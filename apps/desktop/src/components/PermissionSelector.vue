@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChevronDown, Shield, ShieldCheck, ShieldAlert } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import type { PermissionLevel } from '@/types/mode'
+
+const { t } = useI18n()
 
 interface PermissionOption {
   key: PermissionLevel
@@ -9,11 +12,11 @@ interface PermissionOption {
   icon: any
 }
 
-const permissions: PermissionOption[] = [
-  { key: 'default', label: 'Default', icon: Shield },
-  { key: 'auto-approve', label: 'Auto Approve', icon: ShieldCheck },
-  { key: 'full-access', label: 'Full Access', icon: ShieldAlert },
-]
+const permissions = computed<PermissionOption[]>(() => [
+  { key: 'default', label: t('permission.default'), icon: Shield },
+  { key: 'auto-approve', label: t('permission.autoApprove'), icon: ShieldCheck },
+  { key: 'full-access', label: t('permission.fullAccess'), icon: ShieldAlert },
+])
 
 const props = defineProps<{
   modelValue: PermissionLevel

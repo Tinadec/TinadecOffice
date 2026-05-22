@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChevronDown, Map, FileSearch, HelpCircle, Sparkles, Zap, Network } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentMode } from '@/types/mode'
+
+const { t } = useI18n()
 
 interface ModeOption {
   key: AgentMode
@@ -9,14 +12,14 @@ interface ModeOption {
   icon: any
 }
 
-const modes: ModeOption[] = [
-  { key: 'plan', label: 'Plan', icon: Map },
-  { key: 'spec', label: 'Spec', icon: FileSearch },
-  { key: 'ask', label: 'Ask', icon: HelpCircle },
-  { key: 'vibe', label: 'Vibe', icon: Sparkles },
-  { key: 'auto', label: 'Auto', icon: Zap },
-  { key: 'agent', label: 'Agent', icon: Network },
-]
+const modes = computed<ModeOption[]>(() => [
+  { key: 'plan', label: t('mode.plan'), icon: Map },
+  { key: 'spec', label: t('mode.spec'), icon: FileSearch },
+  { key: 'ask', label: t('mode.ask'), icon: HelpCircle },
+  { key: 'vibe', label: t('mode.vibe'), icon: Sparkles },
+  { key: 'auto', label: t('mode.auto'), icon: Zap },
+  { key: 'agent', label: t('mode.agent'), icon: Network },
+])
 
 const props = defineProps<{
   modelValue: AgentMode

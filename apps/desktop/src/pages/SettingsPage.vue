@@ -675,44 +675,44 @@ loadAgentCenter()
                 </div>
 
                 <div class="provider-detail-section">
-                  <div class="provider-detail-section-title">连接配置</div>
+                  <div class="provider-detail-section-title">{{ t('settings.connectionConfig') }}</div>
                   <div class="provider-detail-grid">
                     <div v-if="provider.base_url" class="provider-detail-cell">
-                      <span class="provider-detail-label">Base URL</span>
+                      <span class="provider-detail-label">{{ t('settings.baseUrl') }}</span>
                       <span class="provider-detail-value provider-detail-mono">{{ provider.base_url }}</span>
                     </div>
                     <div v-if="provider.model" class="provider-detail-cell">
-                      <span class="provider-detail-label">模型</span>
+                      <span class="provider-detail-label">{{ t('settings.modelLabel') }}</span>
                       <span class="provider-detail-value provider-detail-mono">{{ provider.model }}</span>
                     </div>
                     <div class="provider-detail-cell">
-                      <span class="provider-detail-label">API Key</span>
+                      <span class="provider-detail-label">{{ t('settings.apiKey') }}</span>
                       <span class="provider-detail-value">
                         <span :class="['provider-key-indicator', provider.has_api_key ? 'has-key' : 'no-key']"></span>
-                        {{ provider.has_api_key ? '已安全存储' : '未设置' }}
+                        {{ provider.has_api_key ? t('settings.apiKeyStored') : t('settings.apiKeyNotSet') }}
                       </span>
                     </div>
                     <div class="provider-detail-cell">
-                      <span class="provider-detail-label">连接方式</span>
+                      <span class="provider-detail-label">{{ t('settings.connectionKind') }}</span>
                       <span class="provider-detail-value">{{ connectionKindLabel(provider.connection_kind) }}</span>
                     </div>
                     <div v-if="provider.binary_path" class="provider-detail-cell">
-                      <span class="provider-detail-label">二进制路径</span>
+                      <span class="provider-detail-label">{{ t('settings.binaryPath') }}</span>
                       <span class="provider-detail-value provider-detail-mono">{{ provider.binary_path }}</span>
                     </div>
                     <div v-if="provider.server_url" class="provider-detail-cell">
-                      <span class="provider-detail-label">服务地址</span>
+                      <span class="provider-detail-label">{{ t('settings.serverUrl') }}</span>
                       <span class="provider-detail-value provider-detail-mono">{{ provider.server_url }}</span>
                     </div>
                     <div v-if="provider.home_path" class="provider-detail-cell">
-                      <span class="provider-detail-label">Home 路径</span>
+                      <span class="provider-detail-label">{{ t('settings.homePath') }}</span>
                       <span class="provider-detail-value provider-detail-mono">{{ provider.home_path }}</span>
                     </div>
                   </div>
                 </div>
 
                 <div v-if="provider.capabilities.length > 0" class="provider-detail-section">
-                  <div class="provider-detail-section-title">能力</div>
+                  <div class="provider-detail-section-title">{{ t('settings.capabilities') }}</div>
                   <div class="model-capability-row">
                     <span v-for="cap in provider.capabilities" :key="cap" class="provider-cap-tag">{{ cap }}</span>
                   </div>
@@ -726,21 +726,21 @@ loadAgentCenter()
                 <div class="provider-detail-actions">
                   <UiButton variant="outline" size="sm" @click="openEditModal(provider)">
                     <Edit3 :size="14" />
-                    <span>编辑配置</span>
+                    <span>{{ t('settings.editConfig') }}</span>
                   </UiButton>
                   <UiButton variant="outline" size="sm" @click="toggleProviderEnabled(provider)">
                     <component :is="provider.enabled ? X : Check" :size="14" />
-                    <span>{{ provider.enabled ? '禁用' : '启用' }}</span>
+                    <span>{{ provider.enabled ? t('settings.disable') : t('settings.enable') }}</span>
                   </UiButton>
                   <span class="provider-action-spacer"></span>
                   <UiButton v-if="confirmDeleteId !== provider.id" variant="ghost" size="sm" class="provider-delete-btn" @click="confirmDeleteId = provider.id">
                     <Trash2 :size="14" />
-                    <span>删除</span>
+                    <span>{{ t('settings.delete') }}</span>
                   </UiButton>
                   <template v-else>
-                    <span class="delete-confirm-text">确认删除此 Provider？</span>
-                    <UiButton variant="destructive" size="sm" :disabled="busy" @click="deleteProvider(provider.id)">确认删除</UiButton>
-                    <UiButton variant="ghost" size="sm" @click="confirmDeleteId = ''">取消</UiButton>
+                    <span class="delete-confirm-text">{{ t('settings.confirmDeleteProvider') }}</span>
+                    <UiButton variant="destructive" size="sm" :disabled="busy" @click="deleteProvider(provider.id)">{{ t('settings.confirmDelete') }}</UiButton>
+                    <UiButton variant="ghost" size="sm" @click="confirmDeleteId = ''">{{ t('settings.cancel') }}</UiButton>
                   </template>
                 </div>
               </div>
@@ -1189,7 +1189,7 @@ loadAgentCenter()
           <p v-if="currentTemplate" class="template-summary">{{ t(currentTemplate.summary_key) }}</p>
 
           <div class="modal-form-section">
-            <div class="modal-form-section-title">基本信息</div>
+            <div class="modal-form-section-title">{{ t('settings.basicInfo') }}</div>
             <div class="settings-field">
               <UiLabel>{{ t('settings.displayName') }}</UiLabel>
               <UiInput v-model="providerForm.display_name" />
@@ -1197,7 +1197,7 @@ loadAgentCenter()
           </div>
 
           <div v-if="formFields.base_url || formFields.model" class="modal-form-section">
-            <div class="modal-form-section-title">连接参数</div>
+            <div class="modal-form-section-title">{{ t('settings.connectionParams') }}</div>
             <div class="model-form-grid">
               <div v-if="formFields.base_url" class="settings-field">
                 <UiLabel>{{ t('settings.baseUrl') }}</UiLabel>
@@ -1211,7 +1211,7 @@ loadAgentCenter()
           </div>
 
           <div v-if="formFields.api_key" class="modal-form-section">
-            <div class="modal-form-section-title">认证</div>
+            <div class="modal-form-section-title">{{ t('settings.authentication') }}</div>
             <div class="settings-field">
               <UiLabel>{{ t('settings.apiKey') }}</UiLabel>
               <UiInput
@@ -1223,7 +1223,7 @@ loadAgentCenter()
           </div>
 
           <div v-if="formFields.binary_path || formFields.home_path" class="modal-form-section">
-            <div class="modal-form-section-title">本地路径</div>
+            <div class="modal-form-section-title">{{ t('settings.localPaths') }}</div>
             <div class="model-form-grid">
               <div v-if="formFields.binary_path" class="settings-field">
                 <UiLabel>{{ t('settings.binaryPath') }}</UiLabel>
@@ -1237,7 +1237,7 @@ loadAgentCenter()
           </div>
 
           <div v-if="formFields.server_url || formFields.launch_args" class="modal-form-section">
-            <div class="modal-form-section-title">服务配置</div>
+            <div class="modal-form-section-title">{{ t('settings.serviceConfig') }}</div>
             <div class="model-form-grid">
               <div v-if="formFields.server_url" class="settings-field">
                 <UiLabel>{{ t('settings.serverUrl') }}</UiLabel>
@@ -1251,18 +1251,18 @@ loadAgentCenter()
           </div>
 
           <div class="modal-form-section">
-            <div class="modal-form-section-title">状态</div>
+            <div class="modal-form-section-title">{{ t('settings.status') }}</div>
             <div class="modal-enabled-row">
               <div>
                 <strong>{{ t('settings.enabled') }}</strong>
-                <span class="modal-enabled-hint">{{ providerForm.enabled ? '启用后将参与模型路由' : '禁用后不会分配任何任务' }}</span>
+                <span class="modal-enabled-hint">{{ providerForm.enabled ? t('settings.enabledHint') : t('settings.disabledHint') }}</span>
               </div>
               <UiSwitch v-model="providerForm.enabled" />
             </div>
           </div>
 
           <div v-if="currentTemplate" class="modal-capability-section">
-            <div class="modal-form-section-title">支持的能力</div>
+            <div class="modal-form-section-title">{{ t('settings.supportedCapabilities') }}</div>
             <div class="model-capability-row">
               <span v-for="capability in currentTemplate.capabilities" :key="capability" class="provider-cap-tag">{{ capability }}</span>
             </div>

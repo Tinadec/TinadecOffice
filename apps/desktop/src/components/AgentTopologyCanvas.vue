@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { AgentCandidateDto, AgentProfileDto, ModelProviderInstanceDto, ModelRouteDto } from '../api'
 
 interface AgentNode {
@@ -36,6 +37,8 @@ const emit = defineEmits<{
   'select-agent': [id: string]
   'configure-agent': [id: string]
 }>()
+
+const { t } = useI18n()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -413,7 +416,7 @@ function onMouseMove(e: MouseEvent) {
   }
 
   if (hit) {
-    tooltipText.value = `${hit.name}\n${hit.providerName ? hit.providerName + ' · ' : ''}${hit.modelName}${hit.enabled ? '' : ' (停用)'}`
+    tooltipText.value = `${hit.name}\n${hit.providerName ? hit.providerName + ' · ' : ''}${hit.modelName}${hit.enabled ? '' : ' (' + t('settings.statusDisabled') + ')'}`
     tooltipX.value = e.clientX + 12
     tooltipY.value = e.clientY - 8
     tooltipVisible.value = true
