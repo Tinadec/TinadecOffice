@@ -36,6 +36,12 @@ builder.Services.AddSingleton<IRuntimeKernelAdapter, CodexRuntimeKernelAdapter>(
 builder.Services.AddSingleton<ICapabilityPolicy, CapabilityPolicyService>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistryService>();
 builder.Services.AddSingleton<IAgentWorkflowRuntime, AgentWorkflowRuntime>();
+builder.Services.AddSingleton<IModelRouteResolver, ModelRouteResolver>();
+builder.Services.AddSingleton<IModelCredentialResolver, ModelCredentialResolver>();
+builder.Services.AddSingleton<IModelInvocationRuntime, ModelInvocationRuntime>();
+builder.Services.AddSingleton<IModelManagementService, ModelManagementService>();
+builder.Services.AddSingleton<IModelProviderRuntime, OpenAiCompatibleProviderRuntime>();
+builder.Services.AddSingleton<IModelProviderRuntime, CliProviderRuntime>();
 builder.Services.AddHttpClient<ICodeToolClient, CodeToolClient>(client =>
 {
     var gatewayUrl = Environment.GetEnvironmentVariable("TINADEC_GATEWAY_URL") ?? "http://127.0.0.1:48730";
@@ -128,9 +134,8 @@ app.MapPost("/api/v1/sessions/{sessionId}/messages", async (
     PostMessageRequest request,
     CoreStore coreStore,
     EventHub events,
-    SecretProtector protector,
     OrchestratorService orchestrator,
-    OpenAiCompatibleClient modelClient,
+    IModelInvocationRuntime modelRuntime,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Content))
@@ -148,33 +153,23 @@ app.MapPost("/api/v1/sessions/{sessionId}/messages", async (
     var orchestration = orchestrator.CreateRunForMessage(sessionId, userMessage.Id, userMessage.Content);
     await orchestrator.DispatchReadOnlyToolsAsync(orchestration, userMessage.Content, cancellationToken);
 
-    var route = coreStore.GetModelRoute("planner");
-    var provider = route is null
-        ? coreStore.GetStoredModelProviderInstance("openai_default")
-        : coreStore.GetStoredModelProviderInstance(route.ProviderInstanceId);
-
-    var settings = provider?.ToModelSettings(route?.Model) ?? coreStore.GetModelSettings();
-    var apiKey = string.IsNullOrWhiteSpace(settings.EncryptedApiKey)
-        ? null
-        : protector.Unprotect(settings.EncryptedApiKey);
+    var modelInvocation = await modelRuntime.InvokeAsync(sessionId, "planner", coreStore.ListMessages(sessionId), cancellationToken);
+    var context = modelInvocation.Context;
 
     Publish(events, coreStore.AppendNewEvent("model.requested", sessionId, new JsonObject
     {
         ["agent_id"] = "agent_meeting",
         ["agent_type"] = "meeting",
-        ["route_purpose"] = "planner",
-        ["provider_instance_id"] = provider?.Id,
-        ["driver"] = provider?.Driver,
-        ["connection_kind"] = provider?.ConnectionKind,
-        ["model"] = settings.Model,
-        ["base_url"] = settings.BaseUrl,
-        ["has_api_key"] = !string.IsNullOrWhiteSpace(apiKey)
+        ["route_purpose"] = context.Purpose,
+        ["provider_instance_id"] = context.ProviderInstanceId,
+        ["driver"] = context.Driver,
+        ["connection_kind"] = context.ConnectionKind,
+        ["model"] = context.EffectiveModel,
+        ["base_url"] = context.EffectiveBaseUrl,
+        ["has_api_key"] = !string.IsNullOrWhiteSpace(context.EncryptedApiKey)
     }, ["agent.meeting", "model.remote"]));
 
-    var history = coreStore.ListMessages(sessionId);
-    var reply = provider?.ConnectionKind.Equals("cli", StringComparison.OrdinalIgnoreCase) == true
-        ? $"Model provider '{provider.DisplayName}' is configured as a CLI provider. TinadecCode can store and route to this provider now; the CLI runtime adapter will execute turns in a later slice."
-        : await modelClient.CreateAssistantReplyAsync(settings, apiKey, history, cancellationToken);
+    var reply = modelInvocation.Content;
     if (orchestration.Run is not null && orchestration.Graph is not null)
     {
         reply = $"{reply}\n\nTask graph ready: {orchestration.Graph.Title} with {orchestration.Nodes.Count} nodes and {orchestration.Assignments.Count} execution assignments. Mutating actions remain approval-gated.";
@@ -314,17 +309,19 @@ app.MapPost("/api/v1/tools/shell", (CreateApprovalRequest request, CoreStore cor
     return Results.Accepted($"/api/v1/approvals/{approval.Id}", approval);
 });
 
-app.MapGet("/api/v1/model-provider-templates", () => Results.Ok(ModelProviderCatalog.ListTemplates()));
-
-app.MapGet("/api/v1/model-providers", (CoreStore coreStore) =>
+app.MapGet("/api/v1/model-provider-templates", (IModelManagementService modelManagement) =>
 {
-    return Results.Ok(coreStore.ListModelProviderInstances());
+    return Results.Ok(modelManagement.ListProviderTemplates());
 });
 
-app.MapPost("/api/v1/model-providers", (SaveModelProviderInstanceRequest request, CoreStore coreStore, SecretProtector protector, EventHub events) =>
+app.MapGet("/api/v1/model-providers", (IModelManagementService modelManagement) =>
 {
-    var encryptedApiKey = ResolveEncryptedApiKey(request, null, protector);
-    var saved = coreStore.SaveModelProviderInstance(request, encryptedApiKey);
+    return Results.Ok(modelManagement.ListProviders());
+});
+
+app.MapPost("/api/v1/model-providers", (SaveModelProviderInstanceRequest request, IModelManagementService modelManagement, CoreStore coreStore, EventHub events) =>
+{
+    var saved = modelManagement.CreateProvider(request);
 
     Publish(events, coreStore.AppendNewEvent("model.provider.saved", null, new JsonObject
     {
@@ -336,16 +333,13 @@ app.MapPost("/api/v1/model-providers", (SaveModelProviderInstanceRequest request
     return Results.Created($"/api/v1/model-providers/{saved.Id}", saved);
 });
 
-app.MapPut("/api/v1/model-providers/{providerInstanceId}", (string providerInstanceId, SaveModelProviderInstanceRequest request, CoreStore coreStore, SecretProtector protector, EventHub events) =>
+app.MapPut("/api/v1/model-providers/{providerInstanceId}", (string providerInstanceId, SaveModelProviderInstanceRequest request, IModelManagementService modelManagement, CoreStore coreStore, EventHub events) =>
 {
-    var existing = coreStore.GetStoredModelProviderInstance(providerInstanceId);
-    if (existing is null)
+    var saved = modelManagement.UpdateProvider(providerInstanceId, request);
+    if (saved is null)
     {
         return Results.NotFound(new TinadecError("MODEL_PROVIDER_NOT_FOUND", "Model provider instance was not found."));
     }
-
-    var encryptedApiKey = ResolveEncryptedApiKey(request, existing, protector);
-    var saved = coreStore.SaveModelProviderInstance(request with { Id = providerInstanceId }, encryptedApiKey);
 
     Publish(events, coreStore.AppendNewEvent("model.provider.saved", null, new JsonObject
     {
@@ -357,16 +351,10 @@ app.MapPut("/api/v1/model-providers/{providerInstanceId}", (string providerInsta
     return Results.Ok(saved);
 });
 
-app.MapDelete("/api/v1/model-providers/{providerInstanceId}", (string providerInstanceId, CoreStore coreStore, EventHub events) =>
+app.MapDelete("/api/v1/model-providers/{providerInstanceId}", (string providerInstanceId, IModelManagementService modelManagement, CoreStore coreStore, EventHub events) =>
 {
-    var existing = coreStore.GetStoredModelProviderInstance(providerInstanceId);
-    if (existing is null)
-    {
-        return Results.NotFound(new TinadecError("MODEL_PROVIDER_NOT_FOUND", "Model provider instance was not found."));
-    }
-
-    var deleted = coreStore.DeleteModelProviderInstance(providerInstanceId);
-    if (!deleted)
+    var deleted = modelManagement.DeleteProvider(providerInstanceId);
+    if (deleted is null)
     {
         return Results.NotFound(new TinadecError("MODEL_PROVIDER_NOT_FOUND", "Model provider instance was not found."));
     }
@@ -374,27 +362,25 @@ app.MapDelete("/api/v1/model-providers/{providerInstanceId}", (string providerIn
     Publish(events, coreStore.AppendNewEvent("model.provider.deleted", null, new JsonObject
     {
         ["provider_instance_id"] = providerInstanceId,
-        ["driver"] = existing.Driver,
-        ["connection_kind"] = existing.ConnectionKind
+        ["driver"] = deleted.Driver,
+        ["connection_kind"] = deleted.ConnectionKind
     }, ["model.provider"]));
 
     return Results.NoContent();
 });
 
-app.MapGet("/api/v1/model-routes", (CoreStore coreStore) =>
+app.MapGet("/api/v1/model-routes", (IModelManagementService modelManagement) =>
 {
-    return Results.Ok(coreStore.ListModelRoutes());
+    return Results.Ok(modelManagement.ListRoutes());
 });
 
-app.MapPut("/api/v1/model-routes/{purpose}", (string purpose, SaveModelRouteRequest request, CoreStore coreStore, EventHub events) =>
+app.MapPut("/api/v1/model-routes/{purpose}", (string purpose, SaveModelRouteRequest request, IModelManagementService modelManagement, CoreStore coreStore, EventHub events) =>
 {
-    var provider = coreStore.GetStoredModelProviderInstance(request.ProviderInstanceId);
-    if (provider is null)
+    var saved = modelManagement.SaveRoute(purpose, request);
+    if (saved is null)
     {
         return Results.NotFound(new TinadecError("MODEL_PROVIDER_NOT_FOUND", "Model provider instance was not found."));
     }
-
-    var saved = coreStore.SaveModelRoute(purpose, request.ProviderInstanceId, request.Model ?? provider.Model);
 
     Publish(events, coreStore.AppendNewEvent("model.route.updated", null, new JsonObject
     {
@@ -406,27 +392,14 @@ app.MapPut("/api/v1/model-routes/{purpose}", (string purpose, SaveModelRouteRequ
     return Results.Ok(saved);
 });
 
-app.MapGet("/api/v1/model-settings", (CoreStore coreStore) =>
+app.MapGet("/api/v1/model-settings", (IModelManagementService modelManagement) =>
 {
-    return Results.Ok(coreStore.GetModelSettings().ToDto());
+    return Results.Ok(modelManagement.GetSettings());
 });
 
-app.MapPut("/api/v1/model-settings", (SaveModelSettingsRequest request, CoreStore coreStore, SecretProtector protector) =>
+app.MapPut("/api/v1/model-settings", (SaveModelSettingsRequest request, IModelManagementService modelManagement) =>
 {
-    var existing = coreStore.GetModelSettings();
-    string? encryptedApiKey = existing.EncryptedApiKey;
-
-    if (request.ClearApiKey)
-    {
-        encryptedApiKey = null;
-    }
-    else if (!string.IsNullOrWhiteSpace(request.ApiKey))
-    {
-        encryptedApiKey = protector.Protect(request.ApiKey.Trim());
-    }
-
-    var saved = coreStore.SaveModelSettings(request.BaseUrl, request.Model, encryptedApiKey);
-    return Results.Ok(saved.ToDto());
+    return Results.Ok(modelManagement.SaveSettings(request));
 });
 
 app.MapGet("/api/v1/market/sources", (CoreStore coreStore) => Results.Ok(coreStore.ListExtensionSources()));
@@ -673,24 +646,6 @@ static async Task WriteSseAsync(HttpResponse response, EventEnvelope envelope, C
 static void Publish(EventHub hub, EventEnvelope envelope)
 {
     hub.Publish(envelope);
-}
-
-static string? ResolveEncryptedApiKey(
-    SaveModelProviderInstanceRequest request,
-    StoredModelProviderInstance? existing,
-    SecretProtector protector)
-{
-    if (request.ClearApiKey)
-    {
-        return null;
-    }
-
-    if (!string.IsNullOrWhiteSpace(request.ApiKey))
-    {
-        return protector.Protect(request.ApiKey.Trim());
-    }
-
-    return existing?.EncryptedApiKey;
 }
 
 public partial class Program;

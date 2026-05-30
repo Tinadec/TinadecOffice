@@ -335,3 +335,22 @@ public sealed record ToolExecutionResponseDto(
     ApprovalDto? Approval,
     CodeToolExecuteResultDto? Result,
     StepResultDto? StepResult);
+
+public sealed record ResolvedModelInvocationContextDto(
+    string Purpose,
+    ModelRouteDto? Route,
+    ModelProviderInstanceDto? Provider,
+    string EffectiveBaseUrl,
+    string EffectiveModel,
+    string? EncryptedApiKey,
+    string? Driver,
+    string ConnectionKind,
+    string ProviderInstanceId,
+    bool IsFallbackProvider);
+
+public sealed record ModelInvocationResultDto(
+    string Status,
+    string Content,
+    ResolvedModelInvocationContextDto Context,
+    bool UsedStubResponse,
+    string? RuntimeId);

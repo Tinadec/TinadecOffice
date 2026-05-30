@@ -140,6 +140,49 @@ public interface IToolPermissionPolicy
     bool RequiresApproval(string capability);
 }
 
+public interface IModelRouteResolver
+{
+    ResolvedModelInvocationContextDto Resolve(string purpose);
+}
+
+public interface IModelCredentialResolver
+{
+    string? ResolveApiKey(ResolvedModelInvocationContextDto context);
+}
+
+public interface IModelProviderRuntime
+{
+    string Id { get; }
+    bool CanHandle(ResolvedModelInvocationContextDto context);
+    Task<ModelInvocationResultDto> GenerateAsync(
+        ResolvedModelInvocationContextDto context,
+        string? apiKey,
+        IReadOnlyList<MessageDto> messages,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IModelInvocationRuntime
+{
+    Task<ModelInvocationResultDto> InvokeAsync(
+        string sessionId,
+        string purpose,
+        IReadOnlyList<MessageDto> messages,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IModelManagementService
+{
+    IReadOnlyList<ModelProviderTemplateDto> ListProviderTemplates();
+    IReadOnlyList<ModelProviderInstanceDto> ListProviders();
+    ModelProviderInstanceDto CreateProvider(SaveModelProviderInstanceRequest request);
+    ModelProviderInstanceDto? UpdateProvider(string providerInstanceId, SaveModelProviderInstanceRequest request);
+    ModelProviderInstanceDto? DeleteProvider(string providerInstanceId);
+    IReadOnlyList<ModelRouteDto> ListRoutes();
+    ModelRouteDto? SaveRoute(string purpose, SaveModelRouteRequest request);
+    ModelSettingsDto GetSettings();
+    ModelSettingsDto SaveSettings(SaveModelSettingsRequest request);
+}
+
 public interface ICoreStore : ISessionService, IApprovalService, IModelRouter
 {
     IReadOnlyList<ProjectDto> ListProjects();
