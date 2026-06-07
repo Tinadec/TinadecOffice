@@ -120,7 +120,7 @@ const toolbarItems = [
           @update:shell-command="emit('update:shellCommand', $event)"
         />
         <OrchestrationTab v-if="activeTab === 'tasks'" :snapshot="orchestration" :tool-executions="toolExecutions" />
-        <DiffTab v-if="activeTab === 'diff'" />
+        <DiffTab v-if="activeTab === 'diff'" :current-project-path="currentProjectPath" />
         <EventsTab v-if="activeTab === 'events'" :events="events" />
         <DoctorTab v-if="activeTab === 'doctor'" :doctor="doctor" />
       </div>

@@ -326,6 +326,9 @@ export async function executeCodeTool(toolId: string, request: CodeToolExecuteRe
   if (spec.id === 'project_template_scaffold') {
     return executeProjectTemplateScaffold(spec, request, args);
   }
+  if (spec.id === 'git_worktree_manager') {
+    return executeGitWorktreeManager(spec, request, args);
+  }
 
   return {
     tool_id: spec.id,
@@ -423,6 +426,218 @@ async function executeProjectTemplateScaffold(
   }, [`project_template:${template.id}`, 'project_templates:scaffold', 'approval:supplied']);
 }
 
+async function executeGitWorktreeManager(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>
+): Promise<CodeToolExecuteResult> {
+  const action = stringArg(args, 'action') ?? 'status';
+  const mutatingActions = new Set(['commit', 'push', 'merge', 'rebase', 'create_branch', 'create_worktree', 'checkout']);
+  if (mutatingActions.has(action) && !request.approval_id) {
+    return resultFor(spec, 'blocked', `${action} requires a Core-approved Git tool invocation.`, {
+      cwd: request.cwd ?? null,
+      action,
+      argument_keys: Object.keys(args).sort(),
+      required_approval: true
+    }, [`git:${action}`, 'approval:required']);
+  }
+
+  if (!request.cwd) {
+    return failedResult(spec, 'Git worktree manager requires a cwd.', args);
+  }
+
+  const root = await git(request.cwd, ['rev-parse', '--show-toplevel']);
+  if (root.code !== 0) {
+    return failedResult(spec, 'cwd is not inside a Git repository.', args, ['git:rev-parse']);
+  }
+
+  if (mutatingActions.has(action)) {
+    return resultFor(spec, 'blocked', `${action} is approved but not executed by the preview manager yet.`, {
+      cwd: request.cwd,
+      git_root: root.stdout.trim(),
+      action,
+      approval_id: request.approval_id,
+      next_step: 'Dispatch a native Git mutation implementation after Core approval.'
+    }, [`git:${action}`, 'approval:supplied', 'mutation:not-implemented']);
+  }
+
+  if (action !== 'status' && action !== 'push_plan' && action !== 'worktrees') {
+    return failedResult(spec, `Unsupported git_worktree_manager action '${action}'.`, args, ['git:unsupported-action']);
+  }
+
+  const gitRoot = root.stdout.trim();
+  const [status, diffStat, recentCommits, remotes, worktrees] = await Promise.all([
+    git(gitRoot, ['status', '--porcelain=v1', '--branch']),
+    git(gitRoot, ['diff', '--stat']),
+    git(gitRoot, ['log', '--oneline', '--decorate', '-5']),
+    git(gitRoot, ['remote', '-v']),
+    git(gitRoot, ['worktree', 'list', '--porcelain'])
+  ]);
+
+  if (status.code !== 0) {
+    return failedResult(spec, status.stderr || 'Unable to read Git status.', args, ['git:status']);
+  }
+
+  const statusSummary = parseGitStatus(status.stdout);
+  const remoteLines = nonEmptyLines(remotes.stdout);
+  const worktreeEntries = parseWorktrees(worktrees.stdout);
+  const pushBlockers = pushReadinessBlockers(statusSummary);
+  const pushReady = pushBlockers.length === 0;
+  const summary = action === 'push_plan'
+    ? pushReady
+      ? `Push plan ready for ${statusSummary.branch}.`
+      : `Push plan blocked: ${pushBlockers.join('; ')}.`
+    : `Git status for ${statusSummary.branch}.`;
+
+  return resultFor(spec, 'completed', summary, {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action,
+    branch: statusSummary.branch,
+    upstream: statusSummary.upstream,
+    ahead: statusSummary.ahead,
+    behind: statusSummary.behind,
+    has_uncommitted_changes: statusSummary.hasUncommittedChanges,
+    changed_entries: statusSummary.changedEntries,
+    diff_stat: diffStat.stdout.trim(),
+    recent_commits: nonEmptyLines(recentCommits.stdout),
+    remotes: remoteLines,
+    worktrees: worktreeEntries,
+    push_ready: pushReady,
+    push_blockers: pushBlockers,
+    needs_push: pushReady && statusSummary.ahead > 0,
+    suggested_commands: suggestedGitCommands(action, statusSummary)
+  }, [`git:${action}`, 'git:status', 'git:push-readiness']);
+}
+
+interface GitCommandResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+interface GitStatusSummary {
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  hasUncommittedChanges: boolean;
+  changedEntries: string[];
+}
+
+async function git(cwd: string, args: string[]): Promise<GitCommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill();
+      resolve({ code: -1, stdout, stderr: stderr || 'git command timed out' });
+    }, 10_000);
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      resolve({ code: -1, stdout, stderr: error.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
+  });
+}
+
+function parseGitStatus(output: string): GitStatusSummary {
+  const lines = output.split(/\r?\n/).filter((line) => line.length > 0);
+  const branchLine = lines.find((line) => line.startsWith('## ')) ?? '## unknown';
+  const branchText = branchLine.slice(3);
+  const rawBranchPart = branchText.split('...')[0].split(' [')[0].trim();
+  const branchPart = rawBranchPart.startsWith('No commits yet on ')
+    ? rawBranchPart.slice('No commits yet on '.length)
+    : rawBranchPart;
+  const upstream = branchText.includes('...')
+    ? branchText.split('...')[1].split(' [')[0].trim() || null
+    : null;
+  const ahead = Number(branchText.match(/\bahead (\d+)/)?.[1] ?? 0);
+  const behind = Number(branchText.match(/\bbehind (\d+)/)?.[1] ?? 0);
+  const changedEntries = lines.filter((line) => !line.startsWith('## '));
+
+  return {
+    branch: branchPart || 'unknown',
+    upstream,
+    ahead,
+    behind,
+    hasUncommittedChanges: changedEntries.length > 0,
+    changedEntries
+  };
+}
+
+function parseWorktrees(output: string): Array<Record<string, string | boolean>> {
+  const entries: Array<Record<string, string | boolean>> = [];
+  let current: Record<string, string | boolean> | null = null;
+
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      if (current) entries.push(current);
+      current = { path: line.slice('worktree '.length) };
+      continue;
+    }
+
+    if (!current || line.length === 0) continue;
+    const [key, ...rest] = line.split(' ');
+    current[key] = rest.length > 0 ? rest.join(' ') : true;
+  }
+
+  if (current) entries.push(current);
+  return entries;
+}
+
+function pushReadinessBlockers(status: GitStatusSummary): string[] {
+  const blockers: string[] = [];
+  if (status.branch === 'HEAD' || status.branch.includes('detached')) {
+    blockers.push('detached HEAD');
+  }
+  if (!status.upstream) {
+    blockers.push('no upstream');
+  }
+  if (status.behind > 0) {
+    blockers.push(`behind upstream by ${status.behind}`);
+  }
+  if (status.hasUncommittedChanges) {
+    blockers.push('uncommitted changes');
+  }
+  return blockers;
+}
+
+function suggestedGitCommands(action: string, status: GitStatusSummary): string[] {
+  if (action !== 'push_plan') {
+    return ['git status --short --branch', 'git diff --stat'];
+  }
+
+  const commands = ['git status --short --branch', 'git diff --stat'];
+  if (status.hasUncommittedChanges) {
+    commands.push('git add <paths>', 'git commit -m "<message>"');
+  }
+  if (!status.upstream) {
+    commands.push(`git push -u origin ${status.branch}`);
+  } else if (status.ahead > 0) {
+    commands.push('git push');
+  }
+  return commands;
+}
+
+function nonEmptyLines(output: string): string[] {
+  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
 function resultFor(
   spec: CodeToolSpec,
   status: CodeToolExecuteResult['status'],
@@ -438,7 +653,7 @@ function resultFor(
       'domain: programming',
       'state_owner: core',
       'tool_layer: code',
-      'code_suite: project_templates',
+      `code_suite: ${spec.category}`,
       ...extraEvidence
     ],
     data,

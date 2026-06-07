@@ -20,6 +20,7 @@ Elysia TypeScript BFF/API layer. It proxies Core HTTP/SSE/debug routes and hosts
 - `/api/v1/code/tools` publishes Tool-layer Code-suite metadata with snake_case public DTO fields. `src/codeTools.ts` keeps internal spec fields camelCase and maps them at the API boundary.
 - Code-suite tools include project templates, runtime probe, bash-like environment, debugging, editor, Git worktree manager, and native-backed Codex primitives.
 - `project_templates` is read-only list/preview. `project_template_scaffold` writes files and must remain approval-gated; direct Gateway execution treats `approval_id` as the Core-supplied approval proof.
+- `git_worktree_manager` supports read-only `status`, `push_plan`, and `worktrees` previews from real Git commands. Mutating actions such as `push`, `commit`, `merge`, `rebase`, branch creation, checkout, and worktree creation must stay blocked without `approval_id`; approved mutation currently returns a handoff block until a native mutation implementation is added.
 - Manual CORS exists because `@elysiajs/cors` returned bad preflight behavior with the Node adapter.
 - Use `setStatus(set, result.status)` when forwarding Core response status.
 - OpenAPI docs are served at `/docs`.

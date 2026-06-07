@@ -9,6 +9,8 @@ TinadecCode is split into four product responsibilities:
 
 Core is the only state authority. Gateway and Desktop must not keep session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
 
+TinadecCode intentionally studies sibling projects such as VS Code, Codex, t3code, OpenCode, OpenHarness, Open-ClaudeCode, openclaw, pi, DeepSeek-TUI, and The Zeroth Docs. The reference map in [`docs/reference-project-map.md`](reference-project-map.md) records what to absorb and what to reject so those influences strengthen, rather than flatten, the Core/Tool/Desktop split.
+
 ## Default Ports
 
 - TinadecCode Elysia API: `http://127.0.0.1:48730`

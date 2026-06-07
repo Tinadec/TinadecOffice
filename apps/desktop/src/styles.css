@@ -3101,6 +3101,140 @@ label {
   font-size: 13px;
 }
 
+.git-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.git-plan-card {
+  display: grid;
+  gap: 10px;
+}
+
+.git-plan-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.git-plan-status.ready {
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.git-plan-status.ready svg {
+  color: var(--accent-success);
+}
+
+.git-plan-status.blocked {
+  border-color: rgba(248, 81, 73, 0.32);
+}
+
+.git-plan-status.blocked svg,
+.git-plan-state.risky svg {
+  color: var(--accent-danger);
+}
+
+.git-plan-status strong,
+.git-plan-grid strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.git-plan-status span,
+.git-plan-approval,
+.git-plan-state {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.git-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.git-plan-grid div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.git-plan-grid span,
+.git-plan-section > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.git-plan-section {
+  display: grid;
+  gap: 5px;
+}
+
+.git-plan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.git-plan-tags small,
+.git-plan-section code {
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.git-plan-tags small {
+  padding: 3px 7px;
+}
+
+.git-plan-section code {
+  display: block;
+  padding: 5px 7px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.git-plan-section pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-diff);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.git-plan-approval,
+.git-plan-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-status-neutral);
+}
+
 .event-list {
   display: grid;
   gap: 4px;

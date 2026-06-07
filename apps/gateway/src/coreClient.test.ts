@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -116,3 +117,51 @@ test('project template scaffold requires approval and writes files inside cwd', 
   assert.equal(escaped?.status, 'failed');
   assert.match(escaped?.summary ?? '', /inside cwd/);
 });
+
+test('git worktree manager reports push readiness and blocks mutations without approval', async (t) => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-tool-'));
+  t.after(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  await runGit(cwd, ['init']);
+  await writeFile(path.join(cwd, 'note.txt'), 'hello\n', 'utf8');
+
+  const plan = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    arguments: { action: 'push_plan' }
+  });
+
+  assert.equal(plan?.status, 'completed');
+  assert.equal(plan?.requires_approval, true);
+  assert.equal(plan?.data.has_uncommitted_changes, true);
+  assert.equal(plan?.data.push_ready, false);
+  assert.ok((plan?.data.push_blockers as string[]).includes('no upstream'));
+  assert.ok((plan?.data.push_blockers as string[]).includes('uncommitted changes'));
+  assert.ok((plan?.data.suggested_commands as string[]).includes('git status --short --branch'));
+
+  const blocked = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    arguments: { action: 'push' }
+  });
+
+  assert.equal(blocked?.status, 'blocked');
+  assert.equal(blocked?.data.required_approval, true);
+});
+
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('git', args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(stderr || `git ${args.join(' ')} failed with code ${code}`));
+    });
+  });
+}
