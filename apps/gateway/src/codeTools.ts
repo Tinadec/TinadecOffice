@@ -451,10 +451,18 @@ async function executeGitWorktreeManager(
     return failedResult(spec, 'cwd is not inside a Git repository.', args, ['git:rev-parse']);
   }
 
+  const gitRoot = root.stdout.trim();
+  if (action === 'commit') {
+    return executeGitCommit(spec, request, args, gitRoot);
+  }
+  if (action === 'push') {
+    return executeGitPush(spec, request, args, gitRoot);
+  }
+
   if (mutatingActions.has(action)) {
     return resultFor(spec, 'blocked', `${action} is approved but not executed by the preview manager yet.`, {
       cwd: request.cwd,
-      git_root: root.stdout.trim(),
+      git_root: gitRoot,
       action,
       approval_id: request.approval_id,
       next_step: 'Dispatch a native Git mutation implementation after Core approval.'
@@ -465,7 +473,6 @@ async function executeGitWorktreeManager(
     return failedResult(spec, `Unsupported git_worktree_manager action '${action}'.`, args, ['git:unsupported-action']);
   }
 
-  const gitRoot = root.stdout.trim();
   const [status, diffStat, recentCommits, remotes, worktrees] = await Promise.all([
     git(gitRoot, ['status', '--porcelain=v1', '--branch']),
     git(gitRoot, ['diff', '--stat']),
@@ -508,6 +515,222 @@ async function executeGitWorktreeManager(
     needs_push: pushReady && statusSummary.ahead > 0,
     suggested_commands: suggestedGitCommands(action, statusSummary)
   }, [`git:${action}`, 'git:status', 'git:push-readiness']);
+}
+
+async function executeGitCommit(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>,
+  gitRoot: string
+): Promise<CodeToolExecuteResult> {
+  if (!booleanArg(args, 'confirm_commit')) {
+    return resultFor(spec, 'blocked', 'commit requires confirm_commit: true after Core approval.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'commit',
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_confirmation: 'confirm_commit'
+    }, ['git:commit', 'approval:supplied', 'confirmation:required']);
+  }
+
+  const message = stringArg(args, 'message') ?? stringArg(args, 'commit_message');
+  if (!message) {
+    return resultFor(spec, 'blocked', 'commit requires a non-empty message.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'commit',
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_argument: 'message'
+    }, ['git:commit', 'approval:supplied', 'message:required']);
+  }
+
+  const includeAll = booleanArg(args, 'include_all');
+  const rawPaths = stringListArg(args, 'paths');
+  if (!includeAll && rawPaths.length === 0) {
+    return resultFor(spec, 'blocked', 'commit requires paths or include_all: true.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'commit',
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_argument: 'paths'
+    }, ['git:commit', 'approval:supplied', 'paths:required']);
+  }
+
+  const pathspecs: string[] = [];
+  if (!includeAll) {
+    for (const rawPath of rawPaths) {
+      const normalized = normalizeGitPathspec(gitRoot, rawPath);
+      if (!normalized.ok) {
+        return resultFor(spec, 'blocked', normalized.message, {
+          cwd: request.cwd,
+          git_root: gitRoot,
+          action: 'commit',
+          approval_id: request.approval_id,
+          argument_keys: Object.keys(args).sort()
+        }, ['git:commit', 'approval:supplied', 'path:blocked']);
+      }
+      pathspecs.push(normalized.pathspec);
+    }
+  }
+
+  const add = await git(gitRoot, includeAll ? ['add', '-A'] : ['add', '--', ...pathspecs]);
+  if (add.code !== 0) {
+    return gitCommandFailedResult(spec, 'git add failed.', args, gitRoot, 'commit', add, ['git:commit', 'git:add']);
+  }
+
+  const staged = await git(gitRoot, ['diff', '--cached', '--name-only']);
+  if (staged.code !== 0) {
+    return gitCommandFailedResult(spec, 'Unable to inspect staged files.', args, gitRoot, 'commit', staged, ['git:commit', 'git:diff-cached']);
+  }
+
+  const stagedFiles = nonEmptyLines(staged.stdout);
+  if (stagedFiles.length === 0) {
+    return resultFor(spec, 'blocked', 'No staged changes are available to commit after git add.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'commit',
+      approval_id: request.approval_id,
+      include_all: includeAll,
+      paths: rawPaths,
+      argument_keys: Object.keys(args).sort()
+    }, ['git:commit', 'approval:supplied', 'git:add', 'staged:none']);
+  }
+
+  const commit = await git(gitRoot, ['commit', '-m', message]);
+  if (commit.code !== 0) {
+    return gitCommandFailedResult(spec, 'git commit failed.', args, gitRoot, 'commit', commit, ['git:commit']);
+  }
+
+  const [head, status] = await Promise.all([
+    git(gitRoot, ['rev-parse', 'HEAD']),
+    git(gitRoot, ['status', '--porcelain=v1', '--branch'])
+  ]);
+  const commitHash = head.code === 0 ? head.stdout.trim() : null;
+  const statusSummary = status.code === 0 ? parseGitStatus(status.stdout) : null;
+
+  return resultFor(spec, 'completed', commitHash ? `Created commit ${commitHash.slice(0, 12)}.` : 'Created commit.', {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action: 'commit',
+    approval_id: request.approval_id,
+    include_all: includeAll,
+    paths: rawPaths,
+    staged_files: stagedFiles,
+    commit_hash: commitHash,
+    commit_output: commit.stdout.trim(),
+    branch: statusSummary?.branch ?? null,
+    upstream: statusSummary?.upstream ?? null,
+    ahead: statusSummary?.ahead ?? null,
+    behind: statusSummary?.behind ?? null,
+    has_uncommitted_changes: statusSummary?.hasUncommittedChanges ?? null
+  }, ['git:commit', 'approval:supplied', 'confirmation:supplied', 'git:add']);
+}
+
+async function executeGitPush(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>,
+  gitRoot: string
+): Promise<CodeToolExecuteResult> {
+  if (!booleanArg(args, 'confirm_push')) {
+    return resultFor(spec, 'blocked', 'push requires confirm_push: true after Core approval.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'push',
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_confirmation: 'confirm_push'
+    }, ['git:push', 'approval:supplied', 'confirmation:required']);
+  }
+
+  const status = await git(gitRoot, ['status', '--porcelain=v1', '--branch']);
+  if (status.code !== 0) {
+    return gitCommandFailedResult(spec, 'Unable to inspect Git status before push.', args, gitRoot, 'push', status, ['git:push', 'git:status']);
+  }
+
+  const statusSummary = parseGitStatus(status.stdout);
+  const setUpstream = booleanArg(args, 'set_upstream');
+  const remote = stringArg(args, 'remote') ?? 'origin';
+  const pushBlockers = pushReadinessBlockers(statusSummary).filter((blocker) => !(blocker === 'no upstream' && setUpstream));
+  if (pushBlockers.length > 0) {
+    return resultFor(spec, 'blocked', `push blocked: ${pushBlockers.join('; ')}.`, {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'push',
+      approval_id: request.approval_id,
+      branch: statusSummary.branch,
+      upstream: statusSummary.upstream,
+      ahead: statusSummary.ahead,
+      behind: statusSummary.behind,
+      has_uncommitted_changes: statusSummary.hasUncommittedChanges,
+      push_blockers: pushBlockers,
+      argument_keys: Object.keys(args).sort()
+    }, ['git:push', 'approval:supplied', 'push:blocked']);
+  }
+
+  if (!isSafeGitRefName(remote)) {
+    return resultFor(spec, 'blocked', 'push remote must be a configured remote name without whitespace or option prefixes.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'push',
+      approval_id: request.approval_id,
+      remote
+    }, ['git:push', 'approval:supplied', 'remote:blocked']);
+  }
+
+  if (!statusSummary.upstream && setUpstream && !isSafeGitRefName(statusSummary.branch)) {
+    return resultFor(spec, 'blocked', 'push cannot set upstream for an unsafe branch name.', {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'push',
+      approval_id: request.approval_id,
+      branch: statusSummary.branch
+    }, ['git:push', 'approval:supplied', 'branch:blocked']);
+  }
+
+  if (statusSummary.upstream && statusSummary.ahead === 0) {
+    return resultFor(spec, 'completed', `No local commits need pushing for ${statusSummary.branch}.`, {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action: 'push',
+      approval_id: request.approval_id,
+      branch: statusSummary.branch,
+      upstream: statusSummary.upstream,
+      ahead: statusSummary.ahead,
+      behind: statusSummary.behind,
+      pushed: false
+    }, ['git:push', 'approval:supplied', 'confirmation:supplied', 'push:no-op']);
+  }
+
+  const pushArgs = !statusSummary.upstream && setUpstream
+    ? ['push', '-u', remote, statusSummary.branch]
+    : ['push'];
+  const push = await git(gitRoot, pushArgs);
+  if (push.code !== 0) {
+    return gitCommandFailedResult(spec, 'git push failed.', args, gitRoot, 'push', push, ['git:push']);
+  }
+
+  const finalStatus = await git(gitRoot, ['status', '--porcelain=v1', '--branch']);
+  const finalSummary = finalStatus.code === 0 ? parseGitStatus(finalStatus.stdout) : statusSummary;
+
+  return resultFor(spec, 'completed', `Pushed ${statusSummary.branch}.`, {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action: 'push',
+    approval_id: request.approval_id,
+    branch: finalSummary.branch,
+    upstream: finalSummary.upstream,
+    ahead: finalSummary.ahead,
+    behind: finalSummary.behind,
+    has_uncommitted_changes: finalSummary.hasUncommittedChanges,
+    pushed: true,
+    set_upstream: !statusSummary.upstream && setUpstream,
+    remote,
+    push_output: [push.stdout.trim(), push.stderr.trim()].filter(Boolean).join('\n')
+  }, ['git:push', 'approval:supplied', 'confirmation:supplied']);
 }
 
 interface GitCommandResult {
@@ -602,7 +825,7 @@ function parseWorktrees(output: string): Array<Record<string, string | boolean>>
 
 function pushReadinessBlockers(status: GitStatusSummary): string[] {
   const blockers: string[] = [];
-  if (status.branch === 'HEAD' || status.branch.includes('detached')) {
+  if (status.branch === 'HEAD' || status.branch.startsWith('HEAD ') || status.branch.includes('detached')) {
     blockers.push('detached HEAD');
   }
   if (!status.upstream) {
@@ -636,6 +859,70 @@ function suggestedGitCommands(action: string, status: GitStatusSummary): string[
 
 function nonEmptyLines(output: string): string[] {
   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function booleanArg(args: Record<string, unknown>, key: string): boolean {
+  return args[key] === true;
+}
+
+function stringListArg(args: Record<string, unknown>, key: string): string[] {
+  const value = args[key];
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeGitPathspec(
+  gitRoot: string,
+  value: string
+): { ok: true; pathspec: string } | { ok: false; message: string } {
+  if (value.includes('\0')) {
+    return { ok: false, message: 'commit paths must not contain NUL characters.' };
+  }
+
+  const candidate = path.isAbsolute(value) ? path.resolve(value) : path.resolve(gitRoot, value);
+  if (!isInside(gitRoot, candidate)) {
+    return { ok: false, message: 'commit paths must stay inside the Git worktree.' };
+  }
+
+  const relative = path.relative(gitRoot, candidate);
+  if (!relative || relative === '.') {
+    return { ok: false, message: 'commit paths must name files or directories inside the Git worktree.' };
+  }
+
+  return { ok: true, pathspec: `:(literal)${relative.split(path.sep).join('/')}` };
+}
+
+function isSafeGitRefName(value: string): boolean {
+  return value.length > 0 && !value.startsWith('-') && !/[\s\0]/.test(value);
+}
+
+function gitCommandFailedResult(
+  spec: CodeToolSpec,
+  summary: string,
+  args: Record<string, unknown>,
+  gitRoot: string,
+  action: string,
+  command: GitCommandResult,
+  extraEvidence: string[] = []
+): CodeToolExecuteResult {
+  return resultFor(spec, 'failed', summary, {
+    git_root: gitRoot,
+    action,
+    argument_keys: Object.keys(args).sort(),
+    exit_code: command.code,
+    stdout: command.stdout.trim(),
+    stderr: command.stderr.trim()
+  }, extraEvidence);
 }
 
 function resultFor(

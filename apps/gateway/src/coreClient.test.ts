@@ -149,6 +149,102 @@ test('git worktree manager reports push readiness and blocks mutations without a
   assert.equal(blocked?.data.required_approval, true);
 });
 
+test('git worktree manager executes approved commit and push with explicit confirmations', async (t) => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-tool-'));
+  const remote = await mkdtemp(path.join(tmpdir(), 'tinadec-git-remote-'));
+  t.after(async () => {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(remote, { recursive: true, force: true });
+  });
+
+  await runGit(cwd, ['init']);
+  await runGit(cwd, ['config', 'user.name', 'Tinadec Test']);
+  await runGit(cwd, ['config', 'user.email', 'tinadec@example.invalid']);
+  await runGit(remote, ['init', '--bare']);
+  await runGit(cwd, ['remote', 'add', 'origin', remote]);
+  await writeFile(path.join(cwd, 'note.txt'), 'hello\n', 'utf8');
+
+  const missingCommitConfirmation = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: {
+      action: 'commit',
+      paths: ['note.txt'],
+      message: 'test commit'
+    }
+  });
+
+  assert.equal(missingCommitConfirmation?.status, 'blocked');
+  assert.equal(missingCommitConfirmation?.data.required_confirmation, 'confirm_commit');
+
+  const escapedCommit = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: {
+      action: 'commit',
+      confirm_commit: true,
+      paths: ['../escape.txt'],
+      message: 'test commit'
+    }
+  });
+
+  assert.equal(escapedCommit?.status, 'blocked');
+  assert.match(escapedCommit?.summary ?? '', /inside the Git worktree/);
+
+  const committed = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: {
+      action: 'commit',
+      confirm_commit: true,
+      paths: ['note.txt'],
+      message: 'test commit'
+    }
+  });
+
+  assert.equal(committed?.status, 'completed');
+  assert.match(committed?.data.commit_hash as string, /^[a-f0-9]{40}$/);
+  assert.deepEqual(committed?.data.staged_files, ['note.txt']);
+  assert.equal(committed?.data.has_uncommitted_changes, false);
+
+  const missingPushConfirmation = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: {
+      action: 'push',
+      set_upstream: true
+    }
+  });
+
+  assert.equal(missingPushConfirmation?.status, 'blocked');
+  assert.equal(missingPushConfirmation?.data.required_confirmation, 'confirm_push');
+
+  const pushed = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: {
+      action: 'push',
+      confirm_push: true,
+      set_upstream: true
+    }
+  });
+
+  assert.equal(pushed?.status, 'completed');
+  assert.equal(pushed?.data.pushed, true);
+  assert.equal(pushed?.data.set_upstream, true);
+  assert.equal(pushed?.data.ahead, 0);
+  assert.equal(pushed?.data.behind, 0);
+
+  const plan = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    arguments: { action: 'push_plan' }
+  });
+
+  assert.equal(plan?.status, 'completed');
+  assert.equal(plan?.data.push_ready, true);
+  assert.equal(plan?.data.needs_push, false);
+});
+
 async function runGit(cwd: string, args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn('git', args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
