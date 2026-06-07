@@ -34,6 +34,13 @@ export interface CodeToolSpecDto {
   language_support?: string[];
 }
 
+export interface ApprovalSnapshot {
+  id: string;
+  session_id?: string | null;
+  kind?: string | null;
+  status?: string | null;
+}
+
 interface CodeToolSpec {
   id: string;
   summary: string;
@@ -304,6 +311,76 @@ export function listCodeToolSpecs(): CodeToolSpecDto[] {
     approval_summary: spec.approvalSummary ?? null,
     language_support: spec.language_support
   }));
+}
+
+export function codeToolRequiresApproval(toolId: string): boolean | null {
+  return TOOL_SPECS[toolId]?.requiresApproval ?? null;
+}
+
+export function codeToolApprovalBlockFor(
+  toolId: string,
+  request: CodeToolExecuteRequest,
+  approvals: ApprovalSnapshot[]
+): CodeToolExecuteResult | null {
+  const spec = TOOL_SPECS[toolId];
+  if (!spec || !spec.requiresApproval || !request.approval_id) {
+    return null;
+  }
+
+  const approval = approvals.find((item) => item.id === request.approval_id);
+  if (!approval) {
+    return resultFor(spec, 'blocked', 'Core approval was not found for this Code tool invocation.', {
+      approval_id: request.approval_id,
+      session_id: request.session_id ?? null,
+      required_approval: true
+    }, ['approval:not-found', 'state_owner: core']);
+  }
+
+  if (approval.status !== 'approved') {
+    return resultFor(spec, 'blocked', `Core approval is ${approval.status ?? 'unknown'}, not approved.`, {
+      approval_id: request.approval_id,
+      approval_status: approval.status ?? null,
+      approval_kind: approval.kind ?? null,
+      session_id: request.session_id ?? null,
+      required_approval: true
+    }, ['approval:not-approved', 'state_owner: core']);
+  }
+
+  const approvalKind = approval.kind ?? null;
+  const allowedKinds = allowedApprovalKindsForTool(toolId);
+  if (!approvalKind || !allowedKinds.includes(approvalKind)) {
+    return resultFor(spec, 'blocked', `Core approval kind '${approvalKind ?? 'unknown'}' cannot authorize ${toolId}.`, {
+      approval_id: request.approval_id,
+      approval_status: approval.status,
+      approval_kind: approvalKind,
+      allowed_approval_kinds: allowedKinds,
+      session_id: request.session_id ?? null,
+      required_approval: true
+    }, ['approval:wrong-kind', 'state_owner: core']);
+  }
+
+  return null;
+}
+
+export function codeToolApprovalUnavailableBlock(toolId: string, request: CodeToolExecuteRequest): CodeToolExecuteResult | null {
+  const spec = TOOL_SPECS[toolId];
+  if (!spec || !spec.requiresApproval || !request.approval_id) {
+    return null;
+  }
+
+  return resultFor(spec, 'blocked', 'Core approval state could not be verified for this Code tool invocation.', {
+    approval_id: request.approval_id,
+    session_id: request.session_id ?? null,
+    required_approval: true
+  }, ['approval:unverified', 'state_owner: core']);
+}
+
+function allowedApprovalKindsForTool(toolId: string): string[] {
+  if (toolId === 'git_worktree_manager') {
+    return ['git'];
+  }
+
+  return ['code', 'tool', toolId];
 }
 
 export async function executeCodeTool(toolId: string, request: CodeToolExecuteRequest = {}): Promise<CodeToolExecuteResult | null> {

@@ -1,7 +1,16 @@
 import { node } from '@elysiajs/node';
 import { swagger } from '@elysiajs/swagger';
 import { Elysia } from 'elysia';
-import { executeCodeTool, listCodeToolIds, listCodeToolSpecs, type CodeToolExecuteRequest } from './codeTools.js';
+import {
+  codeToolApprovalBlockFor,
+  codeToolApprovalUnavailableBlock,
+  codeToolRequiresApproval,
+  executeCodeTool,
+  listCodeToolIds,
+  listCodeToolSpecs,
+  type ApprovalSnapshot,
+  type CodeToolExecuteRequest
+} from './codeTools.js';
 import { coreUrl, proxyJson, proxySse } from './coreClient.js';
 import { proxyDebugJson, debugWsUrl } from './debugProxy.js';
 
@@ -25,6 +34,25 @@ function isOriginAllowed(origin: string): boolean {
     if (typeof pattern === 'string') return pattern === origin;
     return pattern.test(origin);
   });
+}
+
+async function verifyCodeToolApproval(toolId: string, request: CodeToolExecuteRequest) {
+  const params = new URLSearchParams();
+  if (request.session_id) {
+    params.set('sessionId', request.session_id);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+
+  try {
+    const approvalResult = await proxyJson(`/api/v1/approvals${suffix}`);
+    if (approvalResult.status < 200 || approvalResult.status >= 300 || !Array.isArray(approvalResult.data)) {
+      return codeToolApprovalUnavailableBlock(toolId, request);
+    }
+
+    return codeToolApprovalBlockFor(toolId, request, approvalResult.data as ApprovalSnapshot[]);
+  } catch {
+    return codeToolApprovalUnavailableBlock(toolId, request);
+  }
 }
 
 const app = new Elysia({ adapter: node() })
@@ -268,7 +296,24 @@ const app = new Elysia({ adapter: node() })
     return result.data;
   })
   .post('/api/v1/code/tools/:toolId/execute', async ({ params, body, set }) => {
-    const result = await executeCodeTool(params.toolId, body as CodeToolExecuteRequest);
+    const request = (body ?? {}) as CodeToolExecuteRequest;
+    const requiresApproval = codeToolRequiresApproval(params.toolId);
+    if (requiresApproval === null) {
+      setStatus(set, 404);
+      return {
+        code: 'CODE_TOOL_NOT_FOUND',
+        message: 'Code tool was not found.'
+      };
+    }
+
+    if (requiresApproval && request.approval_id) {
+      const approvalBlock = await verifyCodeToolApproval(params.toolId, request);
+      if (approvalBlock) {
+        return approvalBlock;
+      }
+    }
+
+    const result = await executeCodeTool(params.toolId, request);
     if (!result) {
       setStatus(set, 404);
       return {

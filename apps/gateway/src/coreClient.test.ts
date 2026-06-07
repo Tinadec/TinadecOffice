@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { coreEndpoint } from './coreClient.js';
-import { executeCodeTool, listCodeToolIds, listCodeToolSpecs } from './codeTools.js';
+import { codeToolApprovalBlockFor, codeToolApprovalUnavailableBlock, codeToolRequiresApproval, executeCodeTool, listCodeToolIds, listCodeToolSpecs } from './codeTools.js';
 
 test('coreEndpoint resolves API paths against the configured core URL', () => {
   assert.equal(coreEndpoint('/api/v1/health'), 'http://127.0.0.1:48731/api/v1/health');
@@ -73,6 +73,47 @@ test('project templates can preview generated files without mutating the workspa
   const files = preview?.data.files as Array<{ path: string; content: string }>;
   assert.ok(files.some((file) => file.path === 'Cargo.toml' && file.content.includes('name = "hello-rust"')));
   assert.ok(files.some((file) => file.path === 'src/main.rs' && file.content.includes('Hello from hello-rust')));
+});
+
+test('Code tool approval gate trusts only approved Core approval state', () => {
+  assert.equal(codeToolRequiresApproval('git_worktree_manager'), true);
+  assert.equal(codeToolRequiresApproval('project_templates'), false);
+  assert.equal(codeToolRequiresApproval('missing_tool'), null);
+
+  const request = {
+    session_id: 'sess_test',
+    approval_id: 'appr_test'
+  };
+
+  const pending = codeToolApprovalBlockFor('git_worktree_manager', request, [
+    { id: 'appr_test', session_id: 'sess_test', kind: 'git', status: 'pending' }
+  ]);
+  assert.equal(pending?.status, 'blocked');
+  assert.equal(pending?.data.approval_status, 'pending');
+
+  const missing = codeToolApprovalBlockFor('git_worktree_manager', request, []);
+  assert.equal(missing?.status, 'blocked');
+  assert.equal(missing?.data.approval_id, 'appr_test');
+  assert.match(missing?.summary ?? '', /not found/);
+
+  const wrongKind = codeToolApprovalBlockFor('git_worktree_manager', request, [
+    { id: 'appr_test', session_id: 'sess_test', kind: 'shell', status: 'approved' }
+  ]);
+  assert.equal(wrongKind?.status, 'blocked');
+  assert.equal(wrongKind?.data.approval_kind, 'shell');
+  assert.deepEqual(wrongKind?.data.allowed_approval_kinds, ['git']);
+
+  const approved = codeToolApprovalBlockFor('git_worktree_manager', request, [
+    { id: 'appr_test', session_id: 'sess_test', kind: 'git', status: 'approved' }
+  ]);
+  assert.equal(approved, null);
+
+  const readOnly = codeToolApprovalBlockFor('project_templates', request, []);
+  assert.equal(readOnly, null);
+
+  const unavailable = codeToolApprovalUnavailableBlock('git_worktree_manager', request);
+  assert.equal(unavailable?.status, 'blocked');
+  assert.match(unavailable?.summary ?? '', /could not be verified/);
 });
 
 test('project template scaffold requires approval and writes files inside cwd', async (t) => {
