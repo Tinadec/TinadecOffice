@@ -26,7 +26,7 @@ TinadecCode should continue absorbing ideas from the sibling repositories under
 ## Current TinadecCode Mappings
 
 - Codex/OpenCode inspired tool descriptors are now Core-visible through the harness manifest and tool search APIs.
-- T3 Code/OpenCode timeline ideas are reflected in the Core-owned tool execution timeline and Desktop right rail.
+- T3 Code/OpenCode timeline and readiness ideas are reflected in the Core-owned tool execution timeline, `/api/v1/readiness` receipts, and Desktop right rail.
 - Codex/T3 Code Git/worktree ideas are reflected in `executor_git_manager`, `git_worktree_manager`, and the Desktop Git push readiness panel.
 - OpenHarness-style multi-agent vocabulary is kept inside TinadecCode's two-layer split: planning agents actively coordinate; execution agents remain task-bound.
 
@@ -34,6 +34,6 @@ TinadecCode should continue absorbing ideas from the sibling repositories under
 
 1. Expand Git/worktree tooling with approved mutation paths after the preview/handoff path is stable.
 2. Make right-rail timelines as inspectable as OpenCode/T3 Code timelines while preserving Core event ownership.
-3. Add provider/runtime readiness receipts rather than UI polling, following T3 Code's startup and async-completion lessons.
+3. Extend provider/runtime readiness receipts with deeper live probes and async-completion evidence, following T3 Code's startup lessons, while keeping the status owned by Core.
 4. Grow tool catalog metadata toward VS Code-style contribution boundaries: project, runtime, environment, editor, git, review, and future extension domains.
 5. Keep bilingual docs and UI text aligned with The Zeroth Docs style: same concepts, same route surface, no Chinese/English drift.

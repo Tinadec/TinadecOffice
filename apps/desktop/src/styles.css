@@ -1468,8 +1468,10 @@ button {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 0 12px;
+  min-width: 0;
+  padding: 0 8px;
   height: 40px;
   font-size: 12px;
   font-weight: 500;
@@ -1480,7 +1482,7 @@ button {
   cursor: pointer;
   transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   white-space: nowrap;
-  flex-shrink: 0;
+  flex: 1 1 0;
 }
 
 .float-panel-item:hover {
@@ -1508,6 +1510,9 @@ button {
 }
 
 .item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: opacity 0.2s ease, width 0.2s ease;
 }
 
@@ -3292,6 +3297,116 @@ label {
 
 .doctor-row strong {
   color: var(--text-primary);
+}
+
+.runtime-readiness-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.readiness-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.readiness-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.readiness-head strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.readiness-head span {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.readiness-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.readiness-metrics span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.readiness-metrics strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.readiness-components {
+  display: grid;
+  gap: 8px;
+}
+
+.readiness-component {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.readiness-component-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.readiness-component-head strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.readiness-component p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.readiness-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.readiness-evidence span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
 }
 
 .context-tabs {

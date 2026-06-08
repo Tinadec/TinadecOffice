@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PanelRightClose, PanelRightOpen, Terminal, GitBranch, ShieldCheck, MoreHorizontal } from '@lucide/vue'
+import { Activity, PanelRightClose, PanelRightOpen, Terminal, GitBranch, ShieldCheck, MoreHorizontal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import ApprovalTab from './ApprovalTab.vue'
 import DiffTab from './DiffTab.vue'
 import EventsTab from './EventsTab.vue'
 import DoctorTab from './DoctorTab.vue'
 import OrchestrationTab from './OrchestrationTab.vue'
-import type { ApprovalDto, EventEnvelope, DoctorReportDto, OrchestrationSnapshotDto, ToolExecutionTimelineItemDto } from '../api'
+import type { ApprovalDto, EventEnvelope, DoctorReportDto, OrchestrationSnapshotDto, RuntimeReadinessReceiptDto, ToolExecutionTimelineItemDto } from '../api'
 
 const { t } = useI18n()
 
@@ -42,6 +42,7 @@ defineProps<{
   approvals: ApprovalDto[]
   events: EventEnvelope[]
   doctor: DoctorReportDto | null
+  readiness: RuntimeReadinessReceiptDto | null
   orchestration: OrchestrationSnapshotDto | null
   toolExecutions: ToolExecutionTimelineItemDto[]
   shellCommand: string
@@ -62,6 +63,7 @@ const toolbarItems = [
   { key: 'tasks' as const, icon: Terminal, label: () => 'Tasks' },
   { key: 'diff' as const, icon: GitBranch, label: () => t('context.diff') },
   { key: 'events' as const, icon: MoreHorizontal, label: () => t('context.events') },
+  { key: 'doctor' as const, icon: Activity, label: () => 'Runtime' },
 ]
 </script>
 
@@ -98,6 +100,7 @@ const toolbarItems = [
           class="float-panel-item"
           :class="{ active: activeTab === item.key }"
           :style="{ '--item-index': index }"
+          :title="item.label()"
           @click="activeTab = item.key"
         >
           <component :is="item.icon" :size="collapsed ? 18 : 14" />
@@ -128,7 +131,7 @@ const toolbarItems = [
           @approval-created="emit('approval-created', $event)"
         />
         <EventsTab v-if="activeTab === 'events'" :events="events" />
-        <DoctorTab v-if="activeTab === 'doctor'" :doctor="doctor" />
+        <DoctorTab v-if="activeTab === 'doctor'" :doctor="doctor" :readiness="readiness" />
       </div>
     </template>
   </aside>

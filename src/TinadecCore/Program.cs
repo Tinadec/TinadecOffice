@@ -37,6 +37,7 @@ builder.Services.AddSingleton<IRuntimeKernelAdapter, CodexRuntimeKernelAdapter>(
 builder.Services.AddSingleton<ICapabilityPolicy, CapabilityPolicyService>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistryService>();
 builder.Services.AddSingleton<HarnessManifestService>();
+builder.Services.AddSingleton<RuntimeReadinessService>();
 builder.Services.AddSingleton<ToolSearchService>();
 builder.Services.AddSingleton<ToolExecutionTimelineService>();
 builder.Services.AddSingleton<IAgentWorkflowRuntime, AgentWorkflowRuntime>();
@@ -95,6 +96,8 @@ app.MapGet("/api/v1/health", () => Results.Ok(new
 }));
 
 app.MapGet("/api/v1/doctor", (DoctorService doctor) => Results.Ok(doctor.Check()));
+
+app.MapGet("/api/v1/readiness", (RuntimeReadinessService readiness) => Results.Ok(readiness.Check()));
 
 app.MapGet("/api/v1/projects", (CoreStore coreStore) => Results.Ok(coreStore.ListProjects()));
 

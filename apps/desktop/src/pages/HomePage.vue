@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { api, type ApprovalDto, type DoctorReportDto, type EventEnvelope, type MessageDto, type ModelSettingsDto, type OrchestrationSnapshotDto, type ProjectDto, type SessionDto, type ToolExecutionTimelineItemDto } from '../api'
+import { api, type ApprovalDto, type DoctorReportDto, type EventEnvelope, type MessageDto, type ModelSettingsDto, type OrchestrationSnapshotDto, type ProjectDto, type RuntimeReadinessReceiptDto, type SessionDto, type ToolExecutionTimelineItemDto } from '../api'
 import { basenameFromPath } from '../format'
 import AppSidebar from '../components/AppSidebar.vue'
 import AppHeader from '../components/AppHeader.vue'
@@ -19,6 +19,7 @@ const messages = ref<MessageDto[]>([])
 const approvals = ref<ApprovalDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const doctor = ref<DoctorReportDto | null>(null)
+const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const modelSettings = ref<ModelSettingsDto | null>(null)
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
@@ -65,14 +66,16 @@ async function run(label: string, action: () => Promise<void>) {
 
 async function loadInitial() {
   await run('load', async () => {
-    const [projectList, settings, report] = await Promise.all([
+    const [projectList, settings, report, readinessReceipt] = await Promise.all([
       api.listProjects(),
       api.getModelSettings(),
       api.doctor(),
+      api.readiness(),
     ])
     projects.value = projectList
     modelSettings.value = settings
     doctor.value = report
+    readiness.value = readinessReceipt
     modelBaseUrl.value = settings.base_url
     modelName.value = settings.model
     selectedProjectId.value = projectList[0]?.id ?? null
@@ -318,6 +321,7 @@ onUnmounted(() => {
         :approvals="approvals"
         :events="recentEvents"
         :doctor="doctor"
+        :readiness="readiness"
         :orchestration="orchestration"
         :tool-executions="toolExecutions"
         :shell-command="shellCommand"

@@ -250,6 +250,38 @@ public sealed class ModelContractTests
     }
 
     [Fact]
+    public void RuntimeReadinessReceiptContractSerializesCoreStartupEvidence()
+    {
+        var receipt = new RuntimeReadinessReceiptDto(
+            Status: "warning",
+            GeneratedAt: DateTimeOffset.UnixEpoch,
+            Runtime: "tinadec-core-workflow",
+            ReceiptId: "readiness_1",
+            Components:
+            [
+                new RuntimeReadinessComponentDto(
+                    "tool_registry",
+                    "Tool Registry",
+                    "ready",
+                    "Core tool registry is canonical.",
+                    ["canonical_tool_count:15"])
+            ],
+            ReadyCount: 1,
+            WarningCount: 1,
+            BlockedCount: 0);
+
+        var json = JsonSerializer.Serialize(receipt, JsonOptions);
+
+        Assert.Contains("\"generated_at\":\"1970-01-01T00:00:00+00:00\"", json);
+        Assert.Contains("\"receipt_id\":\"readiness_1\"", json);
+        Assert.Contains("\"ready_count\":1", json);
+        Assert.Contains("\"warning_count\":1", json);
+        Assert.Contains("\"blocked_count\":0", json);
+        Assert.Contains("\"components\"", json);
+        Assert.Contains("\"evidence\":[\"canonical_tool_count:15\"]", json);
+    }
+
+    [Fact]
     public void PromptFragmentContractUsesPlanFieldNames()
     {
         var fragment = new PromptFragmentDto(

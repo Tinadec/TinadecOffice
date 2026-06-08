@@ -9,4 +9,10 @@ describe('format helpers', () => {
   it('maps pending work to a warning tone', () => {
     expect(toneForStatus('pending')).toBe('warn');
   });
+
+  it('maps runtime readiness statuses to existing tones', () => {
+    expect(toneForStatus('ready')).toBe('ok');
+    expect(toneForStatus('warning')).toBe('warn');
+    expect(toneForStatus('blocked')).toBe('danger');
+  });
 });

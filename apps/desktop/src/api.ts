@@ -125,6 +125,25 @@ export interface DoctorReportDto {
   checks: Array<{ name: string; status: string; message: string }>;
 }
 
+export interface RuntimeReadinessComponentDto {
+  id: string;
+  name: string;
+  status: string;
+  summary: string;
+  evidence: string[];
+}
+
+export interface RuntimeReadinessReceiptDto {
+  status: string;
+  generated_at: string;
+  runtime: string;
+  receipt_id: string;
+  components: RuntimeReadinessComponentDto[];
+  ready_count: number;
+  warning_count: number;
+  blocked_count: number;
+}
+
 export interface EventEnvelope {
   v: string;
   type: string;
@@ -582,6 +601,7 @@ export const api = {
   gatewayUrl,
   health: () => request<Record<string, unknown>>('/api/v1/health'),
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
+  readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),
   listProjects: () => request<ProjectDto[]>('/api/v1/projects'),
   createProject: (name: string, path: string) => request<ProjectDto>('/api/v1/projects', {
     method: 'POST',

@@ -135,6 +135,28 @@ public sealed class CoreCapabilityAdapterTests
     }
 
     [Fact]
+    public void RuntimeReadinessReceiptSummarizesCoreOwnedStartupState()
+    {
+        var store = new CoreStore(Path.Combine(Path.GetTempPath(), $"tinadec-readiness-{Guid.NewGuid():N}.db"));
+        store.Initialize();
+        var service = new RuntimeReadinessService(store, new ToolRegistryService());
+
+        var receipt = service.Check();
+
+        Assert.Equal(AgentWorkflowRuntime.RuntimeName, receipt.Runtime);
+        Assert.Equal("ready", receipt.Status);
+        Assert.Equal(receipt.Components.Count, receipt.ReadyCount);
+        Assert.Equal(0, receipt.WarningCount);
+        Assert.Equal(0, receipt.BlockedCount);
+        Assert.StartsWith("readiness_", receipt.ReceiptId);
+        Assert.Contains(receipt.Components, component => component.Id == "storage" && component.Status == "ready");
+        Assert.Contains(receipt.Components, component => component.Id == "agent_profiles" && component.Evidence.Any(item => item.StartsWith("enabled_planning_count:", StringComparison.Ordinal)));
+        Assert.Contains(receipt.Components, component => component.Id == "tool_registry" && component.Evidence.Any(item => item.StartsWith("canonical_tool_count:", StringComparison.Ordinal)));
+        Assert.Contains(receipt.Components, component => component.Id == "model_routes" && component.Summary.Contains("enabled provider", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(receipt.Components, component => component.Id == "extension_runtime");
+    }
+
+    [Fact]
     public void ToolSearchRanksMetadataAndPreservesCoreRiskPolicy()
     {
         var service = new ToolSearchService(new ToolRegistryService());

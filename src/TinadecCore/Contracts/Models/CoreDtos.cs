@@ -91,6 +91,23 @@ public sealed record DoctorReportDto(
     string CoreVersion,
     IReadOnlyList<DoctorCheckDto> Checks);
 
+public sealed record RuntimeReadinessComponentDto(
+    string Id,
+    string Name,
+    string Status,
+    string Summary,
+    IReadOnlyList<string> Evidence);
+
+public sealed record RuntimeReadinessReceiptDto(
+    string Status,
+    DateTimeOffset GeneratedAt,
+    string Runtime,
+    string ReceiptId,
+    IReadOnlyList<RuntimeReadinessComponentDto> Components,
+    int ReadyCount,
+    int WarningCount,
+    int BlockedCount);
+
 public sealed record ExtensionSourceDto(
     string Id,
     string Name,

@@ -109,6 +109,11 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  .get('/api/v1/readiness', async ({ set }) => {
+    const result = await proxyJson('/api/v1/readiness');
+    setStatus(set, result.status);
+    return result.data;
+  })
   .get('/api/v1/projects', async ({ set }) => {
     const result = await proxyJson('/api/v1/projects');
     setStatus(set, result.status);
