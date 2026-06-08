@@ -102,6 +102,47 @@ export interface ModelRouteDto {
   updated_at: string;
 }
 
+export interface ModelProviderReadinessDto {
+  provider_instance_id: string;
+  display_name: string;
+  driver: string;
+  connection_kind: string;
+  status: string;
+  provider_status: string;
+  enabled: boolean;
+  has_credential: boolean;
+  route_purposes: string[];
+  summary: string;
+  evidence: string[];
+}
+
+export interface ModelRouteReadinessDto {
+  purpose: string;
+  provider_instance_id?: string | null;
+  provider_display_name?: string | null;
+  model?: string | null;
+  status: string;
+  summary: string;
+  evidence: string[];
+}
+
+export interface ModelReadinessReceiptDto {
+  status: string;
+  generated_at: string;
+  receipt_id: string;
+  provider_count: number;
+  ready_provider_count: number;
+  warning_provider_count: number;
+  blocked_provider_count: number;
+  route_count: number;
+  ready_route_count: number;
+  warning_route_count: number;
+  blocked_route_count: number;
+  providers: ModelProviderReadinessDto[];
+  routes: ModelRouteReadinessDto[];
+  design_notes: string[];
+}
+
 export interface SaveModelProviderInstanceInput {
   id?: string | null;
   driver: string;
@@ -654,6 +695,7 @@ export const api = {
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
+  getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),
   createModelProvider: (provider: SaveModelProviderInstanceInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers', {
     method: 'POST',
     body: JSON.stringify(provider)

@@ -108,15 +108,22 @@ public sealed class RuntimeReadinessService(
         var routes = store.ListModelRoutes();
         var providers = store.ListModelProviderInstances();
         var enabledProviders = providers.Where(provider => provider.Enabled).ToArray();
-        var providerIds = providers.Select(provider => provider.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var providersById = providers.ToDictionary(provider => provider.Id, StringComparer.OrdinalIgnoreCase);
         var enabledProviderIds = enabledProviders.Select(provider => provider.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var missingProviderRoutes = routes
-            .Where(route => !providerIds.Contains(route.ProviderInstanceId))
+            .Where(route => !providersById.ContainsKey(route.ProviderInstanceId))
             .Select(route => route.Purpose)
             .OrderBy(purpose => purpose, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var disabledProviderRoutes = routes
-            .Where(route => providerIds.Contains(route.ProviderInstanceId) && !enabledProviderIds.Contains(route.ProviderInstanceId))
+            .Where(route => providersById.ContainsKey(route.ProviderInstanceId) && !enabledProviderIds.Contains(route.ProviderInstanceId))
+            .Select(route => route.Purpose)
+            .OrderBy(purpose => purpose, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var unavailableProviderRoutes = routes
+            .Where(route => providersById.TryGetValue(route.ProviderInstanceId, out var provider)
+                && enabledProviderIds.Contains(route.ProviderInstanceId)
+                && !provider.Status.Equals("ready", StringComparison.OrdinalIgnoreCase))
             .Select(route => route.Purpose)
             .OrderBy(purpose => purpose, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -125,6 +132,7 @@ public sealed class RuntimeReadinessService(
             && enabledProviders.Length > 0
             && missingProviderRoutes.Length == 0
             && disabledProviderRoutes.Length == 0
+            && unavailableProviderRoutes.Length == 0
                 ? "ready"
                 : "warning";
         var summary = status == "ready"
@@ -145,6 +153,10 @@ public sealed class RuntimeReadinessService(
         if (disabledProviderRoutes.Length > 0)
         {
             evidence.Add($"disabled_provider_routes:{string.Join(",", disabledProviderRoutes)}");
+        }
+        if (unavailableProviderRoutes.Length > 0)
+        {
+            evidence.Add($"unavailable_provider_routes:{string.Join(",", unavailableProviderRoutes)}");
         }
 
         return Component("model_routes", "Model Routes", status, summary, evidence);

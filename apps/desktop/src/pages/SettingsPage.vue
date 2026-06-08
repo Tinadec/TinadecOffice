@@ -43,7 +43,9 @@ import {
   type AgentCandidateDto,
   type AgentModeDto,
   type AgentProfileDto,
+  type ModelProviderReadinessDto,
   type ModelProviderInstanceDto,
+  type ModelReadinessReceiptDto,
   type ModelRouteDto,
   type PromptContextPreviewDto,
   type PromptFragmentDto,
@@ -117,6 +119,7 @@ function closeWindow() {
 
 const activeSection = ref<SettingsSection>('model')
 const providers = ref<ModelProviderInstanceDto[]>([])
+const modelReadiness = ref<ModelReadinessReceiptDto | null>(null)
 const routes = ref<ModelRouteDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
 const agents = ref<AgentProfileDto[]>([])
@@ -204,6 +207,16 @@ const chatRoute = computed(() =>
 )
 const chatProvider = computed(() =>
   providers.value.find((provider) => provider.id === chatRoute.value?.provider_instance_id) ?? null
+)
+const providerReadinessById = computed(() => {
+  const map = new Map<string, ModelProviderReadinessDto>()
+  for (const provider of modelReadiness.value?.providers ?? []) {
+    map.set(provider.provider_instance_id, provider)
+  }
+  return map
+})
+const blockedModelRoutes = computed(() =>
+  (modelReadiness.value?.routes ?? []).filter((route) => route.status === 'blocked')
 )
 
 const formFields = computed(() => currentTemplate.value?.fields ?? {
@@ -391,12 +404,14 @@ function closeModal() {
 async function loadModelCenter() {
   loading.value = true
   try {
-    const [instances, modelRoutes] = await Promise.all([
+    const [instances, modelRoutes, readiness] = await Promise.all([
       api.listModelProviders(),
-      api.listModelRoutes()
+      api.listModelRoutes(),
+      api.getModelReadiness()
     ])
     providers.value = instances
     routes.value = modelRoutes
+    modelReadiness.value = readiness
 
     const selected = instances.find((provider) => provider.id === selectedProviderId.value) ?? instances[0]
     if (selected) {
@@ -826,6 +841,13 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
   return 'outline'
 }
 
+function readinessVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'ready') return 'default'
+  if (status === 'blocked') return 'destructive'
+  if (status === 'warning') return 'outline'
+  return 'secondary'
+}
+
 loadModelCenter()
 loadAgentCenter()
 loadPromptContextCenter()
@@ -878,6 +900,42 @@ loadPromptContextCenter()
               <span>{{ t('settings.refresh') }}</span>
             </UiButton>
           </div>
+
+          <section v-if="modelReadiness" class="model-readiness-panel">
+            <div class="model-readiness-head">
+              <div>
+                <h3>Provider Readiness</h3>
+                <span>{{ modelReadiness.receipt_id }}</span>
+              </div>
+              <UiBadge :variant="readinessVariant(modelReadiness.status)">
+                <Circle :size="8" />
+                {{ modelReadiness.status }}
+              </UiBadge>
+            </div>
+            <div class="model-readiness-metrics">
+              <div>
+                <strong>{{ modelReadiness.ready_provider_count }}</strong>
+                <span>ready providers</span>
+              </div>
+              <div>
+                <strong>{{ modelReadiness.blocked_provider_count }}</strong>
+                <span>blocked providers</span>
+              </div>
+              <div>
+                <strong>{{ modelReadiness.ready_route_count }}</strong>
+                <span>ready routes</span>
+              </div>
+              <div>
+                <strong>{{ modelReadiness.blocked_route_count }}</strong>
+                <span>blocked routes</span>
+              </div>
+            </div>
+            <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
+              <span v-for="route in blockedModelRoutes.slice(0, 6)" :key="route.purpose">
+                {{ route.purpose }} · {{ route.provider_display_name ?? route.provider_instance_id }}
+              </span>
+            </div>
+          </section>
 
           <div class="model-section-header">
             <h3>{{ t('settings.addedProviders') }}</h3>
@@ -971,6 +1029,23 @@ loadPromptContextCenter()
                 <div v-if="provider.status_message" class="provider-status-note">
                   <Terminal :size="14" />
                   <span>{{ provider.status_message }}</span>
+                </div>
+
+                <div v-if="providerReadinessById.get(provider.id)" class="provider-readiness-detail">
+                  <div class="provider-readiness-detail-head">
+                    <span>Core receipt</span>
+                    <UiBadge :variant="readinessVariant(providerReadinessById.get(provider.id)!.status)">
+                      <Circle :size="8" />
+                      {{ providerReadinessById.get(provider.id)!.status }}
+                    </UiBadge>
+                  </div>
+                  <p>{{ providerReadinessById.get(provider.id)!.summary }}</p>
+                  <div class="provider-readiness-evidence">
+                    <span v-for="item in providerReadinessById.get(provider.id)!.evidence.slice(0, 5)" :key="item">{{ item }}</span>
+                  </div>
+                  <div v-if="providerReadinessById.get(provider.id)!.route_purposes.length > 0" class="provider-readiness-evidence route-list">
+                    <span v-for="purpose in providerReadinessById.get(provider.id)!.route_purposes" :key="purpose">{{ purpose }}</span>
+                  </div>
                 </div>
 
                 <div class="provider-detail-actions">

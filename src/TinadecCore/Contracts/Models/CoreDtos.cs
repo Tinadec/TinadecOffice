@@ -80,6 +80,44 @@ public sealed record ModelRouteDto(
     string? Model,
     DateTimeOffset UpdatedAt);
 
+public sealed record ModelProviderReadinessDto(
+    string ProviderInstanceId,
+    string DisplayName,
+    string Driver,
+    string ConnectionKind,
+    string Status,
+    string ProviderStatus,
+    bool Enabled,
+    bool HasCredential,
+    IReadOnlyList<string> RoutePurposes,
+    string Summary,
+    IReadOnlyList<string> Evidence);
+
+public sealed record ModelRouteReadinessDto(
+    string Purpose,
+    string? ProviderInstanceId,
+    string? ProviderDisplayName,
+    string? Model,
+    string Status,
+    string Summary,
+    IReadOnlyList<string> Evidence);
+
+public sealed record ModelReadinessReceiptDto(
+    string Status,
+    DateTimeOffset GeneratedAt,
+    string ReceiptId,
+    int ProviderCount,
+    int ReadyProviderCount,
+    int WarningProviderCount,
+    int BlockedProviderCount,
+    int RouteCount,
+    int ReadyRouteCount,
+    int WarningRouteCount,
+    int BlockedRouteCount,
+    IReadOnlyList<ModelProviderReadinessDto> Providers,
+    IReadOnlyList<ModelRouteReadinessDto> Routes,
+    IReadOnlyList<string> DesignNotes);
+
 public sealed record DoctorCheckDto(
     string Name,
     string Status,

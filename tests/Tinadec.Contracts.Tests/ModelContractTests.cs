@@ -282,6 +282,61 @@ public sealed class ModelContractTests
     }
 
     [Fact]
+    public void ModelReadinessReceiptContractSerializesProviderAndRouteEvidence()
+    {
+        var receipt = new ModelReadinessReceiptDto(
+            Status: "blocked",
+            GeneratedAt: DateTimeOffset.UnixEpoch,
+            ReceiptId: "model_readiness_1",
+            ProviderCount: 1,
+            ReadyProviderCount: 0,
+            WarningProviderCount: 0,
+            BlockedProviderCount: 1,
+            RouteCount: 1,
+            ReadyRouteCount: 0,
+            WarningRouteCount: 0,
+            BlockedRouteCount: 1,
+            Providers:
+            [
+                new ModelProviderReadinessDto(
+                    "openai_default",
+                    "OpenAI Compatible",
+                    "openai-compatible",
+                    "api-key",
+                    "blocked",
+                    "needs_key",
+                    Enabled: true,
+                    HasCredential: false,
+                    RoutePurposes: ["chat"],
+                    Summary: "Provider status 'needs_key' blocks routed model traffic.",
+                    Evidence: ["provider_status:needs_key"])
+            ],
+            Routes:
+            [
+                new ModelRouteReadinessDto(
+                    "chat",
+                    "openai_default",
+                    "OpenAI Compatible",
+                    "gpt-5.4-mini",
+                    "blocked",
+                    "Route provider is needs_key.",
+                    ["provider_status:needs_key"])
+            ],
+            DesignNotes: ["Core owns provider readiness."]);
+
+        var json = JsonSerializer.Serialize(receipt, JsonOptions);
+
+        Assert.Contains("\"receipt_id\":\"model_readiness_1\"", json);
+        Assert.Contains("\"provider_count\":1", json);
+        Assert.Contains("\"blocked_provider_count\":1", json);
+        Assert.Contains("\"blocked_route_count\":1", json);
+        Assert.Contains("\"provider_instance_id\":\"openai_default\"", json);
+        Assert.Contains("\"provider_status\":\"needs_key\"", json);
+        Assert.Contains("\"has_credential\":false", json);
+        Assert.Contains("\"route_purposes\":[\"chat\"]", json);
+    }
+
+    [Fact]
     public void PromptFragmentContractUsesPlanFieldNames()
     {
         var fragment = new PromptFragmentDto(

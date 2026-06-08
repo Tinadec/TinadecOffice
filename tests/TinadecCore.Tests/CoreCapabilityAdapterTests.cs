@@ -144,16 +144,42 @@ public sealed class CoreCapabilityAdapterTests
         var receipt = service.Check();
 
         Assert.Equal(AgentWorkflowRuntime.RuntimeName, receipt.Runtime);
-        Assert.Equal("ready", receipt.Status);
-        Assert.Equal(receipt.Components.Count, receipt.ReadyCount);
-        Assert.Equal(0, receipt.WarningCount);
+        Assert.Equal("warning", receipt.Status);
+        Assert.Equal(receipt.Components.Count - 1, receipt.ReadyCount);
+        Assert.Equal(1, receipt.WarningCount);
         Assert.Equal(0, receipt.BlockedCount);
         Assert.StartsWith("readiness_", receipt.ReceiptId);
         Assert.Contains(receipt.Components, component => component.Id == "storage" && component.Status == "ready");
         Assert.Contains(receipt.Components, component => component.Id == "agent_profiles" && component.Evidence.Any(item => item.StartsWith("enabled_planning_count:", StringComparison.Ordinal)));
         Assert.Contains(receipt.Components, component => component.Id == "tool_registry" && component.Evidence.Any(item => item.StartsWith("canonical_tool_count:", StringComparison.Ordinal)));
-        Assert.Contains(receipt.Components, component => component.Id == "model_routes" && component.Summary.Contains("enabled provider", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(receipt.Components, component => component.Id == "model_routes" && component.Status == "warning" && component.Evidence.Any(item => item.StartsWith("unavailable_provider_routes:", StringComparison.Ordinal)));
         Assert.Contains(receipt.Components, component => component.Id == "extension_runtime");
+    }
+
+    [Fact]
+    public void ModelReadinessReceiptBlocksRoutesToUnavailableProviders()
+    {
+        var store = new CoreStore(Path.Combine(Path.GetTempPath(), $"tinadec-model-readiness-{Guid.NewGuid():N}.db"));
+        store.Initialize();
+        var service = new ModelReadinessService(store);
+
+        var receipt = service.Check();
+
+        Assert.Equal("blocked", receipt.Status);
+        Assert.True(receipt.ProviderCount > 0);
+        Assert.True(receipt.RouteCount > 0);
+        Assert.True(receipt.BlockedProviderCount > 0);
+        Assert.True(receipt.BlockedRouteCount > 0);
+        Assert.Contains(receipt.Providers, provider =>
+            provider.ProviderInstanceId == "openai_default"
+            && provider.ProviderStatus == "needs_key"
+            && provider.Status == "blocked"
+            && provider.Evidence.Contains("requires_api_key:True"));
+        Assert.Contains(receipt.Routes, route =>
+            route.ProviderInstanceId == "openai_default"
+            && route.Status == "blocked"
+            && route.Evidence.Contains("provider_status:needs_key"));
+        Assert.Contains(receipt.DesignNotes, note => note.Contains("advisory", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
