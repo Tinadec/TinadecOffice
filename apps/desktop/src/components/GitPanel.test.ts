@@ -32,6 +32,23 @@ const pendingCommitApproval: ApprovalDto = {
   created_at: '2026-06-09T00:00:00Z'
 };
 
+const pendingStageApproval: ApprovalDto = {
+  id: 'approval-stage',
+  session_id: 'session-1',
+  kind: 'git',
+  summary: 'Stage changes',
+  command: 'git add -- src/app.ts README.md',
+  cwd: 'D:/repo',
+  status: 'pending',
+  created_at: '2026-06-09T00:00:00Z'
+};
+
+const approvedStageApproval: ApprovalDto = {
+  ...pendingStageApproval,
+  status: 'approved',
+  decided_at: '2026-06-09T00:01:00Z'
+};
+
 const approvedPushApproval: ApprovalDto = {
   id: 'approval-push',
   session_id: 'session-1',
@@ -193,7 +210,7 @@ describe('GitPanel', () => {
     await flushPromises();
 
     await wrapper.find('textarea').setValue('Commit Git panel work');
-    await wrapper.findAll('button.git-action-button')[0].trigger('click');
+    await wrapper.find('.git-commit-approval-button').trigger('click');
     await flushPromises();
 
     expect(createApproval).toHaveBeenCalledWith({
@@ -207,13 +224,60 @@ describe('GitPanel', () => {
     expect(wrapper.text()).toContain('context.gitCommitApprovalRequested');
   });
 
+  it('creates and executes stage approvals for selected files', async () => {
+    createApproval.mockResolvedValueOnce(pendingStageApproval);
+    executeCodeTool
+      .mockResolvedValueOnce({
+        tool_id: 'git_worktree_manager',
+        status: 'completed',
+        summary: 'Staged 2 paths.',
+        evidence: [],
+        requires_approval: true,
+        approval_summary: null,
+        data: {}
+      })
+      .mockResolvedValueOnce(previewResult)
+      .mockResolvedValueOnce(pushPlanResult);
+
+    const wrapper = mountGitPanel([approvedStageApproval]);
+    await flushPromises();
+
+    await wrapper.find('.git-stage-approval-button').trigger('click');
+    await flushPromises();
+
+    expect(createApproval).toHaveBeenCalledWith({
+      session_id: 'session-1',
+      kind: 'git',
+      summary: 'Stage 2 files on main',
+      command: 'git add -- src/app.ts README.md',
+      cwd: 'D:/repo'
+    });
+    expect(wrapper.emitted('approval-created')?.[0]).toEqual([pendingStageApproval]);
+
+    await wrapper.setProps({ approvals: [approvedStageApproval] });
+    await nextTick();
+    await wrapper.find('.git-index-execute-button').trigger('click');
+    await flushPromises();
+
+    expect(executeCodeTool).toHaveBeenCalledWith('git_worktree_manager', {
+      session_id: 'session-1',
+      approval_id: 'approval-stage',
+      cwd: 'D:/repo',
+      arguments: {
+        action: 'stage',
+        confirm_stage: true,
+        paths: ['src/app.ts', 'README.md']
+      }
+    });
+  });
+
   it('emits inline decisions for pending Git approvals', async () => {
     createApproval.mockResolvedValueOnce(pendingCommitApproval);
     const wrapper = mountGitPanel([pendingCommitApproval]);
     await flushPromises();
 
     await wrapper.find('textarea').setValue('Commit Git panel work');
-    await wrapper.findAll('button.git-action-button')[0].trigger('click');
+    await wrapper.find('.git-commit-approval-button').trigger('click');
     await flushPromises();
 
     await wrapper.find('.git-approval-inline-actions .approve').trigger('click');
@@ -239,7 +303,7 @@ describe('GitPanel', () => {
     const wrapper = mountGitPanel([approvedPushApproval]);
     await flushPromises();
 
-    await wrapper.findAll('button.git-action-button')[2].trigger('click');
+    await wrapper.find('.git-push-approval-button').trigger('click');
     await flushPromises();
     expect(createApproval).toHaveBeenCalledWith({
       session_id: 'session-1',
@@ -251,7 +315,7 @@ describe('GitPanel', () => {
 
     await wrapper.setProps({ approvals: [approvedPushApproval] });
     await nextTick();
-    await wrapper.findAll('button.git-action-button')[3].trigger('click');
+    await wrapper.find('.git-push-execute-button').trigger('click');
     await flushPromises();
 
     expect(executeCodeTool).toHaveBeenCalledWith('git_worktree_manager', {

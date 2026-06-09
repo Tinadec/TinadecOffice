@@ -28,7 +28,7 @@ apps/desktop/
 | Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
 | Tool layer catalog/search | `src/pages/SettingsPage.vue`, `src/toolCatalog.ts`, `src/api.ts` | Settings presents Code-suite tools, Codex primitives, supported runtimes, Core manifest registry governance/design notes, and Core-owned tool search results. |
 | Tool execution visibility | `src/pages/HomePage.vue`, `src/components/ContextPanel.vue`, `src/components/OrchestrationTab.vue`, `src/api.ts` | Right rail presents Core-owned tool execution timeline state, provider layer, duration, checkpoint summary, and step-result evidence. |
-| Git management UI | `src/components/GitPanel.vue`, `src/components/ContextPanel.vue`, `src/gitDiffParser.ts`, `src/api.ts` | Right rail Git tab calls Gateway `git_worktree_manager` with `status`, `push_plan`, and `diff_preview`; it can request Core `git` approvals and execute approved `commit` / `push` calls, but never runs Git directly. |
+| Git management UI | `src/components/GitPanel.vue`, `src/components/ContextPanel.vue`, `src/gitDiffParser.ts`, `src/api.ts` | Right rail Git tab calls Gateway `git_worktree_manager` with `status`, `push_plan`, and `diff_preview`; it can request Core `git` approvals and execute approved `stage` / `unstage` / `commit` / `push` calls, but never runs Git directly. |
 | Marketplace | `src/pages/MarketPage.vue` | Extension source/catalog/install flow. |
 | Debug Studio | `src/debug/DebugStudio.vue`, `src/debug/**` | Composables/types/components are feature-local. |
 | UI primitives | `src/components/ui/index.ts`, `src/lib/utils.ts` | `Ui*` barrel exports; `cn()` uses clsx + tailwind-merge. |
@@ -42,7 +42,7 @@ apps/desktop/
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
 - Prompt Context UI is presentation and local preview only. The renderer calls Gateway APIs mirrored in `src/api.ts`; Core owns fragment selection, context pack handling, token estimates, and warnings.
 - Code-suite UI is presentation-only: group/filter tool descriptors and project template summaries from Gateway/Core, but keep approval and execution ownership outside Desktop.
-- Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, show blockers/diffs/worktrees, create Core approval records when needed, and only call approved `commit` / `push` tool executions with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
+- Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, show blockers/diffs/worktrees, create Core approval records when needed, and only call approved `stage` / `unstage` / `commit` / `push` tool executions with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
 - Tool search UI must consume Core/Gateway `/api/v1/tools/search` results. Do not invent provider-layer, matched-field, or human-checkpoint semantics in the renderer.
 - Tool execution UI must consume Core/Gateway `/api/v1/sessions/{sessionId}/tool-executions` results. Do not reconstruct audit timelines, provider layers, durations, or checkpoint summaries from local event arrays in Desktop.
 - Dev server is pinned: `127.0.0.1:5173`, `strictPort: true`.

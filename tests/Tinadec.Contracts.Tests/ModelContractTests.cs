@@ -194,7 +194,7 @@ public sealed class ModelContractTests
                 "git-write",
                 RequiresApproval: true,
                 ExecuteEndpoint: "/api/v1/code/tools/git_worktree_manager/execute",
-                Capabilities: ["git.status", "git.diff", "git.worktree", "git.commit", "git.push", "workspace.isolation"]),
+                Capabilities: ["git.status", "git.diff", "git.stage", "git.unstage", "git.worktree", "git.commit", "git.push", "workspace.isolation"]),
             Score: 420,
             MatchedFields: ["id", "capabilities"],
             ProviderLayer: "tool-layer",

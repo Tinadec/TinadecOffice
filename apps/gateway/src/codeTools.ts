@@ -509,7 +509,7 @@ async function executeGitWorktreeManager(
   args: Record<string, unknown>
 ): Promise<CodeToolExecuteResult> {
   const action = stringArg(args, 'action') ?? 'status';
-  const mutatingActions = new Set(['commit', 'push', 'merge', 'rebase', 'create_branch', 'create_worktree', 'checkout']);
+  const mutatingActions = new Set(['stage', 'unstage', 'commit', 'push', 'merge', 'rebase', 'create_branch', 'create_worktree', 'checkout']);
   if (mutatingActions.has(action) && !request.approval_id) {
     return resultFor(spec, 'blocked', `${action} requires a Core-approved Git tool invocation.`, {
       cwd: request.cwd ?? null,
@@ -529,6 +529,9 @@ async function executeGitWorktreeManager(
   }
 
   const gitRoot = root.stdout.trim();
+  if (action === 'stage' || action === 'unstage') {
+    return executeGitIndexUpdate(spec, request, args, gitRoot, action);
+  }
   if (action === 'commit') {
     return executeGitCommit(spec, request, args, gitRoot);
   }
@@ -597,6 +600,77 @@ async function executeGitWorktreeManager(
     needs_push: pushReady && statusSummary.ahead > 0,
     suggested_commands: suggestedGitCommands(action, statusSummary)
   }, [`git:${action}`, 'git:status', 'git:push-readiness']);
+}
+
+async function executeGitIndexUpdate(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>,
+  gitRoot: string,
+  action: 'stage' | 'unstage'
+): Promise<CodeToolExecuteResult> {
+  const requiredConfirmation = action === 'stage' ? 'confirm_stage' : 'confirm_unstage';
+  if (!booleanArg(args, requiredConfirmation)) {
+    return resultFor(spec, 'blocked', `${action} requires ${requiredConfirmation}: true after Core approval.`, {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action,
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_confirmation: requiredConfirmation
+    }, [`git:${action}`, 'approval:supplied', 'confirmation:required']);
+  }
+
+  const rawPaths = stringListArg(args, 'paths');
+  if (rawPaths.length === 0) {
+    return resultFor(spec, 'blocked', `${action} requires one or more paths.`, {
+      cwd: request.cwd,
+      git_root: gitRoot,
+      action,
+      approval_id: request.approval_id,
+      argument_keys: Object.keys(args).sort(),
+      required_argument: 'paths'
+    }, [`git:${action}`, 'approval:supplied', 'paths:required']);
+  }
+
+  const pathspecs: string[] = [];
+  for (const rawPath of rawPaths) {
+    const normalized = normalizeGitPathspec(gitRoot, rawPath);
+    if (!normalized.ok) {
+      return resultFor(spec, 'blocked', normalized.message, {
+        cwd: request.cwd,
+        git_root: gitRoot,
+        action,
+        approval_id: request.approval_id,
+        argument_keys: Object.keys(args).sort()
+      }, [`git:${action}`, 'approval:supplied', 'path:blocked']);
+    }
+    pathspecs.push(normalized.pathspec);
+  }
+
+  const command = action === 'stage'
+    ? ['add', '--', ...pathspecs]
+    : ['restore', '--staged', '--', ...pathspecs];
+  const update = await git(gitRoot, command);
+  if (update.code !== 0) {
+    return gitCommandFailedResult(spec, `git ${action} failed.`, args, gitRoot, action, update, [`git:${action}`, 'git:index']);
+  }
+
+  const status = await git(gitRoot, ['status', '--porcelain=v1', '--branch']);
+  const statusSummary = status.code === 0 ? parseGitStatus(status.stdout) : null;
+  return resultFor(spec, 'completed', `${action === 'stage' ? 'Staged' : 'Unstaged'} ${rawPaths.length} path${rawPaths.length === 1 ? '' : 's'}.`, {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action,
+    approval_id: request.approval_id,
+    paths: rawPaths,
+    branch: statusSummary?.branch ?? null,
+    upstream: statusSummary?.upstream ?? null,
+    ahead: statusSummary?.ahead ?? null,
+    behind: statusSummary?.behind ?? null,
+    has_uncommitted_changes: statusSummary?.hasUncommittedChanges ?? null,
+    files: statusSummary?.files ?? null
+  }, [`git:${action}`, 'approval:supplied', 'confirmation:supplied', 'git:index']);
 }
 
 async function executeGitCommit(
@@ -1474,17 +1548,17 @@ function normalizeGitPathspec(
   value: string
 ): { ok: true; pathspec: string } | { ok: false; message: string } {
   if (value.includes('\0')) {
-    return { ok: false, message: 'commit paths must not contain NUL characters.' };
+    return { ok: false, message: 'Git paths must not contain NUL characters.' };
   }
 
   const candidate = path.isAbsolute(value) ? path.resolve(value) : path.resolve(gitRoot, value);
   if (!isInside(gitRoot, candidate)) {
-    return { ok: false, message: 'commit paths must stay inside the Git worktree.' };
+    return { ok: false, message: 'Git paths must stay inside the Git worktree.' };
   }
 
   const relative = path.relative(gitRoot, candidate);
   if (!relative || relative === '.') {
-    return { ok: false, message: 'commit paths must name files or directories inside the Git worktree.' };
+    return { ok: false, message: 'Git paths must name files or directories inside the Git worktree.' };
   }
 
   return { ok: true, pathspec: `:(literal)${relative.split(path.sep).join('/')}` };

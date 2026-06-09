@@ -168,7 +168,7 @@ public sealed class CodeCapabilityProvider : ICapabilityProvider
             "git-write",
             true,
             "/api/v1/code/tools/git_worktree_manager/execute",
-            ["git.status", "git.diff", "git.worktree", "git.branch", "git.commit", "git.push", "workspace.isolation", "tool-layer.code-suite"])
+            ["git.status", "git.diff", "git.stage", "git.unstage", "git.worktree", "git.branch", "git.commit", "git.push", "workspace.isolation", "tool-layer.code-suite"])
     ];
 
     public IReadOnlyList<ToolDescriptorDto> ListCapabilities() => CodeTools;

@@ -79,6 +79,8 @@ const commitMessage = ref('')
 const selectedSectionId = ref('working_tree')
 const selectedFilePath = ref<string | null>(null)
 const selectedPaths = ref<Set<string>>(new Set())
+const indexApprovalId = ref<string | null>(null)
+const indexAction = ref<'stage' | 'unstage' | null>(null)
 const commitApprovalId = ref<string | null>(null)
 const pushApprovalId = ref<string | null>(null)
 const preview = ref<CodeToolExecuteResultDto | null>(null)
@@ -106,6 +108,9 @@ const hasPushCandidate = computed(() => {
   return (pushReady.value && ahead > 0) || noUpstreamOnly.value
 })
 const selectedCommitPaths = computed(() => [...selectedPaths.value])
+const canRequestIndexApproval = computed(() =>
+  Boolean(props.currentProjectPath && props.selectedSessionId && selectedCommitPaths.value.length > 0)
+)
 const canRequestCommitApproval = computed(() =>
   Boolean(props.currentProjectPath && props.selectedSessionId && commitMessage.value.trim() && selectedCommitPaths.value.length > 0)
 )
@@ -114,6 +119,8 @@ const canRequestPushApproval = computed(() =>
 )
 const commitApproval = computed(() => props.approvals.find((approval) => approval.id === commitApprovalId.value) ?? null)
 const pushApproval = computed(() => props.approvals.find((approval) => approval.id === pushApprovalId.value) ?? null)
+const indexApproval = computed(() => props.approvals.find((approval) => approval.id === indexApprovalId.value) ?? null)
+const canDecideIndexApproval = computed(() => indexApproval.value?.status === 'pending')
 const canDecideCommitApproval = computed(() => commitApproval.value?.status === 'pending')
 const canDecidePushApproval = computed(() => pushApproval.value?.status === 'pending')
 const pushCommand = computed(() => noUpstreamOnly.value ? `git push -u origin ${pushData.value.branch ?? 'HEAD'}` : 'git push')
@@ -167,6 +174,58 @@ function togglePath(path: string) {
     next.add(path)
   }
   selectedPaths.value = next
+}
+
+async function requestIndexApproval(action: 'stage' | 'unstage') {
+  if (!props.currentProjectPath || !props.selectedSessionId || !canRequestIndexApproval.value) return
+  operationLoading.value = true
+  feedback.value = null
+  try {
+    const paths = selectedCommitPaths.value
+    const isStage = action === 'stage'
+    const approval = await api.createApproval({
+      session_id: props.selectedSessionId,
+      kind: 'git',
+      summary: `${isStage ? 'Stage' : 'Unstage'} ${paths.length} file${paths.length === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
+      command: `${isStage ? 'git add' : 'git restore --staged'} -- ${paths.join(' ')}`,
+      cwd: props.currentProjectPath
+    })
+    indexApprovalId.value = approval.id
+    indexAction.value = action
+    feedback.value = t('context.gitIndexApprovalRequested')
+    emit('approval-created', approval)
+  } catch (err) {
+    feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+  } finally {
+    operationLoading.value = false
+  }
+}
+
+async function executeApprovedIndexUpdate() {
+  if (!props.currentProjectPath || !props.selectedSessionId || !indexApproval.value || indexApproval.value.status !== 'approved' || !indexAction.value) return
+  operationLoading.value = true
+  feedback.value = null
+  try {
+    const confirmKey = indexAction.value === 'stage' ? 'confirm_stage' : 'confirm_unstage'
+    const result = await api.executeCodeTool('git_worktree_manager', {
+      session_id: props.selectedSessionId,
+      approval_id: indexApproval.value.id,
+      cwd: props.currentProjectPath,
+      arguments: {
+        action: indexAction.value,
+        [confirmKey]: true,
+        paths: selectedCommitPaths.value
+      }
+    })
+    feedback.value = result.summary
+    indexApprovalId.value = null
+    indexAction.value = null
+    await loadGit()
+  } catch (err) {
+    feedback.value = err instanceof Error ? err.message : t('context.gitIndexUpdateFailed')
+  } finally {
+    operationLoading.value = false
+  }
 }
 
 async function requestCommitApproval() {
@@ -285,6 +344,8 @@ function sectionFileMeta(file: GitDiffFile) {
 }
 
 watch(() => props.currentProjectPath, () => {
+  indexApprovalId.value = null
+  indexAction.value = null
   commitApprovalId.value = null
   pushApprovalId.value = null
   void loadGit()
@@ -435,6 +496,43 @@ watch(activeParsedFiles, () => {
           <span>{{ file.path }}</span>
           <small>{{ file.status }}</small>
         </label>
+        <div class="git-action-row">
+          <button
+            class="secondary-button git-action-button git-stage-approval-button"
+            :disabled="operationLoading || !canRequestIndexApproval"
+            @click="requestIndexApproval('stage')"
+          >
+            <ShieldCheck :size="14" />
+            <span>{{ t('context.gitRequestStageApproval') }}</span>
+          </button>
+          <button
+            class="secondary-button git-action-button git-unstage-approval-button"
+            :disabled="operationLoading || !canRequestIndexApproval"
+            @click="requestIndexApproval('unstage')"
+          >
+            <ShieldCheck :size="14" />
+            <span>{{ t('context.gitRequestUnstageApproval') }}</span>
+          </button>
+        </div>
+        <div class="git-action-row">
+          <button
+            class="secondary-button git-action-button git-index-execute-button"
+            :disabled="operationLoading || indexApproval?.status !== 'approved'"
+            @click="executeApprovedIndexUpdate"
+          >
+            <CheckCircle2 :size="14" />
+            <span>{{ t('context.gitExecuteIndexUpdate') }}</span>
+          </button>
+        </div>
+        <span class="git-action-note">{{ t('context.gitIndexAction') }}: {{ indexAction ?? '-' }} · {{ t('context.gitApprovalStatus') }}: {{ approvalStatusLabel(indexApproval) }}</span>
+        <div v-if="canDecideIndexApproval" class="git-approval-inline-actions">
+          <button class="icon-button approve" :title="t('approval.approve')" @click="decideGitApproval(indexApproval, 'approved')">
+            <CheckCircle2 :size="14" />
+          </button>
+          <button class="icon-button reject" :title="t('approval.reject')" @click="decideGitApproval(indexApproval, 'rejected')">
+            <ShieldX :size="14" />
+          </button>
+        </div>
         <textarea
           v-model="commitMessage"
           rows="3"
@@ -442,7 +540,7 @@ watch(activeParsedFiles, () => {
         />
         <div class="git-action-row">
           <button
-            class="secondary-button git-action-button"
+            class="secondary-button git-action-button git-commit-approval-button"
             :disabled="operationLoading || !canRequestCommitApproval"
             @click="requestCommitApproval"
           >
@@ -450,7 +548,7 @@ watch(activeParsedFiles, () => {
             <span>{{ t('context.gitRequestCommitApproval') }}</span>
           </button>
           <button
-            class="secondary-button git-action-button"
+            class="secondary-button git-action-button git-commit-execute-button"
             :disabled="operationLoading || commitApproval?.status !== 'approved'"
             @click="executeApprovedCommit"
           >
@@ -486,7 +584,7 @@ watch(activeParsedFiles, () => {
         </div>
         <div class="git-action-row">
           <button
-            class="secondary-button git-action-button"
+            class="secondary-button git-action-button git-push-approval-button"
             :disabled="operationLoading || !canRequestPushApproval"
             @click="requestPushApproval"
           >
@@ -494,7 +592,7 @@ watch(activeParsedFiles, () => {
             <span>{{ t('context.gitRequestPushApproval') }}</span>
           </button>
           <button
-            class="secondary-button git-action-button"
+            class="secondary-button git-action-button git-push-execute-button"
             :disabled="operationLoading || pushApproval?.status !== 'approved'"
             @click="executeApprovedPush"
           >

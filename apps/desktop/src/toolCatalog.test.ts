@@ -30,7 +30,7 @@ const tools: ToolDescriptorDto[] = [
     risk: 'git-write',
     requires_approval: true,
     execute_endpoint: '/api/v1/code/tools/git_worktree_manager/execute',
-    capabilities: ['git.status', 'git.diff', 'git.worktree', 'git.commit', 'git.push', 'workspace.isolation']
+    capabilities: ['git.status', 'git.diff', 'git.stage', 'git.unstage', 'git.worktree', 'git.commit', 'git.push', 'workspace.isolation']
   },
   {
     id: 'read_file',

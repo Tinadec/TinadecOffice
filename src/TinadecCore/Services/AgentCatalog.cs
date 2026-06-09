@@ -171,7 +171,7 @@ public static class AgentCatalog
             "Manages approved Git workflows, prepares push plans, explains diffs and branch state, and records user-facing Git handoff notes.",
             "git",
             ["git_worktree_manager", "review_format", "read_file", "grep_content", "event.write"],
-            ["git.status", "git.diff", "git.branch", "git.worktree", "git.commit", "git.push", "git.merge", "git.rebase", "conflict.resolve", "handoff.explain"],
+            ["git.status", "git.diff", "git.stage", "git.unstage", "git.branch", "git.worktree", "git.commit", "git.push", "git.merge", "git.rebase", "conflict.resolve", "handoff.explain"],
             "You are TinadecCode's Git Manager Subagent. Work only from assigned execution tasks. Explain repository state, branch intent, diff impact, and push readiness clearly. Never push, rewrite history, create commits, or mutate Git state unless Core has supplied an explicit approval-bound tool invocation."),
         new(
             "executor_code_writer",

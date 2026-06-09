@@ -202,6 +202,8 @@ public sealed class CoreStoreTests
             && tool.Source == "code"
             && tool.RequiresApproval
             && tool.Capabilities.Contains("git.diff")
+            && tool.Capabilities.Contains("git.stage")
+            && tool.Capabilities.Contains("git.unstage")
             && tool.Capabilities.Contains("git.commit")
             && tool.Capabilities.Contains("git.push"));
         Assert.Contains(tools, tool => tool.Id == "language_runtime_probe" && tool.Capabilities.Contains("runtime.nodejs") && tool.Capabilities.Contains("runtime.java"));

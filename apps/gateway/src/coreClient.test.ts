@@ -194,6 +194,66 @@ test('git worktree manager reports push readiness and blocks mutations without a
   assert.equal(blocked?.data.required_approval, true);
 });
 
+test('git worktree manager stages and unstages approved path selections', async (t) => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-index-'));
+  t.after(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  await runGit(cwd, ['init']);
+  await runGit(cwd, ['config', 'user.name', 'Tinadec Test']);
+  await runGit(cwd, ['config', 'user.email', 'tinadec@example.invalid']);
+  await writeFile(path.join(cwd, 'tracked.txt'), 'one\n', 'utf8');
+  await writeFile(path.join(cwd, 'removed.txt'), 'remove me\n', 'utf8');
+  await runGit(cwd, ['add', '.']);
+  await runGit(cwd, ['commit', '-m', 'initial']);
+  await writeFile(path.join(cwd, 'tracked.txt'), 'one\ntwo\n', 'utf8');
+  await rm(path.join(cwd, 'removed.txt'));
+
+  const blockedStage = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    arguments: { action: 'stage', paths: ['tracked.txt'] }
+  });
+  assert.equal(blockedStage?.status, 'blocked');
+  assert.equal(blockedStage?.data.required_approval, true);
+
+  const missingConfirmation = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'stage', paths: ['tracked.txt'] }
+  });
+  assert.equal(missingConfirmation?.status, 'blocked');
+  assert.equal(missingConfirmation?.data.required_confirmation, 'confirm_stage');
+
+  const escapedStage = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'stage', confirm_stage: true, paths: ['../escape.txt'] }
+  });
+  assert.equal(escapedStage?.status, 'blocked');
+  assert.match(escapedStage?.summary ?? '', /inside the Git worktree/);
+
+  const staged = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'stage', confirm_stage: true, paths: ['tracked.txt', 'removed.txt'] }
+  });
+  assert.equal(staged?.status, 'completed');
+  const stagedFiles = staged?.data.files as Array<{ path: string; staged_status: string; unstaged_status: string }>;
+  assert.ok(stagedFiles.some((file) => file.path === 'tracked.txt' && file.staged_status === 'modified'));
+  assert.ok(stagedFiles.some((file) => file.path === 'removed.txt' && file.staged_status === 'deleted'));
+
+  const unstaged = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'unstage', confirm_unstage: true, paths: ['tracked.txt', 'removed.txt'] }
+  });
+  assert.equal(unstaged?.status, 'completed');
+  const unstagedFiles = unstaged?.data.files as Array<{ path: string; staged_status: string; unstaged_status: string }>;
+  assert.ok(unstagedFiles.some((file) => file.path === 'tracked.txt' && file.staged_status === 'clean' && file.unstaged_status === 'modified'));
+  assert.ok(unstagedFiles.some((file) => file.path === 'removed.txt' && file.staged_status === 'clean' && file.unstaged_status === 'deleted'));
+});
+
 test('git worktree manager executes approved commit and push with explicit confirmations', async (t) => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-tool-'));
   const remote = await mkdtemp(path.join(tmpdir(), 'tinadec-git-remote-'));
