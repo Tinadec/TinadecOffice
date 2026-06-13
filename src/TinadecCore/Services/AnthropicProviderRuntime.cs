@@ -214,7 +214,8 @@ public sealed class AnthropicProviderRuntime(AnthropicClient client) : IModelPro
         ResolvedModelInvocationContextDto context,
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         try
         {

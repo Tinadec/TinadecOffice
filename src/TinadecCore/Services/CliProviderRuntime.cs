@@ -36,7 +36,8 @@ public sealed partial class CliProviderRuntime : IModelProviderRuntime
         ResolvedModelInvocationContextDto context,
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         var validationFailure = ValidateConfiguration(context);
         if (validationFailure is not null)

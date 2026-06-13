@@ -24,7 +24,8 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
         string? providerId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         using var activity = TinadecActivitySource.Instance.StartActivity(SpanNames.AgentInference);
         activity?
@@ -70,14 +71,33 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement;
         var choice = root.GetProperty("choices")[0];
-        var content = choice
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString();
+        var messageElement = choice.GetProperty("message");
+        var content = messageElement.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.String
+            ? contentProp.GetString()
+            : null;
 
         var textContent = string.IsNullOrWhiteSpace(content)
             ? "The model returned an empty response."
             : content;
+
+        // Parse tool_calls from the response
+        IReadOnlyList<ToolCallDto>? parsedToolCalls = null;
+        if (messageElement.TryGetProperty("tool_calls", out var toolCallsElement)
+            && toolCallsElement.ValueKind == JsonValueKind.Array
+            && toolCallsElement.GetArrayLength() > 0)
+        {
+            var calls = new List<ToolCallDto>();
+            foreach (var tc in toolCallsElement.EnumerateArray())
+            {
+                var callId = tc.GetProperty("id").GetString() ?? $"call_{Guid.NewGuid():N}";
+                var function = tc.GetProperty("function");
+                var functionName = function.GetProperty("name").GetString() ?? "unknown";
+                var argsJson = function.TryGetProperty("arguments", out var argsProp) ? argsProp.GetString() ?? "{}" : "{}";
+                var arguments = ParseToolArguments(argsJson);
+                calls.Add(new ToolCallDto(callId, functionName, arguments));
+            }
+            parsedToolCalls = calls;
+        }
 
         return CreateResponse(
             textContent,
@@ -88,13 +108,15 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
             ReadString(root, "id"),
             ReadString(root, "object"),
             ReadInt64(root, "created"),
-            root.GetProperty("choices").GetArrayLength());
+            root.GetProperty("choices").GetArrayLength(),
+            parsedToolCalls);
     }
 
     public static HttpRequestMessage BuildChatCompletionRequest(
         StoredModelSettings settings,
         string? apiKey,
-        IReadOnlyList<MessageDto> messages)
+        IReadOnlyList<MessageDto> messages,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         var endpoint = BuildChatCompletionsEndpoint(settings.BaseUrl);
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
@@ -103,16 +125,40 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
 
-        var payload = new
+        var messageList = messages.Select(message =>
         {
-            model = settings.Model,
-            stream = false,
-            messages = messages.Select(message => new
+            var msg = new Dictionary<string, object?>
             {
-                role = message.Role,
-                content = message.Content
-            })
+                ["role"] = message.Role,
+                ["content"] = message.Content
+            };
+            if (!string.IsNullOrWhiteSpace(message.ToolCallId))
+            {
+                msg["tool_call_id"] = message.ToolCallId;
+            }
+            return msg;
+        }).ToList();
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = settings.Model,
+            ["stream"] = false,
+            ["messages"] = messageList
         };
+
+        if (tools is { Count: > 0 })
+        {
+            payload["tools"] = tools.Select(tool => new
+            {
+                type = tool.Type,
+                function = new
+                {
+                    name = tool.Function.Name,
+                    description = tool.Function.Description,
+                    parameters = tool.Function.Parameters
+                }
+            }).ToArray();
+        }
 
         request.Content = new StringContent(
             JsonSerializer.Serialize(payload, TinadecJson.Options),
@@ -142,13 +188,23 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
         string? responseId,
         string? responseObject,
         long? created,
-        int? choiceCount)
+        int? choiceCount,
+        IReadOnlyList<ToolCallDto>? toolCalls = null)
     {
         var custom = new Dictionary<string, object?>();
         AddIfPresent(custom, "response_id", responseId);
         AddIfPresent(custom, "response_object", responseObject);
         AddIfPresent(custom, "created", created);
         AddIfPresent(custom, "choice_count", choiceCount);
+        if (toolCalls is { Count: > 0 })
+        {
+            custom["tool_calls"] = toolCalls.Select(tc => new Dictionary<string, object?>
+            {
+                ["call_id"] = tc.CallId,
+                ["tool_id"] = tc.ToolId,
+                ["argument_keys"] = tc.Arguments.Keys.OrderBy(k => k).ToArray()
+            }).ToArray();
+        }
 
         return new ModelInvocationResponseDto(
             textContent,
@@ -161,7 +217,8 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
                 custom),
             null,
             null,
-            null);
+            null,
+            toolCalls);
     }
 
     private static ModelUsageDto ReadUsage(JsonElement root)
@@ -218,6 +275,37 @@ public sealed class OpenAiCompatibleClient(HttpClient httpClient)
         if (value is not null)
         {
             custom[key] = value;
+        }
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argsJson)
+    {
+        if (string.IsNullOrWhiteSpace(argsJson) || argsJson == "{}")
+        {
+            return new Dictionary<string, object?>();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(argsJson);
+            var result = new Dictionary<string, object?>();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                result[property.Name] = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Number => property.Value.TryGetInt64(out var l) ? l : property.Value.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => property.Value.GetRawText()
+                };
+            }
+            return result;
+        }
+        catch
+        {
+            return new Dictionary<string, object?> { ["raw"] = argsJson };
         }
     }
 

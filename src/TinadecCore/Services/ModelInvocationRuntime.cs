@@ -16,7 +16,8 @@ public sealed class ModelInvocationRuntime(
         string purpose,
         IReadOnlyList<MessageDto> messages,
         CancellationToken cancellationToken = default,
-        string? systemPrompt = null)
+        string? systemPrompt = null,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         var requestMessages = BuildRequestMessages(sessionId, messages, systemPrompt);
         using var activity = TinadecActivitySource.Instance.StartActivity(SpanNames.ModelProviderInvocation);
@@ -34,7 +35,7 @@ public sealed class ModelInvocationRuntime(
             ModelInvocationResultDto result;
             try
             {
-                result = await InvokeResolvedProviderAsync(purpose, requestMessages, cancellationToken);
+                result = await InvokeResolvedProviderAsync(purpose, requestMessages, cancellationToken, tools);
             }
             catch (InvalidOperationException)
             {
@@ -125,7 +126,8 @@ public sealed class ModelInvocationRuntime(
     private async Task<ModelInvocationResultDto> InvokeResolvedProviderAsync(
         string purpose,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         var context = routeResolver.Resolve(purpose);
         using var invocationActivity = TinadecActivitySource.Instance.StartActivity(SpanNames.ModelRequest);
@@ -172,7 +174,7 @@ public sealed class ModelInvocationRuntime(
             return new ModelInvocationResultDto("failed", content, context, true, null);
         }
 
-        var result = await runtime.GenerateAsync(context, apiKey, messages, cancellationToken);
+        var result = await runtime.GenerateAsync(context, apiKey, messages, cancellationToken, tools);
         invocationActivity?
             .SetTag(SpanAttrs.Status, result.Status)
             .SetTag(SpanAttrs.ErrorCategory, result.ErrorCategory?.ToString());

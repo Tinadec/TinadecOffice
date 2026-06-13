@@ -245,6 +245,139 @@ public sealed class ToolRegistryService : IToolRegistry
             "Core canonicalizes duplicate tool ids by source precedence, then keeps the more approval-gated and higher-risk descriptor for same-precedence declarations.");
     }
 
+    /// <summary>
+    /// Build OpenAI-compatible function-calling tool specs for model invocation.
+    /// Converts canonical tool descriptors into the format expected by chat completion APIs.
+    /// </summary>
+    public IReadOnlyList<ModelToolSpecDto> BuildOpenAiToolSpecs(string? domain = null)
+    {
+        return CanonicalTools(domain)
+            .Where(tool => !string.Equals(tool.Source, "core", StringComparison.OrdinalIgnoreCase))
+            .Select(tool => new ModelToolSpecDto(
+                "function",
+                new ModelToolFunctionDto(
+                    tool.Id,
+                    BuildToolDescription(tool),
+                    BuildToolParameters(tool))))
+            .ToArray();
+    }
+
+    private static string BuildToolDescription(ToolDescriptorDto tool)
+    {
+        var approval = tool.RequiresApproval ? " [requires user approval]" : "";
+        var caps = tool.Capabilities.Count > 0 ? $" Capabilities: {string.Join(", ", tool.Capabilities.Take(5))}." : "";
+        return $"{tool.DisplayName}.{approval}{caps}";
+    }
+
+    private static IReadOnlyDictionary<string, object?> BuildToolParameters(ToolDescriptorDto tool)
+    {
+        // Generic parameter schema — accepts an object with any properties.
+        // Tool-specific schemas can be added later per tool ID.
+        return tool.Id switch
+        {
+            "search_files" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["query"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Search query for file names." },
+                    ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Maximum results." },
+                    ["exclude"] = new Dictionary<string, object?> { ["type"] = "array", ["items"] = new Dictionary<string, object?> { ["type"] = "string" }, ["description"] = "Patterns to exclude." }
+                },
+                ["required"] = new[] { "query" }
+            },
+            "glob_search" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["pattern"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Glob pattern (e.g. **/*.ts, src/**/*.rs)." },
+                    ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Maximum results." }
+                },
+                ["required"] = new[] { "pattern" }
+            },
+            "read_file" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["path"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "File path to read." },
+                    ["start_line"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Start line (1-based)." },
+                    ["end_line"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "End line (inclusive)." }
+                },
+                ["required"] = new[] { "path" }
+            },
+            "list_directory" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["path"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Directory path." },
+                    ["show_hidden"] = new Dictionary<string, object?> { ["type"] = "boolean", ["description"] = "Include hidden files." },
+                    ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Maximum entries." }
+                },
+                ["required"] = new[] { "path" }
+            },
+            "grep_content" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["pattern"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Text pattern to search for." },
+                    ["glob"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Optional glob filter for files." },
+                    ["context"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Context lines around matches." },
+                    ["case_insensitive"] = new Dictionary<string, object?> { ["type"] = "boolean", ["description"] = "Case-insensitive search." },
+                    ["limit"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "Maximum matches." }
+                },
+                ["required"] = new[] { "pattern" }
+            },
+            "apply_patch" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["patch"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "The patch content to apply." }
+                },
+                ["required"] = new[] { "patch" }
+            },
+            "sandbox_exec" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["command"] = new Dictionary<string, object?> { ["type"] = "array", ["items"] = new Dictionary<string, object?> { ["type"] = "string" }, ["description"] = "Command and arguments to execute." }
+                },
+                ["required"] = new[] { "command" }
+            },
+            "review_format" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["findings"] = new Dictionary<string, object?> { ["type"] = "array", ["items"] = new Dictionary<string, object?> { ["type"] = "object" }, ["description"] = "Review findings with title, severity, location, description." },
+                    ["title"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Review title." }
+                },
+                ["required"] = new[] { "findings" }
+            },
+            "git_worktree_manager" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["action"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Action: status, diff, branch, commit, push, worktree." },
+                    ["args"] = new Dictionary<string, object?> { ["type"] = "object", ["description"] = "Action-specific arguments." }
+                },
+                ["required"] = new[] { "action" }
+            },
+            _ => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>(),
+                ["required"] = Array.Empty<string>()
+            }
+        };
+    }
+
     private ToolDescriptorDto[] DeclaredTools(string? domain = null)
     {
         var tools = _providers

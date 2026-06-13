@@ -31,7 +31,8 @@ public sealed class LocalHttpProviderRuntime(HttpClient httpClient, OpenAiCompat
         ResolvedModelInvocationContextDto context,
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         try
         {

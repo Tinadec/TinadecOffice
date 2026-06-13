@@ -126,6 +126,7 @@ public interface IToolRegistry
     IReadOnlyList<ToolDescriptorDto> ListTools(string? domain = null);
     ToolDescriptorDto? Resolve(string toolId);
     ToolRegistrySummaryDto Describe(string? domain = null);
+    IReadOnlyList<ModelToolSpecDto> BuildOpenAiToolSpecs(string? domain = null);
 }
 
 public interface ICodeToolClient
@@ -159,7 +160,8 @@ public interface IModelProviderRuntime
         ResolvedModelInvocationContextDto context,
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ModelToolSpecDto>? tools = null);
 }
 
 public interface IModelProviderModule
@@ -186,7 +188,8 @@ public interface IModelInvocationRuntime
         string purpose,
         IReadOnlyList<MessageDto> messages,
         CancellationToken cancellationToken = default,
-        string? systemPrompt = null);
+        string? systemPrompt = null,
+        IReadOnlyList<ModelToolSpecDto>? tools = null);
 }
 
 public interface IPromptContextPlannerRuntime

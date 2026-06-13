@@ -227,7 +227,8 @@ public sealed class OrchestratorServiceTests
             ResolvedModelInvocationContextDto context,
             string? apiKey,
             IReadOnlyList<MessageDto> messages,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlyList<ModelToolSpecDto>? tools = null)
         {
             var response = Responses.TryGetValue(context.ProviderInstanceId, out var handler)
                 ? handler(context)
@@ -275,6 +276,11 @@ public sealed class OrchestratorServiceTests
                 [],
                 ["core", "code", "codex-rust", "extension"],
                 "No tools are registered.");
+        }
+
+        public IReadOnlyList<ModelToolSpecDto> BuildOpenAiToolSpecs(string? domain = null)
+        {
+            return [];
         }
     }
 

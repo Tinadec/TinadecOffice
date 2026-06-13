@@ -22,7 +22,8 @@ public sealed record MessageDto(
     string SessionId,
     string Role,
     string Content,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? ToolCallId = null);
 
 public sealed record ApprovalDto(
     string Id,
@@ -612,6 +613,11 @@ public sealed record ResolvedModelInvocationContextDto(
     string ProviderInstanceId,
     bool IsFallbackProvider);
 
+public sealed record ToolCallDto(
+    string CallId,
+    string ToolId,
+    IReadOnlyDictionary<string, object?> Arguments);
+
 public sealed record ModelInvocationResultDto(
     string Status,
     string Content,
@@ -623,7 +629,8 @@ public sealed record ModelInvocationResultDto(
     int? ProviderStatusCode = null,
     int? ProviderExitCode = null,
     string? SafeErrorMessage = null,
-    string? ErrorProviderId = null);
+    string? ErrorProviderId = null,
+    IReadOnlyList<ToolCallDto>? ToolCalls = null);
 
 public sealed record ModelInvocationRequestDto(
     IReadOnlyList<MessageDto> Messages,
@@ -639,7 +646,8 @@ public sealed record ModelInvocationResponseDto(
     ProviderMetadataDto Metadata,
     ModelStateHandleDto? StateHandle,
     ProviderErrorCategory? ErrorCategory,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    IReadOnlyList<ToolCallDto>? ToolCalls = null);
 
 public sealed record ModelUsageDto(
     int PromptTokens,
@@ -718,3 +726,15 @@ public enum ProviderHealthStatus
 public sealed record ModelStateHandleDto(
     string Handle,
     DateTimeOffset? ExpiresAt);
+
+/// <summary>
+/// OpenAI-compatible function-calling tool descriptor used when sending tool definitions to the model.
+/// </summary>
+public sealed record ModelToolSpecDto(
+    string Type,
+    ModelToolFunctionDto Function);
+
+public sealed record ModelToolFunctionDto(
+    string Name,
+    string Description,
+    IReadOnlyDictionary<string, object?> Parameters);

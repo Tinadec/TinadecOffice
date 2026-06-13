@@ -285,7 +285,8 @@ public sealed class ModelInvocationRuntimeTests
             ResolvedModelInvocationContextDto context,
             string? apiKey,
             IReadOnlyList<MessageDto> messages,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlyList<ModelToolSpecDto>? tools = null)
         {
             WasCalled = true;
             LastMessages = messages;

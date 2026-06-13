@@ -336,7 +336,8 @@ public sealed class OpenAiCompatibleClientTests
         public bool CanHandle(ResolvedModelInvocationContextDto context) => canHandle(context);
         public Task<ModelInvocationResultDto> GenerateAsync(
             ResolvedModelInvocationContextDto context, string? apiKey,
-            IReadOnlyList<MessageDto> messages, CancellationToken cancellationToken)
+            IReadOnlyList<MessageDto> messages, CancellationToken cancellationToken,
+            IReadOnlyList<ModelToolSpecDto>? tools = null)
         {
             return Task.FromResult(new ModelInvocationResultDto(
                 "executed", $"Handled by {Id}", context, false, Id));

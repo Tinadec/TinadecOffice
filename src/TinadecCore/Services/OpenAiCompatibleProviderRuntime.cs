@@ -25,7 +25,8 @@ public sealed class OpenAiCompatibleProviderRuntime(
         ResolvedModelInvocationContextDto context,
         string? apiKey,
         IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ModelToolSpecDto>? tools = null)
     {
         var outcome = await ProviderPolicyHelpers.ExecuteAsync(
             context.ProviderInstanceId,
@@ -42,7 +43,8 @@ public sealed class OpenAiCompatibleProviderRuntime(
                     apiKey,
                     messages,
                     context.ProviderInstanceId,
-                    executionToken);
+                    executionToken,
+                    tools);
             },
             exception => ProviderErrorMapper.FromException(context.ProviderInstanceId, exception),
             _policy,
@@ -58,7 +60,8 @@ public sealed class OpenAiCompatibleProviderRuntime(
                 response.TextContent,
                 context,
                 false,
-                Id);
+                Id,
+                ToolCalls: response.ToolCalls);
         }
 
         var failure = outcome.Failure!;

@@ -8,6 +8,8 @@ namespace TinadecCore.Services;
 
 public sealed class OrchestratorService
 {
+    private const int MaxAgentTurns = 8;
+
     private readonly CoreStore _store;
     private readonly EventHub _events;
     private readonly IAgentWorkflowRuntime _workflowRuntime;
@@ -143,49 +145,262 @@ public sealed class OrchestratorService
             "agent_meeting",
             cancellationToken: cancellationToken);
 
-        var invocation = await _modelRuntime.InvokeAsync(
-            snapshot.Run.SessionId,
-            "planner",
-            _store.ListMessages(snapshot.Run.SessionId),
-            cancellationToken,
-            promptContext.SystemPrompt);
+        // Build OpenAI-compatible tool specs for the model to use
+        var toolSpecs = _tools.BuildOpenAiToolSpecs("programming");
+        var hasTools = toolSpecs.Count > 0;
 
-        activity?
-            .SetTag(SpanAttrs.ProviderId, invocation.Context.ProviderInstanceId)
-            .SetTag(SpanAttrs.ProviderInstanceId, invocation.Context.ProviderInstanceId)
-            .SetTag(SpanAttrs.Model, invocation.Context.EffectiveModel)
-            .SetTag(SpanAttrs.Status, invocation.Status)
-            .SetTag(SpanAttrs.ErrorCategory, invocation.ErrorCategory?.ToString())
-            .SetTag(SpanAttrs.FallbackProviderId, IsFallback(invocation) ? invocation.ErrorProviderId : null);
+        // Conversation history for the agent loop (mutable list)
+        var conversation = new List<MessageDto>(_store.ListMessages(snapshot.Run.SessionId));
 
-        PublishModelEvent("model.requested", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote"]);
+        ModelInvocationResultDto? lastInvocation = null;
 
-        if (!string.Equals(invocation.Status, "executed", StringComparison.OrdinalIgnoreCase))
+        for (var turn = 0; turn < MaxAgentTurns; turn++)
         {
-            PublishModelEvent("model.failed", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote", "model.error"]);
-            return new SessionModelOrchestrationResult(null, invocation);
+            var invocation = await _modelRuntime.InvokeAsync(
+                snapshot.Run.SessionId,
+                "planner",
+                conversation,
+                cancellationToken,
+                promptContext.SystemPrompt,
+                hasTools ? toolSpecs : null);
+
+            lastInvocation = invocation;
+
+            activity?
+                .SetTag(SpanAttrs.ProviderId, invocation.Context.ProviderInstanceId)
+                .SetTag(SpanAttrs.ProviderInstanceId, invocation.Context.ProviderInstanceId)
+                .SetTag(SpanAttrs.Model, invocation.Context.EffectiveModel)
+                .SetTag(SpanAttrs.Status, invocation.Status)
+                .SetTag(SpanAttrs.ErrorCategory, invocation.ErrorCategory?.ToString())
+                .SetTag(SpanAttrs.FallbackProviderId, IsFallback(invocation) ? invocation.ErrorProviderId : null);
+
+            PublishModelEvent("model.requested", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote"]);
+
+            if (!string.Equals(invocation.Status, "executed", StringComparison.OrdinalIgnoreCase))
+            {
+                PublishModelEvent("model.failed", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote", "model.error"]);
+                return new SessionModelOrchestrationResult(null, invocation);
+            }
+
+            // Check if the model wants to call tools
+            var toolCalls = invocation.ToolCalls;
+            if (toolCalls is null || toolCalls.Count == 0)
+            {
+                // No tool calls — final text response
+                var reply = invocation.Content;
+                if (snapshot.Graph is not null && turn == 0)
+                {
+                    reply = $"{reply}\n\nTask graph ready: {snapshot.Graph.Title} with {snapshot.Nodes.Count} nodes and {snapshot.Assignments.Count} execution assignments. Mutating actions remain approval-gated.";
+                }
+
+                var assistantMessage = _store.AddMessage(snapshot.Run.SessionId, "assistant", reply);
+                Publish("message.created", snapshot.Run.SessionId, new JsonObject
+                {
+                    ["message_id"] = assistantMessage.Id,
+                    ["role"] = assistantMessage.Role,
+                    ["run_id"] = snapshot.Run.Id,
+                    ["route_purpose"] = invocation.Context.Purpose,
+                    ["provider_instance_id"] = invocation.Context.ProviderInstanceId,
+                    ["model"] = invocation.Context.EffectiveModel,
+                    ["agent_turn"] = turn,
+                    ["fallback_provider_selected"] = IsFallback(invocation)
+                }, ["agent.message", "agent.meeting", "model.remote"]);
+
+                PublishModelEvent("model.completed", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote"]);
+                return new SessionModelOrchestrationResult(assistantMessage, invocation);
+            }
+
+            // Model wants to call tools — process them
+            Publish("model.tool_calls", snapshot.Run.SessionId, new JsonObject
+            {
+                ["run_id"] = snapshot.Run.Id,
+                ["turn"] = turn,
+                ["tool_call_count"] = toolCalls.Count,
+                ["tool_ids"] = new JsonArray(toolCalls.Select(tc => JsonValue.Create(tc.ToolId)).ToArray())
+            }, ["agent.tool_calls", "model.remote"]);
+
+            // Add assistant message with tool_calls to conversation (not persisted, just for model context)
+            var toolCallSummary = string.Join("\n", toolCalls.Select(tc => $"[Calling {tc.ToolId}]"));
+            conversation.Add(new MessageDto(
+                $"asst_tc_{Guid.NewGuid():N}",
+                snapshot.Run.SessionId,
+                "assistant",
+                string.IsNullOrWhiteSpace(invocation.Content) ? toolCallSummary : $"{invocation.Content}\n{toolCallSummary}",
+                DateTimeOffset.UtcNow));
+
+            // Execute each tool call
+            var pendingApprovals = new List<ToolCallDto>();
+            foreach (var toolCall in toolCalls)
+            {
+                var tool = _tools.Resolve(toolCall.ToolId);
+                if (tool is null)
+                {
+                    // Tool not found — return error as tool result
+                    conversation.Add(new MessageDto(
+                        $"tool_{Guid.NewGuid():N}",
+                        snapshot.Run.SessionId,
+                        "tool",
+                        $"Error: Tool '{toolCall.ToolId}' is not registered in the tool registry.",
+                        DateTimeOffset.UtcNow,
+                        toolCall.CallId));
+                    continue;
+                }
+
+                // Check if approval is needed
+                if (tool.RequiresApproval || _capabilityPolicy.Evaluate("approval", tool).Required)
+                {
+                    // Create an approval record
+                    var approval = _store.CreateApproval(new CreateApprovalRequest(
+                        snapshot.Run.SessionId,
+                        tool.Id,
+                        tool.DisplayName,
+                        SummarizeToolCall(toolCall),
+                        null));
+                    Publish("tool.execution.approval_required", snapshot.Run.SessionId, new JsonObject
+                    {
+                        ["run_id"] = snapshot.Run.Id,
+                        ["tool_id"] = tool.Id,
+                        ["tool_call_id"] = toolCall.CallId,
+                        ["approval_id"] = approval.Id,
+                        ["agent_turn"] = turn
+                    }, ["tool.execution", "approval.ask"]);
+
+                    pendingApprovals.Add(toolCall);
+                    conversation.Add(new MessageDto(
+                        $"tool_{Guid.NewGuid():N}",
+                        snapshot.Run.SessionId,
+                        "tool",
+                        $"Tool '{tool.Id}' requires user approval before execution. Approval ID: {approval.Id}. Please wait for user decision.",
+                        DateTimeOffset.UtcNow,
+                        toolCall.CallId));
+                    continue;
+                }
+
+                // Execute read-only tool
+                var result = await ExecuteToolCallAsync(snapshot.Run, tool, toolCall, cancellationToken);
+
+                // Record step result
+                _store.AddStepResult(
+                    snapshot.Run.Id,
+                    $"agent_turn_{turn}_{tool.Id}",
+                    "agent_planner",
+                    result.Status,
+                    result.Summary,
+                    result.Evidence);
+
+                Publish("tool.execution.completed", snapshot.Run.SessionId, new JsonObject
+                {
+                    ["run_id"] = snapshot.Run.Id,
+                    ["tool_id"] = tool.Id,
+                    ["tool_call_id"] = toolCall.CallId,
+                    ["status"] = result.Status,
+                    ["agent_turn"] = turn
+                }, ["tool.execution", "step.result"]);
+
+                // Add tool result to conversation
+                var resultContent = FormatToolResult(result);
+                conversation.Add(new MessageDto(
+                    $"tool_{Guid.NewGuid():N}",
+                    snapshot.Run.SessionId,
+                    "tool",
+                    resultContent,
+                    DateTimeOffset.UtcNow,
+                    toolCall.CallId));
+            }
+
+            // If any tool required approval, return early with pending approval info
+            if (pendingApprovals.Count > 0)
+            {
+                var approvalNote = $"I need your approval to execute {pendingApprovals.Count} tool(s): {string.Join(", ", pendingApprovals.Select(tc => tc.ToolId))}. Please review the pending approvals and decide.";
+                var approvalMessage = _store.AddMessage(snapshot.Run.SessionId, "assistant", approvalNote);
+                Publish("message.created", snapshot.Run.SessionId, new JsonObject
+                {
+                    ["message_id"] = approvalMessage.Id,
+                    ["role"] = approvalMessage.Role,
+                    ["run_id"] = snapshot.Run.Id,
+                    ["pending_approval_count"] = pendingApprovals.Count
+                }, ["agent.message", "approval.ask"]);
+
+                return new SessionModelOrchestrationResult(approvalMessage, lastInvocation);
+            }
+
+            // Continue loop — model will see tool results and decide next action
         }
 
-        var reply = invocation.Content;
-        if (snapshot.Graph is not null)
-        {
-            reply = $"{reply}\n\nTask graph ready: {snapshot.Graph.Title} with {snapshot.Nodes.Count} nodes and {snapshot.Assignments.Count} execution assignments. Mutating actions remain approval-gated.";
-        }
-
-        var assistantMessage = _store.AddMessage(snapshot.Run.SessionId, "assistant", reply);
+        // Max turns reached
+        var fallbackReply = lastInvocation?.Content ?? "Agent loop reached maximum turns without a final response.";
+        var fallbackMessage = _store.AddMessage(snapshot.Run.SessionId, "assistant", fallbackReply);
         Publish("message.created", snapshot.Run.SessionId, new JsonObject
         {
-            ["message_id"] = assistantMessage.Id,
-            ["role"] = assistantMessage.Role,
+            ["message_id"] = fallbackMessage.Id,
+            ["role"] = fallbackMessage.Role,
             ["run_id"] = snapshot.Run.Id,
-            ["route_purpose"] = invocation.Context.Purpose,
-            ["provider_instance_id"] = invocation.Context.ProviderInstanceId,
-            ["model"] = invocation.Context.EffectiveModel,
-            ["fallback_provider_selected"] = IsFallback(invocation)
-        }, ["agent.message", "agent.meeting", "model.remote"]);
+            ["max_turns_reached"] = true
+        }, ["agent.message", "agent.loop.limit"]);
 
-        PublishModelEvent("model.completed", snapshot.Run.SessionId, snapshot.Run.Id, invocation, promptContext, ["agent.meeting", "model.remote"]);
-        return new SessionModelOrchestrationResult(assistantMessage, invocation);
+        return new SessionModelOrchestrationResult(fallbackMessage, lastInvocation);
+    }
+
+    private async Task<CodeToolExecuteResultDto> ExecuteToolCallAsync(
+        OrchestrationRunDto run,
+        ToolDescriptorDto tool,
+        ToolCallDto toolCall,
+        CancellationToken cancellationToken)
+    {
+        var session = _store.ListSessions(null).FirstOrDefault(item => item.Id == run.SessionId);
+        var project = session is null ? null : _store.ListProjects().FirstOrDefault(item => item.Id == session.ProjectId);
+        var cwd = project?.Path ?? Directory.GetCurrentDirectory();
+
+        var request = new CodeToolExecuteRequest(
+            run.SessionId,
+            run.Id,
+            null,
+            null,
+            cwd,
+            toolCall.Arguments);
+
+        var adapter = _invocationAdapters.FirstOrDefault(item => item.CanInvoke(tool));
+        if (adapter is null)
+        {
+            return new CodeToolExecuteResultDto(
+                tool.Id,
+                "failed",
+                $"No invocation adapter registered for tool source '{tool.Source}'.",
+                ["adapter missing", tool.Source],
+                new Dictionary<string, object?>(),
+                false,
+                null);
+        }
+
+        try
+        {
+            return await adapter.InvokeAsync(tool, request, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return new CodeToolExecuteResultDto(
+                tool.Id,
+                "failed",
+                $"Tool execution failed: {ex.Message}",
+                ["execution failed", tool.Id],
+                new Dictionary<string, object?>(),
+                false,
+                null);
+        }
+    }
+
+    private static string FormatToolResult(CodeToolExecuteResultDto result)
+    {
+        var status = result.Status;
+        var summary = result.Summary;
+        var dataKeys = result.Data.Count > 0 ? string.Join(", ", result.Data.Keys.Take(8)) : "none";
+        return $"[{status}] {summary}\nData keys: {dataKeys}";
+    }
+
+    private static string SummarizeToolCall(ToolCallDto toolCall)
+    {
+        var argKeys = toolCall.Arguments.Count > 0 ? string.Join(", ", toolCall.Arguments.Keys) : "none";
+        return $"{toolCall.ToolId}(args: {argKeys})";
     }
 
     public async Task DispatchReadOnlyToolsAsync(

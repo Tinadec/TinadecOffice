@@ -112,7 +112,8 @@ public sealed class ProviderModuleTests
             ResolvedModelInvocationContextDto context,
             string? apiKey,
             IReadOnlyList<MessageDto> messages,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlyList<ModelToolSpecDto>? tools = null)
         {
             return Task.FromResult(new ModelInvocationResultDto(
                 "executed",

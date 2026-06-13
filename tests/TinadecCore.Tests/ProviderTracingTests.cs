@@ -224,7 +224,8 @@ public sealed class ProviderTracingTests
             ResolvedModelInvocationContextDto context,
             string? apiKey,
             IReadOnlyList<MessageDto> messages,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IReadOnlyList<ModelToolSpecDto>? tools = null)
         {
             var response = Responses[context.ProviderInstanceId](context);
             return Task.FromResult(response);
