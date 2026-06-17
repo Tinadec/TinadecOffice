@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using TinadecCore.Services;
 using Tinadec.Contracts.Events;
+using TinadecModel.Providers;
 using Tinadec.Contracts.Models;
 
 namespace TinadecCore.Storage;
@@ -3096,7 +3097,7 @@ public sealed class CoreStore
         Execute(connection, "delete from acp_adapters where extension_id = $extension_id", command => command.Parameters.AddWithValue("$extension_id", installedExtensionId));
     }
 
-    private static string ResolveDatabasePath(IConfiguration configuration)
+    public static string ResolveDatabasePath(IConfiguration configuration)
     {
         var configured = configuration["Tinadec:DatabasePath"] ?? Environment.GetEnvironmentVariable("TINADEC_DB");
         if (!string.IsNullOrWhiteSpace(configured))

@@ -25,18 +25,6 @@ public interface IEventLog
     EventEnvelope AppendNewEvent(string type, string? sessionId, IReadOnlyDictionary<string, object?>? payload, IReadOnlyList<string> capabilities);
 }
 
-public interface IModelProviderRegistry
-{
-    IReadOnlyList<ModelProviderTemplateDto> ListTemplates();
-    IReadOnlyList<ModelProviderInstanceDto> ListProviders();
-}
-
-public interface IModelRouter
-{
-    IReadOnlyList<ModelRouteDto> ListRoutes();
-    ModelRouteDto? GetRoute(string purpose);
-}
-
 public interface IExtensionCatalogService
 {
     IReadOnlyList<ExtensionSourceDto> ListSources();
@@ -142,56 +130,6 @@ public interface IToolPermissionPolicy
     bool RequiresApproval(string capability);
 }
 
-public interface IModelRouteResolver
-{
-    ResolvedModelInvocationContextDto Resolve(string purpose);
-}
-
-public interface IModelCredentialResolver
-{
-    string? ResolveApiKey(ResolvedModelInvocationContextDto context);
-}
-
-public interface IModelProviderRuntime
-{
-    string Id { get; }
-    bool CanHandle(ResolvedModelInvocationContextDto context);
-    Task<ModelInvocationResultDto> GenerateAsync(
-        ResolvedModelInvocationContextDto context,
-        string? apiKey,
-        IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default,
-        IReadOnlyList<ModelToolSpecDto>? tools = null);
-}
-
-public interface IModelProviderModule
-{
-    string ProviderFamily { get; }
-    void RegisterServices(IServiceCollection services);
-    ProviderCapabilityDto GetCapabilities();
-}
-
-public sealed record ModelProviderModuleMetadata(
-    string ProviderFamily,
-    ProviderCapabilityDto Capabilities);
-
-public interface IModelProviderModuleCatalog
-{
-    IReadOnlyList<ModelProviderModuleMetadata> ListModules();
-    ProviderCapabilityDto? GetCapabilities(string providerFamily);
-}
-
-public interface IModelInvocationRuntime
-{
-    Task<ModelInvocationResultDto> InvokeAsync(
-        string sessionId,
-        string purpose,
-        IReadOnlyList<MessageDto> messages,
-        CancellationToken cancellationToken = default,
-        string? systemPrompt = null,
-        IReadOnlyList<ModelToolSpecDto>? tools = null);
-}
-
 public interface IPromptContextPlannerRuntime
 {
     Task<PromptContextPlanDto?> TryCreatePlanAsync(
@@ -199,20 +137,7 @@ public interface IPromptContextPlannerRuntime
         CancellationToken cancellationToken = default);
 }
 
-public interface IModelManagementService
-{
-    IReadOnlyList<ModelProviderTemplateDto> ListProviderTemplates();
-    IReadOnlyList<ModelProviderInstanceDto> ListProviders();
-    ModelProviderInstanceDto CreateProvider(SaveModelProviderInstanceRequest request);
-    ModelProviderInstanceDto? UpdateProvider(string providerInstanceId, SaveModelProviderInstanceRequest request);
-    ModelProviderInstanceDto? DeleteProvider(string providerInstanceId);
-    IReadOnlyList<ModelRouteDto> ListRoutes();
-    ModelRouteDto? SaveRoute(string purpose, SaveModelRouteRequest request);
-    ModelSettingsDto GetSettings();
-    ModelSettingsDto SaveSettings(SaveModelSettingsRequest request);
-}
-
-public interface ICoreStore : ISessionService, IApprovalService, IModelRouter
+public interface ICoreStore : ISessionService, IApprovalService
 {
     IReadOnlyList<ProjectDto> ListProjects();
     ProjectDto CreateProject(string name, string path);

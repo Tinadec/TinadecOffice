@@ -890,6 +890,30 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload)
   }),
+
+  // Semantic wrappers for code tools
+  readFile: (cwd: string, filePath: string, options?: { start_line?: number; end_line?: number }) =>
+    api.executeCodeTool('read_file', { cwd, arguments: { path: filePath, ...options } }),
+  listDirectory: (cwd: string, dirPath: string) =>
+    api.executeCodeTool('list_directory', { cwd, arguments: { path: dirPath } }),
+  globSearch: (cwd: string, pattern: string) =>
+    api.executeCodeTool('glob_search', { cwd, arguments: { pattern } }),
+  grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number }) =>
+    api.executeCodeTool('grep_content', { cwd, arguments: { pattern, ...options } }),
+  applyPatch: (cwd: string, patch: string, approvalId?: string) =>
+    api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
+  codeEditorOpen: (cwd: string, filePath: string) =>
+    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'open', path: filePath } }),
+  codeEditorSave: (cwd: string, filePath: string, content: string, approvalId: string) =>
+    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'save', path: filePath, content } }),
+  codeEditorDiff: (cwd: string, filePath: string) =>
+    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'diff', path: filePath } }),
+  codeEditorPatch: (cwd: string, filePath: string, patch: string, approvalId: string) =>
+    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'patch', path: filePath, patch } }),
+  gitDiffCompare: (cwd: string, baseRef: string, headRef: string, paths?: string[]) =>
+    api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
+  gitLog: (cwd: string, limit?: number, ref?: string) =>
+    api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
   saveAgent: (agentId: string, agent: {
     name: string;
     layer: string;

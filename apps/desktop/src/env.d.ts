@@ -6,6 +6,11 @@ declare module '*.vue' {
   export default component
 }
 
+declare module 'monaco-editor/esm/vs/basic-languages/*' {
+  const contribution: unknown
+  export default contribution
+}
+
 declare global {
   interface Window {
     tinadec: {

@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Tinadec.Contracts/Tinadec.Contracts.csproj" />
+    <Project Path="src/TinadecModel/TinadecModel.csproj" />
     <Project Path="src/TinadecCore/TinadecCore.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Tinadec.Contracts.Models;
 using TinadecCore.Services;
 using TinadecCore.Storage;
+using TinadecModel.Providers;
 
 namespace TinadecCore.Tests;
 

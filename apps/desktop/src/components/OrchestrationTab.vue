@@ -1,25 +1,45 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { AlertTriangle, Archive, CheckCircle2, Layers3, Wrench } from '@lucide/vue'
-import type { OrchestrationSnapshotDto, ToolExecutionTimelineItemDto } from '../api'
+import { computed, ref } from 'vue'
+import { AlertTriangle, Archive, BarChart3, CheckCircle2, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
+import type { OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
+import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
+import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
+import ToolStatsDashboard from './tools/ToolStatsDashboard.vue'
 
 const props = defineProps<{
   snapshot: OrchestrationSnapshotDto | null
   toolExecutions: ToolExecutionTimelineItemDto[]
+  tools?: ToolDescriptorDto[]
 }>()
+
+const emit = defineEmits<{
+  'rerun-tool': [toolExecution: ToolExecutionTimelineItemDto]
+  'view-tool-details': [toolExecution: ToolExecutionTimelineItemDto]
+  'execute-tool': [tool: ToolDescriptorDto]
+}>()
+
+type TabKey = 'timeline' | 'catalog' | 'stats'
+
+const activeTab = ref<TabKey>('timeline')
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
 
-function formatDuration(milliseconds: number): string {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
-    return '0 ms'
-  }
+const tabs: Array<{ key: TabKey; label: string; icon: typeof ListTree }> = [
+  { key: 'timeline', label: 'Timeline', icon: ListTree },
+  { key: 'catalog', label: 'Catalog', icon: Package },
+  { key: 'stats', label: 'Stats', icon: BarChart3 }
+]
 
-  if (milliseconds < 1000) {
-    return `${Math.round(milliseconds)} ms`
-  }
+function onRerun(exec: ToolExecutionTimelineItemDto) {
+  emit('rerun-tool', exec)
+}
 
-  return `${(milliseconds / 1000).toFixed(1)} s`
+function onViewDetails(exec: ToolExecutionTimelineItemDto) {
+  emit('view-tool-details', exec)
+}
+
+function onExecuteTool(tool: ToolDescriptorDto) {
+  emit('execute-tool', tool)
 }
 </script>
 
@@ -63,36 +83,36 @@ function formatDuration(milliseconds: number): string {
           <Wrench :size="15" />
           <strong>Tool Executions</strong>
         </div>
-        <div v-if="toolExecutions.length === 0" class="quiet">
-          No tool executions.
+
+        <div class="orchestration-tabs">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            class="orchestration-tab-btn"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
+          >
+            <component :is="tab.icon" :size="13" />
+            <span>{{ tab.label }}</span>
+          </button>
         </div>
-        <div
-          v-for="execution in toolExecutions"
-          :key="execution.id"
-          class="tool-execution-row"
-          :class="{ risky: execution.requires_approval }"
-        >
-          <div class="tool-execution-top">
-            <span>{{ execution.status }}</span>
-            <strong>{{ execution.tool_display_name }}</strong>
-          </div>
-          <p>{{ execution.summary }}</p>
-          <div class="tool-execution-meta">
-            <span>{{ execution.source }}</span>
-            <span>{{ execution.provider_layer }}</span>
-            <span>{{ execution.risk }}</span>
-            <span>{{ formatDuration(execution.duration_ms) }}</span>
-            <span>seq {{ execution.requested_seq }}-{{ execution.updated_seq }}</span>
-            <span v-if="execution.approval_id">approval {{ execution.approval_id }}</span>
-            <span v-if="execution.step_result_id">step {{ execution.step_result_id }}</span>
-          </div>
-          <p class="tool-execution-checkpoint">{{ execution.checkpoint_summary }}</p>
-          <div v-if="execution.evidence.length > 0" class="tool-execution-evidence">
-            <small v-for="item in execution.evidence" :key="item">{{ item }}</small>
-          </div>
-          <div class="tool-execution-events">
-            <span v-for="eventType in execution.event_types" :key="eventType">{{ eventType }}</span>
-          </div>
+
+        <div class="orchestration-tab-content">
+          <ToolExecutionTimeline
+            v-if="activeTab === 'timeline'"
+            :tool-executions="toolExecutions"
+            @rerun="onRerun"
+            @view-details="onViewDetails"
+          />
+          <ToolCatalogBrowser
+            v-else-if="activeTab === 'catalog'"
+            :tools="tools"
+            @execute="onExecuteTool"
+          />
+          <ToolStatsDashboard
+            v-else-if="activeTab === 'stats'"
+            :tool-executions="toolExecutions"
+          />
         </div>
       </article>
 
@@ -129,3 +149,140 @@ function formatDuration(milliseconds: number): string {
     </template>
   </section>
 </template>
+
+<style scoped>
+.orchestration-tab {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.orchestration-block {
+  border-bottom: 1px solid var(--border-muted);
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
+.orchestration-block-head {
+  align-items: center;
+  color: var(--text-primary);
+  display: flex;
+  gap: 7px;
+}
+
+.orchestration-block p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 3px 0 0;
+}
+
+.orchestration-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.orchestration-tags span {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.orchestration-finding {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+}
+
+.orchestration-finding span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.orchestration-finding small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.quiet {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.orchestration-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.orchestration-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.orchestration-tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.orchestration-tab-btn.active {
+  color: var(--accent-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.orchestration-tab-content {
+  min-height: 200px;
+}
+
+.context-pack-row,
+.step-result-row {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+}
+
+.context-pack-row p,
+.step-result-row p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 3px 0 0;
+}
+
+.step-result-row span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.orchestration-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px;
+}
+</style>

@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { computed, toRef } from 'vue'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import TaskGraphPanel from './TaskGraphPanel.vue'
+import AgentActivityBanner from './chat/AgentActivityBanner.vue'
+import { useAgentActivity } from '@/composables/useAgentActivity'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 
@@ -30,7 +33,30 @@ const emit = defineEmits<{
   'welcome-send': [content: string]
   'create-project': []
   'select-project': [id: string]
+  'approve': [approvalId: string]
+  'reject': [approvalId: string]
 }>()
+
+const sessionId = computed(() => props.currentSession?.id ?? null)
+const orchestrationRef = toRef(props, 'orchestration')
+
+const {
+  activity,
+  toolCalls,
+  thinkingSteps,
+  agentStates,
+  progressEvents,
+} = useAgentActivity(sessionId, orchestrationRef)
+
+const agentLabel = computed(() => activity.value.activeAgentName ?? null)
+
+function handleApprove(approvalId: string) {
+  emit('approve', approvalId)
+}
+
+function handleReject(approvalId: string) {
+  emit('reject', approvalId)
+}
 </script>
 
 <template>
@@ -52,8 +78,17 @@ const emit = defineEmits<{
       <template v-else>
         <div class="chat-active-panel" key="chat-active">
           <ChatHeader :current-session="currentSession" />
+          <AgentActivityBanner :activity="activity" :agent-states="agentStates" />
           <TaskGraphPanel :snapshot="orchestration" />
-          <MessageList :messages="messages" />
+          <MessageList
+            :messages="messages"
+            :thinking-steps="thinkingSteps"
+            :tool-calls="toolCalls"
+            :progress-events="progressEvents"
+            :agent-label="agentLabel"
+            @approve="handleApprove"
+            @reject="handleReject"
+          />
           <ComposerBar
             :busy="busy"
             :model-value="draft"

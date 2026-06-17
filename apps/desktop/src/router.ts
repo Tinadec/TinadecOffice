@@ -23,6 +23,11 @@ const router = createRouter({
       name: 'debug-studio',
       component: () => import('./pages/DebugStudioPage.vue'),
     },
+    {
+      path: '/code-editor',
+      name: 'code-editor',
+      component: () => import('./pages/CodePage.vue'),
+    },
   ],
 })
 

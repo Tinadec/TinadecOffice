@@ -2,6 +2,7 @@ using Tinadec.Contracts.Models;
 using TinadecCore.Abstractions;
 using TinadecCore.Services;
 using TinadecCore.Storage;
+using TinadecModel.Providers;
 
 namespace TinadecCore.Tests;
 

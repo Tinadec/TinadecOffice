@@ -4,6 +4,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api'
 import { parseUnifiedDiff, type GitDiffFile } from '../gitDiffParser'
+import CommitCompare from './git/CommitCompare.vue'
+import CommitMessageEditor from './git/CommitMessageEditor.vue'
+import DiffViewer from './git/DiffViewer.vue'
+import WorktreeManager from './git/WorktreeManager.vue'
+import { reconstructFromHunks, type DiffFileEntry } from './git/diffUtils'
 
 const { t } = useI18n()
 
@@ -88,6 +93,7 @@ const commitApprovalId = ref<string | null>(null)
 const pushApprovalId = ref<string | null>(null)
 const preview = ref<CodeToolExecuteResultDto | null>(null)
 const pushPlan = ref<CodeToolExecuteResultDto | null>(null)
+const topTab = ref<'changes' | 'compare' | 'worktrees'>('changes')
 
 const previewData = computed(() => (preview.value?.data ?? {}) as GitPreviewData)
 const pushData = computed(() => (pushPlan.value?.data ?? {}) as GitPushPlanData)
@@ -368,6 +374,47 @@ function sectionFileMeta(file: GitDiffFile) {
   return activeSection.value?.files.find((item) => item.path === file.path) ?? null
 }
 
+const diffEntries = computed<DiffFileEntry[]>(() => {
+  return activeParsedFiles.value.map((file) => {
+    const meta = sectionFileMeta(file)
+    const { original, modified } = reconstructFromHunks(file)
+    return {
+      path: file.path,
+      previousPath: file.previous_path,
+      originalContent: original,
+      modifiedContent: modified,
+      additions: meta?.additions,
+      deletions: meta?.deletions,
+      binary: file.binary,
+      truncated: meta?.truncated,
+      changeType: meta?.change_type ?? file.change_type
+    }
+  })
+})
+
+function onStageHunk(payload: { filePath: string; hunkHeader: string | null }) {
+  const next = new Set(selectedPaths.value)
+  next.add(payload.filePath)
+  selectedPaths.value = next
+  void requestIndexApproval('stage')
+}
+
+function onDiscardHunk(payload: { filePath: string; hunkHeader: string | null }) {
+  feedback.value = `${t('context.gitDiffDiscardHunk')} ${payload.filePath}: ${t('context.gitDiscardNeedsApproval')}`
+}
+
+function onSwitchWorktree(path: string) {
+  feedback.value = `${t('context.gitWorktreeSwitch')}: ${path}`
+}
+
+function onCreateWorktree(payload: { branch: string; path: string }) {
+  feedback.value = `${t('context.gitWorktreeCreate')} ${payload.branch} → ${payload.path}: ${t('context.gitWorktreeNeedsApproval')}`
+}
+
+function onRemoveWorktree(path: string) {
+  feedback.value = `${t('context.gitWorktreeRemove')} ${path}: ${t('context.gitWorktreeNeedsApproval')}`
+}
+
 watch(() => props.currentProjectPath, () => {
   indexApprovalId.value = null
   indexAction.value = null
@@ -437,6 +484,34 @@ watch(activeParsedFiles, () => {
         </div>
       </div>
 
+      <div class="git-top-tabs">
+        <button
+          class="git-top-tab"
+          :class="{ active: topTab === 'changes' }"
+          @click="topTab = 'changes'"
+        >
+          <FileCode2 :size="13" />
+          <span>{{ t('context.gitTabChanges') }}</span>
+        </button>
+        <button
+          class="git-top-tab"
+          :class="{ active: topTab === 'compare' }"
+          @click="topTab = 'compare'"
+        >
+          <GitCompare :size="13" />
+          <span>{{ t('context.gitTabCompare') }}</span>
+        </button>
+        <button
+          class="git-top-tab"
+          :class="{ active: topTab === 'worktrees' }"
+          @click="topTab = 'worktrees'"
+        >
+          <GitBranch :size="13" />
+          <span>{{ t('context.gitTabWorktrees') }}</span>
+        </button>
+      </div>
+
+      <template v-if="topTab === 'changes'">
       <div v-if="hasRepositoryDetails" class="git-info-grid">
         <section v-if="diffStatLines.length" class="git-info-panel">
           <div class="git-panel-subtitle">{{ t('context.gitDiffStat') }}</div>
@@ -474,55 +549,18 @@ watch(activeParsedFiles, () => {
         <span v-for="notice in activeSection.notices" :key="notice">{{ notice }}</span>
       </div>
 
-      <div class="git-review-layout">
-        <div class="git-file-list">
-          <button
-            v-for="file in activeParsedFiles"
-            :key="file.id"
-            class="git-file-row"
-            :class="{ active: selectedParsedFile?.path === file.path }"
-            @click="selectedFilePath = file.path"
-          >
-            <FileCode2 :size="13" />
-            <span>{{ file.path }}</span>
-            <small>
-              +{{ sectionFileMeta(file)?.additions ?? 0 }} -{{ sectionFileMeta(file)?.deletions ?? 0 }}
-            </small>
-          </button>
-          <div v-if="activeParsedFiles.length === 0" class="git-empty-inline">
-            {{ parsedActiveSection.notice ?? t('context.gitNoDiff') }}
-          </div>
-        </div>
-
-        <div class="git-diff-view">
-          <template v-if="selectedParsedFile">
-            <div class="git-diff-file-head">
-              <strong>{{ selectedParsedFile.path }}</strong>
-              <small v-if="selectedParsedFile.previous_path">{{ selectedParsedFile.previous_path }}</small>
-            </div>
-            <div v-if="selectedParsedFile.binary || selectedParsedFile.notice" class="git-notices">
-              <span>{{ selectedParsedFile.notice ?? t('context.gitBinaryFile') }}</span>
-            </div>
-            <div v-for="hunk in selectedParsedFile.hunks" :key="hunk.id" class="git-hunk">
-              <div class="git-hunk-head">{{ hunk.header }}</div>
-              <div
-                v-for="line in hunk.lines"
-                :key="line.id"
-                class="git-diff-line"
-                :class="line.change"
-              >
-                <span class="git-line-number">{{ line.old_line_number ?? '' }}</span>
-                <span class="git-line-number">{{ line.new_line_number ?? '' }}</span>
-                <code>{{ line.content }}</code>
-              </div>
-            </div>
-            <div v-if="selectedParsedFile.hunks.length === 0 && !selectedParsedFile.notice" class="git-empty-inline">
-              {{ t('context.gitNoRenderableDiff') }}
-            </div>
-          </template>
-          <div v-else class="git-empty-inline">
-            {{ t('context.gitNoDiff') }}
-          </div>
+      <div class="git-diff-wrap">
+        <DiffViewer
+          v-if="diffEntries.length > 0"
+          :files="diffEntries"
+          :selected-file-path="selectedFilePath"
+          :enable-hunk-actions="true"
+          @update:selected-file-path="selectedFilePath = $event"
+          @stage-hunk="onStageHunk"
+          @discard-hunk="onDiscardHunk"
+        />
+        <div v-else class="git-empty-inline">
+          {{ parsedActiveSection.notice ?? t('context.gitNoDiff') }}
         </div>
       </div>
 
@@ -577,10 +615,9 @@ watch(activeParsedFiles, () => {
             <ShieldX :size="14" />
           </button>
         </div>
-        <textarea
+        <CommitMessageEditor
           v-model="commitMessage"
-          rows="3"
-          :placeholder="t('context.gitCommitMessagePlaceholder')"
+          :recent-commits="recentCommits"
         />
         <div class="git-action-row">
           <button
@@ -665,6 +702,21 @@ watch(activeParsedFiles, () => {
           <span>{{ worktree.path }}</span>
         </div>
       </div>
+      </template>
+
+      <CommitCompare
+        v-else-if="topTab === 'compare'"
+        :cwd="props.currentProjectPath!"
+      />
+
+      <WorktreeManager
+        v-else-if="topTab === 'worktrees'"
+        :cwd="props.currentProjectPath!"
+        :current-path="props.currentProjectPath"
+        @switch="onSwitchWorktree"
+        @create="onCreateWorktree"
+        @remove="onRemoveWorktree"
+      />
 
       <div v-if="feedback" class="git-plan-approval">
         <ShieldCheck :size="14" />
@@ -678,3 +730,46 @@ watch(activeParsedFiles, () => {
     </template>
   </section>
 </template>
+
+<style scoped>
+.git-top-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.git-top-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.git-top-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.git-top-tab.active {
+  color: var(--text-primary);
+  border-color: var(--bg-selected-outline);
+  background: var(--bg-selected);
+}
+
+.git-diff-wrap {
+  min-height: 320px;
+  height: 480px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+</style>

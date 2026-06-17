@@ -406,6 +406,9 @@ export async function executeCodeTool(toolId: string, request: CodeToolExecuteRe
   if (spec.id === 'git_worktree_manager') {
     return executeGitWorktreeManager(spec, request, args);
   }
+  if (spec.id === 'code_editor') {
+    return executeCodeEditor(spec, request, args);
+  }
 
   return {
     tool_id: spec.id,
@@ -503,6 +506,136 @@ async function executeProjectTemplateScaffold(
   }, [`project_template:${template.id}`, 'project_templates:scaffold', 'approval:supplied']);
 }
 
+/**
+ * code_editor tool: open / save / diff / patch actions for workspace files.
+ * - open: read file content (no approval needed)
+ * - save: write file content (approval required)
+ * - diff: get working-tree diff for a file (no approval needed)
+ * - patch: apply a unified diff patch (approval required)
+ */
+async function executeCodeEditor(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>
+): Promise<CodeToolExecuteResult> {
+  const action = stringArg(args, 'action') ?? 'open';
+  const filePath = stringArg(args, 'path');
+
+  if (!filePath) {
+    return failedResult(spec, 'code_editor requires a "path" argument.', args, ['code_editor:missing-path']);
+  }
+
+  if (!request.cwd) {
+    return failedResult(spec, 'code_editor requires a cwd.', args, ['code_editor:missing-cwd']);
+  }
+
+  const resolved = resolveTargetInsideCwd(request.cwd, filePath);
+  if (!resolved.ok) {
+    return failedResult(spec, resolved.message, args, ['code_editor:invalid-path']);
+  }
+
+  // open: read file content
+  if (action === 'open') {
+    try {
+      const content = await readFile(resolved.path, 'utf8');
+      const stats = await stat(resolved.path);
+      return resultFor(spec, 'completed', `Opened ${resolved.relative_path}.`, {
+        cwd: request.cwd,
+        action: 'open',
+        path: resolved.relative_path,
+        absolute_path: resolved.path,
+        content,
+        size: stats.size,
+        modified_at: stats.mtime.toISOString()
+      }, ['code_editor:open', `file:${resolved.relative_path}`]);
+    } catch (error) {
+      return failedResult(spec, error instanceof Error ? error.message : String(error), args, ['code_editor:open-error']);
+    }
+  }
+
+  // diff: get working-tree diff for a single file
+  if (action === 'diff') {
+    const diffResult = await git(request.cwd, ['diff', '--', resolved.relative_path]);
+    const stagedResult = await git(request.cwd, ['diff', '--cached', '--', resolved.relative_path]);
+    return resultFor(spec, 'completed', `Diff for ${resolved.relative_path}.`, {
+      cwd: request.cwd,
+      action: 'diff',
+      path: resolved.relative_path,
+      working_tree_diff: diffResult.stdout || null,
+      staged_diff: stagedResult.stdout || null
+    }, ['code_editor:diff', `file:${resolved.relative_path}`]);
+  }
+
+  // save: write file content (approval required)
+  if (action === 'save') {
+    if (!request.approval_id) {
+      return resultFor(spec, 'blocked', 'save requires a Core-approved code tool invocation.', {
+        cwd: request.cwd,
+        action: 'save',
+        path: resolved.relative_path,
+        required_approval: true
+      }, ['code_editor:save', 'approval:required']);
+    }
+
+    const content = stringArg(args, 'content');
+    if (content === null) {
+      return failedResult(spec, 'save requires a "content" argument.', args, ['code_editor:missing-content']);
+    }
+
+    try {
+      await writeFile(resolved.path, content, 'utf8');
+      const stats = await stat(resolved.path);
+      return resultFor(spec, 'completed', `Saved ${resolved.relative_path}.`, {
+        cwd: request.cwd,
+        action: 'save',
+        path: resolved.relative_path,
+        absolute_path: resolved.path,
+        size: stats.size,
+        modified_at: stats.mtime.toISOString(),
+        approval_id: request.approval_id
+      }, ['code_editor:save', `file:${resolved.relative_path}`, 'approval:supplied']);
+    } catch (error) {
+      return failedResult(spec, error instanceof Error ? error.message : String(error), args, ['code_editor:save-error']);
+    }
+  }
+
+  // patch: apply a unified diff patch (approval required)
+  if (action === 'patch') {
+    if (!request.approval_id) {
+      return resultFor(spec, 'blocked', 'patch requires a Core-approved code tool invocation.', {
+        cwd: request.cwd,
+        action: 'patch',
+        path: resolved.relative_path,
+        required_approval: true
+      }, ['code_editor:patch', 'approval:required']);
+    }
+
+    const patch = stringArg(args, 'patch');
+    if (!patch) {
+      return failedResult(spec, 'patch requires a "patch" argument.', args, ['code_editor:missing-patch']);
+    }
+
+    try {
+      const patchResult = await git(request.cwd, ['apply', '--whitespace=nowarn', '-'], {
+        input: patch
+      });
+      if (patchResult.code !== 0) {
+        return failedResult(spec, `git apply failed: ${patchResult.stderr}`, args, ['code_editor:patch-error']);
+      }
+      return resultFor(spec, 'completed', `Patched ${resolved.relative_path}.`, {
+        cwd: request.cwd,
+        action: 'patch',
+        path: resolved.relative_path,
+        approval_id: request.approval_id
+      }, ['code_editor:patch', `file:${resolved.relative_path}`, 'approval:supplied']);
+    } catch (error) {
+      return failedResult(spec, error instanceof Error ? error.message : String(error), args, ['code_editor:patch-error']);
+    }
+  }
+
+  return failedResult(spec, `Unsupported code_editor action '${action}'.`, args, ['code_editor:unsupported-action']);
+}
+
 async function executeGitWorktreeManager(
   spec: CodeToolSpec,
   request: CodeToolExecuteRequest,
@@ -551,6 +684,14 @@ async function executeGitWorktreeManager(
 
   if (action === 'diff_preview') {
     return executeGitDiffPreview(spec, request, args, gitRoot);
+  }
+
+  if (action === 'diff_compare') {
+    return executeGitDiffCompare(spec, request, args, gitRoot);
+  }
+
+  if (action === 'log') {
+    return executeGitLog(spec, request, args, gitRoot);
   }
 
   if (action !== 'status' && action !== 'push_plan' && action !== 'worktrees') {
@@ -889,6 +1030,111 @@ async function executeGitPush(
   }, ['git:push', 'approval:supplied', 'confirmation:supplied']);
 }
 
+/**
+ * diff_compare: diff between any two refs (commit/branch/tag).
+ * Args: base_ref, head_ref, paths? (optional filter)
+ */
+async function executeGitDiffCompare(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>,
+  gitRoot: string
+): Promise<CodeToolExecuteResult> {
+  const baseRef = stringArg(args, 'base_ref');
+  const headRef = stringArg(args, 'head_ref');
+  if (!baseRef || !headRef) {
+    return failedResult(spec, 'diff_compare requires "base_ref" and "head_ref" arguments.', args, ['git:diff_compare:missing-refs']);
+  }
+
+  const maxDiffBytes = Number(args.max_diff_bytes ?? 180000);
+  const paths = Array.isArray(args.paths) ? args.paths.filter((p): p is string => typeof p === 'string') : null;
+
+  const diffArgs = ['diff', `${baseRef}...${headRef}`, '--stat', '--numstat', '--name-status'];
+  if (paths && paths.length > 0) {
+    diffArgs.push('--');
+    for (const p of paths) diffArgs.push(p);
+  }
+
+  const [statResult, numstatResult, nameStatusResult, diffResult, logResult] = await Promise.all([
+    git(gitRoot, ['diff', `${baseRef}...${headRef}`, '--stat']),
+    git(gitRoot, ['diff', `${baseRef}...${headRef}`, '--numstat']),
+    git(gitRoot, ['diff', `${baseRef}...${headRef}`, '--name-status']),
+    git(gitRoot, ['diff', `${baseRef}...${headRef}`]),
+    git(gitRoot, ['log', '--oneline', `${baseRef}...${headRef}`])
+  ]);
+
+  let diffText = diffResult.stdout;
+  let truncated = false;
+  if (diffText.length > maxDiffBytes) {
+    diffText = diffText.slice(0, maxDiffBytes);
+    truncated = true;
+  }
+
+  const files = mergeDiffFileMetadata(parseGitNumstat(numstatResult.stdout), parseGitNameStatus(nameStatusResult.stdout));
+
+  return resultFor(spec, 'completed', `Diff ${baseRef}...${headRef} (${files.length} files, ${logResult.stdout ? logResult.stdout.split('\n').filter(Boolean).length : 0} commits).`, {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action: 'diff_compare',
+    base_ref: baseRef,
+    head_ref: headRef,
+    diff_stat: statResult.stdout || null,
+    diff: diffText || null,
+    truncated,
+    files,
+    file_count: files.length,
+    commits: logResult.stdout ? logResult.stdout.split('\n').filter(Boolean) : []
+  }, ['git:diff_compare', `refs:${baseRef}...${headRef}`]);
+}
+
+/**
+ * log: git log with configurable limit and format.
+ * Args: limit? (default 20), ref? (optional ref/range)
+ */
+async function executeGitLog(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest,
+  args: Record<string, unknown>,
+  gitRoot: string
+): Promise<CodeToolExecuteResult> {
+  const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 200);
+  const ref = stringArg(args, 'ref');
+
+  const logArgs = ['log', `--format=%H|%h|%an|%ae|%ad|%s`, '--date=iso', `-${limit}`];
+  if (ref) {
+    logArgs.push(ref);
+  }
+
+  const logResult = await git(gitRoot, logArgs);
+  if (logResult.code !== 0) {
+    return failedResult(spec, `git log failed: ${logResult.stderr}`, args, ['git:log:error']);
+  }
+
+  const commits = logResult.stdout
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => {
+      const [hash, shortHash, author, email, date, ...subjectParts] = line.split('|');
+      return {
+        hash: hash ?? '',
+        short_hash: shortHash ?? '',
+        author: author ?? '',
+        email: email ?? '',
+        date: date ?? '',
+        subject: subjectParts.join('|') ?? ''
+      };
+    });
+
+  return resultFor(spec, 'completed', `Retrieved ${commits.length} commits.`, {
+    cwd: request.cwd,
+    git_root: gitRoot,
+    action: 'log',
+    ref: ref ?? 'HEAD',
+    limit,
+    commits
+  }, ['git:log']);
+}
+
 async function executeGitDiffPreview(
   spec: CodeToolSpec,
   request: CodeToolExecuteRequest,
@@ -1064,11 +1310,11 @@ interface GitDiffPreviewBuildOptions {
   maxDiffBytes: number;
 }
 
-async function git(cwd: string, args: string[]): Promise<GitCommandResult> {
+async function git(cwd: string, args: string[], options?: { input?: string }): Promise<GitCommandResult> {
   return new Promise((resolve) => {
     const child = spawn('git', args, {
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true
     });
 
@@ -1091,6 +1337,12 @@ async function git(cwd: string, args: string[]): Promise<GitCommandResult> {
       clearTimeout(timeout);
       resolve({ code: code ?? 0, stdout, stderr });
     });
+    if (options?.input !== undefined) {
+      child.stdin.write(options.input);
+      child.stdin.end();
+    } else {
+      child.stdin.end();
+    }
   });
 }
 
