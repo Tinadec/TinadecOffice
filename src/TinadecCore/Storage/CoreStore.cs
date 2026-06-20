@@ -1500,7 +1500,12 @@ public sealed class CoreStore
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "select id, extension_id, name, transport, status, tools_json, updated_at from mcp_servers order by name";
+        command.CommandText = """
+            select m.id, m.extension_id, m.name, m.transport, m.status, m.tools_json, m.updated_at, e.manifest_json
+            from mcp_servers m
+            left join installed_extensions e on e.id = m.extension_id
+            order by m.name
+            """;
         using var reader = command.ExecuteReader();
         var servers = new List<McpServerDto>();
         while (reader.Read())
@@ -1519,11 +1524,53 @@ public sealed class CoreStore
             using var connection = OpenConnection();
             Execute(connection, """
                 update mcp_servers
-                set status = 'ready', updated_at = $updated_at
+                set status = 'pending_connect', updated_at = $updated_at
                 where id = $id
                 """, command =>
             {
                 command.Parameters.AddWithValue("$id", serverId);
+                command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
+            });
+        }
+
+        return ListMcpServers().FirstOrDefault(server => server.Id == serverId);
+    }
+
+    public McpServerDto? UpdateMcpServerStatus(string serverId, string status, string? statusMessage)
+    {
+        var now = DateTimeOffset.UtcNow;
+        lock (_gate)
+        {
+            using var connection = OpenConnection();
+            Execute(connection, """
+                update mcp_servers
+                set status = $status, updated_at = $updated_at
+                where id = $id
+                """, command =>
+            {
+                command.Parameters.AddWithValue("$id", serverId);
+                command.Parameters.AddWithValue("$status", status);
+                command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
+            });
+        }
+
+        return ListMcpServers().FirstOrDefault(server => server.Id == serverId);
+    }
+
+    public McpServerDto? UpdateMcpServerTools(string serverId, IReadOnlyList<string> tools)
+    {
+        var now = DateTimeOffset.UtcNow;
+        lock (_gate)
+        {
+            using var connection = OpenConnection();
+            Execute(connection, """
+                update mcp_servers
+                set tools_json = $tools_json, updated_at = $updated_at
+                where id = $id
+                """, command =>
+            {
+                command.Parameters.AddWithValue("$id", serverId);
+                command.Parameters.AddWithValue("$tools_json", JsonSerializer.Serialize(tools, TinadecJson.Options));
                 command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
             });
         }
@@ -3075,7 +3122,7 @@ public sealed class CoreStore
             var serverId = $"mcp_{extension.Id}";
             Execute(connection, """
                 insert into mcp_servers (id, extension_id, name, transport, status, tools_json, updated_at)
-                values ($id, $extension_id, $name, $transport, 'ready', $tools_json, $updated_at)
+                values ($id, $extension_id, $name, $transport, 'pending_connect', $tools_json, $updated_at)
                 on conflict(id) do update set
                     name = excluded.name,
                     transport = excluded.transport,
@@ -3088,7 +3135,7 @@ public sealed class CoreStore
                 command.Parameters.AddWithValue("$extension_id", extension.Id);
                 command.Parameters.AddWithValue("$name", extension.DisplayName);
                 command.Parameters.AddWithValue("$transport", extension.Capabilities.Contains("stdio") ? "stdio" : "http");
-                command.Parameters.AddWithValue("$tools_json", JsonSerializer.Serialize(new[] { $"{extension.ExtensionId}.tool" }, TinadecJson.Options));
+                command.Parameters.AddWithValue("$tools_json", JsonSerializer.Serialize(Array.Empty<string>(), TinadecJson.Options));
                 command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
             });
         }
@@ -3098,7 +3145,7 @@ public sealed class CoreStore
             var adapterId = $"acp_{extension.Id}";
             Execute(connection, """
                 insert into acp_adapters (id, extension_id, name, command, status, status_message, capabilities_json, updated_at)
-                values ($id, $extension_id, $name, $command, 'ready', $status_message, $capabilities_json, $updated_at)
+                values ($id, $extension_id, $name, $command, 'pending_connect', $status_message, $capabilities_json, $updated_at)
                 on conflict(id) do update set
                     name = excluded.name,
                     command = excluded.command,
@@ -3112,7 +3159,7 @@ public sealed class CoreStore
                 command.Parameters.AddWithValue("$extension_id", extension.Id);
                 command.Parameters.AddWithValue("$name", extension.DisplayName);
                 command.Parameters.AddWithValue("$command", "agent acp");
-                command.Parameters.AddWithValue("$status_message", "Adapter metadata is enabled. Runtime process spawning remains approval-gated.");
+                command.Parameters.AddWithValue("$status_message", "Adapter metadata is enabled. Awaiting Gateway connect.");
                 command.Parameters.AddWithValue("$capabilities_json", JsonSerializer.Serialize(extension.Capabilities, TinadecJson.Options));
                 command.Parameters.AddWithValue("$updated_at", now.ToString("O"));
             });
@@ -3323,6 +3370,7 @@ public sealed class CoreStore
     private static McpServerDto ReadMcpServer(SqliteDataReader reader)
     {
         var tools = JsonSerializer.Deserialize<string[]>(reader.GetString(5), TinadecJson.Options) ?? [];
+        var manifestJson = reader.IsDBNull(7) ? "{}" : reader.GetString(7);
         return new McpServerDto(
             reader.GetString(0),
             reader.GetString(1),
@@ -3330,6 +3378,7 @@ public sealed class CoreStore
             reader.GetString(3),
             reader.GetString(4),
             tools,
+            manifestJson,
             ParseTime(reader.GetString(6)));
     }
 

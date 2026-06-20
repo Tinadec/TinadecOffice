@@ -13,6 +13,7 @@ import {
 } from './codeTools.js';
 import { coreUrl, proxyJson, proxySse } from './coreClient.js';
 import { proxyDebugJson, debugWsUrl } from './debugProxy.js';
+import { mcpRoutes } from './mcp/mcpRoutes.js';
 
 const port = Number(process.env.TINADEC_GATEWAY_PORT ?? 48730);
 
@@ -99,6 +100,7 @@ const app = new Elysia({ adapter: node() })
       }
     }
   }))
+  .use(mcpRoutes)
   .get('/api/v1/health', async ({ set }) => {
     const result = await proxyJson('/api/v1/health');
     setStatus(set, result.status);

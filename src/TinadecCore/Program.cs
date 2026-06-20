@@ -38,6 +38,7 @@ builder.Services.AddTinadecModel(CoreStore.ResolveDatabasePath(builder.Configura
 builder.Services.AddSingleton<ICapabilityProvider, CodexCapabilityProvider>();
 builder.Services.AddSingleton<ICapabilityProvider, CodeCapabilityProvider>();
 builder.Services.AddSingleton<ICapabilityProvider, PromptContextCapabilityProvider>();
+builder.Services.AddSingleton<ICapabilityProvider, McpCapabilityProvider>();
 builder.Services.AddSingleton<IRuntimeKernelAdapter, CodexRuntimeKernelAdapter>();
 builder.Services.AddSingleton<ICapabilityPolicy, CapabilityPolicyService>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistryService>();
@@ -54,8 +55,18 @@ builder.Services.AddHttpClient<ICodeToolClient, CodeToolClient>(client =>
     var gatewayUrl = Environment.GetEnvironmentVariable("TINADEC_GATEWAY_URL") ?? "http://127.0.0.1:48730";
     client.BaseAddress = new Uri(gatewayUrl.TrimEnd('/') + "/");
 });
+builder.Services.AddHttpClient<McpGatewayClient>(client =>
+{
+    var gatewayUrl = Environment.GetEnvironmentVariable("TINADEC_GATEWAY_URL") ?? "http://127.0.0.1:48730";
+    client.BaseAddress = new Uri(gatewayUrl.TrimEnd('/') + "/");
+});
 builder.Services.AddSingleton<IToolInvocationAdapter, CodexToolInvocationAdapter>();
 builder.Services.AddSingleton<IToolInvocationAdapter, CoreToolInvocationAdapter>();
+builder.Services.AddHttpClient<McpToolInvocationAdapter>(client =>
+{
+    var gatewayUrl = Environment.GetEnvironmentVariable("TINADEC_GATEWAY_URL") ?? "http://127.0.0.1:48730";
+    client.BaseAddress = new Uri(gatewayUrl.TrimEnd('/') + "/");
+});
 builder.Services.AddSingleton<DoctorService>();
 builder.Services.AddSingleton<OrchestratorService>();
 builder.Services.AddSingleton<ToolExecutionService>();
@@ -604,12 +615,114 @@ app.MapGet("/api/v1/mcp/servers/{serverId}/tools", (string serverId, CoreStore c
         : Results.Ok(server.Tools);
 });
 
-app.MapPost("/api/v1/mcp/servers/{serverId}/reload", (string serverId, CoreStore coreStore) =>
+app.MapPost("/api/v1/mcp/servers/{serverId}/reload", async (string serverId, CoreStore coreStore, McpGatewayClient gateway) =>
 {
     var server = coreStore.ReloadMcpServer(serverId);
-    return server is null
-        ? Results.NotFound(new TinadecError("MCP_SERVER_NOT_FOUND", "MCP server was not found."))
-        : Results.Ok(server);
+    if (server is null)
+    {
+        return Results.NotFound(new TinadecError("MCP_SERVER_NOT_FOUND", "MCP server was not found."));
+    }
+
+    // 先优雅关闭旧进程，再重新连接（spec: reload = disconnect + connect）
+    try { await gateway.DisconnectAsync(serverId); } catch { /* best effort */ }
+    try
+    {
+        await gateway.ConnectAsync(serverId);
+    }
+    catch { /* connect 失败由 report 回调更新状态 */ }
+
+    return Results.Ok(coreStore.ListMcpServers().FirstOrDefault(s => s.Id == serverId));
+});
+
+app.MapPost("/api/v1/mcp/servers/{serverId}/connect", async (string serverId, CoreStore coreStore, McpGatewayClient gateway) =>
+{
+    var server = coreStore.ListMcpServers().FirstOrDefault(item => item.Id == serverId);
+    if (server is null)
+    {
+        return Results.NotFound(new TinadecError("MCP_SERVER_NOT_FOUND", "MCP server was not found."));
+    }
+
+    try
+    {
+        var result = await gateway.ConnectAsync(serverId);
+        return result is null
+            ? Results.StatusCode(502)
+            : Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 502, title: "MCP_CONNECT_FAILED");
+    }
+});
+
+app.MapPost("/api/v1/mcp/servers/{serverId}/disconnect", async (string serverId, McpGatewayClient gateway) =>
+{
+    try
+    {
+        var result = await gateway.DisconnectAsync(serverId);
+        return result is null
+            ? Results.StatusCode(502)
+            : Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 502, title: "MCP_DISCONNECT_FAILED");
+    }
+});
+
+app.MapGet("/api/v1/mcp/servers/{serverId}/status", async (string serverId, CoreStore coreStore, McpGatewayClient gateway) =>
+{
+    var server = coreStore.ListMcpServers().FirstOrDefault(item => item.Id == serverId);
+    if (server is null)
+    {
+        return Results.NotFound(new TinadecError("MCP_SERVER_NOT_FOUND", "MCP server was not found."));
+    }
+
+    // 查询 Gateway 运行时状态
+    try
+    {
+        var runtimeStatus = await gateway.GetStatusAsync(serverId);
+        return Results.Ok(new
+        {
+            server.Id,
+            server.Name,
+            server.Transport,
+            dbStatus = server.Status,
+            runtimeState = runtimeStatus?.State ?? "unknown",
+            runtimeTools = runtimeStatus?.Tools ?? Array.Empty<string>(),
+            server.UpdatedAt,
+        });
+    }
+    catch
+    {
+        return Results.Ok(new
+        {
+            server.Id,
+            server.Name,
+            server.Transport,
+            dbStatus = server.Status,
+            runtimeState = "unreachable",
+            runtimeTools = Array.Empty<string>(),
+            server.UpdatedAt,
+        });
+    }
+});
+
+app.MapPost("/api/v1/mcp/servers/{serverId}/report", (string serverId, McpReportRequest report, CoreStore coreStore) =>
+{
+    var server = coreStore.UpdateMcpServerStatus(serverId, report.Status, report.StatusMessage);
+    if (server is null)
+    {
+        return Results.NotFound(new TinadecError("MCP_SERVER_NOT_FOUND", "MCP server was not found."));
+    }
+
+    // 如果 report 含 tools 列表，更新 tools
+    if (report.Tools is not null)
+    {
+        coreStore.UpdateMcpServerTools(serverId, report.Tools);
+    }
+
+    return Results.Ok(coreStore.ListMcpServers().FirstOrDefault(s => s.Id == serverId));
 });
 
 app.MapGet("/api/v1/acp/adapters", (CoreStore coreStore) => Results.Ok(coreStore.ListAcpAdapters()));

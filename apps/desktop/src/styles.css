@@ -403,11 +403,11 @@ button {
   cursor: pointer;
 }
 
-.market-source-item.is-clawhub {
+.market-source-item.is-builtin {
   background: var(--bg-tertiary);
 }
 
-.market-source-item.is-clawhub .clawhub-icon {
+.market-source-item.is-builtin .builtin-icon {
   color: var(--accent-brand);
 }
 

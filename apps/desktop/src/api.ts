@@ -932,6 +932,7 @@ export const api = {
   deleteExtension: (extensionId: string) => request<void>(`/api/v1/extensions/${encodeURIComponent(extensionId)}`, { method: 'DELETE' }),
   listMcpServers: () => request<McpServerDto[]>('/api/v1/mcp/servers'),
   reloadMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/reload`, { method: 'POST' }),
+  connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),

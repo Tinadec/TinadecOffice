@@ -300,7 +300,18 @@ public sealed record McpServerDto(
     string Transport,
     string Status,
     IReadOnlyList<string> Tools,
+    string ManifestJson,
     DateTimeOffset UpdatedAt);
+
+public sealed record McpConnectResultDto(string Status, IReadOnlyList<string> Tools);
+
+public sealed record McpDisconnectResultDto(string Status);
+
+public sealed record McpRuntimeStatusDto(string State, IReadOnlyList<string> Tools);
+
+public sealed record McpToolCallResultDto(bool Ok, object? Result, string? Error, string? Message);
+
+public sealed record McpReportRequest(string Status, IReadOnlyList<string>? Tools, string? StatusMessage, int? ExitCode);
 
 public sealed record AcpAdapterDto(
     string Id,

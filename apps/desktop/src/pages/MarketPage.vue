@@ -30,14 +30,14 @@ const router = useRouter()
 
 const BUILT_IN_SOURCES = [
   {
-    name: 'ClawHub',
+    name: 'Tinadec Curated',
     kind: 'marketplace-url',
-    location: 'https://clawhub.ai/',
+    location: 'tinadec://marketplace/curated',
   },
   {
-    name: 'ClawHub CN',
+    name: 'Tinadec Community',
     kind: 'marketplace-url',
-    location: 'https://mirror-cn.clawhub.com/',
+    location: 'tinadec://marketplace/community',
   },
 ]
 
@@ -110,8 +110,8 @@ const selectedRuntime = computed(() => {
   ]
 })
 
-const clawhubSource = computed(() =>
-  sources.value.find((s) => s.location.includes('clawhub'))
+const builtinSource = computed(() =>
+  sources.value.find((s) => s.location.includes('tinadec://'))
 )
 
 function kindLabel(kind: string) {
@@ -189,8 +189,8 @@ async function loadAll() {
     mcpServers.value = servers
     acpAdapters.value = adapters
     if (!sourceFilter.value) {
-      const clawhub = sourceList.find((s) => s.location.includes('clawhub'))
-      sourceFilter.value = clawhub?.id ?? sourceList[0]?.id ?? ''
+      const builtin = sourceList.find((s) => s.location.includes('tinadec://'))
+      sourceFilter.value = builtin?.id ?? sourceList[0]?.id ?? ''
     }
     await loadCatalog()
   } finally {
@@ -241,12 +241,24 @@ async function approveAndInstallCatalog() {
   if (!selectedItem.value) return
   await run('install extension', async () => {
     const first = await api.installExtension({ catalog_id: selectedItem.value?.catalog_id })
+    let installedExtension = first.extension
     if (first.approval_required && first.approval) {
       await api.decideApproval(first.approval.id, 'approved')
-      await api.installExtension({ catalog_id: selectedItem.value?.catalog_id, approval_id: first.approval.id })
+      const second = await api.installExtension({ catalog_id: selectedItem.value?.catalog_id, approval_id: first.approval.id })
+      installedExtension = second.extension ?? installedExtension
     }
     await loadAll()
     await loadPreview()
+    if (installedExtension && selectedItem.value?.kind === 'mcp-server') {
+      const server = mcpServers.value.find((s) => s.extension_id === installedExtension!.id)
+      if (server) {
+        try {
+          await api.connectMcpServer(server.id)
+        } catch {
+          // gateway will report connection status asynchronously
+        }
+      }
+    }
   })
 }
 
@@ -359,10 +371,10 @@ onMounted(() => {
             v-for="source in sources"
             :key="source.id"
             class="market-source-item"
-            :class="{ active: sourceFilter === source.id, 'is-clawhub': source.location.includes('clawhub') }"
+            :class="{ active: sourceFilter === source.id, 'is-builtin': source.location.includes('tinadec://') }"
             @click="sourceFilter = source.id"
           >
-            <Zap v-if="source.location.includes('clawhub')" :size="14" class="clawhub-icon" />
+            <Zap v-if="source.location.includes('tinadec://')" :size="14" class="builtin-icon" />
             <Store v-else :size="14" />
             <span>{{ source.name }}</span>
             <UiButton variant="ghost" size="icon" :title="t('settings.refresh')" @click.stop="refreshSource(source.id)">
