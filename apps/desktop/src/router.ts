@@ -28,6 +28,11 @@ const router = createRouter({
       name: 'code-editor',
       component: () => import('./pages/CodePage.vue'),
     },
+    {
+      path: '/panel',
+      name: 'detached-panel',
+      component: () => import('./pages/DetachedPanelPage.vue'),
+    },
   ],
 })
 

@@ -112,6 +112,18 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 
+/** Wrapper that also broadcasts theme changes to detached panel windows */
+function changeTheme(newTheme: 'dark' | 'light' | 'system') {
+  setTheme(newTheme)
+  window.tinadec?.broadcastTheme?.(newTheme, accentColor.value)
+}
+
+/** Wrapper that also broadcasts accent color changes to detached panel windows */
+function changeAccentColor(key: string) {
+  setAccentColor(key)
+  window.tinadec?.broadcastTheme?.(theme.value, key)
+}
+
 function minimizeWindow() {
   window.tinadec?.minimizeWindow?.()
 }
@@ -2094,21 +2106,21 @@ loadPromptContextCenter()
           <div class="theme-options">
             <button
               :class="['theme-option', { active: theme === 'dark' }]"
-              @click="setTheme('dark')"
+              @click="changeTheme('dark')"
             >
               <Moon :size="18" />
               {{ t('settings.dark') }}
             </button>
             <button
               :class="['theme-option', { active: theme === 'light' }]"
-              @click="setTheme('light')"
+              @click="changeTheme('light')"
             >
               <Sun :size="18" />
               {{ t('settings.light') }}
             </button>
             <button
               :class="['theme-option', { active: theme === 'system' }]"
-              @click="setTheme('system')"
+              @click="changeTheme('system')"
             >
               <Monitor :size="18" />
               {{ t('settings.system') }}
@@ -2124,7 +2136,7 @@ loadPromptContextCenter()
               :class="['accent-color-swatch', { active: accentColor === color.key }]"
               :style="{ '--swatch-color': color.dark.accentPrimary }"
               :title="t(color.labelKey)"
-              @click="setAccentColor(color.key)"
+              @click="changeAccentColor(color.key)"
             >
               <span class="accent-color-dot"></span>
               <span class="accent-color-label">{{ t(color.labelKey) }}</span>

@@ -1658,6 +1658,67 @@ button {
   color: var(--text-primary);
 }
 
+/* ===== Tab detach button ===== */
+.browser-tab-detach {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: -2px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+
+.browser-tab:hover .browser-tab-detach {
+  opacity: 0.7;
+}
+
+.browser-tab-detach:hover {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color: var(--accent-primary);
+  opacity: 1;
+}
+
+/* ===== Detached tab indicator (clickable to focus floating window) ===== */
+.browser-tab-detached {
+  opacity: 0.65;
+  cursor: pointer;
+  font-style: italic;
+  pointer-events: auto;
+  border-left: 2px dashed var(--border-muted);
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.browser-tab-detached:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+.browser-tab-detached-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.browser-tab-detached:hover .browser-tab-detached-icon {
+  opacity: 1;
+  color: var(--accent-primary);
+}
+
+/* ===== Drag-to-detach visual feedback ===== */
+.browser-tab.tab-dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+  transform: scale(0.95);
+  transition: opacity 0.1s, transform 0.1s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
 .browser-tab-add {
   display: grid;
   place-items: center;
@@ -1698,27 +1759,57 @@ button {
 }
 
 /* ===== Responsive: Compact mode (panel width < 420px) ===== */
-/* Strategy: Progressive disclosure — hide labels first, keep icons. */
-.float-panel.mode-compact .browser-tab-label {
+/* NOTE: mode-compact controls padding, grid, and toolbar adjustments ONLY.
+   Tab label visibility is now controlled by the smart tab-labels-* classes
+   below, which dynamically calculate based on tab count + panel width. */
+
+/* ===== Smart tab label visibility (dynamic, not fixed breakpoint) ===== */
+/* tab-labels-hidden: Not enough space for any label — icon-only mode */
+.float-panel.tab-labels-hidden .browser-tab-label {
   display: none;
 }
 
-.float-panel.mode-compact .browser-tab {
+.float-panel.tab-labels-hidden .browser-tab {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
-.float-panel.mode-compact .browser-tab-home {
+.float-panel.tab-labels-hidden .browser-tab-home {
   max-width: 36px;
 }
 
-/* Hide close button in compact; show on hover only */
-.float-panel.mode-compact .browser-tab-close {
+/* Hide close/detach buttons in icon-only; show on hover */
+.float-panel.tab-labels-hidden .browser-tab-close,
+.float-panel.tab-labels-hidden .browser-tab-detach {
   display: none;
 }
 
-.float-panel.mode-compact .browser-tab:hover .browser-tab-close {
+.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close {
+  display: grid;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: var(--bg-tertiary);
+}
+
+/* tab-labels-active-only: Enough space for the active tab's label only */
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
+  display: none;
+}
+
+.float-panel.tab-labels-active-only .browser-tab:not(.active) {
+  max-width: 36px;
+  padding: 5px;
+  justify-content: center;
+}
+
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
+  display: none;
+}
+
+.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;

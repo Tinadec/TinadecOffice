@@ -11,6 +11,52 @@ declare module 'monaco-editor/esm/vs/basic-languages/*' {
   export default contribution
 }
 
+interface PanelWindowInfo {
+  windowId: number;
+  tabId: string;
+  type: string;
+  title: string;
+}
+
+interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface DetachResult {
+  windowId: number;
+  tabId: string;
+}
+
+interface ReattachData {
+  tabId: string;
+  type: string;
+  title: string;
+  state: Record<string, unknown>;
+}
+
+interface PanelClosedData {
+  windowId: number;
+  tabId: string;
+  type: string;
+  title: string;
+  state: Record<string, unknown>;
+}
+
+interface PanelDetachedData {
+  windowId: number;
+  tabId: string;
+  type: string;
+  title: string;
+}
+
+interface ThemeChangedData {
+  theme: string;
+  accentColor: string;
+}
+
 declare global {
   interface Window {
     tinadec: {
@@ -20,6 +66,30 @@ declare global {
       maximizeWindow: () => void;
       closeWindow: () => void;
       openDebugStudio: () => Promise<boolean>;
+      /** Detach a tab into a new floating BrowserWindow */
+      detachPanel: (tabId: string, type: string, title: string, state: Record<string, unknown>) => Promise<DetachResult | null>;
+      /** Reattach a panel window back to the main window */
+      reattachPanel: (tabId: string, type: string, title: string, state: Record<string, unknown>) => Promise<boolean>;
+      /** Close a specific panel window by windowId */
+      closePanelWindow: (windowId: number) => void;
+      /** Focus a specific panel window by windowId */
+      focusPanelWindow: (windowId: number) => void;
+      /** Get list of all open panel windows */
+      getPanelWindows: () => Promise<PanelWindowInfo[]>;
+      /** Get current cursor screen position */
+      getCursorScreen: () => Promise<{ x: number; y: number }>;
+      /** Get the main window bounds (for drag-out detection) */
+      getMainBounds: () => Promise<WindowBounds | null>;
+      /** Broadcast theme change to all panel windows */
+      broadcastTheme: (theme: string, accentColor: string) => void;
+      /** Listen for panel detached events (main window side) */
+      onPanelDetached: (callback: (data: PanelDetachedData) => void) => () => void;
+      /** Listen for panel reattach events (main window side) */
+      onPanelReattach: (callback: (data: ReattachData) => void) => () => void;
+      /** Listen for panel closed events (main window side) */
+      onPanelClosed: (callback: (data: PanelClosedData) => void) => () => void;
+      /** Listen for theme change broadcasts (panel window side) */
+      onPanelThemeChanged: (callback: (data: ThemeChangedData) => void) => () => void;
     };
   }
 }

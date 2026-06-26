@@ -6,7 +6,7 @@ Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/
 ## STRUCTURE
 ```
 apps/desktop/
-├── electron/          # Electron main, preload, Debug Studio window
+├── electron/          # Electron main, preload, Debug Studio window, panel window manager
 ├── scripts/dev.mjs    # Vite then Electron launcher
 └── src/
     ├── pages/         # hash-router route pages
@@ -33,10 +33,11 @@ apps/desktop/
 | Debug Studio | `src/debug/DebugStudio.vue`, `src/debug/**` | Composables/types/components are feature-local. |
 | UI primitives | `src/components/ui/index.ts`, `src/lib/utils.ts` | `Ui*` barrel exports; `cn()` uses clsx + tailwind-merge. |
 | Theme/i18n | `src/composables/useTheme.ts`, `src/i18n.ts`, `src/locales/*` | Persisted theme/accent/locale behavior. |
+| Detached panel windows | `electron/panelWindow.cjs`, `src/pages/DetachedPanelPage.vue`, `src/components/ContextPanel.vue`, `src/composables/usePanelTabs.ts` | Electron multi-window management: BrowserWindow creation, cursor-polling drag-to-detach (Chrome-style tab tearing), disk-based layout persistence, reattach/focus, and cross-window theme broadcast. Main window is tagged with `_isTinadecMain` so `getMainWindow()` distinguishes it from Debug Studio. Panel layout persisted to `~/.tinadec-panel-layout.json` on move/resize/quit and restored on launch. |
 
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.
-- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`.
+- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window).
 - No Pinia/store layer exists; use composables and local refs.
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
