@@ -62,14 +62,26 @@ const agentLabel = computed(() => agentActivity.value.activeAgentName ?? null)
 // ---- Background customization ----
 const {
   settings: backgroundSettings,
+  applyBackground,
 } = useBackground()
+
+// Apply background settings when they change
+watch(backgroundSettings, () => {
+  applyBackground()
+}, { deep: true, immediate: true })
 
 // ---- Panel styles ----
 const {
   panelStyles,
   getPanelStyle,
   getPanelDataAttributes,
+  applyStylesToDOM,
 } = usePanelStyles()
+
+// Apply panel styles when they change
+watch(panelStyles, () => {
+  applyStylesToDOM()
+}, { deep: true, immediate: true })
 
 // Compute background style for the shell
 const backgroundStyle = computed(() => {
@@ -79,6 +91,7 @@ const backgroundStyle = computed(() => {
   
   const style: Record<string, string> = {
     position: 'relative',
+    minHeight: '100vh',
   }
   
   return style

@@ -2194,10 +2194,8 @@ loadPromptContextCenter()
               {{ t('settings.resetPanelStyles') }}
             </UiButton>
           </div>
-        </template>
-
-        <!-- Background Settings Section -->
-        <template v-if="activeSection === 'appearance'">
+          
+          <!-- Background Settings Section -->
           <h2>{{ t('settings.background') }}</h2>
           
           <!-- Background Type Selection -->

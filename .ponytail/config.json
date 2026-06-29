@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "project": "TinadecOffice",
+  "mode": "full",
+  "safety": {
+    "preserveValidation": true,
+    "preserveErrorHandling": true,
+    "preserveSecurity": true,
+    "preserveAccessibility": true
+  },
+  "architecture": {
+    "desktopLayer": {
+      "framework": "vue3",
+      "uiLibrary": "tailwind",
+      "principles": [
+        "prefer-composition-api",
+        "avoid-options-api",
+        "reuse-existing-components"
+      ]
+    },
+    "gatewayLayer": {
+      "framework": "elysia",
+      "principles": [
+        "thin-proxy-mode",
+        "no-business-logic",
+        "proxy-only"
+      ]
+    },
+    "coreLayer": {
+      "framework": "dotnet10",
+      "principles": [
+        "minimal-api",
+        "interface-governance",
+        "no-hardcoded-tools"
+      ]
+    },
+    "nativeLayer": {
+      "framework": "rust",
+      "principles": [
+        "reuse-codex-primitives",
+        "stable-adapters",
+        "no-reimplementation"
+      ]
+    }
+  },
+  "excludes": [
+    "node_modules/",
+    "dist/",
+    "bin/",
+    "obj/",
+    "native/target/"
+  ],
+  "created": "2026-06-29",
+  "lastUpdated": "2026-06-29"
+}

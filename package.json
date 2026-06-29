@@ -15,7 +15,17 @@
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$toolchain = 'D:\\tools\\rust\\rustup\\toolchains\\stable-x86_64-pc-windows-gnullvm'; $cargo = if ($env:CARGO) { $env:CARGO } else { Join-Path $toolchain 'bin\\cargo.exe' }; $env:PATH = (Join-Path $toolchain 'bin') + ';' + (Join-Path $toolchain 'lib\\rustlib\\x86_64-pc-windows-gnullvm\\bin') + ';' + (Join-Path $toolchain 'lib\\rustlib\\x86_64-pc-windows-gnullvm\\bin\\gcc-ld') + ';' + (Join-Path 'D:\\tools\\rust\\rustup\\toolchains\\stable-x86_64-pc-windows-gnu' 'lib\\rustlib\\x86_64-pc-windows-gnu\\lib\\self-contained') + ';' + $env:PATH; & $cargo build --manifest-path native/Cargo.toml\"",
     "build:native:release": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$toolchain = 'D:\\tools\\rust\\rustup\\toolchains\\stable-x86_64-pc-windows-gnullvm'; $cargo = if ($env:CARGO) { $env:CARGO } else { Join-Path $toolchain 'bin\\cargo.exe' }; $env:PATH = (Join-Path $toolchain 'bin') + ';' + (Join-Path $toolchain 'lib\\rustlib\\x86_64-pc-windows-gnullvm\\bin') + ';' + (Join-Path $toolchain 'lib\\rustlib\\x86_64-pc-windows-gnullvm\\bin\\gcc-ld') + ';' + (Join-Path 'D:\\tools\\rust\\rustup\\toolchains\\stable-x86_64-pc-windows-gnu' 'lib\\rustlib\\x86_64-pc-windows-gnu\\lib\\self-contained') + ';' + $env:PATH; & $cargo build --manifest-path native/Cargo.toml --release\"",
     "test": "npm run test --workspaces --if-present && powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet test TinadecOffice.slnx --no-build\"",
-    "restore:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet restore TinadecOffice.slnx\""
+    "restore:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet restore TinadecOffice.slnx\"",
+    "ai:codegraph:init": "codegraph init",
+    "ai:codegraph:sync": "codegraph sync",
+    "ai:codegraph:status": "codegraph status",
+    "ai:codegraph:explore": "codegraph explore",
+    "ai:codegraph:impact": "codegraph impact",
+    "ai:ponytail:validate": "node .ponytail/validate.js",
+    "ai:tools:install": "npm i -g @colbymchenry/codegraph && codegraph install --target=claude,opencode",
+    "ai:tools:check": "npm run ai:codegraph:status && node .ponytail/validate.js",
+    "ai:tools:setup": "powershell -ExecutionPolicy Bypass -File scripts/install-ai-tools.ps1",
+    "ai:tools:test": "powershell -ExecutionPolicy Bypass -File scripts/test-ai-tools.ps1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

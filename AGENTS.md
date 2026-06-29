@@ -249,6 +249,69 @@ TinadecOffice/
 - Root .NET scripts clear `Version` and `Ice-Version`; do the same for direct PowerShell dotnet runs on this machine.
 - No repo ESLint, Prettier, or `.editorconfig` was found. Match local file style.
 
+## PONYTAIL CODING PRINCIPLES
+
+Before writing code, AI agents MUST follow this decision ladder:
+
+1. **YAGNI Check**: Does this need to exist? → No: skip it
+2. **Reuse Check**: Already in this codebase? → Reuse it, don't rewrite
+3. **Stdlib Check**: Stdlib does it? → Use it
+4. **Platform Check**: Native platform feature? → Use it
+5. **Dependency Check**: Installed dependency? → Use it
+6. **One-liner Check**: One line? → One line
+7. **Minimum Viable**: Only then: the minimum that works
+
+**Safety Rules**:
+- NEVER remove validation, error handling, security, or accessibility code
+- NEVER compromise security guards for brevity
+- ALWAYS maintain existing safety patterns
+
+**TinadecOffice Specific Applications**:
+- Core层: 优先使用现有的服务接口，避免重复实现
+- Gateway层: 保持薄代理模式，不添加业务逻辑
+- Desktop层: 复用现有组件，避免过度封装
+- Native层: 利用 Codex 现有能力，不重新实现底层工具
+
+**CodeGraph Integration**:
+- Use CodeGraph for understanding cross-layer call chains
+- Query CodeGraph before making architecture changes
+- Verify impact radius using CodeGraph impact analysis
+- Trust CodeGraph results, avoid re-verifying with grep
+
+**Layer-Specific Examples**:
+
+Desktop Layer (Electron + Vue 3):
+```vue
+<!-- Good: Use native HTML5 -->
+<input type="date" v-model="date">
+
+<!-- Bad: Install third-party library -->
+<!-- <DatePicker v-model="date" /> -->
+```
+
+Gateway Layer (Elysia TypeScript):
+```typescript
+// Good: Simple validation
+app.post('/api/v1/endpoint', {
+  body: t.Object({ name: t.String() })
+}, (context) => proxyToCore(context))
+
+// Bad: Complex middleware chain
+// app.post('/api/v1/endpoint', validate, transform, authorize, handler)
+```
+
+Core Layer (.NET 10 C#):
+```csharp
+// Good: Use built-in logging
+_logger.LogInformation("Operation completed")
+
+// Bad: Introduce third-party logging
+// Log.Information("Operation completed")
+```
+
+**Ponytail Validation**:
+Run `npm run ai:ponytail:validate` to verify Ponytail configuration.
+
 ## ANTI-PATTERNS (THIS PROJECT)
 - Do not make Desktop call Core directly; Desktop calls Gateway.
 - Do not store session state, approvals, model routes, or provider lifecycle state in Gateway/Desktop; Core owns it.

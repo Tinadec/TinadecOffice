@@ -181,6 +181,90 @@ The main mental model is:
 - Do not edit generated or artifact directories: `bin/`, `obj/`, `node_modules/`, `dist/`, `dist-electron/`, `.vite/`, `coverage/`, `output/`, `native/target/`, `tmp/`.
 - Preserve the Windows-first workflow. Direct .NET PowerShell commands should clear `Version` and `Ice-Version` first.
 
+## Ponytail Integration
+
+Claude MUST apply Ponytail principles when:
+- Creating new components or services
+- Refactoring existing code
+- Adding new features
+- Fixing bugs
+
+**Architecture-Aware Rules**:
+- Desktop层: 优先使用 Vue 3 组合式 API，避免 Options API
+- Gateway层: 保持 Elysia 路由简洁，不添加中间件逻辑
+- Core层: 使用 .NET 10 最小 API 模式，避免过度抽象
+- Native层: 复用 Codex 原语，不重新实现文件操作
+
+**Safety Checklist**:
+- [ ] 安全验证代码未被删除
+- [ ] 错误处理机制完整
+- [ ] 审批门机制正常工作
+- [ ] 敏感信息未暴露
+- [ ] 权限控制有效
+
+## CodeGraph Integration
+
+Claude SHOULD use CodeGraph for:
+- Understanding cross-layer call chains
+- Analyzing code impact before changes
+- Locating specific functions and their callers
+- Understanding state management flows
+
+**Query Examples**:
+```powershell
+# 查询特定函数的调用链
+codegraph explore "How does ToolRegistryService register tools?"
+
+# 查询跨层依赖
+codegraph explore "What calls CoreStore from Gateway?"
+
+# 查询状态管理
+codegraph explore "How does session state flow through the layers?"
+
+# 查询工具执行
+codegraph explore "How does approval gate mechanism work?"
+```
+
+**Best Practices**:
+1. 查询前先思考：明确要理解的问题，避免模糊查询
+2. 信任结果：CodeGraph 返回的代码已经是最新索引，无需重复验证
+3. 关注调用链：利用 CodeGraph 的调用路径分析功能
+4. 检查影响范围：修改代码前，使用 impact 分析功能
+
+**Installation**:
+```powershell
+# 安装 CodeGraph CLI
+npm i -g @colbymchenry/codegraph
+
+# 初始化项目索引
+cd d:\github\agent\TinadecCode
+codegraph init
+
+# 配置 Claude 集成
+codegraph install --target=claude
+```
+
+**Verification Commands**:
+```powershell
+# 验证 CodeGraph 状态
+npm run ai:codegraph:status
+
+# 验证 Ponytail 配置
+npm run ai:ponytail:validate
+
+# 检查所有 AI 工具状态
+npm run ai:tools:check
+```
+
+**Architecture Compliance Checklist**:
+Before making changes, verify:
+- [ ] Desktop layer does not call Core directly
+- [ ] Gateway layer remains a thin proxy
+- [ ] Core layer maintains state authority
+- [ ] Native layer uses Codex primitives
+- [ ] No business logic in Gateway/Desktop
+- [ ] All mutations go through approval gates
+
 ## Useful Commands
 
 ```powershell
