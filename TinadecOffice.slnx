@@ -8,6 +8,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/TinadecCore.Tests/TinadecCore.Tests.csproj" />
     <Project Path="tests/Tinadec.Contracts.Tests/Tinadec.Contracts.Tests.csproj" />
+    <Project Path="tests/TinadecTools.Tests/TinadecTools.Tests.csproj" />
   </Folder>
   <Project Path="TinadecTools/TinadecTools.csproj" />
 </Solution>
