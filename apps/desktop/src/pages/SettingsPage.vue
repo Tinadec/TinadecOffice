@@ -36,7 +36,7 @@ import {
   Workflow,
   X
 } from '@lucide/vue'
-import { computed, nextTick, reactive, ref, watch } from 'vue' 
+import { computed, nextTick, reactive, ref } from 'vue' 
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
@@ -116,25 +116,21 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 
-// Background management
+// Background management — backgroundSettings is a singleton shared with
+// App.vue (which renders the background layer globally).  The setters below
+// are used by the Settings → Appearance section.
 const {
-  settings: backgroundSettings,
-  applyBackground,
-  setBackgroundType,
-  setBackgroundSource,
-  setBackgroundOpacity,
-  setBackgroundBlur,
-  setBackgroundSize,
-  setBackgroundPosition,
-  setBackgroundRepeat,
-  selectFile: selectBackgroundFile,
-  resetBackground,
+settings: backgroundSettings,
+setBackgroundType,
+setBackgroundSource,
+setBackgroundOpacity,
+setBackgroundBlur,
+setBackgroundSize,
+setBackgroundPosition,
+setBackgroundRepeat,
+selectFile: selectBackgroundFile,
+resetBackground,
 } = useBackground()
-
-// Apply data-bg-type attribute when background settings change
-watch(backgroundSettings, () => {
-  applyBackground()
-}, { deep: true, immediate: true })
 
 // Computed source with getter/setter to ensure path normalization on manual input
 const backgroundSource = computed({
@@ -949,47 +945,7 @@ loadPromptContextCenter()
 
 <template>
 <div class="settings-page">
-<!-- Background Layer (same architecture as HomePage) -->
-<div v-if="backgroundSettings.type !== 'none'" class="background-layer">
-  <!-- Image Background -->
-  <div
-    v-if="backgroundSettings.type === 'image'"
-    class="background-image"
-    :style="{
-      backgroundImage: backgroundSettings.source ? `url('${backgroundSettings.source}')` : 'none',
-      backgroundSize: backgroundSettings.size,
-      backgroundPosition: backgroundSettings.position,
-      backgroundRepeat: backgroundSettings.repeat,
-      opacity: backgroundSettings.opacity / 100,
-      filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-    }"
-  />
-  
-  <!-- Video Background -->
-  <video
-    v-else-if="backgroundSettings.type === 'video' && backgroundSettings.source"
-    class="background-video"
-    :src="backgroundSettings.source"
-    autoplay
-    loop
-    muted
-    :style="{
-      opacity: backgroundSettings.opacity / 100,
-      filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-    }"
-  />
-  
-  <!-- HTML Background -->
-  <div
-    v-else-if="backgroundSettings.type === 'html' && backgroundSettings.source"
-    class="background-html"
-    v-html="backgroundSettings.source"
-    :style="{
-      opacity: backgroundSettings.opacity / 100,
-      filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-    }"
-  />
-</div>
+<!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
 <!-- Full-width draggable bar for window dragging -->
 <div class="top-drag-bar" />
@@ -1027,6 +983,8 @@ loadPromptContextCenter()
       </nav>
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
+        <Transition name="section-fade" mode="out-in">
+        <div :key="activeSection" class="settings-section-wrapper">
         <template v-if="activeSection === 'model'">
           <div class="model-center-heading">
             <div>
@@ -2452,6 +2410,8 @@ loadPromptContextCenter()
           </UiCard>
           <p class="about-decouple-hint">{{ t('settings.decoupleHint') }}</p>
         </template>
+        </div>
+        </Transition>
       </div>
     </div>
 

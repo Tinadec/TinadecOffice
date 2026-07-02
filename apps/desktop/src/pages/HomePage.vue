@@ -60,18 +60,11 @@ const {
 const agentLabel = computed(() => agentActivity.value.activeAgentName ?? null)
 
 // ---- Background customization ----
-// useBackground returns a singleton ref; the template renders the
-// background layer via reactive inline styles. applyBackground() sets
-// a data-bg-type attribute on <html> for optional CSS targeting.
+// useBackground returns a singleton ref shared with App.vue (which renders
+// the background layer globally) and the Settings appearance section.
 const {
-  settings: backgroundSettings,
-  applyBackground,
+settings: backgroundSettings,
 } = useBackground()
-
-// Apply data-bg-type attribute when background settings change
-watch(backgroundSettings, () => {
-  applyBackground()
-}, { deep: true, immediate: true })
 
 // ---- Panel styles (global material effect) ----
 // All panels share the same global material setting.
@@ -328,47 +321,7 @@ onUnmounted(() => {
 
 <template>
   <main class="shell" :style="backgroundStyle">
-    <!-- Background Layer -->
-    <div v-if="backgroundSettings.type !== 'none'" class="background-layer">
-      <!-- Image Background -->
-      <div
-        v-if="backgroundSettings.type === 'image'"
-        class="background-image"
-        :style="{
-          backgroundImage: backgroundSettings.source ? `url('${backgroundSettings.source}')` : 'none',
-          backgroundSize: backgroundSettings.size,
-          backgroundPosition: backgroundSettings.position,
-          backgroundRepeat: backgroundSettings.repeat,
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-      
-      <!-- Video Background -->
-      <video
-        v-else-if="backgroundSettings.type === 'video' && backgroundSettings.source"
-        class="background-video"
-        :src="backgroundSettings.source"
-        autoplay
-        loop
-        muted
-        :style="{
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-      
-      <!-- HTML Background -->
-      <div
-        v-else-if="backgroundSettings.type === 'html' && backgroundSettings.source"
-        class="background-html"
-        v-html="backgroundSettings.source"
-        :style="{
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-    </div>
+    <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
     <!-- Full-width draggable bar for window dragging -->
     <div class="top-drag-bar" />

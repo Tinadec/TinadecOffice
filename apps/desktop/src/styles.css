@@ -4521,8 +4521,36 @@ grid-template-columns: 220px 1fr;
 gap: 8px;
 flex: 1;
 min-height: 0;
+/* Uniform 8px padding so the sidebar starts near the top (matching
+   the main interface sidebar's top: 8px).  The content panel gets its
+   own margin-top to avoid the window-controls bar. */
 padding: 8px;
 overflow: hidden;
+}
+
+/* Staggered entrance: nav slides in from the left, content fades in.
+Triggered by the page-level transition on the parent .settings-page. */
+
+@keyframes settings-nav-enter {
+from {
+  opacity: 0;
+  transform: translateX(-16px);
+}
+to {
+  opacity: 1;
+  transform: translateX(0);
+}
+}
+
+@keyframes settings-content-enter {
+from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+to {
+  opacity: 1;
+  transform: translateX(0);
+}
 }
 
 .settings-nav {
@@ -4533,6 +4561,8 @@ border-radius: 12px;
 border: 1px solid var(--border-muted);
 box-shadow: var(--shadow-panel);
 overflow: auto;
+animation: settings-nav-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+animation-delay: 0.05s;
 }
 
 .settings-nav-header {
@@ -4575,12 +4605,17 @@ overflow: auto;
 }
 
 .settings-content {
+/* Push content below the 40px window-controls bar so it doesn't
+   overlap, while the sidebar (on the left) can start at the top. */
+margin-top: 40px;
 padding: 24px 32px;
 overflow: auto;
 background: var(--bg-secondary);
 border-radius: 12px;
 border: 1px solid var(--border-muted);
 box-shadow: var(--shadow-panel);
+animation: settings-content-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+animation-delay: 0.12s;
 }
 
 .settings-content h2 {
@@ -5784,8 +5819,76 @@ box-shadow: var(--shadow-panel);
 
 .chat-panel-enter-to,
 .chat-panel-leave-from {
-  opacity: 1;
-  transform: translateY(0);
+opacity: 1;
+transform: translateY(0);
+}
+
+/* ===== Page-level Route Transitions (Wayfinding Design) =====
+   Following wayfinding design principles:
+   - Navigating "deeper" (home → settings) slides content leftward
+   - Navigating "back" (settings → home) slides content rightward
+   - The entering page's content panel appears to slide in from the
+     sidebar direction, creating a natural spatial narrative.
+   - Timing: 280ms with ease-out for enter (decelerating, natural landing),
+             200ms with ease-in for leave (quick exit, no distraction).
+================================================================== */
+
+/* --- Slide Left (forward navigation: home → settings) --- */
+.page-slide-left-enter-active {
+transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+            transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.page-slide-left-leave-active {
+transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
+            transform 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+.page-slide-left-enter-from {
+opacity: 0;
+transform: translateX(30px);
+}
+.page-slide-left-leave-to {
+opacity: 0;
+transform: translateX(-30px);
+}
+
+/* --- Slide Right (back navigation: settings → home) --- */
+.page-slide-right-enter-active {
+transition: opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+            transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.page-slide-right-leave-active {
+transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
+            transform 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+.page-slide-right-enter-from {
+opacity: 0;
+transform: translateX(-30px);
+}
+.page-slide-right-leave-to {
+opacity: 0;
+transform: translateX(30px);
+}
+
+/* --- Settings section switch transition --- */
+.section-fade-enter-active {
+transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+.section-fade-leave-active {
+transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.section-fade-enter-from {
+opacity: 0;
+transform: translateX(12px);
+}
+.section-fade-leave-to {
+opacity: 0;
+transform: translateX(-8px);
+}
+
+/* Wrapper for section content inside settings-content.
+   Ensures the transition wrapper fills the scrollable area. */
+.settings-section-wrapper {
+min-height: 0;
 }
 
 /* Agent Activity Visualization Styles */
