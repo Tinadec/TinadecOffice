@@ -65,151 +65,144 @@ public static class FileWriter
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    [ToolFunction("replace_lines")]
-    public static async ValueTask<FileMutationResponse> ReplaceLinesAsync(
+    [ToolFunction("replace_lines", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> ReplaceLinesAsync(
         ReplaceLinesParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateAsync(args.FilePath, "replace_lines", async slot =>
+        return RunMutationAsync(args.FilePath, "replace_lines", async slot =>
         {
-            var startLine = ToZeroBasedLine(args.StartRow, nameof(args.StartRow));
-            var endLine = ToZeroBasedLine(args.EndRow, nameof(args.EndRow));
-            if (startLine > endLine)
-                throw new ArgumentException("start_row must be less than or equal to end_row.");
-
-            var expectedCount = endLine - startLine + 1;
-            if (args.Content.Count != expectedCount)
-                throw new ArgumentException($"content count {args.Content.Count} does not match target line count {expectedCount}.");
-
-            var currentLines = await slot.File.ReadLines([new KeyValuePair<int, int>(startLine, endLine)])
+            var (startLine, endLine, expectedCount) = GetReplaceRange(args);
+            await ValidateLineAnchorsAsync(slot.File, args.Content, startLine, endLine, expectedCount, cancellationToken)
                 .ConfigureAwait(false);
-            if (currentLines.Count != expectedCount)
-                throw new InvalidOperationException("target lines could not be read for hash validation.");
 
-            for (var i = 0; i < currentLines.Count; i++)
-            {
-                var expectedHash = args.Content[i].Hash;
-                var actualLine = new LineContent(currentLines[i].Content, currentLines[i].LineNumber + 1, currentLines[i].LineLength);
-                var actualHash = BuildLineHash(actualLine);
-                if (!string.Equals(expectedHash, actualHash, StringComparison.Ordinal))
-                    throw new InvalidOperationException($"REJECT line {actualLine.LineNumber}: hash mismatch, expected {expectedHash}, actual {actualHash}.");
-            }
-
-            await slot.File.ReplaceLines(startLine, endLine, args.Content.Select(line => line.Content).ToArray())
+            await slot.File.ReplaceLines(
+                    startLine,
+                    endLine,
+                    args.Content.Select(line => line.Content).ToArray())
                 .ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
     }
 
-    [ToolFunction("replace_bytes")]
-    public static async ValueTask<FileMutationResponse> ReplaceBytesAsync(
+    [ToolFunction("replace_bytes", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> ReplaceBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateWithFileHashAsync(args.FilePath, args.FileHash, "replace_bytes", async slot =>
-        {
-            await slot.File.ReplaceBytes(args.StartOffset, args.Length, Encoding.UTF8.GetBytes(args.Content))
-                .ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        return RunHashCheckedMutationAsync(
+            args.FilePath,
+            "replace_bytes",
+            args.FileHash,
+            slot => slot.File.ReplaceBytes(args.StartOffset, args.Length, Encoding.UTF8.GetBytes(args.Content)),
+            cancellationToken);
     }
 
-    [ToolFunction("insert_bytes")]
-    public static async ValueTask<FileMutationResponse> InsertBytesAsync(
+    [ToolFunction("insert_bytes", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> InsertBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateWithFileHashAsync(args.FilePath, args.FileHash, "insert_bytes", async slot =>
-        {
-            await slot.File.InsertBytes(args.StartOffset, Encoding.UTF8.GetBytes(args.Content))
-                .ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        return RunHashCheckedMutationAsync(
+            args.FilePath,
+            "insert_bytes",
+            args.FileHash,
+            slot => slot.File.InsertBytes(args.StartOffset, Encoding.UTF8.GetBytes(args.Content)),
+            cancellationToken);
     }
 
-    [ToolFunction("insert_byte")]
-    public static async ValueTask<FileMutationResponse> InsertByteAsync(
+    [ToolFunction("insert_byte", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> InsertByteAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
     {
-        return await InsertBytesAsync(args, cancellationToken).ConfigureAwait(false);
+        return InsertBytesAsync(args, cancellationToken);
     }
 
-    [ToolFunction("delete_bytes")]
-    public static async ValueTask<FileMutationResponse> DeleteBytesAsync(
+    [ToolFunction("delete_bytes", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> DeleteBytesAsync(
         FileHashMutationParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateWithFileHashAsync(args.FilePath, args.FileHash, "delete_bytes", async slot =>
-        {
-            await slot.File.DeleteBytes(args.StartOffset, args.Length).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        return RunHashCheckedMutationAsync(
+            args.FilePath,
+            "delete_bytes",
+            args.FileHash,
+            slot => slot.File.DeleteBytes(args.StartOffset, args.Length),
+            cancellationToken);
     }
 
-    [ToolFunction("insert_line")]
-    public static async ValueTask<FileMutationResponse> InsertLineAsync(
+    [ToolFunction("insert_line", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> InsertLineAsync(
         InsertLineParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateWithFileHashAsync(args.FilePath, args.FileHash, "insert_line", async slot =>
-        {
-            var lineNumber = ToZeroBasedLine(args.LineNumber, nameof(args.LineNumber));
-            if (string.Equals(args.Position, "before", StringComparison.OrdinalIgnoreCase))
+        return RunHashCheckedMutationAsync(
+            args.FilePath,
+            "insert_line",
+            args.FileHash,
+            slot =>
             {
-                await slot.File.InsertLinesBeforeLine(lineNumber, args.Content).ConfigureAwait(false);
-                return;
-            }
+                var lineNumber = ToZeroBasedLine(args.LineNumber, nameof(args.LineNumber));
+                if (string.Equals(args.Position, "before", StringComparison.OrdinalIgnoreCase))
+                    return slot.File.InsertLinesBeforeLine(lineNumber, args.Content);
 
-            if (string.Equals(args.Position, "after", StringComparison.OrdinalIgnoreCase))
-            {
-                await slot.File.InsertLinesAfterLine(lineNumber, args.Content).ConfigureAwait(false);
-                return;
-            }
+                if (string.Equals(args.Position, "after", StringComparison.OrdinalIgnoreCase))
+                    return slot.File.InsertLinesAfterLine(lineNumber, args.Content);
 
-            throw new ArgumentException("position must be 'before' or 'after'.");
-        }, cancellationToken).ConfigureAwait(false);
+                throw new ArgumentException("position must be 'before' or 'after'.");
+            },
+            cancellationToken);
     }
 
-    [ToolFunction("delete_line")]
-    public static async ValueTask<FileMutationResponse> DeleteLineAsync(
+    [ToolFunction("delete_line", RequiresApproval = true)]
+    public static ValueTask<FileMutationResponse> DeleteLineAsync(
         DeleteLineParams args,
         CancellationToken cancellationToken)
     {
-        return await MutateWithFileHashAsync(args.FilePath, args.FileHash, "delete_line", async slot =>
-        {
-            var startLine = ToZeroBasedLine(args.StartRow, nameof(args.StartRow));
-            var endLine = ToZeroBasedLine(args.EndRow, nameof(args.EndRow));
-            await slot.File.DeleteLines(startLine, endLine).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        return RunHashCheckedMutationAsync(
+            args.FilePath,
+            "delete_line",
+            args.FileHash,
+            slot => slot.File.DeleteLines(
+                ToZeroBasedLine(args.StartRow, nameof(args.StartRow)),
+                ToZeroBasedLine(args.EndRow, nameof(args.EndRow))),
+            cancellationToken);
     }
 
-    private static async ValueTask<FileMutationResponse> MutateWithFileHashAsync(
+    private static ValueTask<FileMutationResponse> RunHashCheckedMutationAsync(
         string filePath,
-        string expectedFileHash,
         string operation,
-        Func<FileSlot, Task> action,
+        string expectedFileHash,
+        Func<FileSlot, Task> mutation,
         CancellationToken cancellationToken)
     {
-        return await MutateAsync(filePath, operation, async slot =>
+        return RunMutationAsync(filePath, operation, async slot =>
         {
             var actualFileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
             if (!string.Equals(expectedFileHash, actualFileHash, StringComparison.Ordinal))
-                throw new InvalidOperationException($"REJECT {operation}: file_hash mismatch, expected {expectedFileHash}, actual {actualFileHash}.");
+            {
+                throw new InvalidOperationException(
+                    $"REJECT {operation}: file_hash mismatch, expected {expectedFileHash}, actual {actualFileHash}.");
+            }
 
-            await action(slot).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+            await mutation(slot).ConfigureAwait(false);
+        }, cancellationToken);
     }
 
-    private static async ValueTask<FileMutationResponse> MutateAsync(
+    private static async ValueTask<FileMutationResponse> RunMutationAsync(
         string filePath,
         string operation,
-        Func<FileSlot, Task> action,
+        Func<FileSlot, Task> mutation,
         CancellationToken cancellationToken)
     {
         try
         {
             var path = FileToolRuntime.ResolvePath(filePath);
             var slot = FileToolRuntime.GetFileHandle(path);
+
             using (await slot.RwLock.WriteLockAsync(cancellationToken).ConfigureAwait(false))
             {
-                await action(slot).ConfigureAwait(false);
+                await mutation(slot).ConfigureAwait(false);
                 var newFileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
                 Logger.Debug("{operation}写入{path}成功，新file_hash为{fileHash}", operation, path, newFileHash);
                 return new FileMutationResponse { Success = true, FileHash = newFileHash };
@@ -227,6 +220,49 @@ public static class FileWriter
         }
     }
 
+    private static async Task ValidateLineAnchorsAsync(
+        FileAccessor file,
+        IReadOnlyList<HashedLineContent> expectedLines,
+        int startLine,
+        int endLine,
+        int expectedCount,
+        CancellationToken cancellationToken)
+    {
+        var currentLines = await file.ReadLines([new KeyValuePair<int, int>(startLine, endLine)])
+            .ConfigureAwait(false);
+
+        if (currentLines.Count != expectedCount)
+            throw new InvalidOperationException("target lines could not be read for hash validation.");
+
+        for (var index = 0; index < currentLines.Count; index++)
+        {
+            var currentLine = currentLines[index];
+            var lineNumber = currentLine.LineNumber + 1;
+            var actualHash = BuildLineHash(currentLine.Content, lineNumber);
+            var expectedHash = expectedLines[index].Hash;
+
+            if (!string.Equals(expectedHash, actualHash, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"REJECT line {lineNumber}: hash mismatch, expected {expectedHash}, actual {actualHash}.");
+            }
+        }
+    }
+
+    private static (int StartLine, int EndLine, int ExpectedCount) GetReplaceRange(ReplaceLinesParams args)
+    {
+        var startLine = ToZeroBasedLine(args.StartRow, nameof(args.StartRow));
+        var endLine = ToZeroBasedLine(args.EndRow, nameof(args.EndRow));
+        if (startLine > endLine)
+            throw new ArgumentException("start_row must be less than or equal to end_row.");
+
+        var expectedCount = endLine - startLine + 1;
+        if (args.Content.Count != expectedCount)
+            throw new ArgumentException($"content count {args.Content.Count} does not match target line count {expectedCount}.");
+
+        return (startLine, endLine, expectedCount);
+    }
+
     private static int ToZeroBasedLine(int lineNumber, string parameterName)
     {
         if (lineNumber < 1)
@@ -235,8 +271,8 @@ public static class FileWriter
         return lineNumber - 1;
     }
 
-    private static string BuildLineHash(LineContent line)
+    private static string BuildLineHash(string content, int lineNumber)
     {
-        return line.LineNumber + "|" + FileHashing.ComputeLineHash(line.Content, line.LineNumber);
+        return lineNumber + "|" + FileHashing.ComputeLineHash(content, lineNumber);
     }
 }
