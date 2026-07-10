@@ -2500,17 +2500,6 @@ loadPromptContextCenter()
                 <div class="about-layer-tech">.NET 10 + SQLite</div>
                 <div class="about-layer-port">:48731</div>
               </div>
-              <div class="about-layer-arrow">
-                <ChevronRight :size="14" />
-              </div>
-              <div class="about-layer about-layer--native">
-                <div class="about-layer-header">
-                  <HardDrive :size="14" />
-                  <span>Native</span>
-                </div>
-                <div class="about-layer-tech">Rust</div>
-                <div class="about-layer-port">tools</div>
-              </div>
             </div>
           </div>
 

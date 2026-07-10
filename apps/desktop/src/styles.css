@@ -4982,11 +4982,6 @@ box-shadow: 0 0 0 1px var(--swatch-color), var(--shadow-panel);
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary));
 }
 
-.about-layer--native {
-  border-style: dashed;
-  opacity: 0.8;
-}
-
 .about-layer-header {
   display: flex;
   align-items: center;
