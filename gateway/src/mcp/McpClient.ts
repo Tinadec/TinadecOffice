@@ -6,7 +6,6 @@
  * - vscode McpStdioStateHandler 的优雅关闭时序（stdin end → 10s → SIGTERM → 10s → SIGKILL）
  * - codex CancellationToken 的取消传播（Node 用 AbortController 模拟）
  * - codex active_time_timeout 在 tools/call 期间暂停空闲超时
- * - codeTools.ts tryExecuteNativeTool 的 spawn 范式（windowsHide + stdio pipe）
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
