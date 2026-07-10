@@ -33,22 +33,13 @@
         "interface-governance",
         "no-hardcoded-tools"
       ]
-    },
-    "nativeLayer": {
-      "framework": "rust",
-      "principles": [
-        "reuse-codex-primitives",
-        "stable-adapters",
-        "no-reimplementation"
-      ]
     }
   },
   "excludes": [
     "node_modules/",
     "dist/",
     "bin/",
-    "obj/",
-    "native/target/"
+    "obj/"
   ],
   "created": "2026-06-29",
   "lastUpdated": "2026-06-29"

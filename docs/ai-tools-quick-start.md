@@ -148,7 +148,7 @@ codegraph explore "How does the agent session creation flow from Desktop through
 
 **结果**：
 1. Desktop 层：`apps/desktop/src/api.ts` → `createSession()`
-2. Gateway 层：`apps/gateway/src/index.ts` → 路由处理
+2. Gateway 层：`gateway/src/index.ts` → 路由处理
 3. Core 层：`src/TinadecCore/Services/OrchestratorService.cs` → 会话创建
 
 #### 场景 2：分析工具注册机制
@@ -221,7 +221,7 @@ codegraph callees "函数名"
 
 ### 引入新工具前检查
 
-- [ ] 工具是否符合四层架构原则？
+- [ ] 工具是否符合三层架构原则？
 - [ ] 工具应归属哪个架构层级？
 - [ ] 是否会影响现有安全机制？
 - [ ] 是否会绕过审批门机制？
@@ -299,7 +299,7 @@ codegraph sync
 2. 添加示例说明何时不应简化
 3. 定期审查 AI 生成的代码
 
-**问题**：AI 不遵循四层架构边界
+**问题**：AI 不遵循三层架构边界
 **解决**：
 1. 在 CLAUDE.md 中明确架构约束
 2. 添加架构违规的示例

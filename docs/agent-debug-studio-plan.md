@@ -45,7 +45,7 @@ TinadecOffice 是一个多层架构的 AI 编码助手平台，当前**没有任
 
 - `CoreStore.cs` 一个文件 2,909 行，20+ 数据表，100+ CRUD 操作——SQLite 出问题只能靠断点
 - `OrchestratorService` 协调 Agent 工作流、工具执行、审批流程——最复杂的业务逻辑无 span 追踪
-- 用户消息 → Gateway → Core → Codex Rust → Model API → 返回，横跨 4 个进程/语言，无 trace_id 贯穿
+- 用户消息 → Gateway → Core → Model API → 返回，横跨多个进程，无 trace_id 贯穿
 - Agent 编排是最容易出问题的地方，但没有指标来回答"是模型响应慢，还是工具执行慢，还是审批等待慢？"
 
 ### 1.2 为什么传统调试不够
@@ -162,14 +162,6 @@ TinadecOffice 是一个多层架构的 AI 编码助手平台，当前**没有任
 ┌──────────────────────────────────────────────────────────────┐
 │              Gateway (Elysia BFF)                             │
 │              NEW: /debug/* 代理路由                           │
-└──────────────────────────────────────────────────────────────┘
-         │
-         │  HTTP / gRPC
-         ▼
-┌──────────────────────────────────────────────────────────────┐
-│           Codex Rust Native Glue                              │
-│           rollout-trace / otel / debug-client                 │
-│           (已存在，需对齐 trace schema)                        │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -405,8 +397,8 @@ WS /api/v1/debug/ws
 
 | 文件路径 | 变更内容 |
 |---------|---------|
-| `apps/gateway/src/index.ts` | 添加 `/debug/*` 代理路由，转发到 Core `http://127.0.0.1:48731` |
-| `apps/gateway/src/debugProxy.ts` | 新增：Debug API 代理逻辑（REST + WebSocket 升级） |
+| `gateway/src/index.ts` | 添加 `/debug/*` 代理路由，转发到 Core `http://127.0.0.1:48731` |
+| `gateway/src/debugProxy.ts` | 新增：Debug API 代理逻辑（REST + WebSocket 升级） |
 
 ---
 
@@ -931,7 +923,7 @@ DebugStudioPage.vue
 | 2.3 | 实现 ProcessDiagnosticsService.cs（进程资源查询） | 新文件 | P1 | 无 |
 | 2.4 | 实现 DebugWebSocketHandler.cs（实时 span 推送） | 新文件 | P0 | Phase 1 |
 | 2.5 | 在 Program.cs 注册 Debug API 路由和 WebSocket | `Program.cs` | P0 | 2.1, 2.4 |
-| 2.6 | Gateway 添加 /debug/* 代理路由 | `apps/gateway/src/index.ts`, 新文件 `debugProxy.ts` | P0 | 2.5 |
+| 2.6 | Gateway 添加 /debug/* 代理路由 | `gateway/src/index.ts`, 新文件 `debugProxy.ts` | P0 | 2.5 |
 | 2.7 | 验证 Debug API 可通过 Gateway 访问 | — | P0 | 2.6 |
 
 **验收**: `curl http://127.0.0.1:48730/debug/traces` 返回追踪数据。

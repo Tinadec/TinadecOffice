@@ -6,16 +6,14 @@
 
 ## 项目技术栈分析
 
-### TinadecOffice 四层架构
+### TinadecOffice 三层架构
 - **Desktop层**: Electron + Vue 3 + Vite + Tailwind CSS (端口 5173)
 - **Gateway层**: Elysia TypeScript + Node.js (端口 48730)
 - **Core层**: .NET 10 C# + ASP.NET Core (端口 48731)
-- **Native层**: Rust workspace
 
 ### 支持的编程语言
 - TypeScript/JavaScript (Desktop, Gateway)
 - C# (Core)
-- Rust (Native)
 - Vue 3 (Desktop UI)
 
 ### 现有 AI 工具支持
@@ -145,7 +143,7 @@ app.post('/api/v1/endpoint', {
 // Joi, Yup, Zod 等
 ```
 
-### 1.4 对四层架构的影响
+### 1.4 对三层架构的影响
 
 **正面影响**：
 - **Desktop层**: 减少不必要的组件依赖，保持 UI 层轻量
@@ -166,7 +164,7 @@ app.post('/api/v1/endpoint', {
 - [ ] 是否删除了安全验证？（不应该）
 - [ ] 是否删除了错误处理？（不应该）
 - [ ] 是否使用了项目现有的服务/组件？
-- [ ] 是否遵循了四层架构边界？
+- [ ] 是否遵循了三层架构边界？
 
 ---
 
@@ -241,7 +239,7 @@ How does the agent session creation flow from Desktop through Gateway to Core?
 
 **返回结果**：
 - Desktop 层：`apps/desktop/src/api.ts` 中的 `createSession()` 函数
-- Gateway 层：`apps/gateway/src/index.ts` 中的路由处理
+- Gateway 层：`gateway/src/index.ts` 中的路由处理
 - Core 层：`src/TinadecCore/Services/OrchestratorService.cs` 中的会话创建逻辑
 
 #### 场景 2：分析工具注册机制
@@ -280,7 +278,6 @@ How does CoreStore manage session state and what are the key state transitions?
 |------|----------|------------|
 | TypeScript | ✅ 完全支持 | Desktop, Gateway |
 | C# | ✅ 完全支持 | Core |
-| Rust | ✅ 完全支持 | Native |
 | Vue | ✅ 完全支持 | Desktop UI |
 
 ### 2.5 自动同步配置
@@ -299,19 +296,17 @@ CodeGraph 默认启用自动同步，配置文件更改时自动更新图谱。
     "node_modules/",
     "dist/",
     "bin/",
-    "obj/",
-    "native/target/"
+    "obj/"
   ]
 }
 ```
 
-### 2.6 对四层架构的影响
+### 2.6 对三层架构的影响
 
 **架构理解增强**：
 - **Desktop层**: 理解 Vue 组件与 API 客户端的交互
 - **Gateway层**: 追踪请求代理到 Core 的完整流程
 - **Core层**: 分析服务间的依赖关系和状态管理
-- **Native层**: 理解 Codex 原语的调用链
 
 **开发效率提升**：
 - 减少手动文件搜索时间
@@ -360,7 +355,7 @@ CodeGraph 默认启用自动同步，配置文件更改时自动更新图谱。
 1. [ ] 安装 CodeGraph CLI
 2. [ ] 初始化项目索引
 3. [ ] 配置 AI 工具集成
-4. [ ] 验证语言支持（TypeScript, C#, Rust, Vue）
+4. [ ] 验证语言支持（TypeScript, C#, Vue）
 5. [ ] 创建常用查询示例
 6. [ ] 团队培训和使用指导
 
@@ -383,7 +378,7 @@ CodeGraph 默认启用自动同步，配置文件更改时自动更新图谱。
 
 ## 第四部分：架构合规性检查
 
-### 4.1 四层架构边界检查
+### 4.1 三层架构边界检查
 
 引入新工具时，必须确保：
 
@@ -409,7 +404,7 @@ CodeGraph 默认启用自动同步，配置文件更改时自动更新图谱。
 ### 4.2 工具集成规范
 
 **新工具引入流程**：
-1. 评估工具是否符合四层架构原则
+1. 评估工具是否符合三层架构原则
 2. 确定工具应归属的架构层级
 3. 设计符合分层规范的集成方案
 4. 实施并验证架构合规性
@@ -443,7 +438,7 @@ CodeGraph 默认启用自动同步，配置文件更改时自动更新图谱。
 2. 添加示例说明何时不应简化
 3. 定期审查 AI 生成的代码
 
-**问题**：AI 不遵循四层架构边界
+**问题**：AI 不遵循三层架构边界
 **解决**：
 1. 在 CLAUDE.md 中明确架构约束
 2. 添加架构违规的示例

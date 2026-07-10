@@ -22,7 +22,6 @@
 | Desktop层 | Vue 3 + Tailwind | prefer-composition-api, avoid-options-api, reuse-existing-components | ✅ 符合 |
 | Gateway层 | Elysia TypeScript | thin-proxy-mode, no-business-logic, proxy-only | ✅ 符合 |
 | Core层 | .NET 10 C# | minimal-api, interface-governance, no-hardcoded-tools | ✅ 符合 |
-| Native层 | Rust | reuse-codex-primitives, stable-adapters, no-reimplementation | ✅ 符合 |
 
 ### 1.2 安全性验证
 
@@ -68,7 +67,6 @@
 | TypeScript | .ts, .tsx | Desktop, Gateway | ✅ 支持 |
 | JavaScript | .js, .jsx | Desktop, Gateway | ✅ 支持 |
 | C# | .cs | Core | ✅ 支持 |
-| Rust | .rs | Native | ✅ 支持 |
 | Vue | .vue | Desktop | ✅ 支持 |
 
 ### 2.2 索引配置验证
@@ -78,7 +76,6 @@
 - [x] `dist/` - 排除构建产物
 - [x] `bin/` - 排除编译输出
 - [x] `obj/` - 排除 .NET 中间文件
-- [x] `native/target/` - 排除 Rust 构建产物
 - [x] `.git/` - 排除版本控制
 - [x] `.ponytail/` - 排除 Ponytail 配置
 
@@ -87,9 +84,8 @@
 | 架构层 | 路径 | 技术栈 | 职责 |
 |--------|------|--------|------|
 | Desktop层 | `apps/desktop/` | Electron + Vue 3 | UI渲染、用户交互、面板管理 |
-| Gateway层 | `apps/gateway/` | Elysia TypeScript | API代理、请求路由、CORS处理 |
+| Gateway层 | `gateway/` | Elysia TypeScript | API代理、请求路由、CORS处理 |
 | Core层 | `src/TinadecCore/` | .NET 10 C# | 状态管理、智能体编排、工具治理 |
-| Native层 | `native/` | Rust | 文件操作、补丁应用、沙箱执行 |
 
 ### 2.3 MCP 集成验证
 
@@ -114,7 +110,7 @@
 
 ---
 
-## 3. 四层架构边界验证
+## 3. 三层架构边界验证
 
 ### 3.1 边界遵守检查
 
@@ -136,17 +132,11 @@
 - [x] 不硬编码工具逻辑
 - [x] 管理所有审批流程
 
-**Native层**:
-- [x] 作为 Tool layer 底层能力提供者
-- [x] 通过稳定适配器与 Core 交互
-- [x] 不直接暴露给 Desktop/Gateway
-- [x] 复用 Codex 现有能力
-
 ### 3.2 API 代理模式验证
 
 **现有代理链路**:
 ```
-Desktop → Gateway → Core → Native
+Desktop → Gateway → Core
 ```
 
 **工具集成影响**:
@@ -157,7 +147,6 @@ Desktop → Gateway → Core → Native
 - ✅ Core 保持唯一状态权威
 - ✅ Gateway 保持无状态
 - ✅ Desktop 保持无状态
-- ✅ Native 保持无状态
 
 ---
 
@@ -303,7 +292,7 @@ npm run ai:codegraph:status
 
 ✅ **所有验证项通过**
 
-- Ponytail 集成符合四层架构原则
+- Ponytail 集成符合三层架构原则
 - CodeGraph 集成符合分层设计
 - 安全性得到保障
 - 性能影响可控

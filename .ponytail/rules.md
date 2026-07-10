@@ -50,12 +50,6 @@ Before writing code, follow this decision ladder:
 - Leverage existing services from `src/TinadecCore/Services/`
 - Avoid over-abstraction
 
-### Native Layer (Rust)
-- Reuse Codex primitives from `native/glue/`
-- Do not reimplement file operations
-- Use stable adapters for Core communication
-- Leverage existing native capabilities
-
 ## Common Patterns
 
 ### Date/Time Handling
@@ -154,4 +148,4 @@ When using Ponytail principles, leverage CodeGraph for:
 
 - [Ponytail Official Repository](https://github.com/DietrichGebert/ponytail)
 - [TinadecOffice Architecture](../docs/architecture.md)
-- [Four-Layer Architecture](../AGENTS.md)
+- [Architecture](../AGENTS.md)
