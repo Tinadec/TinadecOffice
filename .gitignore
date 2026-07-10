@@ -18,6 +18,7 @@ native/codex-src/
 /native/codex-src
 .omo/
 .idea/
+/.tinadec/sandbox.json
 .opencode/
 *.log
 config.json

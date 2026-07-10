@@ -3,9 +3,19 @@
 using System.Text.Json;
 using NLog;
 using TinadecTools.Abstractions;
+using TinadecTools.Runtime.Sandbox;
+using TinadecTools.Runtime.Sandbox.Windows;
 using TinadecTools.Tools.Demo;
 using TinadecTools.Tools.FileRW;
 using TinadecTools.Tools.Mcp;
+
+// ── internal sandbox modes ──────────────────────────────────────────────────
+
+if (OperatingSystem.IsWindows() && WindowsSandboxSetup.IsSetupMode(args))
+    return WindowsSandboxSetup.RunSetup();
+
+if (OperatingSystem.IsWindows() && WindowsSandboxRunner.IsRunnerMode(args))
+    return WindowsSandboxRunner.RunRunner();
 
 var logger = LogManager.GetCurrentClassLogger();
 FileToolRuntime.InitializeWorkspace();
@@ -53,3 +63,5 @@ finally
 {
     await McpRuntime.DisposeAsync();
 }
+
+return 0;

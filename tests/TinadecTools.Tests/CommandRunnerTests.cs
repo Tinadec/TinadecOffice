@@ -1,87 +1,110 @@
+using TinadecTools.Runtime.Sandbox;
 using TinadecTools.Tools.Command;
 
 namespace TinadecTools.Tests;
 
+[Collection("CommandSandbox")]
 public sealed class CommandRunnerTests
 {
-    // ── 基础执行 ──────────────────────────────────────────────────────────────
-
     [Fact]
-    public async Task BasicExecution_ReturnsStdout()
+    public async Task HandleAsync_ForwardsApprovedCommandToSandbox()
     {
-        var resp = await CommandRunner.HandleAsync(
-            new CommandRunParams
+        var backend = new FakeSandboxBackend
+        {
+            Result = new SandboxRunnerResponse
             {
-                Executable = "dotnet",
-                Arguments = ["--version"]
-            },
-            CancellationToken.None);
+                Success = true,
+                ExitCode = 0,
+                Stdout = "sandbox output",
+                DurationMs = 12
+            }
+        };
+        using var _ = CommandSandboxRuntime.OverrideBackendForTests(backend);
 
-        Assert.True(resp.Success);
-        Assert.Equal(0, resp.ExitCode);
-        Assert.False(string.IsNullOrWhiteSpace(resp.Stdout));
-        Assert.False(resp.TimedOut);
-        Assert.True(resp.DurationMs >= 0);
+        var response = await CommandRunner.HandleAsync(new CommandRunParams
+        {
+            Executable = "dotnet",
+            Arguments = ["--version"],
+            Stdin = "input",
+            TimeoutMs = 1_000
+        }, CancellationToken.None);
+
+        Assert.True(backend.SetupRequested);
+        Assert.Equal("dotnet", backend.Request?.Executable);
+        Assert.Equal(["--version"], backend.Request?.Arguments);
+        Assert.Equal("input", backend.Request?.Stdin);
+        Assert.True(response.Success);
+        Assert.Equal("sandbox output", response.Stdout);
     }
 
-    // ── Stdin ─────────────────────────────────────────────────────────────────
-
     [Fact]
-    public async Task Stdin_PassedToProcess()
+    public async Task HandleAsync_InvalidTimeout_ReturnsSandboxErrorWithoutExecution()
     {
-        var executable = OperatingSystem.IsWindows() ? "findstr" : "grep";
-        var args = OperatingSystem.IsWindows() ? new[] { "hello" } : new[] { "hello" };
+        var backend = new FakeSandboxBackend();
+        using var _ = CommandSandboxRuntime.OverrideBackendForTests(backend);
 
-        var resp = await CommandRunner.HandleAsync(
-            new CommandRunParams
-            {
-                Executable = executable,
-                Arguments = [..args],
-                Stdin = "hello world\ngoodbye world\n"
-            },
-            CancellationToken.None);
+        var response = await CommandRunner.HandleAsync(new CommandRunParams
+        {
+            Executable = "dotnet",
+            TimeoutMs = 1_800_001
+        }, CancellationToken.None);
 
-        Assert.True(resp.Success);
-        Assert.Contains("hello", resp.Stdout, StringComparison.OrdinalIgnoreCase);
+        Assert.False(response.Success);
+        Assert.Contains("timeout_ms", response.SandboxError, StringComparison.OrdinalIgnoreCase);
+        Assert.False(backend.SetupRequested);
     }
 
-    // ── Timeout ───────────────────────────────────────────────────────────────
-
     [Fact]
-    public async Task Timeout_KillsProcessAndReturnsTimedOut()
+    public async Task HandleAsync_ReportsSandboxOutputTruncation()
     {
-        var sleepCmd = OperatingSystem.IsWindows()
-            ? ("powershell", new[] { "-Command", "Start-Sleep -Seconds 10" })
-            : ("sleep", new[] { "10" });
-
-        var resp = await CommandRunner.HandleAsync(
-            new CommandRunParams
+        var backend = new FakeSandboxBackend
+        {
+            Result = new SandboxRunnerResponse
             {
-                Executable = sleepCmd.Item1,
-                Arguments = [..sleepCmd.Item2],
-                TimeoutMs = 500
-            },
-            CancellationToken.None);
+                Success = true,
+                StdoutTruncated = true,
+                StderrTruncated = true
+            }
+        };
+        using var _ = CommandSandboxRuntime.OverrideBackendForTests(backend);
 
-        Assert.False(resp.Success);
-        Assert.True(resp.TimedOut);
+        var response = await CommandRunner.HandleAsync(new CommandRunParams
+        {
+            Executable = "dotnet",
+            TimeoutMs = 1_000
+        }, CancellationToken.None);
+
+        Assert.True(response.StdoutTruncated);
+        Assert.True(response.StderrTruncated);
     }
 
-    // ── 大输出 ────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task LargeOutput_DoesNotDeadlock()
+    private sealed class FakeSandboxBackend : ISandboxBackend
     {
-        // dotnet --info 输出通常几KB，足够测试并发读取路径
-        var resp = await CommandRunner.HandleAsync(
-            new CommandRunParams
-            {
-                Executable = "dotnet",
-                Arguments = ["--info"]
-            },
-            CancellationToken.None);
+        public bool IsSupported => true;
+        public bool IsInitialized => true;
+        public bool SetupRequested { get; private set; }
+        public SandboxRunnerRequest? Request { get; private set; }
+        public SandboxRunnerResponse Result { get; init; } = new();
 
-        Assert.True(resp.Success);
-        Assert.False(string.IsNullOrWhiteSpace(resp.Stdout));
+        public Task EnsureSetupAsync(CancellationToken ct)
+        {
+            SetupRequested = true;
+            return Task.CompletedTask;
+        }
+
+        public Task<SandboxRunnerResponse> ExecuteAsync(
+            SandboxRunnerRequest request,
+            SandboxPermissions permissions,
+            bool persistGrants,
+            CancellationToken ct)
+        {
+            Request = request;
+            return Task.FromResult(Result);
+        }
+
+        public Task ResetAsync(SandboxResetScope scope, CancellationToken ct) => Task.CompletedTask;
     }
 }
+
+[CollectionDefinition("CommandSandbox", DisableParallelization = true)]
+public sealed class CommandSandboxCollection;

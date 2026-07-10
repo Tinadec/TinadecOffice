@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Runtime;
+using TinadecTools.Runtime.Sandbox;
 
 namespace TinadecTools.Tools.Command;
 
@@ -20,9 +21,21 @@ public sealed class CommandRunParams
     [JsonPropertyName("stdin")]
     public string? Stdin { get; set; }
 
-    /// <summary>超时毫秒数，&lt;= 0 表示不设超时</summary>
+    /// <summary>超时毫秒数，合法范围 1..1_800_000，默认 30 秒</summary>
     [JsonPropertyName("timeout_ms")]
     public int TimeoutMs { get; set; } = 30_000;
+
+    [JsonPropertyName("additional_read_paths")]
+    public List<string>? AdditionalReadPaths { get; set; }
+
+    [JsonPropertyName("additional_write_paths")]
+    public List<string>? AdditionalWritePaths { get; set; }
+
+    [JsonPropertyName("environment_variable_names")]
+    public List<string>? EnvironmentVariableNames { get; set; }
+
+    [JsonPropertyName("persist_grants")]
+    public bool PersistGrants { get; set; } = false;
 }
 
 public sealed class CommandRunResponse
@@ -44,6 +57,15 @@ public sealed class CommandRunResponse
 
     [JsonPropertyName("duration_ms")]
     public long DurationMs { get; set; }
+
+    [JsonPropertyName("sandbox_error")]
+    public string? SandboxError { get; set; }
+
+    [JsonPropertyName("stdout_truncated")]
+    public bool StdoutTruncated { get; set; }
+
+    [JsonPropertyName("stderr_truncated")]
+    public bool StderrTruncated { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false)]
@@ -54,8 +76,6 @@ internal partial class CommandRunnerJsonContext : JsonSerializerContext;
 
 // ── 工具入口 ──────────────────────────────────────────────────────────────────
 
-// ponytail: 单个进程直调，无进程池/队列。stdin 循环本身已并发 dispatch 多个调用，
-// 需要长驻/流式命令时再加专门的 job 抽象。
 public static class CommandRunner
 {
     [ToolFunction("command_run", RequiresApproval = true)]
@@ -63,22 +83,51 @@ public static class CommandRunner
         CommandRunParams args,
         CancellationToken cancellationToken)
     {
-        var result = await TerminalRunner.RunAsync(
-            args.Executable,
-            args.Arguments,
-            args.WorkingDirectory,
-            args.Stdin,
-            args.TimeoutMs,
-            cancellationToken).ConfigureAwait(false);
+        var workingDir = args.WorkingDirectory
+            ?? TinadecTools.Tools.FileRW.WorkspacePathResolver.WorkspaceRoot;
 
-        return new CommandRunResponse
+        var requestedPermissions = CommandSandboxRuntime.BuildPermissions(
+            args.AdditionalReadPaths,
+            args.AdditionalWritePaths,
+            args.EnvironmentVariableNames);
+
+        if (args.PersistGrants)
+            SandboxPolicyStore.MergeAndPersist(requestedPermissions);
+
+        var permissions = CommandSandboxRuntime.MergeWithPolicy(requestedPermissions);
+
+        try
         {
-            Success = result.Success,
-            ExitCode = result.ExitCode,
-            Stdout = result.Stdout,
-            Stderr = result.Stderr,
-            TimedOut = result.TimedOut,
-            DurationMs = result.DurationMs
-        };
+            var result = await CommandSandboxRuntime.ExecuteSandboxedAsync(
+                args.Executable,
+                args.Arguments,
+                workingDir,
+                args.Stdin,
+                args.TimeoutMs,
+                permissions,
+                persistGrants: false,
+                cancellationToken).ConfigureAwait(false);
+
+            return new CommandRunResponse
+            {
+                Success = result.Success,
+                ExitCode = result.ExitCode,
+                Stdout = result.Stdout,
+                Stderr = result.Stderr,
+                TimedOut = result.TimedOut,
+                DurationMs = result.DurationMs,
+                SandboxError = result.Error,
+                StdoutTruncated = result.StdoutTruncated,
+                StderrTruncated = result.StderrTruncated
+            };
+        }
+        catch (Exception ex)
+        {
+            return new CommandRunResponse
+            {
+                Success = false,
+                SandboxError = ex.Message
+            };
+        }
     }
 }
