@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,7 +15,7 @@ export interface CodeToolExecuteRequest {
 
 export interface CodeToolExecuteResult {
   tool_id: string;
-  status: 'native' | 'completed' | 'stubbed' | 'blocked' | 'failed';
+  status: 'completed' | 'stubbed' | 'blocked' | 'failed';
   summary: string;
   evidence: string[];
   data: Record<string, unknown>;
@@ -51,7 +50,6 @@ interface CodeToolSpec {
   requiresApproval: boolean;
   approvalSummary?: string;
   language_support?: string[];
-  nativeBacked?: boolean;
 }
 
 interface ProjectTemplateFile {
@@ -195,59 +193,51 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     id: 'search_files',
     summary: 'Fuzzy file-name search powered by Codex Rust codex-file-search (nucleo matcher). Returns ranked matches with scores.',
     category: 'primitive',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   glob_search: {
     id: 'glob_search',
     summary: 'Glob-pattern file search powered by Codex Rust ignore crate (WalkBuilder). Supports patterns like **/*.rs, src/**/*.ts.',
     category: 'primitive',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   read_file: {
     id: 'read_file',
     summary: 'Read file contents with optional line range. Returns content with line numbers. Detects binary files.',
     category: 'primitive',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   list_directory: {
     id: 'list_directory',
     summary: 'List directory entries with metadata (directories first, then files). Supports hidden file toggle.',
     category: 'primitive',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   grep_content: {
     id: 'grep_content',
     summary: 'Search file contents for a text pattern with optional glob filter, context lines, and case-insensitive mode.',
     category: 'primitive',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   sandbox_exec: {
     id: 'sandbox_exec',
     summary: 'Codex sandbox exec adapter. Execution is blocked until Core approval is supplied.',
     category: 'environment',
     requiresApproval: true,
-    approvalSummary: 'Run a sandboxed command in the workspace.',
-    nativeBacked: true
+    approvalSummary: 'Run a sandboxed command in the workspace.'
   },
   apply_patch: {
     id: 'apply_patch',
     summary: 'Codex apply_patch adapter. Workspace writes are blocked until Core approval is supplied.',
     category: 'editor',
     requiresApproval: true,
-    approvalSummary: 'Apply a patch that may modify workspace files.',
-    nativeBacked: true
+    approvalSummary: 'Apply a patch that may modify workspace files.'
   },
   review_format: {
     id: 'review_format',
     summary: 'Format code review findings as structured markdown with severity markers and summary.',
     category: 'review',
-    requiresApproval: false,
-    nativeBacked: true
+    requiresApproval: false
   },
   project_templates: {
     id: 'project_templates',
@@ -436,13 +426,6 @@ export async function executeCodeTool(toolId: string, request: CodeToolExecuteRe
     return null;
   }
 
-  if (spec.nativeBacked) {
-    const nativeResult = await tryExecuteNativeTool(spec, request);
-    if (nativeResult) {
-      return nativeResult;
-    }
-  }
-
   const args = request.arguments ?? {};
   if (spec.id === 'project_templates') {
     return executeProjectTemplatesTool(spec, request, args);
@@ -465,7 +448,7 @@ export async function executeCodeTool(toolId: string, request: CodeToolExecuteRe
       'domain: programming',
       'state_owner: core',
       'tool_layer: code',
-      spec.nativeBacked ? 'native_runtime: pending' : 'code_suite: metadata'
+      'code_suite: metadata'
     ],
     data: fallbackData(spec, request, args),
     requires_approval: spec.requiresApproval,
@@ -2883,102 +2866,4 @@ function fallbackData(spec: CodeToolSpec, request: CodeToolExecuteRequest, args:
     category: spec.category,
     language_support: spec.language_support ?? []
   };
-}
-
-async function tryExecuteNativeTool(spec: CodeToolSpec, request: CodeToolExecuteRequest): Promise<CodeToolExecuteResult | null> {
-  const binary = resolveNativeBinary();
-  if (!binary) {
-    return null;
-  }
-
-  const payload = JSON.stringify({
-    tool_id: spec.id,
-    session_id: request.session_id ?? null,
-    run_id: request.run_id ?? null,
-    task_node_id: request.task_node_id ?? null,
-    approval_id: request.approval_id ?? null,
-    cwd: request.cwd ?? null,
-    arguments: request.arguments ?? {}
-  });
-
-  return new Promise((resolve) => {
-    const child = spawn(binary, ['execute'], {
-      cwd: request.cwd ?? process.cwd(),
-      env: {
-        ...process.env,
-        PATH: nativeRuntimePath()
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
-    });
-
-    let stdout = '';
-    let stderr = '';
-    const timeout = setTimeout(() => {
-      child.kill();
-      resolve(null);
-    }, 15_000);
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      if (code !== 0 || stdout.trim().length === 0) {
-        if (stderr.trim().length > 0) {
-          console.warn(`tinadec-code-native failed: ${stderr.trim()}`);
-        }
-        resolve(null);
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(stdout) as CodeToolExecuteResult);
-      } catch {
-        resolve(null);
-      }
-    });
-    child.stdin.end(payload);
-  });
-}
-
-function nativeRuntimePath(): string {
-  const separator = process.platform === 'win32' ? ';' : ':';
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(here, '..', '..', '..');
-  const runtimeDirs: string[] = [];
-
-  const cargoHome = process.env.CARGO_HOME || process.env.RUSTUP_HOME;
-  if (cargoHome) {
-    runtimeDirs.push(path.join(cargoHome, 'bin'));
-  }
-
-  runtimeDirs.push(
-    path.join(repoRoot, 'native', 'target', 'debug'),
-    path.join(repoRoot, 'native', 'target', 'release')
-  );
-
-  return [...runtimeDirs, process.env.PATH ?? ''].join(separator);
-}
-
-function resolveNativeBinary(): string | null {
-  const explicit = process.env.TINADEC_CODE_NATIVE_BIN;
-  if (explicit && existsSync(explicit)) {
-    return explicit;
-  }
-
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(here, '..', '..', '..');
-  const exe = process.platform === 'win32' ? 'tinadec-code-native.exe' : 'tinadec-code-native';
-  const candidates = [
-    path.join(repoRoot, 'native', 'target', 'debug', exe),
-    path.join(repoRoot, 'native', 'target', 'release', exe)
-  ];
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
