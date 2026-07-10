@@ -20,13 +20,6 @@ const {
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
-// Disable hardware acceleration when GPU cache is unavailable (e.g. sandboxed
-// environments).  transparent: true needs compositing; software rendering
-// avoids GPU cache creation failures that make the window fully transparent.
-if (process.env.TINADEC_DISABLE_GPU === '1') {
-  app.disableHardwareAcceleration();
-}
-
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
