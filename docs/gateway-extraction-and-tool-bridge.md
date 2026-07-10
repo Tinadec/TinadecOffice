@@ -207,7 +207,59 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 
 ---
 
-## 七、不在本次范围
+## 七、网关层临时补丁：list_directory 直调 ls（MVP 兜底，2 周替换）
+
+### 背景
+Tool layer（cjt 的 C# TinadecTools）目前**主要缺文件系统访问（list_directory）和文件 Review 工具（review_format）**。为保 MVP 半个月内跑通，在 Gateway 层打临时补丁：删 Rust 后 `list_directory` 的 `tryExecuteNativeTool` 链断裂，临时用系统 `ls` 命令兜底。
+
+### 数据流向
+上层（TS/C#）请求 → Gateway `executeCodeTool('list_directory')` → 执行 `ls` → 结果返回上层
+
+### 安全加固（保命，必须做）
+1. **命令白名单**：只允许 `ls`，禁止任何 shell 元字符。校验目标路径字符串，命中以下任一即拒绝并返回 failed：
+   - `;` `&` `|` `$` `` ` `` `(` `)` `>` `<` `\n` `\r` 空格拼接的额外命令
+   - 路径展开符 `*` `?` `[` `]`（由 gateway 自己调 Node `fs` 列目录，避免 shell 展开）
+2. **路径限制**：强制限定在 workspace 根下。请求的 `path` 解析为绝对路径后必须以 `request.cwd`（workspace 根）为前缀，禁止 `..` 逃逸；禁止访问 `/etc`、`/usr`、`/`、`~`、项目根之外路径。
+3. **不拼 shell**：用 Node `child_process.spawn('ls', ['-A', resolvedPath], { shell: false })`，参数走数组不拼字符串，从根上杜绝注入。
+4. **输出截断**：`ls` 输出超限（如 >65536 字符或 >2000 项）截断并标 `truncated: true`。
+
+### 补丁落点
+[codeTools.ts](file:///workspace/apps/gateway/src/codeTools.ts) `executeCodeTool` 函数（[L441](file:///workspace/apps/gateway/src/codeTools.ts#L441)），在 native 分支之前为 `list_directory` 加临时分支：
+
+```ts
+// FIXME: MVP TEMPORARY HACK - REPLACE WITH SANDBOX LISTDIR AFTER 2 WEEKS
+// Tool layer (cjt) 缺文件系统访问；Rust 删后 native 链断。临时直调 ls 兜底。
+// 安全风险：暴露终端执行面。已加白名单+路径限制，但仍是技术债。
+// 替换时机：cjt 的 C# 沙箱 listdir 就绪后删除本分支，改走 toolLayerBridge。
+if (spec.id === 'list_directory') {
+  return executeListDirectoryViaLs(spec, request);
+}
+```
+
+新增 `executeListDirectoryViaLs()` 函数（codeTools.ts 内，风格对齐现有 `resultFor`/`failedResult`/`stringArg`）：
+- 解析 `args.path`（默认 `.`）+ `args.show_hidden`（默认 false）
+- 路径校验：相对 `request.cwd` 解析 → 拒 `..` 逃逸 → 拒 workspace 外 → 拒元字符
+- `spawn('ls', flags, { shell: false, cwd: request.cwd })`，flags 仅允许 `-A`/无 flag
+- 解析输出为 entries 数组（目录在前、文件在后），返回 `resultFor(spec, 'completed', ...)`
+- 任何校验失败或执行异常返回 `failedResult(spec, ...)`，不抛出
+
+### review_format 处理
+`review_format` 是 Tool layer 第二个主要缺口。本次**不做网关兜底**（review 是格式化逻辑，不是文件系统访问，无安全风险但实现成本高于补丁范围），保留 stub 状态返回 `'stubbed'`，等 Tool layer 补 review_format 工具后接驳。
+
+### 技术债跟踪
+- 代码内 `// FIXME: MVP TEMPORARY HACK` 注释（上示）
+- 本文档本节记录安全隐患与替换时机
+- 替换条件：cjt 的 C# 沙箱 listdir 就绪 → 删 `executeListDirectoryViaLs` → `list_directory` 改走 `toolLayerBridge.callTool(workspace, 'list_directory', ...)`
+- 半个月复盘时强制核对：本补丁是否已删，未删则升级为阻塞项
+
+### 与清单其他阶段的关系
+- 阶段 1 删 Rust 时，`list_directory` 的 nativeBacked 分支会断；本补丁**在删 Rust 同时落地**，避免 MVP 期 `list_directory` 直接 404
+- 阶段 2 接驳 Tool layer 时，`list_directory` 分支优先改为 toolLayerBridge（若 cjt 已补）；若未补，保留本补丁
+- 阶段 8 验证时确认 `list_directory` 经 ls 补丁可工作，且 `..` 逃逸/元字符注入被拒
+
+---
+
+## 八、不在本次范围
 
 - Tool layer 技术栈/API/端口/工具实现/进程编排
 - Tool layer 向 Core 注册工具的契约
@@ -215,3 +267,4 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 - `codex-rust` source 名统一改名（待 Tool layer 接驳稳定后单独立项）
 - gateway MCP 迁往 Tool layer
 - git/code_editor/terminal/templates 从 gateway 迁往 Tool layer
+- review_format 网关兜底实现（等 Tool layer 补）
