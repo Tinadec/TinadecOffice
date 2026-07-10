@@ -12,9 +12,7 @@ public sealed class DoctorService
         {
             Probe("git", "--version", "Git is needed for diff and repository workflows."),
             Probe("dotnet", "--version", ".NET is needed to run Core."),
-            Probe("node", "--version", "Node is needed for the gateway and desktop shell."),
-            Probe("cargo", "--version", "Rust/Cargo is needed to build Codex Rust native glue."),
-            Probe("rustc", "--version", "Rustc is needed to compile Core and Codex native glue crates.")
+            Probe("node", "--version", "Node is needed for the gateway and desktop shell.")
         };
 
         return new DoctorReportDto(

@@ -11,11 +11,8 @@ dist-electron/
 TestResults/
 coverage/
 output/
-native/target/
 *.user
 *.suo
-native/codex-src/
-/native/codex-src
 .omo/
 .idea/
 .opencode/
