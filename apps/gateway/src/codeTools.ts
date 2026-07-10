@@ -238,6 +238,7 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     category: 'review',
     requiresApproval: false
   },
+  // TODO: DEFERRED - 待 Tool layer 补 scaffold 后迁移
   project_templates: {
     id: 'project_templates',
     summary: 'List and preview built-in project templates for Node.js, Bun, Go, Flutter, Python, Rust, Zig, Nim, C#, and Java.',
@@ -245,6 +246,7 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     requiresApproval: false,
     language_support: CODE_LANGUAGE_SUPPORT
   },
+  // TODO: DEFERRED - 待 Tool layer 补 scaffold 后迁移
   project_template_scaffold: {
     id: 'project_template_scaffold',
     summary: 'Create a project from a built-in Code template inside the approved workspace.',
@@ -253,6 +255,7 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     approvalSummary: 'Write a new project scaffold into the workspace.',
     language_support: CODE_LANGUAGE_SUPPORT
   },
+  // TODO: DEFERRED - 待 Tool layer 定义 runtime probe 契约
   language_runtime_probe: {
     id: 'language_runtime_probe',
     summary: 'Report built-in language/runtime support expected from the Code tool suite.',
@@ -267,6 +270,7 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     requiresApproval: true,
     approvalSummary: 'Run a workspace command through the Code bash-like environment.'
   },
+  // TODO: DEFERRED - 待 Tool layer 定义 debug session 契约
   debug_session: {
     id: 'debug_session',
     summary: 'Built-in debug session surface for launch requests, breakpoints, logs, traces, and repro controls.',
@@ -281,6 +285,7 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     requiresApproval: true,
     approvalSummary: 'Modify workspace files through the built-in code editor.'
   },
+  // TODO: DEFERRED - 待 Tool layer 补 git 能力后迁移
   git_worktree_manager: {
     id: 'git_worktree_manager',
     summary: 'Git worktree manager for branches, isolated workspaces, diffs, commits, rebases, and conflicts.',
