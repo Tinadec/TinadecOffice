@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export interface CodeToolExecuteRequest {
   session_id?: string | null;
@@ -420,10 +419,126 @@ function allowedApprovalKindsForTool(toolId: string): string[] {
   return ['code', 'tool', toolId];
 }
 
+// FIXME: MVP TEMPORARY HACK - REPLACE WITH SANDBOX LISTDIR AFTER 2 WEEKS
+// Tool layer (cjt) 缺文件系统访问；Rust 删后 native 链断。临时 spawn 系统 shell 兜底。
+// 安全：参数走数组不拼字符串（shell:false）+ 路径白名单 + workspace 逃逸校验。
+// 替换时机：cjt 的 C# 沙箱 listdir 就绪后删除本函数，改走 toolLayerBridge。
+const LIST_DIR_FORBIDDEN_CHARS = /[$`;&|<>()\n\r\*?\[\]\\]/;
+
+async function executeListDirectoryViaSpawn(
+  spec: CodeToolSpec,
+  request: CodeToolExecuteRequest
+): Promise<CodeToolExecuteResult> {
+  const args = request.arguments ?? {};
+  const requestedPath = stringArg(args, 'path') ?? '.';
+  const showHidden = args['show_hidden'] === true;
+
+  const cwd = request.cwd;
+  if (!cwd) {
+    return failedResult(spec, 'list_directory requires a cwd (workspace root).', args, ['list_directory:missing-cwd']);
+  }
+
+  if (LIST_DIR_FORBIDDEN_CHARS.test(requestedPath)) {
+    return failedResult(spec, 'Path contains forbidden characters.', args, ['list_directory:rejected-metachar']);
+  }
+
+  const normalizedCwd = path.resolve(cwd);
+  const resolvedPath = path.resolve(normalizedCwd, requestedPath);
+  if (resolvedPath !== normalizedCwd && !resolvedPath.startsWith(normalizedCwd + path.sep)) {
+    return failedResult(spec, 'Path escapes workspace root.', args, ['list_directory:rejected-escape']);
+  }
+
+  // 跨平台 spawn：Windows 走 pwsh Get-ChildItem，POSIX 走 ls -A
+  // 参数走数组、shell:false，杜绝 shell 注入
+  const isWin = process.platform === 'win32';
+  let cmd: string;
+  let cmdArgs: string[];
+  if (isWin) {
+    const pwshCandidates = [
+      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      'C:\\Program Files\\PowerShell\\6\\pwsh.exe'
+    ];
+    const pwsh = pwshCandidates.find((p) => existsSync(p)) ?? 'powershell.exe';
+    const gciArgs = showHidden ? ['-Force'] : [];
+    cmd = pwsh;
+    cmdArgs = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Get-ChildItem -LiteralPath '${resolvedPath.replace(/'/g, "''")}' ${gciArgs.join(' ')} | ForEach-Object { "$($_.Name)|$($_.PSIsContainer)" }`
+    ];
+  } else {
+    cmd = '/bin/ls';
+    cmdArgs = [showHidden ? '-A1' : '-1', resolvedPath];
+  }
+
+  const entries = await new Promise<Array<{ name: string; is_directory: boolean }>>((resolve) => {
+    const child = spawn(cmd, cmdArgs, { shell: false, cwd: normalizedCwd, windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill(); }, 10_000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', () => { clearTimeout(timer); resolve([]); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (isWin) {
+        const mapped: Array<{ name: string; is_directory: boolean }> = [];
+        for (const line of stdout.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const sep = trimmed.lastIndexOf('|');
+          if (sep < 0) continue;
+          const name = trimmed.slice(0, sep);
+          const isDir = trimmed.slice(sep + 1).toLowerCase() === 'true';
+          mapped.push({ name, is_directory: isDir });
+        }
+        resolve(mapped);
+      } else {
+        const names = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        Promise.all(names.map(async (name) => {
+          try {
+            const s = await stat(path.join(resolvedPath, name));
+            return { name, is_directory: s.isDirectory() };
+          } catch {
+            return { name, is_directory: false };
+          }
+        })).then(resolve).catch(() => resolve([]));
+      }
+    });
+  });
+
+  entries.sort((a, b) => {
+    if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const MAX_ENTRIES = 2000;
+  const truncated = entries.length > MAX_ENTRIES;
+  const visible = truncated ? entries.slice(0, MAX_ENTRIES) : entries;
+
+  return resultFor(spec, 'completed', `Listed ${entries.length} entries in ${requestedPath}.`, {
+    cwd: normalizedCwd,
+    path: requestedPath,
+    resolved_path: resolvedPath,
+    show_hidden: showHidden,
+    entries: visible,
+    total_count: entries.length,
+    truncated
+  }, ['list_directory:spawn', 'mvp-temporary-hack']);
+}
+
 export async function executeCodeTool(toolId: string, request: CodeToolExecuteRequest = {}): Promise<CodeToolExecuteResult | null> {
   const spec = TOOL_SPECS[toolId];
   if (!spec) {
     return null;
+  }
+
+  // FIXME: MVP TEMPORARY HACK - see executeListDirectoryViaSpawn
+  if (spec.id === 'list_directory') {
+    return executeListDirectoryViaSpawn(spec, request);
   }
 
   const args = request.arguments ?? {};

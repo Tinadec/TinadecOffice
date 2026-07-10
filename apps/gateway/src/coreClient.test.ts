@@ -39,13 +39,8 @@ test('Code tools expose programming-domain execution contracts', async () => {
 
   const search = await executeCodeTool('search_files', { arguments: { query: 'AgentWorkflowRuntime' } });
   assert.equal(search?.requires_approval, false);
-  assert.match(search?.status ?? '', /^(native|stubbed)$/);
-  if (search?.status === 'native') {
-    assert.equal(search.data.query, 'AgentWorkflowRuntime');
-    assert.ok(Array.isArray(search.data.matches));
-  } else {
-    assert.deepEqual(search?.data.argument_keys, ['query']);
-  }
+  assert.match(search?.status ?? '', /^(stubbed)$/);
+  assert.deepEqual(search?.data.argument_keys, ['query']);
 
   const patch = await executeCodeTool('apply_patch', { cwd: 'D:/github/TinadecOffice' });
   assert.equal(patch?.requires_approval, true);
