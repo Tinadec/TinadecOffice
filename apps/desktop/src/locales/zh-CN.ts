@@ -726,4 +726,13 @@ retry: '重试',
     notAvailableHint: '集成终端需要 Electron 桌面应用环境，在浏览器或网页预览中不可用。',
     shortcutHint: 'Ctrl+Shift+T 新建 · Ctrl+W 关闭 · Ctrl+Tab 切换',
   },
+  aboutPage: {
+    subtitle: 'Windows 智能体桌面工作台，围绕通用智能体线束构建的四层架构应用。',
+    runtimeStatus: '运行时状态',
+    running: '运行中',
+    unreachable: '未连接',
+    architecture: '四层架构',
+    features: '核心能力',
+    links: '链接',
+  },
 }

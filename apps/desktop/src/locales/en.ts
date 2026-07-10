@@ -726,4 +726,13 @@ retry: 'Retry',
     notAvailableHint: 'The integrated terminal requires the Electron desktop app. It is not available in a browser or web preview.',
     shortcutHint: 'Ctrl+Shift+T new · Ctrl+W close · Ctrl+Tab switch',
   },
+  aboutPage: {
+    subtitle: 'A Windows-first intelligent agent desktop workbench built around a universal agent harness.',
+    runtimeStatus: 'Runtime Status',
+    running: 'Running',
+    unreachable: 'Unreachable',
+    architecture: 'Architecture',
+    features: 'Core Features',
+    links: 'Links',
+  },
 }
