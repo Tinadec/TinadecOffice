@@ -4,7 +4,8 @@
   "private": true,
   "license": "GPL-3.0-or-later",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "gateway"
   ],
   "scripts": {
     "dev": "concurrently -n core,gateway,desktop -c blue,magenta,green \"npm run dev:core\" \"npm run dev:gateway\" \"npm run dev:desktop\"",
