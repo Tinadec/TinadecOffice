@@ -79,9 +79,24 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 |---|---|---|
 | `git_worktree_manager`(~2000 行) | Tool layer 完全无 git；迁移成本高 | 标注后续 Tool layer 接管候选 |
 | `code_editor`(文件读写) | Tool layer 有更强 FileRW，但 gateway 版较简单且不依赖 Rust | 标注可由 Tool layer read_file/replace_* 替代 |
-| `terminal`(PTY) | Tool layer 无交互式 PTY | 保留 |
 | `project_templates/scaffold` | Tool layer 无 | 保留 |
 | `bash_environment`/`language_runtime_probe`/`debug_session` | 双方都是 stub | 保留 |
+
+### 3.3 gateway terminal 工具 → 删除（PTY 跑在 Desktop，gateway 是 stub 添堵）
+gateway 的 `terminal` 工具（[codeTools.ts:302-309](file:///workspace/apps/gateway/src/codeTools.ts#L302) spec、[codeTools.ts:697-862](file:///workspace/apps/gateway/src/codeTools.ts#L697) 实现）**全是 stub**：create/write/resize/destroy/list 全返回 `'stubbed'`（注释"等待Native层集成"），只有 `get_shells` 是 completed。真正的 PTY 跑在 Desktop 的 Electron 主进程（node-pty + terminalManager.cjs）。
+
+Desktop [useTerminal.ts](file:///workspace/apps/desktop/src/composables/useTerminal.ts) 现状：`loadShells`/`createTerminal` 先试 gateway API，失败/ stubbed 才 fallback 到 `window.tinadec.terminal.*`（Electron IPC）；而 `attachTerminal`/`closeTerminal`/`resize`/`write` **已全部走 Electron IPC**，不依赖 gateway。gateway 这层 stub 纯属多余，删掉后 Desktop 直接走本地 IPC 即可。
+
+| 删除项 | 位置 |
+|---|---|
+| terminal spec | [codeTools.ts:302-309](file:///workspace/apps/gateway/src/codeTools.ts#L302) — TOOL_SPECS 中 `terminal` 条目删除 |
+| terminal 执行分支 | [codeTools.ts:467-469](file:///workspace/apps/gateway/src/codeTools.ts#L467) — `executeCodeTool` 中 `if (spec.id === 'terminal')` 分支删除 |
+| terminal 实现 | [codeTools.ts:697-862](file:///workspace/apps/gateway/src/codeTools.ts#L697) — `executeTerminal`、`getDefaultShell`、`getAvailableShells` 整段删除 |
+
+Desktop 侧改动（useTerminal.ts 直连 Electron IPC，删 gateway 路径）：
+- [useTerminal.ts:138-174](file:///workspace/apps/desktop/src/composables/useTerminal.ts#L138) `loadShells` — 删除 gateway fetch 分支，直接走 `window.tinadec.terminal.getShells()`
+- [useTerminal.ts:212-264](file:///workspace/apps/desktop/src/composables/useTerminal.ts#L212) `createTerminalInstance` — 删除 gateway fetch 分支，直接走 `window.tinadec.terminal.create()`
+- `attachTerminal`/`closeTerminal`/`resize`/`write` — 已走 IPC，无需改动
 
 ---
 
@@ -114,6 +129,11 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 **注意保留**
 - [codeTools.ts:139](file:///workspace/apps/gateway/src/codeTools.ts#L139) `package_manager: 'cargo'` 的 rust-cli 项目模板**保留**（脚手架模板，不依赖本机 Rust toolchain）
 
+**删除 gateway terminal 工具**（PTY 跑在 Desktop，gateway 是 stub 添堵，详见 3.3 节）
+- [ ] [codeTools.ts:302-309](file:///workspace/apps/gateway/src/codeTools.ts#L302) — TOOL_SPECS 中 `terminal` 条目删除
+- [ ] [codeTools.ts:467-469](file:///workspace/apps/gateway/src/codeTools.ts#L467) — `executeCodeTool` 中 `if (spec.id === 'terminal')` 分支删除
+- [ ] [codeTools.ts:697-862](file:///workspace/apps/gateway/src/codeTools.ts#L697) — `executeTerminal`、`getDefaultShell`、`getAvailableShells` 整段删除
+
 ### 阶段 2：Gateway 接驳 Tool layer stdio
 **新增 Tool layer 进程管理器**（gateway 内，按 workspace 缓存实例）
 - [ ] 新增 `apps/gateway/src/toolLayerBridge.ts`：
@@ -144,7 +164,9 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 - [ ] [apps/desktop/src/toolCatalog.ts:115](file:///workspace/apps/desktop/src/toolCatalog.ts#L115) — source precedence 中 `'codex-rust': 2` 处理（见阶段 6 Core 决策）
 - [ ] Desktop 工具组件中 `source === 'codex-rust'` 标签：[ToolCatalogBrowser.vue:75,129](file:///workspace/apps/desktop/src/components/tools/ToolCatalogBrowser.vue#L75)、[ToolInvocationCard.vue:52](file:///workspace/apps/desktop/src/components/tools/ToolInvocationCard.vue#L52)、[ToolExecutionTimeline.vue:59](file:///workspace/apps/desktop/src/components/tools/ToolExecutionTimeline.vue#L59)、[ToolStatsDashboard.vue:128](file:///workspace/apps/desktop/src/components/tools/ToolStatsDashboard.vue#L128)、[SettingsPage.vue:353](file:///workspace/apps/desktop/src/pages/SettingsPage.vue#L353) — 视 Core 侧 source 名决策更新
 - [ ] [apps/desktop/src/toolCatalog.test.ts](file:///workspace/apps/desktop/src/toolCatalog.test.ts) — codex-rust fixture 更新
-- [ ] preload.cjs / api.ts / env.d.ts **不动**（Desktop 永远只调 Gateway，契约不变）
+- [ ] [apps/desktop/src/composables/useTerminal.ts:138-174](file:///workspace/apps/desktop/src/composables/useTerminal.ts#L138) `loadShells` — 删 gateway fetch 分支，直接走 `window.tinadec.terminal.getShells()`（详见 3.3 节）
+- [ ] [apps/desktop/src/composables/useTerminal.ts:212-264](file:///workspace/apps/desktop/src/composables/useTerminal.ts#L212) `createTerminalInstance` — 删 gateway fetch 分支，直接走 `window.tinadec.terminal.create()`
+- [ ] preload.cjs / api.ts / env.d.ts **不动**（Desktop 永远只调 Gateway，契约不变；terminal 改走本地 IPC）
 
 ### 阶段 6：Core 侧 codex-rust 清理（仅清理 Rust 专属硬编码，不重设计 Tool layer 契约）
 > 本阶段只删除因 Rust 移除而失效的硬编码；Core→Gateway 工具调用链（CodeToolClient/McpGatewayClient 指向 `TINADEC_GATEWAY_URL`）**保留不动**（工具仍嵌在 gateway 内执行）。
@@ -203,7 +225,8 @@ Rust 删除后，这些工具的 `tryExecuteNativeTool` 执行链断裂。接驳
 5. **ripgrep bundle 路径失效**：删 `native/` 后 TinadecTools.csproj 的 `..\native\rg\rg.exe` 条件拷贝失效（不报错，跳过），退化为运行时自动下载。Tool layer 团队需决定 rg 二进制归属。
 6. **Core 侧 source 名 `codex-rust` 保留**：本次不触发 Core/Desktop/Tests 的 source 名连锁改动，待 Tool layer 接驳稳定后单独立项统一。
 7. **gateway MCP 与 Tool layer MCP 暂并存**：本次不迁移 gateway `src/mcp/`，后续统一为 mcp-passthrough。
-8. **git/code_editor/terminal/templates 随 gateway 保留**：这些 TS 工具不依赖 Rust，删除 Rust 不影响；但它们长期应归 Tool layer，本次不迁移以控制范围。
+8. **git/code_editor/templates 随 gateway 保留**：这些 TS 工具不依赖 Rust，删除 Rust 不影响；但它们长期应归 Tool layer，本次不迁移以控制范围。
+9. **terminal 已从 gateway 删除**：PTY 本就跑在 Desktop Electron 主进程（node-pty），gateway 的 terminal 工具全是 stub 添堵，已规划删除并让 Desktop 直连 IPC（详见 3.3 节）。
 
 ---
 
