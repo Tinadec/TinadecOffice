@@ -298,14 +298,6 @@ const TOOL_SPECS: Record<string, CodeToolSpec> = {
     category: 'git',
     requiresApproval: true,
     approvalSummary: 'Create or modify Git branches/worktrees.'
-  },
-  terminal: {
-    id: 'terminal',
-    summary: 'Interactive terminal emulator with PTY support for running commands, scripts, and interactive programs.',
-    category: 'environment',
-    requiresApproval: true,
-    approvalSummary: 'Create or interact with an interactive terminal session.',
-    nativeBacked: true
   }
 };
 
@@ -463,9 +455,6 @@ export async function executeCodeTool(toolId: string, request: CodeToolExecuteRe
   }
   if (spec.id === 'code_editor') {
     return executeCodeEditor(spec, request, args);
-  }
-  if (spec.id === 'terminal') {
-    return executeTerminal(spec, request, args);
   }
 
   return {
@@ -692,173 +681,6 @@ async function executeCodeEditor(
   }
 
   return failedResult(spec, `Unsupported code_editor action '${action}'.`, args, ['code_editor:unsupported-action']);
-}
-
-async function executeTerminal(
-  spec: CodeToolSpec,
-  request: CodeToolExecuteRequest,
-  args: Record<string, unknown>
-): Promise<CodeToolExecuteResult> {
-  const action = stringArg(args, 'action') ?? 'create';
-  
-  // create: 创建新终端
-  if (action === 'create') {
-    const shell = stringArg(args, 'shell') ?? getDefaultShell();
-    const shellArgs = stringListArg(args, 'args');
-    const cwd = request.cwd ?? process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
-    const cols = numberArg(args, 'cols') ?? 80;
-    const rows = numberArg(args, 'rows') ?? 24;
-    const title = stringArg(args, 'title') ?? path.basename(shell);
-    
-    // 调用Native层创建PTY
-    // 这里需要通过Core层或直接调用Native层
-    // 暂时返回stubbed状态，等待Native层集成
-    return resultFor(spec, 'stubbed', 'Terminal creation not yet implemented in Gateway.', {
-      action: 'create',
-      shell,
-      args: shellArgs,
-      cwd,
-      cols,
-      rows,
-      title
-    }, ['terminal:create', 'status:stubbed']);
-  }
-  
-  // write: 向终端写入数据
-  if (action === 'write') {
-    const terminalId = stringArg(args, 'terminal_id');
-    const data = stringArg(args, 'data');
-    
-    if (!terminalId || !data) {
-      return failedResult(spec, 'terminal write requires terminal_id and data.', args);
-    }
-    
-    // 调用Native层写入数据
-    return resultFor(spec, 'stubbed', 'Terminal write not yet implemented in Gateway.', {
-      action: 'write',
-      terminal_id: terminalId,
-      data_length: data.length
-    }, ['terminal:write', 'status:stubbed']);
-  }
-  
-  // resize: 调整终端大小
-  if (action === 'resize') {
-    const terminalId = stringArg(args, 'terminal_id');
-    const cols = numberArg(args, 'cols') ?? 80;
-    const rows = numberArg(args, 'rows') ?? 24;
-    
-    if (!terminalId) {
-      return failedResult(spec, 'terminal resize requires terminal_id.', args);
-    }
-    
-    // 调用Native层调整大小
-    return resultFor(spec, 'stubbed', 'Terminal resize not yet implemented in Gateway.', {
-      action: 'resize',
-      terminal_id: terminalId,
-      cols,
-      rows
-    }, ['terminal:resize', 'status:stubbed']);
-  }
-  
-  // destroy: 销毁终端
-  if (action === 'destroy') {
-    const terminalId = stringArg(args, 'terminal_id');
-    
-    if (!terminalId) {
-      return failedResult(spec, 'terminal destroy requires terminal_id.', args);
-    }
-    
-    // 调用Native层销毁终端
-    return resultFor(spec, 'stubbed', 'Terminal destroy not yet implemented in Gateway.', {
-      action: 'destroy',
-      terminal_id: terminalId
-    }, ['terminal:destroy', 'status:stubbed']);
-  }
-  
-  // list: 列出活跃终端
-  if (action === 'list') {
-    // 调用Native层获取终端列表
-    return resultFor(spec, 'stubbed', 'Terminal list not yet implemented in Gateway.', {
-      action: 'list'
-    }, ['terminal:list', 'status:stubbed']);
-  }
-  
-  // get_shells: 获取可用shell列表
-  if (action === 'get_shells') {
-    const shells = getAvailableShells();
-    return resultFor(spec, 'completed', 'Available shells retrieved.', {
-      action: 'get_shells',
-      shells
-    }, ['terminal:get_shells']);
-  }
-  
-  return failedResult(spec, `Unsupported terminal action '${action}'.`, args);
-}
-
-function getDefaultShell(): string {
-  if (process.platform === 'win32') {
-    return 'powershell.exe';
-  }
-  return '/bin/bash';
-}
-
-function getAvailableShells(): Array<{id: string, label: string, shell: string, args: string[]}> {
-  const shells: Array<{id: string, label: string, shell: string, args: string[]}> = [];
-  
-  if (process.platform === 'win32') {
-    // PowerShell 7+ (pwsh)
-    const pwshPaths = [
-      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-      'C:\\Program Files\\PowerShell\\6\\pwsh.exe',
-    ];
-    const pwshPath = pwshPaths.find((p) => {
-      try { return existsSync(p); } catch { return false; }
-    });
-    if (pwshPath) {
-      shells.push({ id: 'pwsh', label: 'PowerShell 7', shell: pwshPath, args: ['-NoLogo'] });
-    }
-    
-    // Windows PowerShell (built-in)
-    shells.push({
-      id: 'powershell',
-      label: 'Windows PowerShell',
-      shell: 'powershell.exe',
-      args: ['-NoLogo'],
-    });
-    
-    // Command Prompt
-    shells.push({
-      id: 'cmd',
-      label: 'Command Prompt',
-      shell: 'cmd.exe',
-      args: [],
-    });
-    
-    // Git Bash (if installed)
-    const gitBashPaths = [
-      'C:\\Program Files\\Git\\bin\\bash.exe',
-      'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-    ];
-    const gitBashPath = gitBashPaths.find((p) => {
-      try { return existsSync(p); } catch { return false; }
-    });
-    if (gitBashPath) {
-      shells.push({ id: 'gitbash', label: 'Git Bash', shell: gitBashPath, args: ['--login', '-i'] });
-    }
-  } else if (process.platform === 'darwin') {
-    shells.push({ id: 'zsh', label: 'zsh', shell: '/bin/zsh', args: ['-l'] });
-    shells.push({ id: 'bash', label: 'bash', shell: '/bin/bash', args: ['-l'] });
-  } else {
-    // Linux
-    shells.push({ id: 'bash', label: 'bash', shell: '/bin/bash', args: ['-l'] });
-    try {
-      if (existsSync('/bin/zsh')) {
-        shells.push({ id: 'zsh', label: 'zsh', shell: '/bin/zsh', args: ['-l'] });
-      }
-    } catch { /* ignore */ }
-  }
-  
-  return shells;
 }
 
 async function executeGitWorktreeManager(
