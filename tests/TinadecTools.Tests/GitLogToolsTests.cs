@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TinadecTools.Tools.Git;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
@@ -9,7 +10,7 @@ public sealed class GitLogToolsTests
 
     private static string CreateTempRepo()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"tinadec-git-test-{Guid.NewGuid():N}");
+        var dir = CreateWorkspaceTempDirectory("git");
         Directory.CreateDirectory(dir);
 
         RunGit(dir, "init", "--initial-branch=main");
@@ -156,7 +157,7 @@ public sealed class GitLogToolsTests
     [Fact]
     public async Task LogList_NotARepo_ReturnsFailure()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"tinadec-git-norepo-{Guid.NewGuid():N}");
+        var dir = CreateWorkspaceTempDirectory("git-norepo");
         Directory.CreateDirectory(dir);
         try
         {
@@ -389,6 +390,16 @@ public sealed class GitLogToolsTests
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
+
+    private static string CreateWorkspaceTempDirectory(string prefix)
+    {
+        var dir = Path.Combine(
+            FileToolRuntime.WorkspaceRoot,
+            ".tinadec-tools-tests",
+            $"{prefix}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
 
     private static string RunGitCapture(string cwd, params string[] args)
     {
