@@ -38,6 +38,7 @@ internal class FileAccessor : IDisposable
     private List<LineSpan> _index = new();
     private readonly string _filepath;
     private readonly SafeFileHandle _handle;
+    private readonly bool _canWrite;
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly UTF8Encoding Utf8NoBom = new(false);
     private const int StreamBufferSize = 128 * 1024;
@@ -56,14 +57,17 @@ internal class FileAccessor : IDisposable
     /// 打开一个文件。
     /// </summary>
     /// <param name="filepath">文件路径</param>
-    internal FileAccessor(string filepath)
+    /// <param name="canWrite">是否以可写模式打开。</param>
+    internal FileAccessor(string filepath, bool canWrite = true)
     {
         _filepath = filepath;
-        _file = new FileStream(filepath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+        _canWrite = canWrite;
+        _file = new FileStream(filepath, FileMode.Open, canWrite ? FileAccess.ReadWrite : FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete, 1024,
             FileOptions.Asynchronous);
         _handle = _file.SafeFileHandle;
-        NormalizeTextFile();
+        if (_canWrite)
+            NormalizeTextFile();
         BuildIndex();
     }
 
@@ -358,6 +362,7 @@ internal class FileAccessor : IDisposable
     /// <param name="replacement">替换内容</param>
     public async Task<bool> ReplaceBytes(long byteOffset, long byteCount, ReadOnlyMemory<byte> replacement)
     {
+        EnsureWritable();
         if (byteOffset < 0 || byteOffset > _file.Length)
             throw new ArgumentOutOfRangeException(nameof(byteOffset), $"字节偏移 {byteOffset} 超出范围 [0, {_file.Length}]");
 
@@ -638,5 +643,11 @@ internal class FileAccessor : IDisposable
     public void Dispose()
     {
         _file.Dispose();
+    }
+
+    private void EnsureWritable()
+    {
+        if (!_canWrite)
+            throw new InvalidOperationException("The file was opened read-only.");
     }
 }

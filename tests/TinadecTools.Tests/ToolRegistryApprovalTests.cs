@@ -4,13 +4,14 @@ using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
-public sealed class ToolRegistryApprovalTests
+public sealed class ToolRegistryApprovalTests : IDisposable
 {
+    private readonly WorkspaceTestDirectory _workspace = new();
     [Fact]
     public async Task DispatchAsync_RejectsUnapprovedMutationTool()
     {
         GeneratedToolRegistry.RegisterAll();
-        var path = CreateTempFile("first\nsecond\n");
+        var path = _workspace.CreateFile("unapproved-mutation.txt", "first\nsecond\n");
         var read = await FileReader.HandleAsync(new NormalFileReadParams { FilePath = path }, CancellationToken.None);
         using var parameters = JsonDocument.Parse(JsonSerializer.Serialize(new InsertLineParams
         {
@@ -40,7 +41,7 @@ public sealed class ToolRegistryApprovalTests
     public async Task DispatchAsync_AllowsUnapprovedReadTool()
     {
         GeneratedToolRegistry.RegisterAll();
-        var path = CreateTempFile("first\nsecond\n");
+        var path = _workspace.CreateFile("read.txt", "first\nsecond\n");
         using var parameters = JsonDocument.Parse(JsonSerializer.Serialize(new NormalFileReadParams
         {
             FilePath = path,
@@ -61,17 +62,12 @@ public sealed class ToolRegistryApprovalTests
         Assert.Equal(11, response.CallId);
     }
 
-    private static string CreateTempFile(string content)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"tinadec-tools-test-{Guid.NewGuid():N}.txt");
-        File.WriteAllText(path, content);
-        return path;
-    }
-
     private static string ReadSharedText(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    public void Dispose() => _workspace.Dispose();
 }

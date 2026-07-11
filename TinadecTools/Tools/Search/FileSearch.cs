@@ -126,6 +126,17 @@ public static class FileSearch
         if (string.IsNullOrWhiteSpace(args.Pattern))
             return new FileSearchResponse { Success = false, Error = "pattern is required." };
 
-        return await RipgrepRunner.RunAsync(args, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await RipgrepRunner.RunAsync(args, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new FileSearchResponse { Success = false, Error = ex.Message };
+        }
     }
 }

@@ -1,4 +1,5 @@
 using TinadecTools.Tools.Search;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
@@ -6,6 +7,7 @@ public sealed class FileSearchTests : IDisposable
 {
     private readonly string? _rgPath;
     private readonly string? _originalRgEnv;
+    private readonly List<string> _temporaryDirectories = new();
 
     public FileSearchTests()
     {
@@ -15,8 +17,15 @@ public sealed class FileSearchTests : IDisposable
             Environment.SetEnvironmentVariable(RipgrepRunner.RgPathEnvVar, _rgPath);
     }
 
-    public void Dispose() =>
+    public void Dispose()
+    {
         Environment.SetEnvironmentVariable(RipgrepRunner.RgPathEnvVar, _originalRgEnv);
+        foreach (var directory in _temporaryDirectories)
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
 
     // ── 基础搜索 ──────────────────────────────────────────────────────────────
 
@@ -241,10 +250,11 @@ public sealed class FileSearchTests : IDisposable
 
     // ── 辅助方法 ──────────────────────────────────────────────────────────────
 
-    private static string CreateTempDir()
+    private string CreateTempDir()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"tinadec-search-test-{Guid.NewGuid():N}");
+        var path = Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"search-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
+        _temporaryDirectories.Add(path);
         return path;
     }
 

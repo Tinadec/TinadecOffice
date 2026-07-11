@@ -9,7 +9,8 @@ Elysia TypeScript BFF/API layer. It proxies Core HTTP/SSE/debug routes and hosts
 | Server routes | `src/index.ts` | Elysia app, Swagger, manual CORS, `/api/v1/*`. |
 | Core proxy | `src/coreClient.ts` | `coreUrl`, JSON proxy, SSE proxy. |
 | Debug proxy | `src/debugProxy.ts` | Debug API + WebSocket URL helpers. |
-| Code tools | `src/codeTools.ts` | Tool execution/fallback boundary. |
+| Code tools | `src/codeTools.ts` | Tool execution/fallback boundary and Gateway DTO adapters. |
+| Tool-layer bridge | `src/toolLayerBridge.ts` | Workspace-scoped TinadecTools stdio process lifecycle and request correlation. |
 | Tests | `src/coreClient.test.ts` | Node test runner + `tsx`. |
 
 ## CONVENTIONS
@@ -18,6 +19,8 @@ Elysia TypeScript BFF/API layer. It proxies Core HTTP/SSE/debug routes and hosts
 - Prompt fragment CRUD and prompt context preview routes are Core proxies only. Do not add prompt selection, token budgeting, or prompt assembly logic in Gateway.
 - Harness manifest, tool search, and tool execution timeline routes are Core proxies only. Do not recompute agent layers, provider layers, risk policy, matched fields, approval summaries, or execution audit state in Gateway.
 - `/api/v1/code/tools` publishes Tool-layer Code-suite metadata with snake_case public DTO fields. `src/codeTools.ts` keeps internal spec fields camelCase and maps them at the API boundary.
+- `list_directory` maps to the C# TinadecTools `ls` tool through `src/toolLayerBridge.ts`. Keep workspace/path validation and link traversal policy in TinadecTools; Gateway may only adapt the result DTO, hidden-entry filtering, ordering, and pagination.
+- Tool-layer processes are cached per resolved workspace because TinadecTools snapshots its workspace at startup and keeps state. Configure the executable with `TINADEC_TOOLS_BIN`; optional `TINADEC_TOOLS_ARGS` is a JSON string array.
 - Code-suite tools include project templates, runtime probe, bash-like environment, debugging, editor, Git worktree manager, and Codex primitives.
 - `project_templates` is read-only list/preview. `project_template_scaffold` writes files and must remain approval-gated; direct Gateway execution treats `approval_id` as the Core-supplied approval proof.
 - `git_worktree_manager` supports read-only `status`, `push_plan`, `worktrees`, and `diff_preview` previews from real Git commands. `diff_preview` returns working-tree, staged, and available branch-range sections with structured file metadata for the Desktop Git panel. `stage`, `unstage`, `commit`, and `push` may execute real Git only with Core-supplied, Core-verified, `kind=git` approved `approval_id` plus explicit confirmations such as `confirm_stage`, `confirm_unstage`, `confirm_commit`, or `confirm_push`; path operations must stay inside the worktree, and push must block on dirty/behind/detached states. Merge, rebase, branch creation, checkout, and worktree creation remain blocked after approval until implemented deliberately.

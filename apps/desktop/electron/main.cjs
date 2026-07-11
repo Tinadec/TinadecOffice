@@ -20,6 +20,12 @@ const {
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
+// When GPU compositing is unavailable (e.g. sandboxed environments that
+// block disk cache), transparent windows fail to render.  Setting
+// TINADEC_DISABLE_TRANSPARENCY=1 falls back to an opaque frameless window
+// with a solid background so the UI remains fully visible.
+const noTransparency = process.env.TINADEC_DISABLE_TRANSPARENCY === '1';
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -28,8 +34,8 @@ async function createWindow() {
     minHeight: 720,
     // transparent: true lets CSS border-radius on <html> create
     // truly transparent rounded corners for the custom-drawn window.
-    transparent: true,
-    backgroundColor: '#00000000',
+    transparent: !noTransparency,
+    backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
     title: 'TinadecOffice',
     frame: false,
     autoHideMenuBar: true,

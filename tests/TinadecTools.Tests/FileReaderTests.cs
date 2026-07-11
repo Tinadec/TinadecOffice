@@ -2,12 +2,13 @@ using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
-public sealed class FileReaderTests
+public sealed class FileReaderTests : IDisposable
 {
+    private readonly WorkspaceTestDirectory _workspace = new();
     [Fact]
     public async Task ReadFile_ReturnsOneBasedLineNumbersAndOffsets()
     {
-        var path = CreateTempFile("alpha\nbeta\n");
+        var path = _workspace.CreateFile("reader.txt", "alpha\nbeta\n");
 
         var response = await FileReader.HandleAsync(new NormalFileReadParams
         {
@@ -31,7 +32,7 @@ public sealed class FileReaderTests
     [Fact]
     public async Task ReadFile_ReturnsEmptyResultForEmptyFile()
     {
-        var path = CreateTempFile(string.Empty);
+        var path = _workspace.CreateFile("empty.txt", string.Empty);
 
         var response = await FileReader.HandleAsync(new NormalFileReadParams
         {
@@ -45,10 +46,5 @@ public sealed class FileReaderTests
         Assert.NotEmpty(response.FileHash);
     }
 
-    private static string CreateTempFile(string content)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"tinadec-tools-test-{Guid.NewGuid():N}.txt");
-        File.WriteAllText(path, content);
-        return path;
-    }
+    public void Dispose() => _workspace.Dispose();
 }

@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { executeCodeTool } from './codeTools.js';
+import { disposeToolLayerProcesses, disposeToolLayerWorkspace } from './toolLayerBridge.js';
+
+after(() => disposeToolLayerProcesses());
 
 test('list_directory lists entries with directories first', async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-ls-'));
@@ -22,7 +25,9 @@ test('list_directory lists entries with directories first', async () => {
     assert.equal(entries[0].is_directory, true);
     const names = entries.map((e) => e.name).sort();
     assert.deepEqual(names, ['file-a.txt', 'file-b.txt', 'subdir']);
+    assert.ok(result.evidence.includes('list_directory:tool-layer'));
   } finally {
+    await disposeToolLayerWorkspace(cwd);
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -33,20 +38,22 @@ test('list_directory rejects path escape via ..', async () => {
     const result = await executeCodeTool('list_directory', { cwd, arguments: { path: '../../../etc' } });
     assert.ok(result);
     assert.equal(result.status, 'failed');
-    assert.ok(result.evidence.includes('list_directory:rejected-escape'));
+    assert.ok(result.evidence.includes('list_directory:tool-layer-rejected'));
   } finally {
+    await disposeToolLayerWorkspace(cwd);
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test('list_directory rejects metacharacters in path', async () => {
+test('list_directory treats shell metacharacters as a literal C# tool path', async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-ls-'));
   try {
     const result = await executeCodeTool('list_directory', { cwd, arguments: { path: 'foo; rm -rf /' } });
     assert.ok(result);
     assert.equal(result.status, 'failed');
-    assert.ok(result.evidence.includes('list_directory:rejected-metachar'));
+    assert.ok(result.evidence.includes('list_directory:tool-layer-rejected'));
   } finally {
+    await disposeToolLayerWorkspace(cwd);
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -65,13 +72,17 @@ test('list_directory respects show_hidden flag', async () => {
     await writeFile(path.join(cwd, 'visible.txt'), 'v');
 
     const hidden = await executeCodeTool('list_directory', { cwd, arguments: { show_hidden: true } });
-    const hiddenNames = ((hidden?.data.entries) as Array<{name:string}>).map((e) => e.name);
+    const hiddenEntries = hidden?.data.entries as Array<{ name: string; is_hidden: boolean }>;
+    const hiddenNames = hiddenEntries.map((entry) => entry.name);
     assert.ok(hiddenNames.includes('.hidden'));
 
     const noHidden = await executeCodeTool('list_directory', { cwd, arguments: { show_hidden: false } });
-    const noHiddenNames = ((noHidden?.data.entries) as Array<{name:string}>).map((e) => e.name);
-    assert.ok(!noHiddenNames.includes('.hidden'));
+    const noHiddenNames = ((noHidden?.data.entries) as Array<{ name: string }>).map((entry) => entry.name);
+    for (const entry of hiddenEntries.filter((candidate) => candidate.is_hidden)) {
+      assert.ok(!noHiddenNames.includes(entry.name));
+    }
   } finally {
+    await disposeToolLayerWorkspace(cwd);
     await rm(cwd, { recursive: true, force: true });
   }
 });

@@ -68,6 +68,7 @@ internal static class RipgrepRunner
         FileSearchParams args,
         CancellationToken cancellationToken)
     {
+        var searchPath = WorkspacePathResolver.ResolveDirectory(args.Path);
         var rgPath = ResolveRgPath();
         string? autoDownloadNote = null;
         if (!File.Exists(rgPath))
@@ -79,8 +80,6 @@ internal static class RipgrepRunner
                             $"Set {RgPathEnvVar} env var or place rg binary next to the executable.");
             autoDownloadNote = $"ripgrep {detail} auto-downloaded from GitHub releases.";
         }
-
-        var searchPath = FileToolRuntime.ResolvePath(args.Path);
 
         var psi = BuildProcessStartInfo(rgPath, args, searchPath);
         using var process = new Process { StartInfo = psi };
@@ -159,7 +158,8 @@ internal static class RipgrepRunner
         {
             try
             {
-                var bytes = await File.ReadAllBytesAsync(fp, cancellationToken).ConfigureAwait(false);
+                var safePath = WorkspacePathResolver.ResolvePath(fp);
+                var bytes = await File.ReadAllBytesAsync(safePath, cancellationToken).ConfigureAwait(false);
                 fileHashes[fp] = FileHashing.ComputeFileHash(bytes);
             }
             catch
@@ -196,6 +196,7 @@ internal static class RipgrepRunner
         };
 
         psi.ArgumentList.Add("--json");
+        psi.ArgumentList.Add("--no-follow");
 
         if (args.CaseSensitive) psi.ArgumentList.Add("--case-sensitive");
         else                    psi.ArgumentList.Add("--ignore-case");

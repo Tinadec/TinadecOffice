@@ -2,12 +2,13 @@ using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tests;
 
-public sealed class FileWriterTests
+public sealed class FileWriterTests : IDisposable
 {
+    private readonly WorkspaceTestDirectory _workspace = new();
     [Fact]
     public async Task ReplaceLines_RejectsMismatchedLineHash()
     {
-        var path = CreateTempFile("first\nsecond\n");
+        var path = _workspace.CreateFile("replace.txt", "first\nsecond\n");
 
         var response = await FileWriter.ReplaceLinesAsync(new ReplaceLinesParams
         {
@@ -25,7 +26,7 @@ public sealed class FileWriterTests
     [Fact]
     public async Task InsertLine_ChecksFileHashAndUpdatesContent()
     {
-        var path = CreateTempFile("first\nsecond\n");
+        var path = _workspace.CreateFile("insert.txt", "first\nsecond\n");
         var read = await FileReader.HandleAsync(new NormalFileReadParams { FilePath = path }, CancellationToken.None);
 
         var response = await FileWriter.InsertLineAsync(new InsertLineParams
@@ -49,10 +50,5 @@ public sealed class FileWriterTests
         return reader.ReadToEnd();
     }
 
-    private static string CreateTempFile(string content)
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"tinadec-tools-test-{Guid.NewGuid():N}.txt");
-        File.WriteAllText(path, content);
-        return path;
-    }
+    public void Dispose() => _workspace.Dispose();
 }

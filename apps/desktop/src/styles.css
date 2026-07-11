@@ -4639,19 +4639,26 @@ animation-delay: 0.12s;
 }
 
 .settings-content h2 {
-  margin: 0 0 20px;
+  margin: 0 0 24px;
   font-size: 20px;
+  font-weight: 700;
   color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
 .settings-content h3 {
-  margin: 20px 0 10px;
+  margin: 24px 0 12px;
   font-size: 14px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
+.settings-content h3:first-of-type {
+  margin-top: 0;
+}
+
 .settings-field {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .settings-field label {
@@ -4829,6 +4836,210 @@ box-shadow: 0 0 0 1px var(--swatch-color), var(--shadow-panel);
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+/* ---- About page enhancements ---- */
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.about-brand-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.about-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.about-brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.about-brand-ver {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.about-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.about-status-card {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.about-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.about-status-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.about-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.about-status-dot.ok {
+  background: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.about-status-dot.off {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+.about-status-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.about-status-text.ok {
+  color: var(--accent);
+}
+
+.about-status-text.off {
+  color: var(--text-muted);
+}
+
+.about-status-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.about-arch {
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+
+.about-arch h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.about-layers {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.about-layer {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  text-align: center;
+  transition: border-color 0.15s;
+}
+
+.about-layer:hover {
+  border-color: var(--accent);
+}
+
+.about-layer--core {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary));
+}
+
+.about-layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.about-layer-header span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.about-layer-tech {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.about-layer-port {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+.about-layer-arrow {
+  flex-shrink: 0;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.about-links {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+
+.about-link-btn {
+  gap: 6px;
+}
+
+.about-license {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 0 8px;
+  border-top: 1px solid var(--border-muted);
+  margin-top: 16px;
 }
 
 .model-center-heading {

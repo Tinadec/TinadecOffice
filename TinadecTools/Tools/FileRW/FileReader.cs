@@ -69,15 +69,16 @@ public static class FileReader
 
             using (await slot.RwLock.ReadLockAsync(cancellationToken).ConfigureAwait(false))
             {
-                var fileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
-                if (slot.File.LineCount == 0 || startLine > slot.File.LineCount)
+                using var file = FileToolRuntime.OpenRead(path);
+                var fileHash = await file.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
+                if (file.LineCount == 0 || startLine > file.LineCount)
                 {
                     logger.Debug("read_file读取{path}的{startRow}-{endRow}行，共0行", path, startLine, endLine);
                     return new NormalFileReadResponse { Success = true, FileHash = fileHash };
                 }
 
-                var effectiveEndLine = Math.Min(endLine, slot.File.LineCount);
-                var lines = await slot.File.ReadLines([new KeyValuePair<int, int>(startLine - 1, effectiveEndLine - 1)])
+                var effectiveEndLine = Math.Min(endLine, file.LineCount);
+                var lines = await file.ReadLines([new KeyValuePair<int, int>(startLine - 1, effectiveEndLine - 1)])
                     .ConfigureAwait(false);
 
                 var contents = lines
