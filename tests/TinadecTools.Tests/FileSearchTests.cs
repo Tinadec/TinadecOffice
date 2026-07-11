@@ -213,11 +213,10 @@ public sealed class FileSearchTests : IDisposable
     // ── rg 找不到 ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task RgNotFound_DownloadDisabled_ReturnsFailureWithHelpfulError()
+    public async Task RgNotFound_ReturnsFailureWithHelpfulError()
     {
         Environment.SetEnvironmentVariable(RipgrepRunner.RgPathEnvVar,
             Path.Combine(Path.GetTempPath(), $"rg-fake-{Guid.NewGuid():N}"));
-        RipgrepDownloader.SkipAutoDownload = true;
         try
         {
             var resp = await FileSearch.HandleAsync(
@@ -230,7 +229,6 @@ public sealed class FileSearchTests : IDisposable
         }
         finally
         {
-            RipgrepDownloader.SkipAutoDownload = false;
             Environment.SetEnvironmentVariable(RipgrepRunner.RgPathEnvVar, _rgPath);
         }
     }
