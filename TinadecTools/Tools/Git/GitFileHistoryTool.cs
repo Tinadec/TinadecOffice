@@ -73,7 +73,7 @@ internal static class GitFileHistoryTool
     private const string CommitMarker = "__TINADEC_COMMIT__\x1f";
     private const string LogFormat = CommitMarker + "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID)]
+    [ToolFunction(TOOL_ID, RequiresApproval = true)]
     public static async ValueTask<GitFileHistoryResult> HandleAsync(
         GitFileHistoryArgs args,
         CancellationToken cancellationToken)

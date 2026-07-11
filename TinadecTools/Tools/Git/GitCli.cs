@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TinadecTools.Runtime;
+using TinadecTools.Tools.FileRW;
 
 namespace TinadecTools.Tools.Git;
 
@@ -7,7 +8,7 @@ namespace TinadecTools.Tools.Git;
 // Reuses TerminalRunner; minimal hard guard: repository_path must be a git worktree.
 // All args go through ArgumentList (no string concat) to prevent shell injection.
 
-internal sealed record GitExecResult(bool Ok, int ExitCode, string Stdout, string Stderr);
+internal sealed record GitExecResult(bool Ok, int ExitCode, string Stdout, string Stderr, bool Truncated = false);
 
 internal static class GitCli
 {
@@ -21,13 +22,15 @@ internal static class GitCli
     public static string? ResolveRepo(string repositoryPath, out string error)
     {
         error = string.Empty;
-        var path = repositoryPath;
-        if (string.IsNullOrWhiteSpace(path))
-            path = Environment.CurrentDirectory;
-
-        if (!Directory.Exists(path))
+        string path;
+        try
         {
-            error = $"repository_path does not exist: {path}";
+            path = WorkspacePathResolver.ResolveDirectory(
+                string.IsNullOrWhiteSpace(repositoryPath) ? "." : repositoryPath);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
             return null;
         }
 
@@ -44,7 +47,15 @@ internal static class GitCli
             return null;
         }
 
-        return revParse.Stdout.Trim();
+        try
+        {
+            return WorkspacePathResolver.ResolveDirectory(revParse.Stdout.Trim());
+        }
+        catch (Exception ex)
+        {
+            error = $"repository root is outside the workspace: {ex.Message}";
+            return null;
+        }
     }
 
     /// <summary>Get blob hash + byte size for rev:path (binary file summary).</summary>
@@ -90,11 +101,16 @@ internal static class GitCli
                 repoTopLevel,
                 stdin,
                 timeoutMs,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                maxOutputChars: 4 * 1024 * 1024).ConfigureAwait(false);
 
             // git not found: TerminalRunner catches and returns Success=false with ex.Message in Stderr.
             if (!r.Success && r.ExitCode < 0 && r.Stderr.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
                 return new GitExecResult(false, r.ExitCode, r.Stdout, GitNotFoundCode);
+
+            if (r.StdoutTruncated || r.StderrTruncated)
+                return new GitExecResult(false, r.ExitCode, r.Stdout,
+                    "git output exceeded the 4 MiB capture limit.", Truncated: true);
 
             return new GitExecResult(r.Success, r.ExitCode, r.Stdout, r.Stderr);
         }

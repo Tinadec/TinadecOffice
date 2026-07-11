@@ -52,7 +52,7 @@ internal static class GitLogListTool
 
     private const string LogFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID)]
+    [ToolFunction(TOOL_ID, RequiresApproval = true)]
     public static async ValueTask<GitLogListResult> HandleAsync(
         GitLogListArgs args,
         CancellationToken cancellationToken)

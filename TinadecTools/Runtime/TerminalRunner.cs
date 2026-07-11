@@ -7,6 +7,8 @@ internal sealed record TerminalResult(
     int ExitCode,
     string Stdout,
     string Stderr,
+    bool StdoutTruncated,
+    bool StderrTruncated,
     bool TimedOut,
     long DurationMs);
 
@@ -18,7 +20,8 @@ internal static class TerminalRunner
         string? workingDirectory = null,
         string? stdin = null,
         int timeoutMs = 30_000,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxOutputChars = 65_536)
     {
         var psi = new ProcessStartInfo
         {
@@ -51,6 +54,8 @@ internal static class TerminalRunner
                 ExitCode: -1,
                 Stdout: string.Empty,
                 Stderr: ex.Message,
+                StdoutTruncated: false,
+                StderrTruncated: false,
                 TimedOut: false,
                 DurationMs: 0);
         }
@@ -92,15 +97,18 @@ internal static class TerminalRunner
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
 
-        const int maxChars = 65_536;
-        if (stdout.Length > maxChars) stdout = stdout[..maxChars];
-        if (stderr.Length > maxChars) stderr = stderr[..maxChars];
+        var stdoutTruncated = stdout.Length > maxOutputChars;
+        var stderrTruncated = stderr.Length > maxOutputChars;
+        if (stdoutTruncated) stdout = stdout[..maxOutputChars];
+        if (stderrTruncated) stderr = stderr[..maxOutputChars];
 
         return new TerminalResult(
             Success: !timedOut && process.ExitCode == 0,
             ExitCode: timedOut ? -1 : process.ExitCode,
             Stdout: stdout,
             Stderr: stderr,
+            StdoutTruncated: stdoutTruncated,
+            StderrTruncated: stderrTruncated,
             TimedOut: timedOut,
             DurationMs: stopwatch.ElapsedMilliseconds);
     }
