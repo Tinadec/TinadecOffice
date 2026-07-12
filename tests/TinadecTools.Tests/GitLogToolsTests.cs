@@ -16,6 +16,7 @@ public sealed class GitLogToolsTests
         RunGit(dir, "init", "--initial-branch=main");
         RunGit(dir, "config", "user.name", "Test");
         RunGit(dir, "config", "user.email", "test@example.com");
+        RunGit(dir, "config", "commit.gpgSign", "false");
         // 确保有初始提交
         File.WriteAllText(Path.Combine(dir, "README.md"), "# hello\n");
         RunGit(dir, "add", "README.md");
@@ -314,6 +315,37 @@ public sealed class GitLogToolsTests
         }
     }
 
+    [Fact]
+    public async Task LogDetail_PatchBudget_PreservesMetadataWithoutPatch()
+    {
+        var repo = CreateTempRepo();
+        try
+        {
+            CommitFile(repo, "large.txt", new string('x', 2_048) + "\n", "add large");
+
+            var result = await GitLogDetailTool.HandleAsync(
+                new GitLogDetailArgs
+                {
+                    RepositoryPath = repo,
+                    Rev = "HEAD",
+                    IncludePatch = true,
+                    MaxPatchBytes = 32
+                },
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.NotEmpty(result.Commits);
+            Assert.Contains(result.Files, file => file.NewPath == "large.txt");
+            Assert.True(result.Truncated);
+            Assert.Equal("patch_output_limit", result.TruncationReason);
+            Assert.Null(result.Patches);
+        }
+        finally
+        {
+            CleanupRepo(repo);
+        }
+    }
+
     // ── git_file_history ───────────────────────────────────────────────────────
 
     [Fact]
@@ -382,6 +414,91 @@ public sealed class GitLogToolsTests
             Assert.True(result.Success);
             Assert.All(result.Entries, e => Assert.NotNull(e.Patch));
             Assert.Contains(result.Entries, e => e.Patch!.Hunks.Count > 0);
+        }
+        finally
+        {
+            CleanupRepo(repo);
+        }
+    }
+
+    [Fact]
+    public async Task FileHistory_RejectsPathOutsideRepository()
+    {
+        var repo = CreateTempRepo();
+        var external = CreateWorkspaceTempDirectory("git-external");
+        try
+        {
+            var externalFile = Path.Combine(external, "outside.txt");
+            File.WriteAllText(externalFile, "outside\n");
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                GitFileHistoryTool.HandleAsync(
+                    new GitFileHistoryArgs { RepositoryPath = repo, Path = externalFile },
+                    CancellationToken.None).AsTask());
+        }
+        finally
+        {
+            CleanupRepo(repo);
+            CleanupRepo(external);
+        }
+    }
+
+    [Fact]
+    public async Task FileHistory_RejectsLinkTraversal()
+    {
+        var repo = CreateTempRepo();
+        var external = CreateWorkspaceTempDirectory("git-link-target");
+        var link = Path.Combine(repo, "external-link");
+        try
+        {
+            File.WriteAllText(Path.Combine(external, "secret.txt"), "secret\n");
+            try
+            {
+                Directory.CreateSymbolicLink(link, external);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return;
+            }
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                GitFileHistoryTool.HandleAsync(
+                    new GitFileHistoryArgs { RepositoryPath = repo, Path = "external-link/secret.txt" },
+                    CancellationToken.None).AsTask());
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            CleanupRepo(repo);
+            CleanupRepo(external);
+        }
+    }
+
+    [Fact]
+    public async Task FileHistory_PatchBudget_PreservesEntriesWithoutPatch()
+    {
+        var repo = CreateTempRepo();
+        try
+        {
+            CommitFile(repo, "large.txt", new string('x', 2_048) + "\n", "add large");
+
+            var result = await GitFileHistoryTool.HandleAsync(
+                new GitFileHistoryArgs
+                {
+                    RepositoryPath = repo,
+                    Path = "large.txt",
+                    IncludePatch = true,
+                    MaxPatchBytes = 32
+                },
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.NotEmpty(result.Entries);
+            Assert.Contains(result.Entries, entry => entry.Change.NewPath == "large.txt");
+            Assert.True(result.Truncated);
+            Assert.Equal("patch_output_limit", result.TruncationReason);
+            Assert.All(result.Entries, entry => Assert.Null(entry.Patch));
         }
         finally
         {

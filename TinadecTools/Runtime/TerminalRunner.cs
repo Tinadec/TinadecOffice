@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace TinadecTools.Runtime;
 
@@ -60,8 +61,8 @@ internal static class TerminalRunner
                 DurationMs: 0);
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        var stdoutTask = ReadOutputAsync(process.StandardOutput, maxOutputChars);
+        var stderrTask = ReadOutputAsync(process.StandardError, maxOutputChars);
 
         if (stdin is not null)
         {
@@ -97,18 +98,13 @@ internal static class TerminalRunner
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
 
-        var stdoutTruncated = stdout.Length > maxOutputChars;
-        var stderrTruncated = stderr.Length > maxOutputChars;
-        if (stdoutTruncated) stdout = stdout[..maxOutputChars];
-        if (stderrTruncated) stderr = stderr[..maxOutputChars];
-
         return new TerminalResult(
             Success: !timedOut && process.ExitCode == 0,
             ExitCode: timedOut ? -1 : process.ExitCode,
-            Stdout: stdout,
-            Stderr: stderr,
-            StdoutTruncated: stdoutTruncated,
-            StderrTruncated: stderrTruncated,
+            Stdout: stdout.Content,
+            Stderr: stderr.Content,
+            StdoutTruncated: stdout.Truncated,
+            StderrTruncated: stderr.Truncated,
             TimedOut: timedOut,
             DurationMs: stopwatch.ElapsedMilliseconds);
     }
@@ -118,4 +114,35 @@ internal static class TerminalRunner
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch { /* best-effort */ }
     }
+
+    private static async Task<CapturedOutput> ReadOutputAsync(StreamReader reader, int maxOutputChars)
+    {
+        var limit = Math.Max(0, maxOutputChars);
+        var builder = new StringBuilder(Math.Min(limit, 4_096));
+        var buffer = new char[4_096];
+        var truncated = false;
+
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false);
+            if (read == 0)
+                break;
+
+            var remaining = limit - builder.Length;
+            if (remaining <= 0)
+            {
+                truncated = true;
+                continue;
+            }
+
+            var captured = Math.Min(remaining, read);
+            builder.Append(buffer, 0, captured);
+            if (captured < read)
+                truncated = true;
+        }
+
+        return new CapturedOutput(builder.ToString(), truncated);
+    }
+
+    private sealed record CapturedOutput(string Content, bool Truncated);
 }

@@ -68,6 +68,7 @@ internal static class GitLogListTool
         List<string> revArgs;
         if (!string.IsNullOrWhiteSpace(args.AfterCommit))
         {
+            GitCli.ValidateRevision(args.AfterCommit, "after_commit");
             // cursor continue: walk from all parents of after_commit
             revArgs = [$"{args.AfterCommit}^@"];
         }
@@ -111,7 +112,7 @@ internal static class GitLogListTool
     }
 
     private static bool HasOptionInjection(List<string> revs) =>
-        revs.Any(r => r.StartsWith("-", StringComparison.Ordinal));
+        revs.Any(r => string.IsNullOrWhiteSpace(r) || r.StartsWith("-", StringComparison.Ordinal));
 
     private static GitLogListResult Fail(GitExecResult exec) => new()
     {

@@ -91,7 +91,8 @@ internal static class GitCli
         IReadOnlyList<string> arguments,
         string? stdin = null,
         CancellationToken cancellationToken = default,
-        int timeoutMs = 60_000)
+        int timeoutMs = 60_000,
+        int maxOutputChars = 4 * 1024 * 1024)
     {
         try
         {
@@ -102,7 +103,7 @@ internal static class GitCli
                 stdin,
                 timeoutMs,
                 cancellationToken,
-                maxOutputChars: 4 * 1024 * 1024).ConfigureAwait(false);
+                maxOutputChars: maxOutputChars).ConfigureAwait(false);
 
             // git not found: TerminalRunner catches and returns Success=false with ex.Message in Stderr.
             if (!r.Success && r.ExitCode < 0 && r.Stderr.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
@@ -110,7 +111,7 @@ internal static class GitCli
 
             if (r.StdoutTruncated || r.StderrTruncated)
                 return new GitExecResult(false, r.ExitCode, r.Stdout,
-                    "git output exceeded the 4 MiB capture limit.", Truncated: true);
+                    $"git output exceeded the {maxOutputChars:N0}-character capture limit.", Truncated: true);
 
             return new GitExecResult(r.Success, r.ExitCode, r.Stdout, r.Stderr);
         }
@@ -118,5 +119,25 @@ internal static class GitCli
         {
             return new GitExecResult(false, -1, string.Empty, ex.Message);
         }
+    }
+
+    public static string ResolveRepositoryRelativePath(string repoTopLevel, string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        var resolved = WorkspacePathResolver.ResolvePath(Path.GetFullPath(path, repoTopLevel));
+        var relative = Path.GetRelativePath(repoTopLevel, resolved);
+        if (relative == "." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+            relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative))
+            throw new UnauthorizedAccessException("Path must be inside the Git repository.");
+
+        return relative.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    public static void ValidateRevision(string value, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        if (value.StartsWith("-", StringComparison.Ordinal))
+            throw new InvalidOperationException($"{parameterName} must not start with '-'.");
     }
 }
