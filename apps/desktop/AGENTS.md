@@ -25,6 +25,7 @@ apps/desktop/
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; model/providers/agents settings. |
+| Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
 | Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
 | Tool layer catalog/search | `src/pages/SettingsPage.vue`, `src/toolCatalog.ts`, `src/api.ts` | Settings presents Code-suite tools, Codex primitives, supported runtimes, Core manifest registry governance/design notes, and Core-owned tool search results. |
 | Tool execution visibility | `src/pages/HomePage.vue`, `src/components/ContextPanel.vue`, `src/components/OrchestrationTab.vue`, `src/api.ts` | Right rail presents Core-owned tool execution timeline state, provider layer, duration, checkpoint summary, and step-result evidence. |
@@ -43,7 +44,10 @@ apps/desktop/
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
 - Prompt Context UI is presentation and local preview only. The renderer calls Gateway APIs mirrored in `src/api.ts`; Core owns fragment selection, context pack handling, token estimates, and warnings.
-- Model Center keeps Core provider/catalog readiness authoritative while presenting it as a compact health overview, native collapsible diagnostics, and a locally searched/filtered union of configured instances plus unconfigured templates. View-model sorting must preserve Core `blocked` / `warning` / `ready` meanings.
+- Model Center consumes the Gateway overview and renders five resource groups: Core suppliers, API/local connections, configured-only models, CLI runtimes, and ACP runtimes. Core supplier templates are executable-catalog authority; `providerTemplates.ts` may only supply presentation metadata such as translations, icons, colors, and placeholders.
+- Model lists contain only provider defaults and existing route overrides until Core adds live discovery. Refresh controls and ACP probes must follow Gateway capability flags, while Gateway diagnostics remain visible and retryable without hiding usable partial data.
+- Agent Center consumes Gateway-derived effective bindings for cards and topology. It may preview `inherit`, `fixed_model`, `provider_auto`, `cli`, and `acp`, but must keep save disabled while `agent_runtime_binding_write=false`; never persist drafts in Desktop, Gateway, or `localStorage`.
+- Legacy `model_route_purpose` bindings can be shared by multiple agents. Show `LEGACY_SHARED_ROUTE` warnings and never save an agent runtime choice by rewriting the shared model route.
 - Code-suite UI is presentation-only: group/filter tool descriptors and project template summaries from Gateway/Core, but keep approval and execution ownership outside Desktop.
 - Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, show blockers/diffs/worktrees, create Core approval records when needed, and only call approved `stage` / `unstage` / `commit` / `push` tool executions with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
 - Tool search UI must consume Core/Gateway `/api/v1/tools/search` results. Do not invent provider-layer, matched-field, or human-checkpoint semantics in the renderer.

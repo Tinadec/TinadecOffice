@@ -31,6 +31,19 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 | `GET /api/v1/model-readiness` | Core-owned model provider and route readiness receipt covering provider status, credential availability, route coverage, blocked routes, and advisory discovery notes. |
 | `GET /api/v1/model-catalog-readiness` | Core-owned model catalog receipt covering static templates, runtime module coverage, configured instance counts, and advisory live-discovery policy. Static templates stay visible when live discovery is unavailable. |
 
+## Model And Agent Center BFF APIs
+
+Gateway exposes stateless center-oriented views for Desktop while Core remains the only authority for provider lifecycle, routes, agents, readiness, and secrets.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/model-center/overview` | Aggregates Core supplier templates, configured provider instances, model routes, model/catalog readiness, and ACP adapters into suppliers, API/local connections, configured-only models, CLI runtimes, ACP runtimes, capabilities, and diagnostics. |
+| `GET /api/v1/agent-center/overview` | Adds agents, modes, candidates, selectable runtime sources, and a Gateway-derived effective binding for each existing `model_route_purpose`. Shared purposes are reported with `LEGACY_SHARED_ROUTE`; they are not treated as per-agent state. |
+| `POST /api/v1/model-center/provider-instances/{providerInstanceId}/models/refresh` | Reserved live-discovery contract. It validates the provider id and returns `501 MODEL_DISCOVERY_UNSUPPORTED` until Core owns discovery. |
+| `PUT /api/v1/agents/{agentId}/runtime-binding` | Reserved snake_case discriminated-union contract for inherit, fixed model, provider auto, CLI, and ACP. It validates the request and returns `501 AGENT_RUNTIME_BINDING_UNSUPPORTED` until Core owns persistent per-agent bindings. |
+
+The BFF normalizes transport and credential kinds separately, recursively strips secret fields, keeps Core readiness receipts unchanged apart from secret removal, and degrades optional Core `404/501` responses into diagnostics. Required Core failures and Core unreachability remain errors. The model list is not live discovery: it is deduplicated only from configured provider defaults and current route overrides. CLI providers and ACP adapters stay distinct; ACP-capable legacy providers are labeled `legacy_provider` rather than merged by guesswork. Gateway and Desktop do not persist binding drafts, implement provider auto-selection, or rewrite shared legacy routes.
+
 ## Built-In Execution Subagents
 
 `executor_git_manager` is the Git Manager Subagent in the execution layer. Git-related goals such as branch review, commit preparation, push readiness, worktree management, merge/rebase guidance, and user-facing handoff notes can route to it. It can explain repository state, but Git mutation and push flows must remain approval-gated through Core-governed tools such as `git_worktree_manager`.

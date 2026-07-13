@@ -375,6 +375,187 @@ export interface AcpAdapterDto {
   updated_at: string;
 }
 
+export interface CenterDiagnosticDto {
+  code: string;
+  severity: 'warning' | 'error' | string;
+  message: string;
+  source?: string | null;
+  status?: number | null;
+  route_purpose?: string | null;
+  agent_ids?: string[] | null;
+}
+
+export interface ModelCenterCapabilitiesDto {
+  provider_crud: boolean;
+  model_catalog_mode: 'configured_only' | string;
+  model_discovery_refresh: boolean;
+  live_model_discovery: boolean;
+  agent_runtime_binding_write: boolean;
+  acp_adapter_read: boolean;
+  acp_probe: boolean;
+}
+
+export interface ModelCenterSupplierDto {
+  supplier_id: string;
+  provider_family: string;
+  driver: string;
+  display_name: string;
+  connection_kind: string;
+  transport_kind: string;
+  credential_kind: string;
+  summary: string;
+  contributor_description: string;
+  default_base_url?: string | null;
+  default_model?: string | null;
+  default_timeout_seconds: number;
+  capabilities: Record<string, unknown>;
+}
+
+export interface ModelCenterApiConnectionDto {
+  id: string;
+  provider_instance_id: string;
+  provider_family?: string | null;
+  driver: string;
+  display_name: string;
+  connection_kind: string;
+  transport_kind: string;
+  credential_kind: string;
+  base_url?: string | null;
+  model?: string | null;
+  has_api_key: boolean;
+  server_url?: string | null;
+  capabilities: string[];
+  enabled: boolean;
+  status: string;
+  status_message: string;
+  cooldown_until?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  route_purposes: string[];
+  readiness?: Record<string, unknown> | null;
+}
+
+export interface ModelCenterModelDto {
+  id: string;
+  display_name: string;
+  provider_instance_id: string;
+  provider_display_name?: string | null;
+  model_id: string;
+  source: 'configured_only' | string;
+  configuration_sources: Array<'provider_default' | 'route_override' | string>;
+  is_provider_default: boolean;
+  route_purposes: string[];
+  enabled: boolean;
+  status: string;
+}
+
+export interface ModelCenterCliRuntimeDto {
+  id: string;
+  runtime_id: string;
+  provider_instance_id: string;
+  source: 'provider_instance' | string;
+  driver: string;
+  display_name: string;
+  binary_path?: string | null;
+  home_path?: string | null;
+  server_url?: string | null;
+  launch_args?: string | null;
+  model?: string | null;
+  capabilities: string[];
+  enabled: boolean;
+  status: string;
+  status_message: string;
+  route_purposes: string[];
+  readiness?: Record<string, unknown> | null;
+}
+
+export interface ModelCenterAcpRuntimeDto {
+  id: string;
+  runtime_id: string;
+  source: 'adapter' | 'legacy_provider' | string;
+  adapter_id?: string | null;
+  provider_instance_id?: string | null;
+  extension_id?: string | null;
+  driver?: string | null;
+  display_name: string;
+  command?: string | null;
+  binary_path?: string | null;
+  home_path?: string | null;
+  status: string;
+  status_message: string;
+  capabilities: string[];
+  enabled: boolean;
+  route_purposes: string[];
+  updated_at?: string | null;
+  readiness?: Record<string, unknown> | null;
+}
+
+export interface ModelCenterOverviewDto {
+  capabilities: ModelCenterCapabilitiesDto;
+  suppliers: ModelCenterSupplierDto[];
+  api_connections: ModelCenterApiConnectionDto[];
+  models: ModelCenterModelDto[];
+  cli_runtimes: ModelCenterCliRuntimeDto[];
+  acp_runtimes: ModelCenterAcpRuntimeDto[];
+  readiness: {
+    model?: ModelReadinessReceiptDto | null;
+    catalog?: ModelCatalogReadinessReceiptDto | null;
+  };
+  diagnostics: CenterDiagnosticDto[];
+}
+
+export type AgentRuntimeSelectionKind = 'inherit' | 'fixed_model' | 'provider_auto' | 'cli' | 'acp';
+
+export type AgentRuntimeBindingInput =
+  | { selection_kind: 'inherit' }
+  | { selection_kind: 'fixed_model'; provider_instance_id: string; model_id: string }
+  | { selection_kind: 'provider_auto'; provider_instance_id: string }
+  | { selection_kind: 'cli'; runtime_id: string }
+  | { selection_kind: 'acp'; runtime_id: string };
+
+export interface AgentRuntimeBindingWarningDto {
+  code: 'LEGACY_SHARED_ROUTE' | string;
+  message: string;
+  shared_agent_ids: string[];
+}
+
+export interface AgentRuntimeBindingDto {
+  selection_kind: AgentRuntimeSelectionKind;
+  source: 'legacy_route' | 'agent_binding' | string;
+  writable: boolean;
+  route_purpose: string;
+  runtime_kind: 'model' | 'cli' | 'acp' | 'unresolved' | string;
+  runtime_id?: string | null;
+  provider_instance_id?: string | null;
+  provider_display_name?: string | null;
+  model_id?: string | null;
+  model_source: 'route_override' | 'provider_default' | 'unset' | string;
+  shared_agent_ids: string[];
+  warnings: AgentRuntimeBindingWarningDto[];
+}
+
+export interface AgentCenterAgentDto extends AgentProfileDto {
+  runtime_binding: AgentRuntimeBindingDto;
+}
+
+export interface AgentCenterOverviewDto {
+  capabilities: ModelCenterCapabilitiesDto;
+  agents: AgentCenterAgentDto[];
+  modes: AgentModeDto[];
+  candidates: AgentCandidateDto[];
+  runtime_sources: {
+    models: ModelCenterModelDto[];
+    providers: ModelCenterApiConnectionDto[];
+    cli_runtimes: ModelCenterCliRuntimeDto[];
+    acp_runtimes: ModelCenterAcpRuntimeDto[];
+  };
+  readiness: {
+    model?: ModelReadinessReceiptDto | null;
+    catalog?: ModelCatalogReadinessReceiptDto | null;
+  };
+  diagnostics: CenterDiagnosticDto[];
+}
+
 export interface AgentProfileDto {
   id: string;
   name: string;
@@ -388,7 +569,7 @@ export interface AgentProfileDto {
   system_prompt?: string | null;
   enabled: boolean;
   is_built_in: boolean;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 export interface AgentModeDto {
@@ -877,6 +1058,10 @@ export const api = {
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
+  getModelCenterOverview: () => request<ModelCenterOverviewDto>('/api/v1/model-center/overview'),
+  refreshProviderModels: (providerInstanceId: string) => request<ModelCenterOverviewDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
+    method: 'POST'
+  }),
   getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),
   getModelCatalogReadiness: () => request<ModelCatalogReadinessReceiptDto>('/api/v1/model-catalog-readiness'),
   createModelProvider: (provider: SaveModelProviderInstanceInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers', {
@@ -935,6 +1120,11 @@ export const api = {
   connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
+  getAgentCenterOverview: () => request<AgentCenterOverviewDto>('/api/v1/agent-center/overview'),
+  saveAgentRuntimeBinding: (agentId: string, binding: AgentRuntimeBindingInput) => request<AgentRuntimeBindingDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/runtime-binding`, {
+    method: 'PUT',
+    body: JSON.stringify(binding)
+  }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
   listAgents: () => request<AgentProfileDto[]>('/api/v1/agents'),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),

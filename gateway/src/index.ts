@@ -14,6 +14,12 @@ import {
 import { coreUrl, proxyJson, proxySse } from './coreClient.js';
 import { proxyDebugJson, debugWsUrl } from './debugProxy.js';
 import { mcpRoutes } from './mcp/mcpRoutes.js';
+import {
+  agentRuntimeBindingWriteResult,
+  loadAgentCenterOverview,
+  loadModelCenterOverview,
+  modelDiscoveryRefreshResult
+} from './modelAgentCenter.js';
 
 const port = Number(process.env.TINADEC_GATEWAY_PORT ?? 48730);
 
@@ -359,6 +365,16 @@ const app = new Elysia({ adapter: node() })
 
     return result;
   })
+  .get('/api/v1/model-center/overview', async ({ set }) => {
+    const result = await loadModelCenterOverview();
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/model-center/provider-instances/:providerInstanceId/models/refresh', ({ params, set }) => {
+    const result = modelDiscoveryRefreshResult(params.providerInstanceId);
+    setStatus(set, result.status);
+    return result.data;
+  })
   .get('/api/v1/model-provider-templates', async ({ set }) => {
     const result = await proxyJson('/api/v1/model-provider-templates');
     setStatus(set, result.status);
@@ -501,6 +517,11 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  .get('/api/v1/agent-center/overview', async ({ set }) => {
+    const result = await loadAgentCenterOverview();
+    setStatus(set, result.status);
+    return result.data;
+  })
   .get('/api/v1/agent-modes', async ({ set }) => {
     const result = await proxyJson('/api/v1/agent-modes');
     setStatus(set, result.status);
@@ -516,6 +537,11 @@ const app = new Elysia({ adapter: node() })
       method: 'PUT',
       body: body as Record<string, unknown>
     });
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .put('/api/v1/agents/:agentId/runtime-binding', ({ params, body, set }) => {
+    const result = agentRuntimeBindingWriteResult(params.agentId, body);
     setStatus(set, result.status);
     return result.data;
   })

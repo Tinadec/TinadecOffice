@@ -8,14 +8,20 @@ Elysia TypeScript BFF/API layer. It proxies Core HTTP/SSE/debug routes and hosts
 |------|----------|-------|
 | Server routes | `src/index.ts` | Elysia app, Swagger, manual CORS, `/api/v1/*`. |
 | Core proxy | `src/coreClient.ts` | `coreUrl`, JSON proxy, SSE proxy. |
+| Model/Agent center BFF | `src/modelAgentCenter.ts` | Stateless, secret-stripping aggregation for model resources and effective agent runtime bindings; includes unsupported-write validation. |
 | Debug proxy | `src/debugProxy.ts` | Debug API + WebSocket URL helpers. |
 | Code tools | `src/codeTools.ts` | Tool execution/fallback boundary and Gateway DTO adapters. |
 | Tool-layer bridge | `src/toolLayerBridge.ts` | Workspace-scoped TinadecTools stdio process lifecycle and request correlation. |
-| Tests | `src/coreClient.test.ts`, `src/codeTools.test.ts` | Node test runner + `tsx`; the latter covers TinadecTools bridge calls. |
+| Tests | `src/coreClient.test.ts`, `src/codeTools.test.ts`, `src/modelAgentCenter.test.ts` | Node test runner + `tsx`; center tests cover normalization, diagnostics, binding validation, and secret stripping. |
 
 ## CONVENTIONS
 - Package is ESM (`"type": "module"`); TypeScript uses `NodeNext`.
 - Keep Gateway thin. Core owns state, approvals, model routes, sessions, events, and persistence.
+- `GET /api/v1/model-center/overview` and `GET /api/v1/agent-center/overview` are transient BFF views over Core templates, provider instances, routes, agents, readiness, and ACP data. They must not persist or invent a second source of truth.
+- Model Center reports only `configured_only` models derived from provider defaults and existing route overrides. Do not present this as live discovery or implement provider auto-selection in Gateway.
+- Optional Core readiness, ACP, agent-mode, and candidate endpoints may degrade on `404/501` into response diagnostics; required catalog/provider/route/agent failures and Core unreachability remain errors.
+- `POST /api/v1/model-center/provider-instances/:id/models/refresh` and `PUT /api/v1/agents/:agentId/runtime-binding` currently validate the public contract and return explicit `501` results. Do not store drafts, rewrite shared legacy routes, or return synthetic success before Core owns these capabilities.
+- Center aggregation must recursively strip API keys and other secret fields. Keep CLI providers and ACP adapters separate; ACP-capable legacy providers are labeled `legacy_provider` rather than guessed or merged with adapters.
 - Prompt fragment CRUD and prompt context preview routes are Core proxies only. Do not add prompt selection, token budgeting, or prompt assembly logic in Gateway.
 - Harness manifest, tool search, and tool execution timeline routes are Core proxies only. Do not recompute agent layers, provider layers, risk policy, matched fields, approval summaries, or execution audit state in Gateway.
 - `/api/v1/code/tools` publishes Tool-layer Code-suite metadata with snake_case public DTO fields. `src/codeTools.ts` keeps internal spec fields camelCase and maps them at the API boundary.
