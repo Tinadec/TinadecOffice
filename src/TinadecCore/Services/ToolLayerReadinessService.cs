@@ -40,6 +40,8 @@ public sealed class ToolLayerReadinessService(
             ["git.push"] = ["git_push", "git_worktree_manager"],
             ["git.fetch"] = ["git_fetch"],
             ["git.pull"] = ["git_pull"],
+            ["git.merge"] = ["git_merge"],
+            ["git.rebase"] = ["git_rebase"],
             ["review.format"] = ["review_format"]
         };
 

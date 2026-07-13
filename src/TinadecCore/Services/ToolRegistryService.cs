@@ -204,6 +204,8 @@ public sealed class CodeCapabilityProvider : ICapabilityProvider
         GitWrite("git_fetch", "Git Fetch", "git.fetch", "git.remote.write"),
         GitWrite("git_push", "Git Push", "git.push", "git.remote.write"),
         GitWrite("git_pull", "Git Pull", "git.pull", "git.remote.write"),
+        GitWrite("git_merge", "Git Merge", "git.merge"),
+        GitWrite("git_rebase", "Git Rebase", "git.rebase", "git.history.rewrite"),
         .. GitReadTools
     ];
 
@@ -529,6 +531,18 @@ public sealed class ToolRegistryService : IToolRegistry
                     ["confirm_fetch"] = new Dictionary<string, object?> { ["type"] = "boolean" },
                     ["confirm_push"] = new Dictionary<string, object?> { ["type"] = "boolean" },
                     ["confirm_pull"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_merge" or "git_rebase" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["operation"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["strategy"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["confirm_merge"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_rebase"] = new Dictionary<string, object?> { ["type"] = "boolean" }
                 }
             },
             _ => new Dictionary<string, object?>

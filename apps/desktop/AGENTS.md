@@ -49,7 +49,7 @@ apps/desktop/
 - Agent Center consumes Gateway-derived effective bindings for cards and topology. It may preview `inherit`, `fixed_model`, `provider_auto`, `cli`, and `acp`, but must keep save disabled while `agent_runtime_binding_write=false`; never persist drafts in Desktop, Gateway, or `localStorage`.
 - Legacy `model_route_purpose` bindings can be shared by multiple agents. Show `LEGACY_SHARED_ROUTE` warnings and never save an agent runtime choice by rewriting the shared model route.
 - Code-suite UI is presentation-only: group/filter tool descriptors and project template summaries from Gateway/Core, but keep approval and execution ownership outside Desktop.
-- Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, use direct approved tools for index, commit, branch, fetch, push, and fast-forward pull operations, and only execute with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
+- Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, use direct approved tools for index, commit, branch, remote sync, merge, and rebase operations, and only execute with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
 - Tool search UI must consume Core/Gateway `/api/v1/tools/search` results. Do not invent provider-layer, matched-field, or human-checkpoint semantics in the renderer.
 - Tool execution UI must consume Core/Gateway `/api/v1/sessions/{sessionId}/tool-executions` results. Do not reconstruct audit timelines, provider layers, durations, or checkpoint summaries from local event arrays in Desktop.
 - Dev server is pinned: `127.0.0.1:5173`, `strictPort: true`.

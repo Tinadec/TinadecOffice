@@ -34,9 +34,11 @@ test('Code tools expose programming-domain execution contracts', async () => {
     'git_file_history',
     'git_log_detail',
     'git_log_list',
+    'git_merge',
     'git_pull',
     'git_push',
     'git_push_readiness',
+    'git_rebase',
     'git_ref_list',
     'git_remote_list',
     'git_stage',
@@ -735,6 +737,99 @@ test('git worktree manager creates and removes managed worktrees through Tinadec
   assert.equal(removed?.status, 'completed');
   assert.equal(removed?.data.removed, true);
   await assert.rejects(() => stat(path.join(cwd, relativePath)), /ENOENT/);
+});
+
+test('git worktree manager runs merge and rebase start operations through TinadecTools', async (t) => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-integrate-'));
+  t.after(async () => {
+    await disposeToolLayerWorkspace(cwd);
+    await rm(cwd, { recursive: true, force: true });
+  });
+  await initGitRepo(cwd);
+  await runGit(cwd, ['config', 'user.name', 'Tinadec Test']);
+  await runGit(cwd, ['config', 'user.email', 'tinadec@example.invalid']);
+  await writeFile(path.join(cwd, 'base.txt'), 'base\n', 'utf8');
+  await runGit(cwd, ['add', 'base.txt']);
+  await runGit(cwd, ['commit', '-m', 'initial']);
+  await runGit(cwd, ['checkout', '-b', 'feature']);
+  await writeFile(path.join(cwd, 'feature.txt'), 'feature\n', 'utf8');
+  await runGit(cwd, ['add', 'feature.txt']);
+  await runGit(cwd, ['commit', '-m', 'feature']);
+  await runGit(cwd, ['checkout', 'main']);
+
+  const merged = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'merge', operation: 'start', branch: 'feature', strategy: 'no_ff', confirm_merge: true }
+  });
+  assert.equal(merged?.status, 'completed');
+
+  await runGit(cwd, ['branch', 'topic']);
+  await writeFile(path.join(cwd, 'main.txt'), 'main\n', 'utf8');
+  await runGit(cwd, ['add', 'main.txt']);
+  await runGit(cwd, ['commit', '-m', 'main advance']);
+  await runGit(cwd, ['checkout', 'topic']);
+  await writeFile(path.join(cwd, 'topic.txt'), 'topic\n', 'utf8');
+  await runGit(cwd, ['add', 'topic.txt']);
+  await runGit(cwd, ['commit', '-m', 'topic change']);
+
+  const rebased = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'rebase', operation: 'start', branch: 'main', confirm_rebase: true }
+  });
+  assert.equal(rebased?.status, 'completed');
+  assert.equal((rebased?.data.status as { branch?: string }).branch, 'topic');
+});
+
+test('git rebase lifecycle supports abort skip and non-interactive continue', async (t) => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-rebase-life-'));
+  t.after(async () => {
+    await disposeToolLayerWorkspace(cwd);
+    await rm(cwd, { recursive: true, force: true });
+  });
+  await initGitRepo(cwd);
+  await runGit(cwd, ['config', 'user.name', 'Tinadec Test']);
+  await runGit(cwd, ['config', 'user.email', 'tinadec@example.invalid']);
+  await writeFile(path.join(cwd, 'shared.txt'), 'base\n', 'utf8');
+  await runGit(cwd, ['add', 'shared.txt']);
+  await runGit(cwd, ['commit', '-m', 'initial']);
+  await runGit(cwd, ['branch', 'topic-abort']);
+  await runGit(cwd, ['branch', 'topic-skip']);
+  await runGit(cwd, ['branch', 'topic-continue']);
+  await runGit(cwd, ['checkout', '-b', 'upstream']);
+  await writeFile(path.join(cwd, 'shared.txt'), 'upstream\n', 'utf8');
+  await runGit(cwd, ['add', 'shared.txt']);
+  await runGit(cwd, ['commit', '-m', 'upstream change']);
+
+  async function conflictOn(branch: string) {
+    await runGit(cwd, ['checkout', branch]);
+    await writeFile(path.join(cwd, 'shared.txt'), `${branch}\n`, 'utf8');
+    await runGit(cwd, ['add', 'shared.txt']);
+    await runGit(cwd, ['commit', '-m', `${branch} change`]);
+    const result = await executeCodeTool('git_rebase', {
+      cwd,
+      approval_id: 'approval-test',
+      arguments: { operation: 'start', branch: 'upstream', confirm_rebase: true }
+    });
+    assert.equal(result?.status, 'failed');
+    assert.equal(result?.data.conflict, true);
+  }
+
+  await conflictOn('topic-abort');
+  const aborted = await executeCodeTool('git_rebase', { cwd, approval_id: 'approval-test', arguments: { operation: 'abort', confirm_rebase: true } });
+  assert.equal(aborted?.status, 'completed');
+
+  await conflictOn('topic-skip');
+  const skipped = await executeCodeTool('git_rebase', { cwd, approval_id: 'approval-test', arguments: { operation: 'skip', confirm_rebase: true } });
+  assert.equal(skipped?.status, 'completed');
+
+  await conflictOn('topic-continue');
+  await writeFile(path.join(cwd, 'shared.txt'), 'resolved\n', 'utf8');
+  await runGit(cwd, ['add', 'shared.txt']);
+  const continued = await executeCodeTool('git_rebase', { cwd, approval_id: 'approval-test', arguments: { operation: 'continue', confirm_rebase: true } });
+  assert.equal(continued?.status, 'completed');
+  assert.equal((await readFile(path.join(cwd, 'shared.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'resolved\n');
 });
 
 test('git worktree manager fetches from a remote and reports tracking info', async (t) => {

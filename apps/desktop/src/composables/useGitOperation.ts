@@ -674,7 +674,7 @@ export function useGitOperation(
     feedback.value = null
     try {
       const branch = checkoutApproval.value.command?.replace('git checkout ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_merge', {
         session_id: sid.value,
         approval_id: checkoutApproval.value.id,
         cwd: cwd.value,
@@ -819,7 +819,6 @@ export function useGitOperation(
         approval_id: mergeApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'merge',
           confirm_merge: true,
           branch,
         },
@@ -864,12 +863,11 @@ export function useGitOperation(
       const branch = operation === 'start'
         ? rebaseApproval.value.command?.replace('git rebase ', '').trim() ?? ''
         : undefined
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_rebase', {
         session_id: sid.value,
         approval_id: rebaseApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'rebase',
           confirm_rebase: true,
           operation,
           ...(branch ? { branch } : {}),
