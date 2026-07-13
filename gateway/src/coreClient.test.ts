@@ -29,10 +29,13 @@ test('Code tools expose programming-domain execution contracts', async () => {
     'git_commit',
     'git_conflict_preview',
     'git_diff',
+    'git_fetch',
     'git_file_at_revision',
     'git_file_history',
     'git_log_detail',
     'git_log_list',
+    'git_pull',
+    'git_push',
     'git_push_readiness',
     'git_ref_list',
     'git_remote_list',
@@ -434,8 +437,8 @@ test('git commit tool and legacy manager execute approved commit and push with e
     }
   });
 
-  assert.equal(unsafeRemote?.status, 'blocked');
-  assert.match(unsafeRemote?.summary ?? '', /remote/);
+  assert.equal(unsafeRemote?.status, 'failed');
+  assert.match(unsafeRemote?.summary ?? '', /remote/i);
 
   const pushed = await executeCodeTool('git_worktree_manager', {
     cwd,
@@ -737,10 +740,12 @@ test('git worktree manager creates and removes managed worktrees through Tinadec
 test('git worktree manager fetches from a remote and reports tracking info', async (t) => {
   const remote = await mkdtemp(path.join(tmpdir(), 'tinadec-git-remote-'));
   const cwd = await mkdtemp(path.join(tmpdir(), 'tinadec-git-fetch-'));
+  const peer = await mkdtemp(path.join(tmpdir(), 'tinadec-git-peer-'));
   t.after(async () => {
     await disposeToolLayerWorkspace(cwd);
     await rm(cwd, { recursive: true, force: true });
     await rm(remote, { recursive: true, force: true });
+    await rm(peer, { recursive: true, force: true });
   });
 
   await runGit(remote, ['init', '--bare']);
@@ -752,6 +757,15 @@ test('git worktree manager fetches from a remote and reports tracking info', asy
   await runGit(cwd, ['add', 'file.txt']);
   await runGit(cwd, ['commit', '-m', 'initial']);
   await runGit(cwd, ['push', '-u', 'origin', 'main']);
+
+  await runGit(peer, ['clone', '-b', 'main', remote, '.']);
+  await runGit(peer, ['config', 'user.name', 'Tinadec Peer']);
+  await runGit(peer, ['config', 'user.email', 'peer@example.invalid']);
+  await runGit(peer, ['config', 'commit.gpgSign', 'false']);
+  await writeFile(path.join(peer, 'remote.txt'), 'remote\n', 'utf8');
+  await runGit(peer, ['add', 'remote.txt']);
+  await runGit(peer, ['commit', '-m', 'remote change']);
+  await runGit(peer, ['push', 'origin', 'main']);
 
   await runGit(cwd, ['checkout', '-b', 'local-only']);
 
@@ -779,6 +793,15 @@ test('git worktree manager fetches from a remote and reports tracking info', asy
   });
   const branches = list?.data.branches as Array<{ name: string; is_remote: boolean }>;
   assert.ok(branches.some((b) => b.name === 'remotes/origin/main' && b.is_remote));
+
+  await runGit(cwd, ['checkout', 'main']);
+  const pulled = await executeCodeTool('git_worktree_manager', {
+    cwd,
+    approval_id: 'approval-test',
+    arguments: { action: 'pull', confirm_pull: true }
+  });
+  assert.equal(pulled?.status, 'completed');
+  assert.equal((await readFile(path.join(cwd, 'remote.txt'), 'utf8')).replace(/\r\n/g, '\n'), 'remote\n');
 });
 
 async function initGitRepo(cwd: string): Promise<void> {

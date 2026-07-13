@@ -201,6 +201,9 @@ public sealed class CodeCapabilityProvider : ICapabilityProvider
         GitWrite("git_branch_rename", "Git Branch Rename", "git.branch.rename", "git.branch.write"),
         GitWrite("git_worktree_create", "Git Worktree Create", "git.worktree.create", "git.worktree.write"),
         GitWrite("git_worktree_remove", "Git Worktree Remove", "git.worktree.remove", "git.worktree.write"),
+        GitWrite("git_fetch", "Git Fetch", "git.fetch", "git.remote.write"),
+        GitWrite("git_push", "Git Push", "git.push", "git.remote.write"),
+        GitWrite("git_pull", "Git Pull", "git.pull", "git.remote.write"),
         .. GitReadTools
     ];
 
@@ -512,6 +515,20 @@ public sealed class ToolRegistryService : IToolRegistry
                     ["force"] = new Dictionary<string, object?> { ["type"] = "boolean" },
                     ["confirm_create_worktree"] = new Dictionary<string, object?> { ["type"] = "boolean" },
                     ["confirm_remove_worktree"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_fetch" or "git_push" or "git_pull" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["remote"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["prune"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["set_upstream"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_fetch"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_push"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_pull"] = new Dictionary<string, object?> { ["type"] = "boolean" }
                 }
             },
             _ => new Dictionary<string, object?>

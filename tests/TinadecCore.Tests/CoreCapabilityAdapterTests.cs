@@ -73,8 +73,8 @@ public sealed class CoreCapabilityAdapterTests
         Assert.Equal("code", tool.Source);
         Assert.Equal("git-write", tool.Risk);
         Assert.True(tool.RequiresApproval);
-        Assert.Equal(30, summary.DeclaredToolCount);
-        Assert.Equal(29, summary.CanonicalToolCount);
+        Assert.Equal(33, summary.DeclaredToolCount);
+        Assert.Equal(32, summary.CanonicalToolCount);
         Assert.Equal(1, summary.DuplicateToolIdCount);
         Assert.Contains("git_worktree_manager", summary.DuplicateToolIds);
         Assert.Equal(new[] { "core", "code", "codex-rust", "extension" }, summary.SourcePrecedence);

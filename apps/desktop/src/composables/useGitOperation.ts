@@ -576,12 +576,11 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_checkout', {
+      const result = await api.executeCodeTool('git_push', {
         session_id: sid.value,
         approval_id: pushApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'push',
           confirm_push: true,
           set_upstream: noUpstreamOnly.value,
           remote: 'origin',
@@ -627,17 +626,14 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_pull', {
         session_id: sid.value,
         approval_id: pullApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'pull',
           confirm_pull: true,
           branch: previewData.value.branch ?? undefined,
           remote: previewData.value.upstream?.split('/')[0] ?? 'origin',
-          rebase: options?.rebase ?? false,
-          ff_only: options?.ff_only ?? false,
         },
       })
       feedback.value = result.summary
@@ -771,12 +767,11 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_branch_delete', {
+      const result = await api.executeCodeTool('git_fetch', {
         session_id: sid.value,
         approval_id: fetchApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'fetch',
           confirm_fetch: true,
         },
       })
