@@ -1,98 +1,61 @@
 /**
- * MCP 路由插件：Gateway 侧的 MCP 协调端点。
+ * MCP 路由插件：Gateway 侧的 MCP 协调端点（纯代理模式）。
+ *
+ * Gateway 不再管理 MCP 连接生命周期，所有 MCP 操作代理到 Tool Runtime。
  *
  * 端点：
- * - POST /api/v1/mcp/servers/:serverId/connect    — 从 Core 拉取 server info，spawn + 握手
- * - POST /api/v1/mcp/servers/:serverId/disconnect — 优雅关闭
- * - GET  /api/v1/mcp/servers/:serverId/status     — 查询运行时状态
- * - POST /api/v1/mcp/servers/:serverId/tools/:toolName/call — 调用 MCP 工具
+ * - POST /api/v1/mcp/servers/:serverId/connect    — 代理到 Tool Runtime 连接 MCP server
+ * - POST /api/v1/mcp/servers/:serverId/disconnect — 代理到 Tool Runtime 断开 MCP server
+ * - GET  /api/v1/mcp/servers/:serverId/status     — 代理到 Tool Runtime 查询状态
+ * - POST /api/v1/mcp/servers/:serverId/tools/:toolName/call — 代理到 Tool Runtime 调用 MCP 工具
  *
- * Gateway 回调 Core /api/v1/mcp/servers/:id/report 由 McpConnectionManager 内部触发。
+ * Gateway 保持薄代理模式，不存储 MCP 连接状态。
  */
 
 import { Elysia, t } from 'elysia';
-import { mcpConnectionManager } from './McpConnectionManager.js';
-import type { McpServerInfo } from './types.js';
-import { proxyJson } from '../coreClient.js';
+import { proxyToolRuntimeJson } from '../toolRuntimeClient.js';
 
-async function fetchServerInfoFromCore(serverId: string): Promise<McpServerInfo | null> {
-  const result = await proxyJson('/api/v1/mcp/servers');
-  if (result.status < 200 || result.status >= 300 || !Array.isArray(result.data)) {
-    return null;
-  }
-  const server = (result.data as Array<Record<string, unknown>>).find(
-    (item) => item.id === serverId,
-  );
-  if (!server) return null;
-  return {
-    id: String(server.id),
-    extensionId: String(server.extensionId ?? ''),
-    name: String(server.name ?? ''),
-    transport: String(server.transport ?? 'stdio'),
-    status: String(server.status ?? 'pending_connect'),
-    tools: Array.isArray(server.tools) ? (server.tools as string[]) : [],
-    manifestJson: typeof server.manifestJson === 'string' ? server.manifestJson : '{}',
-    updatedAt: String(server.updatedAt ?? ''),
-  };
+function setStatus(set: { status?: number | string }, status: number): void {
+  set.status = status;
 }
 
 export const mcpRoutes = new Elysia({ name: 'mcp-routes' })
   .post('/api/v1/mcp/servers/:serverId/connect', async ({ params, set }) => {
     const { serverId } = params as { serverId: string };
-    const server = await fetchServerInfoFromCore(serverId);
-    if (!server) {
-      setStatus(set, 404);
-      return { error: 'MCP_SERVER_NOT_FOUND', message: `MCP server ${serverId} was not found in Core.` };
-    }
-    try {
-      const result = await mcpConnectionManager.connect(server);
-      setStatus(set, 200);
-      return result;
-    } catch (error) {
-      setStatus(set, 502);
-      return {
-        error: 'MCP_CONNECT_FAILED',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
+    const result = await proxyToolRuntimeJson(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, {
+      method: 'POST',
+    });
+    setStatus(set, result.status);
+    return result.data;
   })
   .post('/api/v1/mcp/servers/:serverId/disconnect', async ({ params, set }) => {
     const { serverId } = params as { serverId: string };
-    const result = await mcpConnectionManager.disconnect(serverId);
-    setStatus(set, 200);
-    return result;
+    const result = await proxyToolRuntimeJson(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/disconnect`, {
+      method: 'POST',
+    });
+    setStatus(set, result.status);
+    return result.data;
   })
   .get('/api/v1/mcp/servers/:serverId/status', async ({ params, set }) => {
     const { serverId } = params as { serverId: string };
-    const status = mcpConnectionManager.getStatus(serverId);
-    if (!status) {
-      setStatus(set, 200);
-      return { state: 'stopped', tools: [] };
-    }
-    setStatus(set, 200);
-    return status;
+    const result = await proxyToolRuntimeJson(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/status`);
+    setStatus(set, result.status);
+    return result.data;
   })
   .post(
     '/api/v1/mcp/servers/:serverId/tools/:toolName/call',
     async ({ params, body, set }) => {
       const { serverId, toolName } = params as { serverId: string; toolName: string };
       const requestBody = (body ?? {}) as { arguments?: Record<string, unknown> };
-      try {
-        const result = await mcpConnectionManager.callTool(
-          serverId,
-          toolName,
-          requestBody.arguments,
-        );
-        setStatus(set, 200);
-        return { ok: true, result };
-      } catch (error) {
-        setStatus(set, 502);
-        return {
-          ok: false,
-          error: 'MCP_TOOL_CALL_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
+      const result = await proxyToolRuntimeJson(
+        `/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/call`,
+        {
+          method: 'POST',
+          body: requestBody,
+        },
+      );
+      setStatus(set, result.status);
+      return result.data;
     },
     {
       body: t.Object({
@@ -100,7 +63,3 @@ export const mcpRoutes = new Elysia({ name: 'mcp-routes' })
       }),
     },
   );
-
-function setStatus(set: { status?: number | string }, status: number): void {
-  set.status = status;
-}

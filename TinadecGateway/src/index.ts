@@ -1,27 +1,62 @@
-import { node } from '@elysiajs/node';
-import { swagger } from '@elysiajs/swagger';
+/**
+ * TinadecGateway — 独立 Bun 包，薄代理 BFF/API 层。
+ *
+ * 职责：
+ *   - 鉴权（云端模式：API Key / JWT / 租户上下文）
+ *   - BFF 组合（Model/Agent Center 聚合视图）
+ *   - 协议转换（HTTP/JSON、SSE、WebSocket、流式 HTTP）
+ *   - 流式转发（代理到 Core 和 Tool Runtime）
+ *
+ * 不执行文件、Git、Shell、PTY 或 MCP 操作。
+ *
+ * 协议分层：
+ *   - HTTP/JSON：普通命令与查询
+ *   - SSE：统一事件流
+ *   - WebSocket：终端、调试、协作
+ *   - 流式 HTTP：大文件与日志
+ *
+ * 部署模式：
+ *   - 本地模式（默认）：监听 127.0.0.1，无认证
+ *   - 云端模式：监听 0.0.0.0，支持认证、租户、反向代理、横向扩展
+ */
+
 import { Elysia } from 'elysia';
+import { getConfig } from './config.js';
+import { coreUrl, proxyJson, proxySse } from './coreClient.js';
+import { proxyToolRuntimeJson, toolRuntimeUrl } from './toolRuntimeClient.js';
+import {
+  authenticate,
+  buildForwardHeaders,
+  isPublicPath,
+  type AuthContext,
+} from './auth.js';
+import {
+  extractApprovalContext,
+  evaluateApproval,
+  buildConfirmationRequiredResponse,
+  applyForwardPatch,
+} from './approval.js';
 import {
   codeToolApprovalBlockFor,
   codeToolApprovalUnavailableBlock,
   codeToolRequiresApproval,
-  executeCodeTool,
+  executeCodeToolViaRuntime,
   listCodeToolIds,
   listCodeToolSpecs,
   type ApprovalSnapshot,
-  type CodeToolExecuteRequest
+  type CodeToolExecuteRequest,
 } from './codeTools.js';
-import { coreUrl, proxyJson, proxySse } from './coreClient.js';
-import { proxyDebugJson, debugWsUrl } from './debugProxy.js';
 import { mcpRoutes } from './mcp/mcpRoutes.js';
+import { findWsRoute, buildTargetWsUrl } from './websocket.js';
+import { proxyStream, setStreamHeaders } from './streaming.js';
 import {
   agentRuntimeBindingWriteResult,
   loadAgentCenterOverview,
   loadModelCenterOverview,
-  modelDiscoveryRefreshResult
+  modelDiscoveryRefreshResult,
 } from './modelAgentCenter.js';
 
-const port = Number(process.env.TINADEC_GATEWAY_PORT ?? 48730);
+const config = getConfig();
 
 function setStatus(set: { status?: number | string }, status: number) {
   set.status = status;
@@ -34,6 +69,14 @@ const ALLOWED_ORIGINS: (string | RegExp)[] = [
   'file://',
   'tauri://localhost',
   'https://tauri.localhost',
+  ...config.corsExtraOrigins.map((origin) => {
+    // 支持通配符域名
+    if (origin.startsWith('*.')) {
+      const suffix = origin.slice(1);
+      return new RegExp(`https?://[^/]*${suffix.replace(/\./g, '\\.')}$`);
+    }
+    return origin;
+  }),
 ];
 
 function isOriginAllowed(origin: string): boolean {
@@ -55,16 +98,14 @@ async function verifyCodeToolApproval(toolId: string, request: CodeToolExecuteRe
     if (approvalResult.status < 200 || approvalResult.status >= 300 || !Array.isArray(approvalResult.data)) {
       return codeToolApprovalUnavailableBlock(toolId, request);
     }
-
     return codeToolApprovalBlockFor(toolId, request, approvalResult.data as ApprovalSnapshot[]);
   } catch {
     return codeToolApprovalUnavailableBlock(toolId, request);
   }
 }
 
-const app = new Elysia({ adapter: node() })
-  // Manual CORS middleware – the @elysiajs/cors plugin returns 400 on
-  // OPTIONS preflight when used with the Node.js adapter.
+const app = new Elysia()
+  // --- CORS 中间件 ---
   .onRequest(({ request, set }) => {
     const origin = request.headers.get('origin');
 
@@ -75,7 +116,7 @@ const app = new Elysia({ adapter: node() })
       corsHeaders['vary'] = 'Origin';
     }
 
-    // Handle CORS preflight
+    // CORS 预检
     if (request.method === 'OPTIONS') {
       const requestMethod = request.headers.get('access-control-request-method');
       const requestHeaders = request.headers.get('access-control-request-headers');
@@ -85,7 +126,7 @@ const app = new Elysia({ adapter: node() })
       if (requestHeaders) {
         corsHeaders['access-control-allow-headers'] = requestHeaders;
       } else {
-        corsHeaders['access-control-allow-headers'] = 'accept, content-type, authorization';
+        corsHeaders['access-control-allow-headers'] = 'accept, content-type, authorization, x-api-key, x-tenant-id, x-user-id';
       }
       corsHeaders['access-control-max-age'] = '86400';
 
@@ -94,24 +135,35 @@ const app = new Elysia({ adapter: node() })
       return '';
     }
 
-    // For non-preflight requests, just set CORS headers
     Object.assign(set.headers, corsHeaders);
   })
-  .use(swagger({
-    path: '/docs',
-    documentation: {
-      info: {
-        title: 'TinadecOffice API',
-        version: '0.1.0'
-      }
+  // --- 认证中间件（云端模式） ---
+  .onRequest(({ request, set, path }) => {
+    if (config.mode === 'local') return;
+    if (isPublicPath(path)) return;
+
+    const authResult = authenticate(request.headers, config.auth);
+    if (!authResult.ok) {
+      setStatus(set, 401);
+      return {
+        code: authResult.error?.code ?? 'AUTH_ERROR',
+        message: authResult.error?.message ?? 'Authentication failed.',
+      };
     }
-  }))
+  })
   .use(mcpRoutes)
+  // --- 健康检查 ---
   .get('/api/v1/health', async ({ set }) => {
     const result = await proxyJson('/api/v1/health');
     setStatus(set, result.status);
     const core = (result.data && typeof result.data === 'object' ? result.data : {}) as Record<string, unknown>;
-    return { ...core, gateway: 'ok', core_url: coreUrl };
+    return {
+      ...core,
+      gateway: 'ok',
+      mode: config.mode,
+      core_url: coreUrl(),
+      tool_runtime_url: toolRuntimeUrl(),
+    };
   })
   .get('/api/v1/doctor', async ({ set }) => {
     const result = await proxyJson('/api/v1/doctor');
@@ -138,6 +190,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Projects ---
   .get('/api/v1/projects', async ({ set }) => {
     const result = await proxyJson('/api/v1/projects');
     setStatus(set, result.status);
@@ -148,6 +201,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Sessions ---
   .get('/api/v1/sessions', async ({ query, set }) => {
     const params = new URLSearchParams();
     if (query.project_id) params.set('projectId', String(query.project_id));
@@ -173,6 +227,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- SSE: 统一事件流 ---
   .post('/api/v1/sessions/:sessionId/invoke-stream', async ({ params, body, set }) => {
     const response = await proxySse(`/api/v1/sessions/${params.sessionId}/invoke-stream`, {
       method: 'POST',
@@ -219,6 +274,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- SSE: 事件流 ---
   .get('/api/v1/events', async ({ query, set }) => {
     const params = new URLSearchParams();
     if (query.session_id) params.set('sessionId', String(query.session_id));
@@ -227,6 +283,7 @@ const app = new Elysia({ adapter: node() })
     set.headers['cache-control'] = 'no-cache';
     return response.body;
   })
+  // --- Approvals ---
   .get('/api/v1/approvals', async ({ query, set }) => {
     const params = new URLSearchParams();
     if (query.status) params.set('status', String(query.status));
@@ -248,6 +305,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Tool 执行（代理到 Core 审批门 → Tool Runtime 执行） ---
   .post('/api/v1/tools/shell', async ({ body, set }) => {
     const result = await proxyJson('/api/v1/tools/shell', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
@@ -261,6 +319,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Code Tools（BFF 规格发布 + Tool Runtime 代理执行） ---
   .get('/api/v1/code/tools', () => ({
     tool_ids: listCodeToolIds(),
     tools: listCodeToolSpecs()
@@ -287,6 +346,58 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Code Tool 执行（审批门 + 高风险二次确认 + Tool Runtime 代理） ---
+  .post('/api/v1/code/tools/:toolId/execute', async ({ params, body, set }) => {
+    const request = (body ?? {}) as CodeToolExecuteRequest;
+    const requiresApproval = codeToolRequiresApproval(params.toolId);
+    if (requiresApproval === null) {
+      setStatus(set, 404);
+      return {
+        code: 'CODE_TOOL_NOT_FOUND',
+        message: 'Code tool was not found.'
+      };
+    }
+
+    // 审批门：验证 Core 审批状态
+    if (requiresApproval && request.approval_id) {
+      const approvalBlock = await verifyCodeToolApproval(params.toolId, request);
+      if (approvalBlock) {
+        return approvalBlock;
+      }
+    }
+
+    // 审批拦截器：人类操作 approval=true 透传 + 高风险二次确认
+    const approvalCtx = extractApprovalContext(request);
+    const approvalResult = evaluateApproval(approvalCtx);
+    if (!approvalResult.allowed) {
+      if (approvalResult.confirmationRequired) {
+        const response = buildConfirmationRequiredResponse(approvalCtx, approvalResult);
+        setStatus(set, response.status);
+        return response.data;
+      }
+      setStatus(set, 403);
+      return {
+        code: 'APPROVAL_DENIED',
+        message: approvalResult.reason ?? 'Request was denied by the approval gate.',
+      };
+    }
+
+    // 将审批补丁合并到请求体
+    const forwardedRequest = applyForwardPatch(request, approvalResult.forwardPatch ?? {});
+
+    // 代理到 Tool Runtime 执行
+    const result = await executeCodeToolViaRuntime(params.toolId, forwardedRequest);
+    if (!result) {
+      setStatus(set, 404);
+      return {
+        code: 'CODE_TOOL_NOT_FOUND',
+        message: 'Code tool was not found.'
+      };
+    }
+
+    return result;
+  })
+  // --- Prompt Fragments ---
   .get('/api/v1/prompt-fragments', async ({ query, set }) => {
     const params = new URLSearchParams();
     if (query.scope) params.set('scope', String(query.scope));
@@ -336,35 +447,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
-  .post('/api/v1/code/tools/:toolId/execute', async ({ params, body, set }) => {
-    const request = (body ?? {}) as CodeToolExecuteRequest;
-    const requiresApproval = codeToolRequiresApproval(params.toolId);
-    if (requiresApproval === null) {
-      setStatus(set, 404);
-      return {
-        code: 'CODE_TOOL_NOT_FOUND',
-        message: 'Code tool was not found.'
-      };
-    }
-
-    if (requiresApproval && request.approval_id) {
-      const approvalBlock = await verifyCodeToolApproval(params.toolId, request);
-      if (approvalBlock) {
-        return approvalBlock;
-      }
-    }
-
-    const result = await executeCodeTool(params.toolId, request);
-    if (!result) {
-      setStatus(set, 404);
-      return {
-        code: 'CODE_TOOL_NOT_FOUND',
-        message: 'Code tool was not found.'
-      };
-    }
-
-    return result;
-  })
+  // --- Model Center ---
   .get('/api/v1/model-center/overview', async ({ set }) => {
     const result = await loadModelCenterOverview();
     setStatus(set, result.status);
@@ -428,6 +511,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Market / Extensions ---
   .get('/api/v1/market/sources', async ({ set }) => {
     const result = await proxyJson('/api/v1/market/sources');
     setStatus(set, result.status);
@@ -492,6 +576,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- MCP (proxy to Core for server list, Tool Runtime for execution) ---
   .get('/api/v1/mcp/servers', async ({ set }) => {
     const result = await proxyJson('/api/v1/mcp/servers');
     setStatus(set, result.status);
@@ -507,6 +592,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- ACP ---
   .get('/api/v1/acp/adapters', async ({ set }) => {
     const result = await proxyJson('/api/v1/acp/adapters');
     setStatus(set, result.status);
@@ -517,6 +603,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
+  // --- Agent Center ---
   .get('/api/v1/agent-center/overview', async ({ set }) => {
     const result = await loadAgentCenterOverview();
     setStatus(set, result.status);
@@ -558,7 +645,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
-  // --- Agent Evolution proxy routes ---
+  // --- Agent Evolution ---
   .get('/api/v1/agent-evolution/proposals', async ({ set }) => {
     const result = await proxyJson('/api/v1/agent-evolution/proposals');
     setStatus(set, result.status);
@@ -589,7 +676,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
-  // --- Prompt Engineering proxy routes ---
+  // --- Prompt Engineering ---
   .get('/api/v1/prompt-fragments/:fragmentId/versions', async ({ params, set }) => {
     const result = await proxyJson(`/api/v1/prompt-fragments/${params.fragmentId}/versions`);
     setStatus(set, result.status);
@@ -637,7 +724,7 @@ const app = new Elysia({ adapter: node() })
     setStatus(set, result.status);
     return result.data;
   })
-  // --- Agent Debug Studio proxy routes ---
+  // --- Debug Studio (proxy to Core) ---
   .get('/api/v1/debug/traces', async ({ query, set }) => {
     const params = new URLSearchParams();
     if (query.session_id) params.set('sessionId', String(query.session_id));
@@ -647,12 +734,12 @@ const app = new Elysia({ adapter: node() })
     if (query.min_duration_ms) params.set('minDurationMs', String(query.min_duration_ms));
     if (query.limit) params.set('limit', String(query.limit));
     if (query.offset) params.set('offset', String(query.offset));
-    const result = await proxyDebugJson(`/api/v1/debug/traces?${params.toString()}`);
+    const result = await proxyJson(`/api/v1/debug/traces?${params.toString()}`);
     setStatus(set, result.status);
     return result.data;
   })
   .get('/api/v1/debug/traces/:traceId', async ({ params, set }) => {
-    const result = await proxyDebugJson(`/api/v1/debug/traces/${params.traceId}`);
+    const result = await proxyJson(`/api/v1/debug/traces/${params.traceId}`);
     setStatus(set, result.status);
     return result.data;
   })
@@ -662,7 +749,7 @@ const app = new Elysia({ adapter: node() })
     if (query.status) params.set('status', String(query.status));
     if (query.min_duration_ms) params.set('minDurationMs', String(query.min_duration_ms));
     if (query.limit) params.set('limit', String(query.limit));
-    const result = await proxyDebugJson(`/api/v1/debug/spans?${params.toString()}`);
+    const result = await proxyJson(`/api/v1/debug/spans?${params.toString()}`);
     setStatus(set, result.status);
     return result.data;
   })
@@ -671,65 +758,194 @@ const app = new Elysia({ adapter: node() })
     params.set('metricName', String(query.metric_name ?? ''));
     if (query.window_ms) params.set('windowMs', String(query.window_ms));
     if (query.bucket_ms) params.set('bucketMs', String(query.bucket_ms));
-    const result = await proxyDebugJson(`/api/v1/debug/metrics?${params.toString()}`);
+    const result = await proxyJson(`/api/v1/debug/metrics?${params.toString()}`);
     setStatus(set, result.status);
     return result.data;
   })
   .get('/api/v1/debug/snapshot/:sessionId', async ({ params, set }) => {
-    const result = await proxyDebugJson(`/api/v1/debug/snapshot/${params.sessionId}`);
+    const result = await proxyJson(`/api/v1/debug/snapshot/${params.sessionId}`);
     setStatus(set, result.status);
     return result.data;
   })
   .get('/api/v1/debug/diagnostics', async ({ set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/diagnostics');
+    const result = await proxyJson('/api/v1/debug/diagnostics');
     setStatus(set, result.status);
     return result.data;
   })
   .get('/api/v1/debug/processes', async ({ set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/processes');
+    const result = await proxyJson('/api/v1/debug/processes');
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/simulate/message', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/simulate/message', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/simulate/message', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/simulate/model-response', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/simulate/model-response', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/simulate/model-response', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/simulate/tool-result', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/simulate/tool-result', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/simulate/tool-result', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/simulate/approval-decision', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/simulate/approval-decision', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/simulate/approval-decision', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/simulate/state-patch', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/simulate/state-patch', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/simulate/state-patch', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .get('/api/v1/debug/breakpoints', async ({ set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/breakpoints');
+    const result = await proxyJson('/api/v1/debug/breakpoints');
     setStatus(set, result.status);
     return result.data;
   })
   .post('/api/v1/debug/breakpoints', async ({ body, set }) => {
-    const result = await proxyDebugJson('/api/v1/debug/breakpoints', { method: 'POST', body: body as Record<string, unknown> });
+    const result = await proxyJson('/api/v1/debug/breakpoints', { method: 'POST', body: body as Record<string, unknown> });
     setStatus(set, result.status);
     return result.data;
   })
   .delete('/api/v1/debug/breakpoints/:id', async ({ params, set }) => {
-    const result = await proxyDebugJson(`/api/v1/debug/breakpoints/${params.id}`, { method: 'DELETE' });
+    const result = await proxyJson(`/api/v1/debug/breakpoints/${params.id}`, { method: 'DELETE' });
     setStatus(set, result.status);
     return result.data;
   })
-  .listen({ port, hostname: '127.0.0.1' });
+  // --- WebSocket: 终端 → Tool Runtime ---
+  .ws('/ws/terminal', {
+    open(ws) {
+      const route = findWsRoute('/ws/terminal');
+      if (route) {
+        const targetUrl = buildTargetWsUrl(route);
+        ws.subscribe('terminal-proxy');
+        ws.store('targetUrl', targetUrl);
+      }
+    },
+    message(ws, message) {
+      // 透传消息到 Tool Runtime WebSocket
+      ws.publish('terminal-proxy', message);
+    },
+    close(ws) {
+      ws.unsubscribe('terminal-proxy');
+    },
+  })
+  // --- WebSocket: 调试 → Core ---
+  .ws('/ws/debug', {
+    open(ws) {
+      const route = findWsRoute('/ws/debug');
+      if (route) {
+        const targetUrl = buildTargetWsUrl(route);
+        ws.subscribe('debug-proxy');
+        ws.store('targetUrl', targetUrl);
+      }
+    },
+    message(ws, message) {
+      ws.publish('debug-proxy', message);
+    },
+    close(ws) {
+      ws.unsubscribe('debug-proxy');
+    },
+  })
+  // --- WebSocket: 协作 → Core ---
+  .ws('/ws/collaboration', {
+    open(ws) {
+      const route = findWsRoute('/ws/collaboration');
+      if (route) {
+        const targetUrl = buildTargetWsUrl(route);
+        ws.subscribe('collaboration-proxy');
+        ws.store('targetUrl', targetUrl);
+      }
+    },
+    message(ws, message) {
+      ws.publish('collaboration-proxy', message);
+    },
+    close(ws) {
+      ws.unsubscribe('collaboration-proxy');
+    },
+  })
+  // --- 流式 HTTP: 大文件与日志 ---
+  .get('/api/v1/files/:sessionId/*', async ({ params, set, request }) => {
+    const filePath = `/${params['*']}`;
+    const response = await proxyStream({
+      target: 'core',
+      path: `/api/v1/files/${params.sessionId}/${filePath}`,
+      headers: Object.fromEntries(request.headers.entries()),
+    });
+    setStreamHeaders(set, response);
+    setStatus(set, response.status);
+    return response.body;
+  })
+  .get('/api/v1/sessions/:sessionId/logs', async ({ params, set, request }) => {
+    const response = await proxyStream({
+      target: 'core',
+      path: `/api/v1/sessions/${params.sessionId}/logs`,
+      headers: Object.fromEntries(request.headers.entries()),
+    });
+    setStreamHeaders(set, response);
+    setStatus(set, response.status);
+    return response.body;
+  })
+  .get('/api/v1/sessions/:sessionId/logs/stream', async ({ params, set, request }) => {
+    const response = await proxyStream({
+      target: 'core',
+      path: `/api/v1/sessions/${params.sessionId}/logs/stream`,
+      headers: Object.fromEntries(request.headers.entries()),
+    });
+    setStreamHeaders(set, response);
+    setStatus(set, response.status);
+    return response.body;
+  })
+  // --- Tool Runtime 代理路由 ---
+  .get('/api/v1/tool-runtime/health', async ({ set }) => {
+    const result = await proxyToolRuntimeJson('/api/v1/health');
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .get('/api/v1/tool-runtime/manifest', async ({ set }) => {
+    const result = await proxyToolRuntimeJson('/api/v1/manifest');
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .get('/api/v1/tool-runtime/tools', async ({ set }) => {
+    const result = await proxyToolRuntimeJson('/api/v1/tools');
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/tool-runtime/tools/:toolId/execute', async ({ params, body, set }) => {
+    // 审批拦截器
+    const request = (body ?? {}) as Record<string, unknown>;
+    const approvalCtx = extractApprovalContext(request);
+    const approvalResult = evaluateApproval(approvalCtx);
+    if (!approvalResult.allowed) {
+      if (approvalResult.confirmationRequired) {
+        const response = buildConfirmationRequiredResponse(approvalCtx, approvalResult);
+        setStatus(set, response.status);
+        return response.data;
+      }
+      setStatus(set, 403);
+      return {
+        code: 'APPROVAL_DENIED',
+        message: approvalResult.reason ?? 'Request was denied by the approval gate.',
+      };
+    }
 
-console.log(`TinadecOffice API listening on http://127.0.0.1:${port}`);
+    const forwardedBody = applyForwardPatch(request, approvalResult.forwardPatch ?? {});
+    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
+      method: 'POST',
+      body: forwardedBody,
+    });
+    setStatus(set, result.status);
+    return result.data;
+  })
+  // --- 启动监听 ---
+  .listen({ port: config.port, hostname: config.hostname });
+
+console.log(`TinadecGateway listening on http://${config.hostname}:${config.port} (${config.mode} mode)`);
+console.log(`  Core:         ${coreUrl()}`);
+console.log(`  Tool Runtime: ${toolRuntimeUrl()}`);
