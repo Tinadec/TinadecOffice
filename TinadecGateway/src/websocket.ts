@@ -33,7 +33,7 @@ export interface WebSocketProxyConfig {
  * 构建目标 WebSocket URL。
  */
 export function buildTargetWsUrl(config: WebSocketProxyConfig, query?: URLSearchParams): string {
-  const baseUrl = config.target === 'core' ? coreUrl : toolRuntimeUrl();
+  const baseUrl = config.target === 'core' ? coreUrl() : toolRuntimeUrl();
   const wsBase = baseUrl.replace(/^http/, 'ws');
   const url = new URL(config.path, wsBase);
   if (query) {

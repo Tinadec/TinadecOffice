@@ -40,7 +40,7 @@ export async function proxyStream(options: StreamProxyOptions): Promise<Response
  * 设置流式响应头。
  */
 export function setStreamHeaders(
-  set: { headers: Record<string, string> },
+  set: { headers: Record<string, string | number> },
   sourceResponse: Response,
 ): void {
   const contentType = sourceResponse.headers.get('content-type');

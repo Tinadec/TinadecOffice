@@ -138,8 +138,9 @@ const app = new Elysia()
     Object.assign(set.headers, corsHeaders);
   })
   // --- 认证中间件（云端模式） ---
-  .onRequest(({ request, set, path }) => {
+  .onRequest(({ request, set }) => {
     if (config.mode === 'local') return;
+    const path = new URL(request.url).pathname;
     if (isPublicPath(path)) return;
 
     const authResult = authenticate(request.headers, config.auth);
@@ -367,7 +368,7 @@ const app = new Elysia()
     }
 
     // 审批拦截器：人类操作 approval=true 透传 + 高风险二次确认
-    const approvalCtx = extractApprovalContext(request);
+    const approvalCtx = extractApprovalContext(request as Record<string, unknown>);
     const approvalResult = evaluateApproval(approvalCtx);
     if (!approvalResult.allowed) {
       if (approvalResult.confirmationRequired) {
@@ -383,7 +384,7 @@ const app = new Elysia()
     }
 
     // 将审批补丁合并到请求体
-    const forwardedRequest = applyForwardPatch(request, approvalResult.forwardPatch ?? {});
+    const forwardedRequest = applyForwardPatch(request as Record<string, unknown>, approvalResult.forwardPatch ?? {});
 
     // 代理到 Tool Runtime 执行
     const result = await executeCodeToolViaRuntime(params.toolId, forwardedRequest);
@@ -824,7 +825,7 @@ const app = new Elysia()
       if (route) {
         const targetUrl = buildTargetWsUrl(route);
         ws.subscribe('terminal-proxy');
-        ws.store('targetUrl', targetUrl);
+        void targetUrl;
       }
     },
     message(ws, message) {
@@ -842,7 +843,7 @@ const app = new Elysia()
       if (route) {
         const targetUrl = buildTargetWsUrl(route);
         ws.subscribe('debug-proxy');
-        ws.store('targetUrl', targetUrl);
+        void targetUrl;
       }
     },
     message(ws, message) {
@@ -859,7 +860,7 @@ const app = new Elysia()
       if (route) {
         const targetUrl = buildTargetWsUrl(route);
         ws.subscribe('collaboration-proxy');
-        ws.store('targetUrl', targetUrl);
+        void targetUrl;
       }
     },
     message(ws, message) {
