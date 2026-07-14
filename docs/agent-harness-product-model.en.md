@@ -52,7 +52,7 @@ The Code tool suite owns:
 - **Built-in debugging**: run controls, breakpoints, logs, traces, diagnostics, and reproducible experiments.
 - **Built-in code editor**: file browsing, editing, diffs, patches, symbol and full-text search, and code review workflows.
 - **Git worktree manager**: branches, worktrees, diffs, commits, rebases, conflicts, and isolated execution spaces.
-- **Local tool glue**: Rust/native/Codex-backed capabilities such as search, read, grep, patch, sandbox, and review formatting.
+- **Local tool glue**: Codex/Tool-layer-backed capabilities such as search, read, grep, patch, sandbox, and review formatting.
 
 Code does not decide whether an agent may perform a risky action. It can declare capabilities, execute tool requests, and return structured results, but approvals, permissions, state recording, and policy decisions belong to Core.
 
@@ -79,7 +79,7 @@ A typical user request should flow in this direction:
 3. Core creates or updates session state, then creates a run, task graph, agent assignments, context packs, and supervision findings.
 4. Core uses tool descriptors and permission policy to decide which read-only tools may run automatically and which tools require approval.
 5. Core requests the Tool layer through tool adapters; the current code-tool path is served by the Code tool adapter.
-6. The Tool layer invokes the matching tool implementation; the Code tool suite may call local or native capabilities and return structured results.
+6. The Tool layer invokes the matching tool implementation; the Code tool suite may call local capabilities and return structured results.
 7. Core records those results as step results, events, traces, and durable state.
 8. Desktop refreshes through HTTP, SSE, or WebSocket channels so the user can see messages, tasks, tool results, approvals, and debug information.
 

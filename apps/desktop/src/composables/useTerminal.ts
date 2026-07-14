@@ -133,42 +133,18 @@ function isTerminalAvailable(): boolean {
 }
 
 /**
- * Load available shell profiles from Gateway API or Electron IPC.
+ * Load available shell profiles from Electron IPC.
  */
 async function loadShells(): Promise<void> {
-  // 尝试通过Gateway API获取shell列表
-  try {
-    const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
-    const response = await fetch(`${gatewayUrl}/api/v1/code/tools/terminal/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        arguments: { action: 'get_shells' }
-      })
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      if (data.status === 'completed' && Array.isArray(data.data?.shells)) {
-        availableShells.value = data.data.shells
-        shellsLoaded.value = true
-        return
-      }
-    }
-  } catch (gatewayError) {
-    console.warn('[useTerminal] Gateway API failed for shells, trying Electron IPC:', gatewayError)
+  if (!isTerminalAvailable()) {
+    availableShells.value = []
+    return
   }
-
-  // 如果Gateway API不可用，fallback到Electron IPC
-  if (isTerminalAvailable()) {
-    try {
-      const shells = await window.tinadec.terminal.getShells()
-      availableShells.value = shells
-      shellsLoaded.value = true
-    } catch {
-      availableShells.value = []
-    }
-  } else {
+  try {
+    const shells = await window.tinadec.terminal.getShells()
+    availableShells.value = shells
+    shellsLoaded.value = true
+  } catch {
     availableShells.value = []
   }
 }
@@ -209,50 +185,9 @@ async function createTerminalInstance(
       shellId = profile.id
     }
 
-    // 尝试通过Gateway API创建终端
     let result: { id: string; shell: string; title: string } | null = null
-    
-    try {
-      const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
-      const response = await fetch(`${gatewayUrl}/api/v1/code/tools/terminal/execute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: null,
-          cwd: options.cwd,
-          arguments: {
-            action: 'create',
-            shell,
-            args,
-            cols: options.cols ?? 80,
-            rows: options.rows ?? 24,
-            title: options.title
-          }
-        })
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        if (data.status === 'completed' && data.data?.terminal_id) {
-          result = {
-            id: data.data.terminal_id,
-            shell: data.data.shell ?? shell ?? 'unknown',
-            title: data.data.title ?? options.title ?? 'Terminal'
-          }
-        } else if (data.status === 'stubbed') {
-          console.warn('[useTerminal] Gateway terminal tool is stubbed, falling back to Electron IPC')
-        } else if (data.status === 'blocked') {
-          throw new Error('Terminal creation requires approval')
-        }
-      }
-    } catch (gatewayError) {
-      console.warn('[useTerminal] Gateway API failed, trying Electron IPC fallback:', gatewayError)
-    }
-
-    // 如果Gateway API不可用或失败，fallback到Electron IPC
-    if (!result && isTerminalAvailable()) {
-      console.log('[useTerminal] Using Electron IPC fallback')
-      const ipcResult = await window.tinadec.terminal.create({
+    if (isTerminalAvailable()) {
+      result = await window.tinadec.terminal.create({
         shell,
         args,
         cwd: options.cwd,
@@ -260,11 +195,9 @@ async function createTerminalInstance(
         rows: options.rows ?? 24,
         title: options.title,
       })
-      result = ipcResult
     }
-
     if (!result) {
-      throw new Error('Neither Gateway API nor Electron IPC available for terminal creation')
+      throw new Error('Electron terminal IPC not available')
     }
 
     const instance: TerminalInstance = {

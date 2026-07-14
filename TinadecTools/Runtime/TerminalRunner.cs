@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace TinadecTools.Runtime;
 
@@ -7,6 +8,8 @@ internal sealed record TerminalResult(
     int ExitCode,
     string Stdout,
     string Stderr,
+    bool StdoutTruncated,
+    bool StderrTruncated,
     bool TimedOut,
     long DurationMs);
 
@@ -18,7 +21,8 @@ internal static class TerminalRunner
         string? workingDirectory = null,
         string? stdin = null,
         int timeoutMs = 30_000,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxOutputChars = 65_536)
     {
         var psi = new ProcessStartInfo
         {
@@ -51,12 +55,14 @@ internal static class TerminalRunner
                 ExitCode: -1,
                 Stdout: string.Empty,
                 Stderr: ex.Message,
+                StdoutTruncated: false,
+                StderrTruncated: false,
                 TimedOut: false,
                 DurationMs: 0);
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        var stdoutTask = ReadOutputAsync(process.StandardOutput, maxOutputChars);
+        var stderrTask = ReadOutputAsync(process.StandardError, maxOutputChars);
 
         if (stdin is not null)
         {
@@ -92,15 +98,13 @@ internal static class TerminalRunner
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
 
-        const int maxChars = 65_536;
-        if (stdout.Length > maxChars) stdout = stdout[..maxChars];
-        if (stderr.Length > maxChars) stderr = stderr[..maxChars];
-
         return new TerminalResult(
             Success: !timedOut && process.ExitCode == 0,
             ExitCode: timedOut ? -1 : process.ExitCode,
-            Stdout: stdout,
-            Stderr: stderr,
+            Stdout: stdout.Content,
+            Stderr: stderr.Content,
+            StdoutTruncated: stdout.Truncated,
+            StderrTruncated: stderr.Truncated,
             TimedOut: timedOut,
             DurationMs: stopwatch.ElapsedMilliseconds);
     }
@@ -110,4 +114,35 @@ internal static class TerminalRunner
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch { /* best-effort */ }
     }
+
+    private static async Task<CapturedOutput> ReadOutputAsync(StreamReader reader, int maxOutputChars)
+    {
+        var limit = Math.Max(0, maxOutputChars);
+        var builder = new StringBuilder(Math.Min(limit, 4_096));
+        var buffer = new char[4_096];
+        var truncated = false;
+
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false);
+            if (read == 0)
+                break;
+
+            var remaining = limit - builder.Length;
+            if (remaining <= 0)
+            {
+                truncated = true;
+                continue;
+            }
+
+            var captured = Math.Min(remaining, read);
+            builder.Append(buffer, 0, captured);
+            if (captured < read)
+                truncated = true;
+        }
+
+        return new CapturedOutput(builder.ToString(), truncated);
+    }
+
+    private sealed record CapturedOutput(string Content, bool Truncated);
 }

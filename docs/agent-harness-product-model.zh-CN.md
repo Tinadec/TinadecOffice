@@ -52,7 +52,7 @@ Code 工具套件的职责包括：
 - **内置调试**：暴露运行、断点、日志、trace、诊断和复现实验能力。
 - **内置 code editor**：提供文件浏览、编辑、diff、patch、符号/全文检索和代码审阅能力。
 - **Git worktree manager**：管理分支、worktree、diff、提交、变基、冲突和隔离执行空间。
-- **本地工具 glue**：通过 Rust/native/Codex 能力提供搜索、读取、grep、patch、sandbox、review formatting 等底层工具。
+- **本地工具 glue**：通过 Codex/Tool layer 能力提供搜索、读取、grep、patch、sandbox、review formatting 等底层工具。
 
 Code 不决定某个 agent 是否可以执行危险动作。它可以声明工具能力、执行工具请求、返回结构化结果，但审批、权限、状态记录和策略判断属于 Core。
 
@@ -79,7 +79,7 @@ Desktop 的核心价值不是保存状态，而是降低 Core 和 Tool layer 的
 3. Core 创建或更新会话状态，生成 run、task graph、agent assignment、context pack 和 supervision finding。
 4. Core 根据工具描述和权限策略决定哪些只读工具可自动执行，哪些工具必须进入审批流程。
 5. Core 通过工具适配器请求 Tool layer；当前代码工具路径由 Code tool adapter 承接。
-6. Tool layer 调用对应工具实现；Code 工具套件可调用本地/native 能力并返回结构化结果。
+6. Tool layer 调用对应工具实现；Code 工具套件可调用本地能力并返回结构化结果。
 7. Core 将结果写回 step result、event、trace 和状态存储。
 8. Desktop 通过 HTTP/SSE/WebSocket 刷新 UI，让用户看到消息、任务、工具结果、审批和调试信息。
 

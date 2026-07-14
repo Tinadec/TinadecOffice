@@ -91,11 +91,8 @@ internal static class WorkspacePathResolver
     }
 }
 
-internal sealed class FileSlot(string path)
+internal sealed class FileSlot
 {
-    private FileAccessor? _file;
-
-    public FileAccessor File => _file ??= new FileAccessor(path);
     public AsyncReaderWriterLock RwLock { get; } = new();
 }
 
@@ -110,10 +107,14 @@ internal static class FileToolRuntime
 
     public static FileSlot GetFileHandle(string path)
     {
-        return Locks.GetOrAdd(path, p => new FileSlot(p));
+        return Locks.GetOrAdd(path, _ => new FileSlot());
     }
 
-    public static FileAccessor OpenRead(string path) => new(path, canWrite: false);
+    public static FileAccessor OpenRead(string path, CancellationToken cancellationToken = default) =>
+        new(path, canWrite: false, cancellationToken);
+
+    public static FileAccessor OpenWrite(string path, CancellationToken cancellationToken = default) =>
+        new(path, canWrite: true, cancellationToken);
 
     public static string ResolvePath(string filePath)
     {

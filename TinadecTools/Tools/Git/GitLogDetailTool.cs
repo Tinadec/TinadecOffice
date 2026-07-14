@@ -44,6 +44,8 @@ public sealed class GitLogDetailResult
 
     [JsonPropertyName("truncated")] public bool Truncated { get; set; }
 
+    [JsonPropertyName("truncation_reason")] public string? TruncationReason { get; set; }
+
     /// <summary>"single" | "first_parent" - only first-parent implemented; combined/per_parent reserved</summary>
     [JsonPropertyName("diff_mode")] public string DiffMode { get; set; } = "first_parent";
 
@@ -70,15 +72,16 @@ internal static class GitLogDetailTool
 
     private const string LogFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID)]
+    [ToolFunction(TOOL_ID, RequiresApproval = true)]
     public static async ValueTask<GitLogDetailResult> HandleAsync(
         GitLogDetailArgs args,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Rev))
             throw new InvalidOperationException("rev is required.");
-        if (args.Rev.StartsWith("-", StringComparison.Ordinal))
-            throw new InvalidOperationException("rev must not start with '-'.");
+        GitCli.ValidateRevision(args.Rev, "rev");
+        if (!string.IsNullOrWhiteSpace(args.AfterCommit))
+            GitCli.ValidateRevision(args.AfterCommit, "after_commit");
 
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var repoError);
         if (repo is null)
@@ -123,10 +126,12 @@ internal static class GitLogDetailTool
         var files = DiffParser.MergeFileChanges(nameStatus, numstat);
 
         var truncated = false;
+        string? truncationReason = null;
         if (files.Count > maxFiles)
         {
             files = files.Take(maxFiles).ToList();
             truncated = true;
+            truncationReason = "max_files";
         }
 
         // binary summaries
@@ -135,15 +140,16 @@ internal static class GitLogDetailTool
         List<GitPatchFile>? patches = null;
         if (args.IncludePatch && !truncated)
         {
-            var patchOut = await GitCli.RunAsync(repo, ["diff-tree", "-r", "--root", "--patch", "-M", hash], stdin: null, cancellationToken, timeoutMs: 30_000).ConfigureAwait(false);
-            if (patchOut.Ok && patchOut.Stdout.Length <= maxPatchBytes)
+            var patch = await GitPatchLoader.LoadAsync(repo, ["diff-tree", "-r", "--root", "--patch", "-M", hash], maxPatchBytes, cancellationToken).ConfigureAwait(false);
+            if (patch.Patches is not null)
             {
-                patches = DiffParser.ParsePatch(patchOut.Stdout);
+                patches = patch.Patches;
                 await FillPatchBinarySummariesAsync(repo, hash, patches, cancellationToken).ConfigureAwait(false);
             }
-            else if (patchOut.Ok)
+            else if (patch.Truncated)
             {
                 truncated = true;
+                truncationReason ??= patch.TruncationReason;
             }
         }
 
@@ -154,6 +160,7 @@ internal static class GitLogDetailTool
             Files = files,
             Patches = patches,
             Truncated = truncated,
+            TruncationReason = truncationReason,
             DiffMode = "first_parent"
         };
     }
@@ -183,6 +190,7 @@ internal static class GitLogDetailTool
 
         var commits = GitLogParser.ParseLog(meta.Stdout);
         var truncated = commits.Count > limit;
+        string? truncationReason = truncated ? "limit" : null;
         if (truncated)
             commits = commits.Take(limit).ToList();
         LaneAssigner.Assign(commits);
@@ -207,21 +215,23 @@ internal static class GitLogDetailTool
             {
                 files = files.Take(maxFiles).ToList();
                 truncated = true;
+                truncationReason ??= "max_files";
             }
 
             await FillBinarySummariesAsync(repo, headRev, files, cancellationToken).ConfigureAwait(false);
 
             if (args.IncludePatch && !truncated)
             {
-                var patchOut = await GitCli.RunAsync(repo, ["diff", "--patch", "-M", diffRev], stdin: null, cancellationToken, timeoutMs: 30_000).ConfigureAwait(false);
-                if (patchOut.Ok && patchOut.Stdout.Length <= maxPatchBytes)
+                var patch = await GitPatchLoader.LoadAsync(repo, ["diff", "--patch", "-M", diffRev], maxPatchBytes, cancellationToken).ConfigureAwait(false);
+                if (patch.Patches is not null)
                 {
-                    patches = DiffParser.ParsePatch(patchOut.Stdout);
+                    patches = patch.Patches;
                     await FillPatchBinarySummariesAsync(repo, headRev, patches, cancellationToken).ConfigureAwait(false);
                 }
-                else if (patchOut.Ok)
+                else if (patch.Truncated)
                 {
                     truncated = true;
+                    truncationReason ??= patch.TruncationReason;
                 }
             }
         }
@@ -233,6 +243,7 @@ internal static class GitLogDetailTool
             Files = files,
             Patches = patches,
             Truncated = truncated,
+            TruncationReason = truncationReason,
             DiffMode = "first_parent",
             NextCursor = truncated && commits.Count > 0 ? commits[^1].Hash : null
         };

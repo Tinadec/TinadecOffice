@@ -37,6 +37,7 @@ async function createWindow() {
     transparent: !noTransparency,
     backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
     title: 'TinadecOffice',
+    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec-logo.png'),
     frame: false,
     autoHideMenuBar: true,
     show: false,

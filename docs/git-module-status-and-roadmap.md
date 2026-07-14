@@ -2,7 +2,7 @@
 
 **文档版本**：2.2  
 **更新日期**：2026-06-26  
-**覆盖范围**：`apps/desktop`、`apps/gateway`、`src/TinadecCore` 三层 Git 相关实现
+**覆盖范围**：`apps/desktop`、`gateway`、`src/TinadecCore` 三层 Git 相关实现
 
 ---
 
@@ -12,12 +12,12 @@
 
 | 功能 | 实现说明 | 关键文件 |
 |---|---|---|
-| 工作区状态展示 | 解析 `git status --porcelain=v1 --branch`，输出 branch、upstream、ahead/behind、文件状态 | `apps/gateway/src/codeTools.ts` |
-| Diff 预览 | 支持 working tree / staged / branch range 三段 diff，带文件元数据与截断控制 | `apps/gateway/src/codeTools.ts` |
+| 工作区状态展示 | 解析 `git status --porcelain=v1 --branch`，输出 branch、upstream、ahead/behind、文件状态 | `gateway/src/codeTools.ts` |
+| Diff 预览 | 支持 working tree / staged / branch range 三段 diff，带文件元数据与截断控制 | `gateway/src/codeTools.ts` |
 | 提交历史 | 结构化 `git log` 输出，支持日期分组与选中 commit 详情 | `apps/desktop/src/components/git/GitHistoryView.vue` |
-| Worktree 列表 | `git worktree list --porcelain` 解析 | `apps/gateway/src/codeTools.ts` |
-| Push 就绪检查 | 检测 detached HEAD、no upstream、behind、uncommitted changes 等 blocker | `apps/gateway/src/codeTools.ts` |
-| 分支对比 | `diff_compare` action 支持任意两个 ref 的 diff | `apps/gateway/src/codeTools.ts` |
+| Worktree 列表 | `git worktree list --porcelain` 解析 | `gateway/src/codeTools.ts` |
+| Push 就绪检查 | 检测 detached HEAD、no upstream、behind、uncommitted changes 等 blocker | `gateway/src/codeTools.ts` |
+| 分支对比 | `diff_compare` action 支持任意两个 ref 的 diff | `gateway/src/codeTools.ts` |
 
 ### 1.2 变更操作（Approval-gated）
 
@@ -40,12 +40,12 @@
 
 | 功能 | 实现说明 | 关键文件 |
 |---|---|---|
-| 真实分支列表 | `branch_list` action 通过 `git branch -a -vv --format=...` 输出所有本地/远程分支 | `apps/gateway/src/codeTools.ts` |
+| 真实分支列表 | `branch_list` action 通过 `git branch -a -vv --format=...` 输出所有本地/远程分支 | `gateway/src/codeTools.ts` |
 | 远程分支展示 | `GitBranchView.vue` 按 `is_remote` 分组展示本地与远程分支 | `apps/desktop/src/components/git/GitBranchView.vue` |
 | 上游跟踪 | 每个分支项显示 upstream 与 `↑ahead ↓behind` | `apps/desktop/src/components/git/GitBranchView.vue` |
 | Fetch 同步 | 分支视图工具栏支持一键请求 fetch approval 并执行 | `apps/desktop/src/composables/useGitOperation.ts` |
-| 分支删除 | `delete_branch` action，支持 `-d` / `-D` | `apps/gateway/src/codeTools.ts` |
-| 分支重命名 | `rename_branch` action，重命名当前分支 | `apps/gateway/src/codeTools.ts` |
+| 分支删除 | `delete_branch` action，支持 `-d` / `-D` | `gateway/src/codeTools.ts` |
+| 分支重命名 | `rename_branch` action，重命名当前分支 | `gateway/src/codeTools.ts` |
 | Merge/Rebase 入口 | 分支视图右键菜单可直接发起 merge/rebase approval | `apps/desktop/src/components/git/GitBranchView.vue` |
 
 ### 1.4 安全与治理

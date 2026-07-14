@@ -3,15 +3,23 @@
 using System.Text.Json;
 using NLog;
 using TinadecTools.Abstractions;
-using TinadecTools.Tools.Demo;
+using TinadecTools.Runtime.Sandbox;
+using TinadecTools.Runtime.Sandbox.Windows;
 using TinadecTools.Tools.FileRW;
 using TinadecTools.Tools.Mcp;
+
+// ── internal sandbox modes ──────────────────────────────────────────────────
+
+if (OperatingSystem.IsWindows() && WindowsSandboxSetup.IsSetupMode(args))
+    return WindowsSandboxSetup.RunSetup();
+
+if (OperatingSystem.IsWindows() && WindowsSandboxRunner.IsRunnerMode(args))
+    return WindowsSandboxRunner.RunRunner();
 
 var logger = LogManager.GetCurrentClassLogger();
 FileToolRuntime.InitializeWorkspace();
 
 GeneratedToolRegistry.RegisterAll();
-ToolRegistry.Register(new StatefulTool("[stateful]"));
 
 try
 {
@@ -21,9 +29,11 @@ try
         if (line is null)
             break;
 
+        ToolCallRequest<JsonElement>? req = null;
         try
         {
-            var req = JsonSerializer.Deserialize(line, ToolCallJsonContext.Default.ToolCallRequestJsonElement)!;
+            req = JsonSerializer.Deserialize(line, ToolCallJsonContext.Default.ToolCallRequestJsonElement)
+                ?? throw new JsonException("Tool call request was null.");
             var resp = await ToolRegistry.DispatchAsync(req);
             lock (Console.Out)
             {
@@ -36,7 +46,7 @@ try
         {
             var error = new ToolCallErrorResponse
             {
-                CallId = -1,
+                CallId = req?.ToolCallId ?? -1,
                 IsSuccess = false,
                 Error = ex.Message
             };
@@ -53,3 +63,5 @@ finally
 {
     await McpRuntime.DisposeAsync();
 }
+
+return 0;

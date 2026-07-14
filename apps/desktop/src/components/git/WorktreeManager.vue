@@ -120,6 +120,13 @@ watch(
   },
   { immediate: true }
 )
+
+watch(newBranch, (value) => {
+  if (!newPath.value || newPath.value.startsWith('.tinadec/worktrees/')) {
+    const slug = value.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+    newPath.value = slug ? `.tinadec/worktrees/${slug}` : ''
+  }
+})
 </script>
 
 <template>

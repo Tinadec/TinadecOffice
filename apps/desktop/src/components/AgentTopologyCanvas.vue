@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { AgentCandidateDto, AgentProfileDto, ModelProviderInstanceDto, ModelRouteDto } from '../api'
+import type { AgentCandidateDto, AgentProfileDto, AgentRuntimeBindingDto, ModelProviderInstanceDto, ModelRouteDto } from '../api'
 
 interface AgentNode {
   id: string
@@ -30,6 +30,7 @@ const props = defineProps<{
   candidates: AgentCandidateDto[]
   providers: ModelProviderInstanceDto[]
   routes: ModelRouteDto[]
+  runtimeBindings: Record<string, AgentRuntimeBindingDto>
   selectedAgentId: string
 }>()
 
@@ -69,6 +70,29 @@ function getAgentProvider(agent: AgentProfileDto): ModelProviderInstanceDto | nu
   return props.providers.find((p) => p.id === route.provider_instance_id) ?? null
 }
 
+function getAgentRuntime(agent: AgentProfileDto) {
+  const binding = props.runtimeBindings[agent.id]
+  if (binding) {
+    if (binding.runtime_kind === 'unresolved') {
+      return {
+        providerName: '',
+        modelName: t('settings.runtimeUnresolved')
+      }
+    }
+    return {
+      providerName: binding.provider_display_name ?? binding.runtime_id ?? '',
+      modelName: binding.model_id ?? binding.runtime_kind.toUpperCase()
+    }
+  }
+
+  const route = props.routes.find((item) => item.purpose === agent.model_route_purpose)
+  const provider = getAgentProvider(agent)
+  return {
+    providerName: provider?.display_name ?? '',
+    modelName: route?.model ?? provider?.model ?? agent.model_route_purpose
+  }
+}
+
 function layerColor(layer: string): [string, string] {
   if (layer === 'planning') return isDark.value ? ['#3fb950', 'rgba(63,185,80,0.12)'] : ['#1a7f37', 'rgba(26,127,55,0.10)']
   if (layer === 'execution') return isDark.value ? ['#58a6ff', 'rgba(88,166,255,0.12)'] : ['#0969da', 'rgba(9,105,218,0.10)']
@@ -92,7 +116,7 @@ function buildLayout() {
 
   chairAgents.forEach((agent, i) => {
     const [color, bg] = layerColor('planning')
-    const prov = getAgentProvider(agent)
+    const runtime = getAgentRuntime(agent)
     nodes.push({
       id: agent.id,
       name: agent.name,
@@ -105,8 +129,8 @@ function buildLayout() {
       height: 56,
       color,
       bgColor: bg,
-      providerName: prov?.display_name ?? '',
-      modelName: prov?.model ?? agent.model_route_purpose,
+      providerName: runtime.providerName,
+      modelName: runtime.modelName,
     })
   })
 
@@ -114,7 +138,7 @@ function buildLayout() {
   const planningStartX = cx - ((allPlanning.length - 1) * planningGap) / 2
   allPlanning.forEach((agent, i) => {
     const [color, bg] = layerColor('planning')
-    const prov = getAgentProvider(agent)
+    const runtime = getAgentRuntime(agent)
     nodes.push({
       id: agent.id,
       name: agent.name,
@@ -127,8 +151,8 @@ function buildLayout() {
       height: 48,
       color,
       bgColor: bg,
-      providerName: prov?.display_name ?? '',
-      modelName: prov?.model ?? agent.model_route_purpose,
+      providerName: runtime.providerName,
+      modelName: runtime.modelName,
     })
   })
 
@@ -136,7 +160,7 @@ function buildLayout() {
   const execStartX = cx - ((execAgents.length - 1) * execGap) / 2
   execAgents.forEach((agent, i) => {
     const [color, bg] = layerColor('execution')
-    const prov = getAgentProvider(agent)
+    const runtime = getAgentRuntime(agent)
     nodes.push({
       id: agent.id,
       name: agent.name,
@@ -149,8 +173,8 @@ function buildLayout() {
       height: 44,
       color,
       bgColor: bg,
-      providerName: prov?.display_name ?? '',
-      modelName: prov?.model ?? agent.model_route_purpose,
+      providerName: runtime.providerName,
+      modelName: runtime.modelName,
     })
   })
 
@@ -464,7 +488,7 @@ function onDblClick(e: MouseEvent) {
   }
 }
 
-watch(() => [props.agents, props.candidates, props.providers, props.routes, isDark], () => {
+watch(() => [props.agents, props.candidates, props.providers, props.routes, props.runtimeBindings, isDark], () => {
   buildLayout()
 }, { deep: true })
 

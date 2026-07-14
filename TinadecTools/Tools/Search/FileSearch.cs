@@ -99,9 +99,6 @@ public sealed class FileSearchResponse
     [JsonPropertyName("total_match_count")]
     public int TotalMatchCount { get; set; }
 
-    /// <summary>首次调用自动下载 rg 时的版本说明，后续调用为 null</summary>
-    [JsonPropertyName("auto_download_note")]
-    public string? AutoDownloadNote { get; set; }
 }
 
 // ── JSON Source Generation ────────────────────────────────────────────────────

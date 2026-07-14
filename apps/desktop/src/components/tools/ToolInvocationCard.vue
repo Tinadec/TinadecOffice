@@ -40,7 +40,7 @@ const toolIcon = computed(() => {
   if (id === 'list_directory') return Folder
   if (id === 'glob_search' || id === 'grep_content') return Search
   if (id === 'apply_patch' || id === 'code_editor') return FileCode2
-  if (id === 'git_worktree_manager') return GitBranch
+  if (id === 'git_worktree_manager' || id.startsWith('git_')) return GitBranch
   if (id === 'sandbox_exec') return Terminal
   return Wrench
 })

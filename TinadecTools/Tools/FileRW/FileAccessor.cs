@@ -2,7 +2,6 @@
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using NLog;
-using UtfUnknown;
 
 namespace TinadecTools.Tools.FileRW;
 
@@ -39,91 +38,31 @@ internal class FileAccessor : IDisposable
     private readonly string _filepath;
     private readonly SafeFileHandle _handle;
     private readonly bool _canWrite;
+    private readonly CancellationToken _cancellationToken;
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly UTF8Encoding Utf8NoBom = new(false);
     private const int StreamBufferSize = 128 * 1024;
-    private const int TextBufferSize = 16 * 1024;
 
     public int LineCount => _index.Count;
 
     public long Length => _file.Length;
-
-    static FileAccessor()
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-    }
 
     /// <summary>
     /// 打开一个文件。
     /// </summary>
     /// <param name="filepath">文件路径</param>
     /// <param name="canWrite">是否以可写模式打开。</param>
-    internal FileAccessor(string filepath, bool canWrite = true)
+    /// <param name="cancellationToken">读取和写入开始前使用的取消令牌。</param>
+    internal FileAccessor(string filepath, bool canWrite = true, CancellationToken cancellationToken = default)
     {
         _filepath = filepath;
         _canWrite = canWrite;
+        _cancellationToken = cancellationToken;
         _file = new FileStream(filepath, FileMode.Open, canWrite ? FileAccess.ReadWrite : FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete, 1024,
+            canWrite ? FileShare.Read | FileShare.Delete : FileShare.ReadWrite | FileShare.Delete, 1024,
             FileOptions.Asynchronous);
         _handle = _file.SafeFileHandle;
-        if (_canWrite)
-            NormalizeTextFile();
         BuildIndex();
-    }
-
-    /// <summary>
-    /// 打开文件时流式检测全文编码，并静默保存为 UTF-8（无 BOM）+ LF。
-    /// </summary>
-    private void NormalizeTextFile()
-    {
-        if (_file.Length == 0)
-            return;
-
-        _file.Seek(0, SeekOrigin.Begin);
-        var detection = CharsetDetector.DetectFromStream(_file);
-        var detected = detection.Detected;
-        var encoding = detected?.Encoding ?? Encoding.UTF8;
-
-        if (IsUtf8Compatible(encoding) &&
-            detected?.HasBOM != true &&
-            !ContainsCarriageReturn())
-        {
-            _file.Seek(0, SeekOrigin.Begin);
-            return;
-        }
-
-        var tempPath = GetTempPath();
-        try
-        {
-            WriteNormalizedTempFile(tempPath, encoding);
-
-            _file.SetLength(0);
-            _file.Seek(0, SeekOrigin.Begin);
-            using var tempInput = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                StreamBufferSize, FileOptions.SequentialScan);
-            tempInput.CopyTo(_file, StreamBufferSize);
-            _file.Flush();
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-            }
-            catch (IOException ex)
-            {
-                Logger.Warn(ex, $"删除临时文件 {tempPath} 失败");
-            }
-
-            _file.Seek(0, SeekOrigin.Begin);
-        }
-    }
-
-    private static bool IsUtf8Compatible(Encoding encoding)
-    {
-        return encoding.CodePage == Encoding.UTF8.CodePage ||
-               encoding.CodePage == Encoding.ASCII.CodePage;
     }
 
     private string GetTempPath()
@@ -133,86 +72,6 @@ internal class FileAccessor : IDisposable
         return Path.Combine(
             string.IsNullOrEmpty(directory) ? "." : directory,
             $".{filename}.{Guid.NewGuid():N}.tmp");
-    }
-
-    private bool ContainsCarriageReturn()
-    {
-        _file.Seek(0, SeekOrigin.Begin);
-
-        var buffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
-        try
-        {
-            while (true)
-            {
-                var bytesRead = _file.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 0)
-                    return false;
-
-                for (var i = 0; i < bytesRead; i++)
-                    if (buffer[i] == '\r')
-                        return true;
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-            _file.Seek(0, SeekOrigin.Begin);
-        }
-    }
-
-    private void WriteNormalizedTempFile(string tempPath, Encoding encoding)
-    {
-        _file.Seek(0, SeekOrigin.Begin);
-
-        using var reader = new StreamReader(_file, encoding, false, StreamBufferSize, true);
-        using var tempOutput = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-            StreamBufferSize, FileOptions.SequentialScan);
-        using var writer = new StreamWriter(tempOutput, Utf8NoBom, StreamBufferSize);
-        var buffer = ArrayPool<char>.Shared.Rent(TextBufferSize);
-        var firstChar = true;
-        var previousWasCr = false;
-
-        try
-        {
-            while (true)
-            {
-                var charsRead = reader.Read(buffer, 0, buffer.Length);
-                if (charsRead == 0)
-                    break;
-
-                for (var i = 0; i < charsRead; i++)
-                {
-                    var ch = buffer[i];
-
-                    if (firstChar)
-                    {
-                        firstChar = false;
-                        if (ch == '\uFEFF')
-                            continue;
-                    }
-
-                    if (previousWasCr)
-                    {
-                        previousWasCr = false;
-                        if (ch == '\n')
-                            continue;
-                    }
-
-                    if (ch == '\r')
-                    {
-                        writer.Write('\n');
-                        previousWasCr = true;
-                        continue;
-                    }
-
-                    writer.Write(ch);
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<char>.Shared.Return(buffer);
-        }
     }
 
     /// <summary>
@@ -313,7 +172,7 @@ internal class FileAccessor : IDisposable
                 {
                     var memory = buf.AsMemory(0, (int)length);
                     var bytesRead =
-                        await RandomAccess.ReadAsync(_handle, memory, span.LineStart, CancellationToken.None);
+                        await RandomAccess.ReadAsync(_handle, memory, span.LineStart, _cancellationToken);
 
                     if (bytesRead < length)
                         Logger.Warn($"读取 {_filepath} 偏移 {span.LineStart} 预期 {length} 字节，实际 {bytesRead}");
@@ -363,6 +222,7 @@ internal class FileAccessor : IDisposable
     public async Task<bool> ReplaceBytes(long byteOffset, long byteCount, ReadOnlyMemory<byte> replacement)
     {
         EnsureWritable();
+        _cancellationToken.ThrowIfCancellationRequested();
         if (byteOffset < 0 || byteOffset > _file.Length)
             throw new ArgumentOutOfRangeException(nameof(byteOffset), $"字节偏移 {byteOffset} 超出范围 [0, {_file.Length}]");
 
@@ -563,6 +423,7 @@ internal class FileAccessor : IDisposable
             return;
 
         _file.Seek(offset, SeekOrigin.Begin);
+        // ponytail: once mutation starts, finish it; mid-write cancellation can corrupt the file.
         await _file.WriteAsync(replacement, CancellationToken.None);
         await _file.FlushAsync(CancellationToken.None);
         _file.Seek(0, SeekOrigin.Begin);

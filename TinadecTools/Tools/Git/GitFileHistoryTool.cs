@@ -5,8 +5,8 @@ namespace TinadecTools.Tools.Git;
 
 // ── git_file_history ──────────────────────────────────────────────────────────
 // Single file history, --follow tracks renames by default.
-// Uses `git log --follow -p` once to get commit metadata + the file's patch,
-// deriving file change (status/binary/counts) from the patch.
+// Reads `git log --follow --name-status` for stable per-commit metadata, then
+// requests individual patches only while the caller's output budget remains.
 
 public sealed class GitFileHistoryEntry
 {
@@ -48,6 +48,8 @@ public sealed class GitFileHistoryResult
 
     [JsonPropertyName("truncated")] public bool Truncated { get; set; }
 
+    [JsonPropertyName("truncation_reason")] public string? TruncationReason { get; set; }
+
     [JsonPropertyName("next_cursor")] public string? NextCursor { get; set; }
 
     [JsonPropertyName("cache")] public object? Cache { get; set; }
@@ -73,7 +75,7 @@ internal static class GitFileHistoryTool
     private const string CommitMarker = "__TINADEC_COMMIT__\x1f";
     private const string LogFormat = CommitMarker + "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID)]
+    [ToolFunction(TOOL_ID, RequiresApproval = true)]
     public static async ValueTask<GitFileHistoryResult> HandleAsync(
         GitFileHistoryArgs args,
         CancellationToken cancellationToken)
@@ -85,12 +87,16 @@ internal static class GitFileHistoryTool
         if (repo is null)
             return new GitFileHistoryResult { Success = false, Error = repoError, ErrorCode = GitCli.NotARepoCode };
 
+        var repositoryPath = GitCli.ResolveRepositoryRelativePath(repo, args.Path);
+        if (!string.IsNullOrWhiteSpace(args.AfterCommit))
+            GitCli.ValidateRevision(args.AfterCommit, "after_commit");
+
         var limit = args.Limit is > 0 ? args.Limit.Value : 100;
         var skip = args.Skip is > 0 ? args.Skip.Value : 0;
         var follow = args.Follow ?? true;
         var maxPatchBytes = args.MaxPatchBytes is > 0 ? args.MaxPatchBytes.Value : 524288;
 
-        var gitArgs = new List<string> { "log", "-p" };
+        var gitArgs = new List<string> { "log", "-z", "--name-status", "-M" };
         if (follow)
             gitArgs.Add("--follow");
         gitArgs.Add($"--format={LogFormat}");
@@ -100,24 +106,24 @@ internal static class GitFileHistoryTool
         if (!string.IsNullOrWhiteSpace(args.AfterCommit))
             gitArgs.Add($"{args.AfterCommit}^@");
         gitArgs.Add("--");
-        gitArgs.Add(args.Path);
+        gitArgs.Add(repositoryPath);
 
         var exec = await GitCli.RunAsync(repo, gitArgs, stdin: null, cancellationToken, timeoutMs: 60_000).ConfigureAwait(false);
         if (!exec.Ok)
             return Fail(exec);
 
-        // ponytail: coarse total-size cap; per-commit byte limits would need per-commit parsing
-        var truncated = exec.Stdout.Length > maxPatchBytes * 4;
+        var truncated = false;
+        string? truncationReason = null;
         var segments = exec.Stdout.Split(CommitMarker, StringSplitOptions.RemoveEmptyEntries);
 
         var entries = new List<GitFileHistoryEntry>();
         foreach (var seg in segments)
         {
-            var nlIdx = seg.IndexOf('\n');
-            var fieldsLine = nlIdx < 0 ? seg : seg[..nlIdx];
-            var patchText = nlIdx < 0 ? string.Empty : seg[(nlIdx + 1)..];
+            var records = seg.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            if (records.Length == 0)
+                continue;
 
-            var fields = fieldsLine.Split('\x1f');
+            var fields = records[0].TrimStart('\r', '\n').Split('\x1f');
             if (fields.Length < 9)
                 continue;
 
@@ -134,29 +140,13 @@ internal static class GitFileHistoryTool
                 Refs = GitLogParser.ParseDecorations(fields[8])
             };
 
-            var patchFiles = DiffParser.ParsePatch(patchText);
-            var pf = patchFiles.Count > 0 ? patchFiles[0] : new GitPatchFile { NewPath = args.Path, OldPath = args.Path };
-            var change = DeriveFileChange(pf);
-
-            // binary summary
-            if (change.IsBinary)
-            {
-                var bp = !string.IsNullOrEmpty(pf.NewPath) ? pf.NewPath : pf.OldPath;
-                if (!string.IsNullOrEmpty(bp))
-                {
-                    var (blobHash, byteSize) = await GitCli.GetBlobSummaryAsync(repo, commit.Hash, bp, cancellationToken).ConfigureAwait(false);
-                    change.BlobHash = blobHash;
-                    change.ByteSize = byteSize;
-                    pf.BlobHash = blobHash;
-                    pf.ByteSize = byteSize;
-                }
-            }
+            var change = ParseChange(records.Skip(1).ToArray(), repositoryPath);
 
             entries.Add(new GitFileHistoryEntry
             {
                 Commit = commit,
                 Change = change,
-                Patch = args.IncludePatch ? pf : null
+                Patch = null
             });
         }
 
@@ -164,43 +154,112 @@ internal static class GitFileHistoryTool
 
         var overflow = entries.Count > limit;
         if (overflow)
+        {
             entries = entries.Take(limit).ToList();
+            truncated = true;
+            truncationReason = "limit";
+        }
+
+        var usedPatchBytes = 0;
+        foreach (var entry in entries)
+        {
+            var path = !string.IsNullOrEmpty(entry.Change.NewPath) ? entry.Change.NewPath : entry.Change.OldPath;
+            if (string.IsNullOrEmpty(path))
+                continue;
+
+            var stat = await GitCli.RunAsync(
+                repo,
+                ["show", "--format=", "--numstat", "-M", entry.Commit.Hash, "--", path],
+                stdin: null,
+                cancellationToken,
+                timeoutMs: 15_000).ConfigureAwait(false);
+            if (stat.Ok)
+            {
+                var numstat = DiffParser.ParseNumstat(stat.Stdout).FirstOrDefault();
+                entry.Change.Additions = numstat.Additions;
+                entry.Change.Deletions = numstat.Deletions;
+                entry.Change.IsBinary = numstat.IsBinary;
+            }
+
+            if (entry.Change.IsBinary)
+            {
+                var (blobHash, byteSize) = await GitCli.GetBlobSummaryAsync(repo, entry.Commit.Hash, path, cancellationToken).ConfigureAwait(false);
+                entry.Change.BlobHash = blobHash;
+                entry.Change.ByteSize = byteSize;
+            }
+
+            if (!args.IncludePatch || truncated)
+                continue;
+
+            var remaining = maxPatchBytes - usedPatchBytes;
+            if (remaining <= 0)
+            {
+                truncated = true;
+                truncationReason ??= "patch_output_limit";
+                break;
+            }
+
+            var patch = await GitPatchLoader.LoadAsync(
+                repo,
+                ["show", "--format=", "--patch", "-M", entry.Commit.Hash, "--", path],
+                remaining,
+                cancellationToken).ConfigureAwait(false);
+            if (patch.Truncated)
+            {
+                truncated = true;
+                truncationReason ??= patch.TruncationReason;
+                break;
+            }
+
+            if (patch.Patches is { Count: > 0 })
+            {
+                var patchFile = patch.Patches[0];
+                if (entry.Change.IsBinary)
+                {
+                    patchFile.BlobHash = entry.Change.BlobHash;
+                    patchFile.ByteSize = entry.Change.ByteSize;
+                }
+                entry.Patch = patchFile;
+                usedPatchBytes += patch.CapturedBytes;
+            }
+        }
 
         return new GitFileHistoryResult
         {
             Success = true,
             Entries = entries,
-            Truncated = truncated || overflow,
-            NextCursor = (truncated || overflow) && entries.Count > 0 ? entries[^1].Commit.Hash : null
+            Truncated = truncated,
+            TruncationReason = truncationReason,
+            NextCursor = truncated && entries.Count > 0 ? entries[^1].Commit.Hash : null
         };
     }
 
-    private static GitFileChange DeriveFileChange(GitPatchFile pf)
+    private static GitFileChange ParseChange(string[] records, string fallbackPath)
     {
-        var oldEmpty = string.IsNullOrEmpty(pf.OldPath);
-        var newEmpty = string.IsNullOrEmpty(pf.NewPath);
-        var renamed = !oldEmpty && !newEmpty && !string.Equals(pf.OldPath, pf.NewPath, StringComparison.Ordinal);
+        if (records.Length == 0)
+            return new GitFileChange { Status = "M", OldPath = fallbackPath, NewPath = fallbackPath };
 
-        var status = (oldEmpty, newEmpty, renamed) switch
+        var statusParts = records[0].Split('\t', 2);
+        var statusField = statusParts[0];
+        var status = statusField[..1];
+        var score = status is "R" or "C" && int.TryParse(statusField[1..], out var parsedScore) ? parsedScore : 0;
+        var firstPath = statusParts.Length > 1 ? statusParts[1] : records.Length > 1 ? records[1] : fallbackPath;
+        var secondPath = status is "R" or "C" && statusParts.Length == 1 && records.Length > 2 ? records[2] : firstPath;
+
+        var (oldPath, newPath) = status switch
         {
-            (true, false, _) => "A",
-            (false, true, _) => "D",
-            (_, _, true) => "R",
-            _ => "M"
+            "A" => ((string?)null, firstPath),
+            "D" => (firstPath, string.Empty),
+            "R" or "C" => (firstPath, secondPath),
+            _ => (firstPath, firstPath)
         };
-
-        var additions = pf.IsBinary ? 0 : pf.Hunks.Sum(h => h.Lines.Count(l => l.Type == "add"));
-        var deletions = pf.IsBinary ? 0 : pf.Hunks.Sum(h => h.Lines.Count(l => l.Type == "delete"));
 
         return new GitFileChange
         {
             Status = status,
-            Score = 0, // ponytail: -p has no similarity score; needs --name-status, skipped
-            OldPath = oldEmpty ? null : pf.OldPath,
-            NewPath = pf.NewPath,
-            Additions = additions,
-            Deletions = deletions,
-            IsBinary = pf.IsBinary
+            Score = score,
+            OldPath = oldPath,
+            NewPath = newPath
         };
     }
 

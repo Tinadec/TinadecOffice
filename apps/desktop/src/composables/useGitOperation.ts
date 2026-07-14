@@ -38,6 +38,11 @@ export interface GitDiffSection {
   notices: string[]
 }
 
+export interface GitIndexSelection {
+  paths?: string[]
+  patch?: string
+}
+
 export interface GitPreviewData {
   git_root?: string
   branch?: string
@@ -179,6 +184,7 @@ export function useGitOperation(
   // Approval tracking
   const indexApprovalId = ref<string | null>(null)
   const indexAction = ref<'stage' | 'unstage' | null>(null)
+  const indexSelection = ref<GitIndexSelection | null>(null)
   const commitApprovalId = ref<string | null>(null)
   const pushApprovalId = ref<string | null>(null)
   const pullApprovalId = ref<string | null>(null)
@@ -192,6 +198,8 @@ export function useGitOperation(
   const resolveConflictStrategy = ref<'ours' | 'theirs' | 'both' | null>(null)
   const deleteBranchApprovalId = ref<string | null>(null)
   const renameBranchApprovalId = ref<string | null>(null)
+  const worktreeApprovalId = ref<string | null>(null)
+  const worktreeOperation = ref<{ action: 'create'; branch: string; path: string } | { action: 'remove'; path: string } | null>(null)
 
   // ---- Computed ----
   const previewData = computed(() => (preview.value?.data ?? {}) as GitPreviewData)
@@ -304,6 +312,9 @@ export function useGitOperation(
   const renameBranchApproval = computed(
     () => allApprovals.value.find((a) => a.id === renameBranchApprovalId.value) ?? null,
   )
+  const worktreeApproval = computed(
+    () => allApprovals.value.find((a) => a.id === worktreeApprovalId.value) ?? null,
+  )
 
   const canDecideIndexApproval = computed(() => indexApproval.value?.status === 'pending')
   const canDecideCommitApproval = computed(() => commitApproval.value?.status === 'pending')
@@ -317,6 +328,7 @@ export function useGitOperation(
   const canDecideResolveConflictApproval = computed(() => resolveConflictApproval.value?.status === 'pending')
   const canDecideDeleteBranchApproval = computed(() => deleteBranchApproval.value?.status === 'pending')
   const canDecideRenameBranchApproval = computed(() => renameBranchApproval.value?.status === 'pending')
+  const canDecideWorktreeApproval = computed(() => worktreeApproval.value?.status === 'pending')
 
   // ---- Validation computed ----
   const cwd = computed(() => currentProjectPath())
@@ -432,22 +444,30 @@ export function useGitOperation(
 
   // ---- Approval-gated operations ----
 
-  async function requestIndexApproval(action: 'stage' | 'unstage', emitApproval: (a: ApprovalDto) => void) {
-    if (!cwd.value || !sid.value || !canRequestIndexApproval.value) return
+  async function requestIndexApproval(action: 'stage' | 'unstage', emitApproval: (a: ApprovalDto) => void, selection?: GitIndexSelection) {
+    const selected = selection?.patch
+      ? { patch: selection.patch }
+      : { paths: selection?.paths?.length ? selection.paths : selectedCommitPaths.value }
+    const paths = selected.paths ?? []
+    if (!cwd.value || !sid.value || (!selected.patch && paths.length === 0)) return
     operationLoading.value = true
     feedback.value = null
     try {
-      const paths = selectedCommitPaths.value
       const isStage = action === 'stage'
       const approval = await api.createApproval({
         session_id: sid.value,
         kind: 'git',
-        summary: `${isStage ? 'Stage' : 'Unstage'} ${paths.length} file${paths.length === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
-        command: `${isStage ? 'git add' : 'git restore --staged'} -- ${paths.join(' ')}`,
+        summary: selected.patch
+          ? `${isStage ? 'Stage' : 'Unstage'} selected text hunks on ${previewData.value.branch ?? 'HEAD'}`
+          : `${isStage ? 'Stage' : 'Unstage'} ${paths.length} file${paths.length === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
+        command: selected.patch
+          ? `${isStage ? 'git apply --cached' : 'git apply --cached --reverse'} <approved patch>`
+          : `${isStage ? 'git add' : 'git restore --staged'} -- ${paths.join(' ')}`,
         cwd: cwd.value,
       })
       indexApprovalId.value = approval.id
       indexAction.value = action
+      indexSelection.value = selected
       feedback.value = t('context.gitIndexApprovalRequested')
       emitApproval(approval)
     } catch (err) {
@@ -462,20 +482,18 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const confirmKey = indexAction.value === 'stage' ? 'confirm_stage' : 'confirm_unstage'
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool(indexAction.value === 'stage' ? 'git_stage' : 'git_unstage', {
         session_id: sid.value,
         approval_id: indexApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: indexAction.value,
-          [confirmKey]: true,
-          paths: selectedCommitPaths.value,
+          ...(indexSelection.value?.patch ? { patch: indexSelection.value.patch } : { paths: indexSelection.value?.paths ?? selectedCommitPaths.value }),
         },
       })
       feedback.value = result.summary
       indexApprovalId.value = null
       indexAction.value = null
+      indexSelection.value = null
       await loadStatus()
     } catch (err) {
       feedback.value = err instanceof Error ? err.message : t('context.gitIndexUpdateFailed')
@@ -512,12 +530,11 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_commit', {
         session_id: sid.value,
         approval_id: commitApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'commit',
           confirm_commit: true,
           commit_staged_only: true,
           message: commitMessage.value.trim(),
@@ -565,12 +582,11 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_push', {
         session_id: sid.value,
         approval_id: pushApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'push',
           confirm_push: true,
           set_upstream: noUpstreamOnly.value,
           remote: 'origin',
@@ -616,17 +632,14 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_pull', {
         session_id: sid.value,
         approval_id: pullApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'pull',
           confirm_pull: true,
           branch: previewData.value.branch ?? undefined,
           remote: previewData.value.upstream?.split('/')[0] ?? 'origin',
-          rebase: options?.rebase ?? false,
-          ff_only: options?.ff_only ?? false,
         },
       })
       feedback.value = result.summary
@@ -667,12 +680,11 @@ export function useGitOperation(
     feedback.value = null
     try {
       const branch = checkoutApproval.value.command?.replace('git checkout ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_merge', {
         session_id: sid.value,
         approval_id: checkoutApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'checkout',
           confirm_checkout: true,
           branch,
         },
@@ -715,12 +727,11 @@ export function useGitOperation(
     feedback.value = null
     try {
       const branchName = branchApproval.value.command?.replace('git checkout -b ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_branch_create', {
         session_id: sid.value,
         approval_id: branchApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'create_branch',
           confirm_create_branch: true,
           branch: branchName,
         },
@@ -762,12 +773,11 @@ export function useGitOperation(
     operationLoading.value = true
     feedback.value = null
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_fetch', {
         session_id: sid.value,
         approval_id: fetchApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'fetch',
           confirm_fetch: true,
         },
       })
@@ -810,12 +820,11 @@ export function useGitOperation(
     feedback.value = null
     try {
       const branch = mergeApproval.value.command?.replace('git merge ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_conflict_resolve', {
         session_id: sid.value,
         approval_id: mergeApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'merge',
           confirm_merge: true,
           branch,
         },
@@ -860,12 +869,11 @@ export function useGitOperation(
       const branch = operation === 'start'
         ? rebaseApproval.value.command?.replace('git rebase ', '').trim() ?? ''
         : undefined
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_rebase', {
         session_id: sid.value,
         approval_id: rebaseApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'rebase',
           confirm_rebase: true,
           operation,
           ...(branch ? { branch } : {}),
@@ -922,7 +930,6 @@ export function useGitOperation(
         approval_id: resolveConflictApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'resolve_conflict',
           confirm_resolve: true,
           path: resolveConflictPath.value,
           strategy: resolveConflictStrategy.value,
@@ -975,7 +982,6 @@ export function useGitOperation(
         approval_id: deleteBranchApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'delete_branch',
           confirm_delete_branch: true,
           branch,
           force,
@@ -1020,12 +1026,11 @@ export function useGitOperation(
     feedback.value = null
     try {
       const newName = renameBranchApproval.value.command?.replace('git branch -m ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_worktree_manager', {
+      const result = await api.executeCodeTool('git_branch_rename', {
         session_id: sid.value,
         approval_id: renameBranchApproval.value.id,
         cwd: cwd.value,
         arguments: {
-          action: 'rename_branch',
           confirm_rename_branch: true,
           new_name: newName,
         },
@@ -1038,6 +1043,51 @@ export function useGitOperation(
     } finally {
       operationLoading.value = false
     }
+  }
+
+  async function requestCreateWorktreeApproval(payload: { branch: string; path: string }, emitApproval: (a: ApprovalDto) => void) {
+    if (!cwd.value || !sid.value || !payload.branch.trim() || !payload.path.trim()) return
+    operationLoading.value = true
+    feedback.value = null
+    try {
+      const operation = { action: 'create' as const, branch: payload.branch.trim(), path: payload.path.trim() }
+      const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Create worktree ${operation.path} for ${operation.branch}`, command: `git worktree add ${operation.path} -b ${operation.branch}`, cwd: cwd.value })
+      worktreeOperation.value = operation
+      worktreeApprovalId.value = approval.id
+      emitApproval(approval)
+    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed') }
+    finally { operationLoading.value = false }
+  }
+
+  async function requestRemoveWorktreeApproval(path: string, emitApproval: (a: ApprovalDto) => void) {
+    if (!cwd.value || !sid.value || !path.trim()) return
+    operationLoading.value = true
+    feedback.value = null
+    try {
+      const operation = { action: 'remove' as const, path: path.trim() }
+      const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Remove worktree ${operation.path}`, command: `git worktree remove ${operation.path}`, cwd: cwd.value })
+      worktreeOperation.value = operation
+      worktreeApprovalId.value = approval.id
+      emitApproval(approval)
+    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed') }
+    finally { operationLoading.value = false }
+  }
+
+  async function executeApprovedWorktreeOperation() {
+    if (!cwd.value || !sid.value || !worktreeApproval.value || worktreeApproval.value.status !== 'approved' || !worktreeOperation.value) return
+    operationLoading.value = true
+    feedback.value = null
+    try {
+      const operation = worktreeOperation.value
+      const result = operation.action === 'create'
+        ? await api.executeCodeTool('git_worktree_create', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { branch: operation.branch, path: operation.path, confirm_create_worktree: true } })
+        : await api.executeCodeTool('git_worktree_remove', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { path: operation.path, confirm_remove_worktree: true } })
+      feedback.value = result.summary
+      worktreeApprovalId.value = null
+      worktreeOperation.value = null
+      await refreshAll()
+    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitWorktreeNeedsApproval') }
+    finally { operationLoading.value = false }
   }
 
   // ---- One-click approve & execute ----
@@ -1146,6 +1196,8 @@ export function useGitOperation(
     resolveConflictStrategy.value = null
     deleteBranchApprovalId.value = null
     renameBranchApprovalId.value = null
+    worktreeApprovalId.value = null
+    worktreeOperation.value = null
   }
 
   // ---- Watch ----
@@ -1201,6 +1253,7 @@ export function useGitOperation(
     resolveConflictApproval,
     deleteBranchApproval,
     renameBranchApproval,
+    worktreeApproval,
     canDecideIndexApproval,
     canDecideCommitApproval,
     canDecidePushApproval,
@@ -1213,6 +1266,7 @@ export function useGitOperation(
     canDecideResolveConflictApproval,
     canDecideDeleteBranchApproval,
     canDecideRenameBranchApproval,
+    canDecideWorktreeApproval,
     // Computed - validation
     canRequestIndexApproval,
     canRequestCommitApproval,
@@ -1252,6 +1306,9 @@ export function useGitOperation(
     executeApprovedDeleteBranch,
     requestRenameBranchApproval,
     executeApprovedRenameBranch,
+    requestCreateWorktreeApproval,
+    requestRemoveWorktreeApproval,
+    executeApprovedWorktreeOperation,
     // One-click approve & execute
     approveAndExecuteIndex,
     approveAndExecuteCommit,

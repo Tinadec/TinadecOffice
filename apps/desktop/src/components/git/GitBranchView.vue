@@ -43,6 +43,7 @@ const props = defineProps<{
   renameBranchApproval: ApprovalDto | null
   mergeApproval: ApprovalDto | null
   rebaseApproval: ApprovalDto | null
+  worktreeApproval: ApprovalDto | null
   canDecideCheckoutApproval: boolean
   canDecideBranchApproval: boolean
   canDecideFetchApproval: boolean
@@ -50,6 +51,7 @@ const props = defineProps<{
   canDecideRenameBranchApproval: boolean
   canDecideMergeApproval: boolean
   canDecideRebaseApproval: boolean
+  canDecideWorktreeApproval: boolean
   canRequestFetchApproval: boolean
   operationLoading: boolean
 }>()
@@ -70,6 +72,9 @@ const emit = defineEmits<{
   'execute-rename-branch': []
   'execute-merge': []
   'execute-rebase': [operation: 'continue' | 'abort' | 'skip']
+  'create-worktree': [payload: { branch: string; path: string }]
+  'remove-worktree': [path: string]
+  'execute-worktree': []
 }>()
 
 const { t } = useI18n()
@@ -151,11 +156,11 @@ function onSwitchWorktree(path: string) {
 }
 
 function onCreateWorktree(payload: { branch: string; path: string }) {
-  // Delegate to parent
+  emit('create-worktree', payload)
 }
 
 function onRemoveWorktree(path: string) {
-  // Delegate to parent
+  emit('remove-worktree', path)
 }
 
 function refreshBranches() {
@@ -554,14 +559,30 @@ defineExpose({ refresh: refreshBranches })
     </div>
 
     <!-- Worktrees sub-view -->
-    <WorktreeManager
-      v-else-if="activeSubview === 'worktrees' && cwd"
-      :cwd="cwd"
-      :current-path="cwd"
-      @switch="onSwitchWorktree"
-      @create="onCreateWorktree"
-      @remove="onRemoveWorktree"
-    />
+    <div v-else-if="activeSubview === 'worktrees' && cwd">
+      <WorktreeManager
+        :cwd="cwd"
+        :current-path="cwd"
+        @switch="onSwitchWorktree"
+        @create="onCreateWorktree"
+        @remove="onRemoveWorktree"
+      />
+      <div v-if="worktreeApproval" class="git-branch-checkout-approval">
+        <div class="git-branch-checkout-approval-info">
+          <ShieldCheck :size="14" />
+          <span>{{ worktreeApproval.summary }}</span>
+          <UiBadge :variant="worktreeApproval.status === 'approved' ? 'default' : 'secondary'">{{ worktreeApproval.status }}</UiBadge>
+        </div>
+        <div v-if="canDecideWorktreeApproval" class="git-approval-decide">
+          <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', worktreeApproval, 'approved')"><ShieldCheck :size="13" /></button>
+          <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', worktreeApproval, 'rejected')"><ShieldX :size="13" /></button>
+        </div>
+        <UiButton v-if="worktreeApproval.status === 'approved'" variant="secondary" size="sm" :disabled="operationLoading" @click="emit('execute-worktree')">
+          <CheckCircle2 :size="13" />
+          <span>{{ t('context.gitWorktreeExecute') }}</span>
+        </UiButton>
+      </div>
+    </div>
 
     <!-- Compare sub-view -->
     <CommitCompare

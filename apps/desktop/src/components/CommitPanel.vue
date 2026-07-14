@@ -182,12 +182,11 @@ async function executeApprovedCommit() {
   operationLoading.value = true
   feedback.value = null
   try {
-    const result = await api.executeCodeTool('git_worktree_manager', {
+    const result = await api.executeCodeTool('git_commit', {
       session_id: props.selectedSessionId,
       approval_id: commitApproval.value.id,
       cwd: props.currentProjectPath,
       arguments: {
-        action: 'commit',
         confirm_commit: true,
         paths: selectedCommitPaths.value,
         message: commitMessage.value.trim(),

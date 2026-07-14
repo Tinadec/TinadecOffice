@@ -70,13 +70,13 @@ public static class FileWriter
         ReplaceLinesParams args,
         CancellationToken cancellationToken)
     {
-        return RunMutationAsync(args.FilePath, "replace_lines", async slot =>
+        return RunMutationAsync(args.FilePath, "replace_lines", async file =>
         {
             var (startLine, endLine, expectedCount) = GetReplaceRange(args);
-            await ValidateLineAnchorsAsync(slot.File, args.Content, startLine, endLine, expectedCount, cancellationToken)
+            await ValidateLineAnchorsAsync(file, args.Content, startLine, endLine, expectedCount, cancellationToken)
                 .ConfigureAwait(false);
 
-            await slot.File.ReplaceLines(
+            await file.ReplaceLines(
                     startLine,
                     endLine,
                     args.Content.Select(line => line.Content).ToArray())
@@ -93,7 +93,7 @@ public static class FileWriter
             args.FilePath,
             "replace_bytes",
             args.FileHash,
-            slot => slot.File.ReplaceBytes(args.StartOffset, args.Length, Encoding.UTF8.GetBytes(args.Content)),
+            file => file.ReplaceBytes(args.StartOffset, args.Length, Encoding.UTF8.GetBytes(args.Content)),
             cancellationToken);
     }
 
@@ -106,7 +106,7 @@ public static class FileWriter
             args.FilePath,
             "insert_bytes",
             args.FileHash,
-            slot => slot.File.InsertBytes(args.StartOffset, Encoding.UTF8.GetBytes(args.Content)),
+            file => file.InsertBytes(args.StartOffset, Encoding.UTF8.GetBytes(args.Content)),
             cancellationToken);
     }
 
@@ -127,7 +127,7 @@ public static class FileWriter
             args.FilePath,
             "delete_bytes",
             args.FileHash,
-            slot => slot.File.DeleteBytes(args.StartOffset, args.Length),
+            file => file.DeleteBytes(args.StartOffset, args.Length),
             cancellationToken);
     }
 
@@ -140,14 +140,14 @@ public static class FileWriter
             args.FilePath,
             "insert_line",
             args.FileHash,
-            slot =>
+            file =>
             {
                 var lineNumber = ToZeroBasedLine(args.LineNumber, nameof(args.LineNumber));
                 if (string.Equals(args.Position, "before", StringComparison.OrdinalIgnoreCase))
-                    return slot.File.InsertLinesBeforeLine(lineNumber, args.Content);
+                    return file.InsertLinesBeforeLine(lineNumber, args.Content);
 
                 if (string.Equals(args.Position, "after", StringComparison.OrdinalIgnoreCase))
-                    return slot.File.InsertLinesAfterLine(lineNumber, args.Content);
+                    return file.InsertLinesAfterLine(lineNumber, args.Content);
 
                 throw new ArgumentException("position must be 'before' or 'after'.");
             },
@@ -163,7 +163,7 @@ public static class FileWriter
             args.FilePath,
             "delete_line",
             args.FileHash,
-            slot => slot.File.DeleteLines(
+            file => file.DeleteLines(
                 ToZeroBasedLine(args.StartRow, nameof(args.StartRow)),
                 ToZeroBasedLine(args.EndRow, nameof(args.EndRow))),
             cancellationToken);
@@ -173,26 +173,26 @@ public static class FileWriter
         string filePath,
         string operation,
         string expectedFileHash,
-        Func<FileSlot, Task> mutation,
+        Func<FileAccessor, Task> mutation,
         CancellationToken cancellationToken)
     {
-        return RunMutationAsync(filePath, operation, async slot =>
+        return RunMutationAsync(filePath, operation, async file =>
         {
-            var actualFileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
+            var actualFileHash = await file.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
             if (!string.Equals(expectedFileHash, actualFileHash, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     $"REJECT {operation}: file_hash mismatch, expected {expectedFileHash}, actual {actualFileHash}.");
             }
 
-            await mutation(slot).ConfigureAwait(false);
+            await mutation(file).ConfigureAwait(false);
         }, cancellationToken);
     }
 
     private static async ValueTask<FileMutationResponse> RunMutationAsync(
         string filePath,
         string operation,
-        Func<FileSlot, Task> mutation,
+        Func<FileAccessor, Task> mutation,
         CancellationToken cancellationToken)
     {
         try
@@ -202,8 +202,9 @@ public static class FileWriter
 
             using (await slot.RwLock.WriteLockAsync(cancellationToken).ConfigureAwait(false))
             {
-                await mutation(slot).ConfigureAwait(false);
-                var newFileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
+                using var file = FileToolRuntime.OpenWrite(path, cancellationToken);
+                await mutation(file).ConfigureAwait(false);
+                var newFileHash = await file.ComputeFileHashAsync(CancellationToken.None).ConfigureAwait(false);
                 Logger.Debug("{operation}写入{path}成功，新file_hash为{fileHash}", operation, path, newFileHash);
                 return new FileMutationResponse { Success = true, FileHash = newFileHash };
             }

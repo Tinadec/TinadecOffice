@@ -204,15 +204,11 @@ Run-Test "Desktop layer path exists" {
 }
 
 Run-Test "Gateway layer path exists" {
-    Test-Path "$projectPath\apps\gateway"
+    Test-Path "$projectPath\gateway"
 }
 
 Run-Test "Core layer path exists" {
     Test-Path "$projectPath\src\TinadecCore"
-}
-
-Run-Test "Native layer path exists" {
-    Test-Path "$projectPath\native"
 }
 
 Write-Host ""

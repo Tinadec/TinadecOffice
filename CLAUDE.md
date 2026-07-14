@@ -4,14 +4,13 @@ This file is the Claude-specific entry point for AI agents. It intentionally poi
 
 ## Project Context
 
-TinadecOffice is a Windows-first intelligent agent desktop workbench built around a universal agent harness. It implements a four-layer architecture:
+TinadecOffice is a Windows-first intelligent agent desktop workbench built around a universal agent harness. It implements a three-layer architecture:
 
 1. **Desktop Layer** (UI Presentation): Electron + Vue 3 + Vite, port 5173
 2. **Gateway Layer** (BFF/API): Elysia TypeScript, port 48730  
 3. **Core Layer** (Agent Orchestration): .NET 10 C#, port 48731
-4. **Native Layer** (Tool Implementation): Rust workspace
 
-The project follows a clear separation of concerns where Core is the only state authority, Gateway is a thin proxy, Desktop is UI-only, and Native provides low-level tool capabilities.
+The project follows a clear separation of concerns where Core is the only state authority, Gateway is a thin proxy, and Desktop is UI-only.
 
 ## Development Environment Configuration
 
@@ -19,7 +18,6 @@ The project follows a clear separation of concerns where Core is the only state 
 - Windows 10/11 (23H2 or later)
 - Node.js 18+ and npm
 - .NET 10 SDK
-- Rust toolchain (stable-x86_64-pc-windows-gnullvm)
 - Git
 
 ### Dependency Installation
@@ -29,9 +27,6 @@ npm install
 
 # Restore .NET dependencies
 npm run restore:dotnet
-
-# Build native tools (optional)
-npm run build:native
 ```
 
 ### Environment Variables
@@ -49,18 +44,16 @@ Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
 ### Key Configuration Files
 - `package.json`: npm workspace configuration
 - `TinadecOffice.slnx`: .NET solution file
-- `native/Cargo.toml`: Rust workspace configuration
-- `apps/gateway/package.json`: Gateway dependencies
+- `gateway/package.json`: Gateway dependencies
 - `apps/desktop/package.json`: Desktop dependencies
 
 ## Architecture Patterns and Design Principles
 
 ### Layered Architecture Pattern
-TinadecOffice follows a strict four-layer architecture:
+TinadecOffice follows a strict three-layer architecture:
 1. **Presentation Layer** (Desktop): UI rendering and user interaction
 2. **API Gateway Layer** (Gateway): Request routing and proxy
 3. **Business Logic Layer** (Core): Agent orchestration and state management
-4. **Tool Implementation Layer** (Native): Low-level tool execution
 
 ### State Management Pattern
 - **Single Source of Truth**: Core is the only state authority
@@ -90,7 +83,7 @@ TinadecOffice follows a strict four-layer architecture:
 
 ### Adding a New Tool
 1. **Define Tool Interface**: Create tool specification in Core's `ToolRegistryService.cs`
-2. **Implement Tool Logic**: Add tool implementation in appropriate layer (Core, Gateway, or Native)
+2. **Implement Tool Logic**: Add tool implementation in appropriate layer (Core or Gateway)
 3. **Register Tool**: Register tool through `IToolRegistry` interface
 4. **Add Tests**: Create unit tests for tool functionality
 5. **Update Documentation**: Update relevant `AGENTS.md` files
@@ -132,9 +125,6 @@ npm run build
 # Run all tests
 npm test
 
-# Build native tools
-npm run build:native
-
 # Clear environment variables for .NET
 Remove-Item Env:Version -ErrorAction SilentlyContinue
 Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
@@ -153,7 +143,7 @@ Before making architecture, feature, UI, or tool-layer changes, read in this ord
 For Tool-layer / Code-suite work, inspect:
 
 - `src/TinadecCore/Services/ToolRegistryService.cs` - Core capability registration and approval posture.
-- `apps/gateway/src/codeTools.ts` - Code tool catalog, DTO mapping, native execution, and fallback data.
+- `gateway/src/codeTools.ts` - Code tool catalog, DTO mapping, and fallback data.
 - `apps/desktop/src/toolCatalog.ts` and `apps/desktop/src/pages/SettingsPage.vue` - Desktop presentation of Tool-layer capabilities.
 
 ## Product Model
@@ -178,7 +168,7 @@ The main mental model is:
 
 - Keep `AGENTS.md` and this file aligned when changing the AI reading path or product-layer vocabulary.
 - When changing code, configs, commands, ports, contracts, module boundaries, or build/test workflows, update the relevant `AGENTS.md` file in the same work item.
-- Do not edit generated or artifact directories: `bin/`, `obj/`, `node_modules/`, `dist/`, `dist-electron/`, `.vite/`, `coverage/`, `output/`, `native/target/`, `tmp/`.
+- Do not edit generated or artifact directories: `bin/`, `obj/`, `node_modules/`, `dist/`, `dist-electron/`, `.vite/`, `coverage/`, `output/`, `tmp/`.
 - Preserve the Windows-first workflow. Direct .NET PowerShell commands should clear `Version` and `Ice-Version` first.
 
 ## Ponytail Integration
@@ -193,7 +183,6 @@ Claude MUST apply Ponytail principles when:
 - Desktop层: 优先使用 Vue 3 组合式 API，避免 Options API
 - Gateway层: 保持 Elysia 路由简洁，不添加中间件逻辑
 - Core层: 使用 .NET 10 最小 API 模式，避免过度抽象
-- Native层: 复用 Codex 原语，不重新实现文件操作
 
 **Safety Checklist**:
 - [ ] 安全验证代码未被删除
@@ -261,7 +250,6 @@ Before making changes, verify:
 - [ ] Desktop layer does not call Core directly
 - [ ] Gateway layer remains a thin proxy
 - [ ] Core layer maintains state authority
-- [ ] Native layer uses Codex primitives
 - [ ] No business logic in Gateway/Desktop
 - [ ] All mutations go through approval gates
 

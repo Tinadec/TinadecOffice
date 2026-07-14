@@ -3,17 +3,14 @@ import {
   ArrowLeft,
   Bot,
   Check,
-  CheckCircle2,
   ChevronRight,
   Circle,
-  Cloud,
   Cpu,
   Dna,
   Edit3,
   FileText,
   GitBranch,
   Globe,
-  HardDrive,
   Info,
   KeyRound,
   LayoutGrid,
@@ -43,10 +40,16 @@ import { useTheme } from '../composables/useTheme'
 import {
   api,
   type AgentCandidateDto,
+  type AgentCenterOverviewDto,
   type AgentModeDto,
   type AgentProfileDto,
+  type AgentRuntimeBindingInput,
+  type AgentRuntimeSelectionKind,
+  type CenterDiagnosticDto,
   type ModelCatalogReadinessReceiptDto,
   type ModelCatalogTemplateReadinessDto,
+  type ModelCenterAcpRuntimeDto,
+  type ModelCenterOverviewDto,
   type ModelProviderReadinessDto,
   type ModelProviderInstanceDto,
   type ModelReadinessReceiptDto,
@@ -62,11 +65,23 @@ import {
 } from '../api'
 import {
   PROVIDER_TEMPLATES,
-  PROVIDER_CATEGORIES,
   findTemplate,
-  type ProviderTemplate,
-  type ProviderCategory
+  type ProviderTemplate
 } from '../providerTemplates'
+import {
+  buildModelCenterRows,
+  filterModelCenterRows,
+  type ModelCenterFilter
+} from '../modelCenterView'
+import {
+  bindingForAgent,
+  legacyRouteWarning,
+  modelOptionKey,
+  providerTemplateFromSupplier,
+  providersFromOverview,
+  runtimeSourceSummary,
+  type ModelCenterSection
+} from '../runtimeCenterView'
 import {
   codeSuiteTools,
   languageSupportFromTools,
@@ -78,6 +93,7 @@ import {
   sortedToolProviders,
   type ProjectTemplateSummary
 } from '../toolCatalog'
+import BrandLogo from '@/components/BrandLogo.vue'
 import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSwitch } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
@@ -105,20 +121,13 @@ interface ProviderForm {
   enabled: boolean
 }
 
-const CATEGORY_ICONS: Record<ProviderCategory, typeof Cloud> = {
-  'cloud-api': Cloud,
-  'local-server': HardDrive,
-  'agent-cli': Terminal,
-  'custom': Settings2,
-}
-
 const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 
-// Background management — backgroundSettings is a singleton shared with
+// Background management 鈥?backgroundSettings is a singleton shared with
 // App.vue (which renders the background layer globally).  The setters below
-// are used by the Settings → Appearance section.
+// are used by the Settings 鈫?Appearance section.
 const {
 settings: backgroundSettings,
 setBackgroundType,
@@ -179,6 +188,10 @@ function closeWindow() {
   window.tinadec?.closeWindow?.()
 }
 
+function openExternal(url: string) {
+  window.open(url, '_blank')
+}
+
 const activeSection = ref<SettingsSection>('model')
 
 // ---- About page runtime health check ----
@@ -200,6 +213,8 @@ async function checkAboutHealth() {
   } catch { aboutGatewayStatus.value = '' }
 }
 checkAboutHealth()
+const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
+const agentCenterOverview = ref<AgentCenterOverviewDto | null>(null)
 const providers = ref<ModelProviderInstanceDto[]>([])
 const modelReadiness = ref<ModelReadinessReceiptDto | null>(null)
 const modelCatalogReadiness = ref<ModelCatalogReadinessReceiptDto | null>(null)
@@ -217,17 +232,37 @@ const projectTemplates = ref<ProjectTemplateSummary[]>([])
 const selectedProviderId = ref('')
 const selectedAgentId = ref('')
 const configuringAgentId = ref('')
-const agentRouteProviderId = ref('')
-const agentRouteModel = ref('')
+const modelCenterSection = ref<ModelCenterSection>('suppliers')
+const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
+const agentRuntimeProviderId = ref('')
+const agentRuntimeModelKey = ref('')
+const agentRuntimeCliId = ref('')
+const agentRuntimeAcpId = ref('')
+const agentRuntimeModelQuery = ref('')
+const agentRuntimeProviderQuery = ref('')
+const agentRuntimeCliQuery = ref('')
+const agentRuntimeAcpQuery = ref('')
+const agentRuntimeNotice = ref('')
 const agentEditTools = ref<string[]>([])
 const agentEditCapabilities = ref<string[]>([])
 const agentEditSystemPrompt = ref('')
 const agentEditDescription = ref('')
 const agentNewCapability = ref('')
 const selectedProviderDetailId = ref('')
+const modelProviderFilter = ref<ModelCenterFilter>('all')
+const modelProviderQuery = ref('')
+const modelProviderListRef = ref<HTMLElement | null>(null)
+const modelDiagnosticsRef = ref<HTMLDetailsElement | null>(null)
 const confirmDeleteId = ref('')
 const busy = ref(false)
 const loading = ref(false)
+const modelCenterLoading = ref(false)
+const agentCenterLoading = ref(false)
+const modelCenterBusy = ref(false)
+const agentRuntimeBusy = ref(false)
+const modelCenterError = ref('')
+const agentCenterError = ref('')
+const modelCenterNotice = ref('')
 const showModal = ref(false)
 const agentViewMode = ref<'topology' | 'list'>('topology')
 const promptSelectedFragmentId = ref('')
@@ -286,7 +321,17 @@ const navItems = computed(() => [
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
 
-const currentTemplate = computed(() => findTemplate(providerForm.driver))
+const modelCenterSections = computed(() => [
+  { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.suppliers.length ?? 0 },
+  { key: 'api' as const, label: t('settings.centerApiConnections'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
+  { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
+  { key: 'cli' as const, label: 'CLI', count: modelCenterOverview.value?.cli_runtimes.length ?? 0 },
+  { key: 'acp' as const, label: 'ACP', count: modelCenterOverview.value?.acp_runtimes.length ?? 0 }
+])
+const supplierTemplates = computed(() => new Map(
+  (modelCenterOverview.value?.suppliers ?? []).map((supplier) => [supplier.driver, providerTemplateFromSupplier(supplier)])
+))
+const currentTemplate = computed(() => supplierTemplates.value.get(providerForm.driver) ?? findTemplate(providerForm.driver))
 
 const chatRoute = computed(() =>
   routes.value.find((route) => route.purpose === 'planner') ?? routes.value.find((route) => route.purpose === 'chat') ?? null
@@ -307,9 +352,6 @@ const blockedModelRoutes = computed(() =>
 const warningCatalogTemplates = computed(() =>
   (modelCatalogReadiness.value?.templates ?? []).filter((template) => template.status !== 'ready')
 )
-const advisoryCatalogTemplates = computed(() =>
-  (modelCatalogReadiness.value?.templates ?? []).filter((template) => template.supports_live_discovery)
-)
 const catalogReadinessByDriver = computed(() => {
   const map = new Map<string, ModelCatalogTemplateReadinessDto>()
   for (const template of modelCatalogReadiness.value?.templates ?? []) {
@@ -324,15 +366,77 @@ const formFields = computed(() => currentTemplate.value?.fields ?? {
 })
 const formPlaceholders = computed(() => currentTemplate.value?.placeholders ?? {})
 
-const addedDriverSet = computed(() => new Set(providers.value.map((p) => p.driver)))
+const modelCenterRows = computed(() => buildModelCenterRows(
+  providersFromOverview(modelCenterOverview.value).filter((provider) => provider.connection_kind !== 'cli'),
+  [...supplierTemplates.value.values()],
+  modelReadiness.value,
+  (key) => t(key)
+).filter((row) => row.kind === 'instance'))
+const filteredModelCenterRows = computed(() => filterModelCenterRows(
+  modelCenterRows.value,
+  modelProviderFilter.value,
+  modelProviderQuery.value
+))
+const modelCenterIssueCount = computed(() => filterModelCenterRows(
+  modelCenterRows.value,
+  'issues',
+  ''
+).length)
+const firstNeedsKeyProvider = computed(() =>
+  providers.value.find((provider) => provider.status === 'needs_key') ?? null
+)
 
-const templatesByCategory = computed(() => {
-  const map = new Map<ProviderCategory, ProviderTemplate[]>()
-  for (const cat of PROVIDER_CATEGORIES) {
-    map.set(cat.key, PROVIDER_TEMPLATES.filter((t) => t.category === cat.key))
-  }
-  return map
-})
+const agentRuntimeBindings = computed(() =>
+  Object.fromEntries((agentCenterOverview.value?.agents ?? []).map((agent) => [agent.id, agent.runtime_binding]))
+)
+const configuringRuntimeBinding = computed(() =>
+  bindingForAgent(agentCenterOverview.value, configuringAgentId.value)
+)
+const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
+const runtimeBindingWritable = computed(() =>
+  Boolean(agentCenterOverview.value?.capabilities.agent_runtime_binding_write && configuringRuntimeBinding.value?.writable)
+)
+const runtimeModels = computed(() => agentCenterOverview.value?.runtime_sources.models ?? modelCenterOverview.value?.models ?? [])
+const runtimeProviders = computed(() => agentCenterOverview.value?.runtime_sources.providers ?? modelCenterOverview.value?.api_connections ?? [])
+const runtimeCliOptions = computed(() => agentCenterOverview.value?.runtime_sources.cli_runtimes ?? modelCenterOverview.value?.cli_runtimes ?? [])
+const runtimeAcpOptions = computed(() => agentCenterOverview.value?.runtime_sources.acp_runtimes ?? modelCenterOverview.value?.acp_runtimes ?? [])
+const modelCenterDiagnostics = computed(() => modelCenterOverview.value?.diagnostics ?? [])
+const agentCenterDiagnostics = computed(() => agentCenterOverview.value?.diagnostics ?? [])
+const filteredRuntimeModels = computed(() => runtimeModels.value.filter((model) => runtimeQueryMatches(
+  agentRuntimeModelQuery.value,
+  model.model_id,
+  model.provider_display_name,
+  model.provider_instance_id,
+  model.status,
+  ...model.configuration_sources,
+  ...model.route_purposes
+)))
+const filteredRuntimeProviders = computed(() => runtimeProviders.value.filter((provider) => runtimeQueryMatches(
+  agentRuntimeProviderQuery.value,
+  provider.display_name,
+  provider.provider_instance_id,
+  provider.driver,
+  provider.status,
+  provider.model
+)))
+const filteredRuntimeCliOptions = computed(() => runtimeCliOptions.value.filter((runtime) => runtimeQueryMatches(
+  agentRuntimeCliQuery.value,
+  runtime.display_name,
+  runtime.runtime_id,
+  runtime.driver,
+  runtime.status,
+  runtime.binary_path,
+  runtime.home_path
+)))
+const filteredRuntimeAcpOptions = computed(() => runtimeAcpOptions.value.filter((runtime) => runtimeQueryMatches(
+  agentRuntimeAcpQuery.value,
+  runtime.display_name,
+  runtime.runtime_id,
+  runtime.source,
+  runtime.driver,
+  runtime.status,
+  runtime.command
+)))
 
 const selectedProvider = computed(() =>
   providers.value.find((provider) => provider.id === selectedProviderId.value) ?? null
@@ -398,11 +502,47 @@ const promptFilteredFragments = computed(() => promptFragments.value.filter((fra
 }))
 
 function brandColor(driver: string) {
-  return findTemplate(driver)?.brand_color ?? '#58a6ff'
+  return findTemplate(driver)?.brand_color ?? supplierTemplates.value.get(driver)?.brand_color ?? '#58a6ff'
 }
 
 function brandBg(driver: string) {
-  return findTemplate(driver)?.brand_bg ?? 'rgba(88,166,255,0.12)'
+  return findTemplate(driver)?.brand_bg ?? supplierTemplates.value.get(driver)?.brand_bg ?? 'rgba(88,166,255,0.12)'
+}
+
+function runtimeQueryMatches(query: string, ...values: Array<string | null | undefined>) {
+  const normalized = query.trim().toLocaleLowerCase()
+  if (!normalized) return true
+  return values.some((value) => value?.toLocaleLowerCase().includes(normalized))
+}
+
+function centerDiagnosticLabel(diagnostic: CenterDiagnosticDto) {
+  if (diagnostic.code === 'CORE_CAPABILITY_UNAVAILABLE') {
+    return t('settings.optionalCapabilityUnavailable', {
+      source: diagnostic.source ?? 'Core',
+      status: diagnostic.status ?? '鈥?
+    })
+  }
+  if (diagnostic.code === 'LEGACY_SHARED_ROUTE') {
+    return t('settings.sharedRouteDiagnostic', {
+      purpose: diagnostic.route_purpose ?? '鈥?,
+      count: diagnostic.agent_ids?.length ?? 0
+    })
+  }
+  return diagnostic.message
+}
+
+function configuredModelSourceLabel(source: string) {
+  if (source === 'provider_default') return t('settings.modelSourceProviderDefault')
+  if (source === 'route_override') return t('settings.modelSourceRouteOverride')
+  return source
+}
+
+function acpRuntimeSourceLabel(source: string) {
+  return source === 'legacy_provider' ? t('settings.legacyProvider') : t('settings.acpAdapter')
+}
+
+function modelCatalogModeLabel(mode?: string) {
+  return mode === 'configured_only' ? t('settings.configuredOnly') : mode ?? t('settings.configuredOnly')
 }
 
 function setLocale(lang: string) {
@@ -434,7 +574,7 @@ function applyTemplateDefaults(template: ProviderTemplate) {
   providerForm.model = template.default_model ?? ''
   providerForm.binary_path = ''
   providerForm.home_path = ''
-  providerForm.server_url = template.driver === 'opencode' ? template.default_base_url ?? '' : ''
+  providerForm.server_url = template.fields.server_url ? template.default_base_url ?? '' : ''
   providerForm.launch_args = ''
 }
 
@@ -444,7 +584,11 @@ function openAddModal(template?: ProviderTemplate) {
   if (template) {
     applyTemplateDefaults(template)
   } else {
-    applyTemplateDefaults(PROVIDER_TEMPLATES[0])
+    applyTemplateDefaults(
+      modelCenterOverview.value?.suppliers[0]
+        ? providerTemplateFromSupplier(modelCenterOverview.value.suppliers[0])
+        : PROVIDER_TEMPLATES[0]
+    )
   }
   providerForm.api_key = ''
   providerForm.clear_api_key = false
@@ -462,10 +606,24 @@ function toggleProviderDetail(providerId: string) {
   selectedProviderDetailId.value = selectedProviderDetailId.value === providerId ? '' : providerId
 }
 
+function focusModelProviderList(filter: ModelCenterFilter) {
+  modelCenterSection.value = filter === 'available' ? 'suppliers' : 'api'
+  modelProviderFilter.value = filter
+  nextTick(() => {
+    modelProviderListRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    modelProviderListRef.value?.querySelector<HTMLInputElement>('input')?.focus()
+  })
+}
+
+function openModelDiagnostics() {
+  if (!modelDiagnosticsRef.value) return
+  modelDiagnosticsRef.value.open = true
+  modelDiagnosticsRef.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function toggleProviderEnabled(provider: ModelProviderInstanceDto) {
-  busy.value = true
+  modelCenterBusy.value = true
   try {
-    const tmpl = findTemplate(provider.driver)
     const payload: SaveModelProviderInstanceInput = {
       id: provider.id,
       driver: provider.driver,
@@ -482,22 +640,22 @@ async function toggleProviderEnabled(provider: ModelProviderInstanceDto) {
       enabled: !provider.enabled
     }
     await api.saveModelProvider(provider.id, payload)
-    await loadModelCenter()
+    await Promise.all([loadModelCenter(), loadAgentCenter()])
   } finally {
-    busy.value = false
+    modelCenterBusy.value = false
   }
 }
 
 async function deleteProvider(providerId: string) {
-  busy.value = true
+  modelCenterBusy.value = true
   try {
     await api.deleteModelProvider(providerId)
     if (selectedProviderDetailId.value === providerId) {
       selectedProviderDetailId.value = ''
     }
-    await loadModelCenter()
+    await Promise.all([loadModelCenter(), loadAgentCenter()])
   } finally {
-    busy.value = false
+    modelCenterBusy.value = false
     confirmDeleteId.value = ''
   }
 }
@@ -507,40 +665,79 @@ function closeModal() {
 }
 
 async function loadModelCenter() {
-  loading.value = true
+  modelCenterLoading.value = true
+  modelCenterError.value = ''
   try {
-    const [instances, modelRoutes, readiness, catalogReadiness] = await Promise.all([
-      api.listModelProviders(),
-      api.listModelRoutes(),
-      api.getModelReadiness(),
-      api.getModelCatalogReadiness()
-    ])
+    const overview = await api.getModelCenterOverview()
+    modelCenterOverview.value = overview
+    modelCenterNotice.value = ''
+    const instances = providersFromOverview(overview)
     providers.value = instances
-    routes.value = modelRoutes
-    modelReadiness.value = readiness
-    modelCatalogReadiness.value = catalogReadiness
+    modelReadiness.value = overview.readiness.model ?? null
+    modelCatalogReadiness.value = overview.readiness.catalog ?? null
 
     const selected = instances.find((provider) => provider.id === selectedProviderId.value) ?? instances[0]
     if (selected) {
       selectedProviderId.value = selected.id
     }
+  } catch (error) {
+    modelCenterError.value = error instanceof Error ? error.message : t('settings.centerLoadFailed')
   } finally {
-    loading.value = false
+    modelCenterLoading.value = false
+  }
+}
+
+async function refreshProviderModels(providerInstanceId: string) {
+  modelCenterBusy.value = true
+  modelCenterNotice.value = ''
+  try {
+    await api.refreshProviderModels(providerInstanceId)
+    await loadModelCenter()
+  } catch (error) {
+    modelCenterNotice.value = error instanceof Error ? error.message : t('settings.modelDiscoveryUnsupported')
+  } finally {
+    modelCenterBusy.value = false
+  }
+}
+
+async function probeAcpRuntime(runtime: ModelCenterAcpRuntimeDto) {
+  if (!runtime.adapter_id) return
+  modelCenterBusy.value = true
+  modelCenterNotice.value = ''
+  try {
+    await api.probeAcpAdapter(runtime.adapter_id)
+    await Promise.all([loadModelCenter(), loadAgentCenter()])
+  } catch (error) {
+    modelCenterNotice.value = error instanceof Error ? error.message : t('settings.acpProbeFailed')
+  } finally {
+    modelCenterBusy.value = false
   }
 }
 
 async function loadAgentCenter() {
-  loading.value = true
+  agentCenterLoading.value = true
+  agentCenterError.value = ''
   try {
-    const [modes, agentList, candidates, toolReadiness] = await Promise.all([
-      api.listAgentModes(),
-      api.listAgents(),
-      api.listAgentCandidates(),
+    const [overview, toolReadiness] = await Promise.all([
+      api.getAgentCenterOverview(),
       api.getToolLayerReadiness().catch(() => null)
     ])
-    agentModes.value = modes
-    agents.value = agentList
-    agentCandidates.value = candidates
+    agentCenterOverview.value = overview
+    agentModes.value = overview.modes
+    agents.value = overview.agents
+    agentCandidates.value = overview.candidates
+    const routeMap = new Map<string, ModelRouteDto>()
+    for (const agent of overview.agents) {
+      const binding = agent.runtime_binding
+      if (!binding.provider_instance_id) continue
+      routeMap.set(binding.route_purpose, {
+        purpose: binding.route_purpose,
+        provider_instance_id: binding.provider_instance_id,
+        model: binding.model_id ?? null,
+        updated_at: agent.updated_at ?? ''
+      })
+    }
+    routes.value = [...routeMap.values()]
     toolLayerReadiness.value = toolReadiness
     // Harness manifest is non-critical: fall back to the legacy tool list for older Core builds.
     api.getHarnessManifest()
@@ -564,11 +761,13 @@ async function loadAgentCenter() {
     api.executeCodeTool('project_templates')
       .then((result) => { projectTemplates.value = projectTemplatesFromResult(result) })
       .catch(() => { projectTemplates.value = [] })
-    if (!agentList.some((agent) => agent.id === selectedAgentId.value)) {
-      selectedAgentId.value = agentList[0]?.id ?? ''
+    if (!overview.agents.some((agent) => agent.id === selectedAgentId.value)) {
+      selectedAgentId.value = overview.agents[0]?.id ?? ''
     }
+  } catch (error) {
+    agentCenterError.value = error instanceof Error ? error.message : t('settings.centerLoadFailed')
   } finally {
-    loading.value = false
+    agentCenterLoading.value = false
   }
 }
 
@@ -788,16 +987,6 @@ function addAgentCapability() {
   }
 }
 
-function agentRoute(agent: AgentProfileDto | null) {
-  if (!agent) return null
-  return routes.value.find((route) => route.purpose === agent.model_route_purpose) ?? null
-}
-
-function agentRouteProvider(agent: AgentProfileDto | null) {
-  const route = agentRoute(agent)
-  return providers.value.find((provider) => provider.id === route?.provider_instance_id) ?? null
-}
-
 function openAgentConfig(agent: AgentProfileDto) {
   selectedAgentId.value = agent.id
   configuringAgentId.value = agent.id
@@ -806,22 +995,21 @@ function openAgentConfig(agent: AgentProfileDto) {
   agentEditSystemPrompt.value = agent.system_prompt ?? ''
   agentEditDescription.value = agent.description ?? ''
   agentNewCapability.value = ''
-  try {
-    const route = agentRoute(agent)
-    if (route && providers.value.some((p) => p.id === route.provider_instance_id)) {
-      agentRouteProviderId.value = route.provider_instance_id
-      agentRouteModel.value = route.model ?? providers.value.find((p) => p.id === route.provider_instance_id)?.model ?? ''
-    } else if (providers.value.length > 0) {
-      agentRouteProviderId.value = providers.value[0].id
-      agentRouteModel.value = providers.value[0].model ?? ''
-    } else {
-      agentRouteProviderId.value = ''
-      agentRouteModel.value = ''
-    }
-  } catch {
-    agentRouteProviderId.value = ''
-    agentRouteModel.value = ''
-  }
+  const binding = bindingForAgent(agentCenterOverview.value, agent.id)
+  agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
+  agentRuntimeProviderId.value = binding?.provider_instance_id ?? runtimeProviders.value[0]?.provider_instance_id ?? ''
+  agentRuntimeModelKey.value = binding?.provider_instance_id && binding.model_id
+    ? modelOptionKey(binding.provider_instance_id, binding.model_id)
+    : runtimeModels.value[0]
+      ? modelOptionKey(runtimeModels.value[0].provider_instance_id, runtimeModels.value[0].model_id)
+      : ''
+  agentRuntimeCliId.value = binding?.runtime_kind === 'cli' ? binding.runtime_id ?? '' : runtimeCliOptions.value[0]?.runtime_id ?? ''
+  agentRuntimeAcpId.value = binding?.runtime_kind === 'acp' ? binding.runtime_id ?? '' : runtimeAcpOptions.value[0]?.runtime_id ?? ''
+  agentRuntimeModelQuery.value = ''
+  agentRuntimeProviderQuery.value = ''
+  agentRuntimeCliQuery.value = ''
+  agentRuntimeAcpQuery.value = ''
+  agentRuntimeNotice.value = ''
   // Scroll to config panel after next tick
   nextTick(() => {
     const panel = document.querySelector('.agent-detail-panel')
@@ -831,25 +1019,47 @@ function openAgentConfig(agent: AgentProfileDto) {
   })
 }
 
-async function saveAgentRoute(agent: AgentProfileDto) {
-  if (!agentRouteProviderId.value) return
-  busy.value = true
+function runtimeBindingInput(): AgentRuntimeBindingInput | null {
+  if (agentRuntimeSelection.value === 'inherit') return { selection_kind: 'inherit' }
+  if (agentRuntimeSelection.value === 'provider_auto') {
+    return agentRuntimeProviderId.value
+      ? { selection_kind: 'provider_auto', provider_instance_id: agentRuntimeProviderId.value }
+      : null
+  }
+  if (agentRuntimeSelection.value === 'cli') {
+    return agentRuntimeCliId.value ? { selection_kind: 'cli', runtime_id: agentRuntimeCliId.value } : null
+  }
+  if (agentRuntimeSelection.value === 'acp') {
+    return agentRuntimeAcpId.value ? { selection_kind: 'acp', runtime_id: agentRuntimeAcpId.value } : null
+  }
+
+  const selected = runtimeModels.value.find((model) =>
+    modelOptionKey(model.provider_instance_id, model.model_id) === agentRuntimeModelKey.value
+  )
+  return selected
+    ? { selection_kind: 'fixed_model', provider_instance_id: selected.provider_instance_id, model_id: selected.model_id }
+    : null
+}
+
+async function saveAgentRuntimeBinding(agent: AgentProfileDto) {
+  const binding = runtimeBindingInput()
+  if (!binding) return
+  agentRuntimeBusy.value = true
+  agentRuntimeNotice.value = ''
   try {
-    await api.saveModelRoute(agent.model_route_purpose, agentRouteProviderId.value, agentRouteModel.value || null)
-    await loadModelCenter()
-    const updatedRoute = routes.value.find((r) => r.purpose === agent.model_route_purpose)
-    if (updatedRoute) {
-      agentRouteProviderId.value = updatedRoute.provider_instance_id
-      agentRouteModel.value = updatedRoute.model ?? ''
-    }
+    await api.saveAgentRuntimeBinding(agent.id, binding)
+    await loadAgentCenter()
+  } catch (error) {
+    agentRuntimeNotice.value = error instanceof Error ? error.message : t('settings.runtimeBindingUnsupported')
   } finally {
-    busy.value = false
+    agentRuntimeBusy.value = false
   }
 }
 
 async function saveProvider() {
-  busy.value = true
+  modelCenterBusy.value = true
   try {
+    const isNewProvider = !providerForm.id
     const tmpl = currentTemplate.value
     const payload: SaveModelProviderInstanceInput = {
       id: providerForm.id || undefined,
@@ -864,7 +1074,9 @@ async function saveProvider() {
       home_path: formFields.value.home_path ? (providerForm.home_path || null) : null,
       server_url: formFields.value.server_url ? (providerForm.server_url || null) : null,
       launch_args: formFields.value.launch_args ? (providerForm.launch_args || null) : null,
-      capabilities: tmpl?.capabilities ?? [],
+      capabilities: providerForm.id
+        ? selectedProvider.value?.capabilities ?? tmpl?.capabilities ?? []
+        : tmpl?.capabilities ?? [],
       enabled: providerForm.enabled
     }
 
@@ -874,9 +1086,12 @@ async function saveProvider() {
 
     selectedProviderId.value = saved.id
     showModal.value = false
-    await loadModelCenter()
+    await Promise.all([loadModelCenter(), loadAgentCenter()])
+    if (isNewProvider) {
+      modelProviderFilter.value = 'configured'
+    }
   } finally {
-    busy.value = false
+    modelCenterBusy.value = false
   }
 }
 
@@ -889,14 +1104,14 @@ function connectionKindLabel(kind: string) {
 
 function agentTypeLabel(type: string) {
   const map: Record<string, string> = {
-    // Layer 1 · Planning 主动智能体
+    // Layer 1 路 Planning 涓诲姩鏅鸿兘浣?
     meeting: t('settings.agentTypeMeeting'),
     'context-compressor': t('settings.agentTypeContextCompressor'),
     evolver: t('settings.agentTypeEvolver'),
     'tool-assistant': t('settings.agentTypeToolAssistant'),
     supervisor: t('settings.agentTypeSupervisor'),
     'skill-learner': t('settings.agentTypeSkillLearner'),
-    // Layer 2 · Execution 被动执行类智能体
+    // Layer 2 路 Execution 琚姩鎵ц绫绘櫤鑳戒綋
     'task-planner': t('settings.agentTypeTaskPlanner'),
     'test-multimodal': t('settings.agentTypeTestMultimodal'),
     'code-explorer': t('settings.agentTypeCodeExplorer'),
@@ -940,7 +1155,8 @@ function statusLabel(status: string) {
   if (status === 'needs_key') return t('settings.statusNeedsKey')
   if (status === 'disabled') return t('settings.statusDisabled')
   if (status === 'cooldown') return t('settings.statusCooldown')
-  return t('settings.statusNotConfigured')
+  if (status === 'not_configured' || !status) return t('settings.statusNotConfigured')
+  return status
 }
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -956,6 +1172,13 @@ function readinessVariant(status: string): 'default' | 'secondary' | 'destructiv
   if (status === 'blocked') return 'destructive'
   if (status === 'warning') return 'outline'
   return 'secondary'
+}
+
+function readinessStatusLabel(status: string) {
+  if (status === 'ready') return t('settings.readinessReady')
+  if (status === 'blocked') return t('settings.readinessBlocked')
+  if (status === 'warning') return t('settings.readinessWarning')
+  return status
 }
 
 loadModelCenter()
@@ -1011,273 +1234,540 @@ loadPromptContextCenter()
               <h2>{{ t('settings.modelCenter') }}</h2>
               <p>{{ t('settings.modelCenterSubtitle') }}</p>
             </div>
-            <UiButton variant="outline" size="sm" :disabled="loading" @click="loadModelCenter">
-              <Server :size="14" />
-              <span>{{ t('settings.refresh') }}</span>
-            </UiButton>
+            <div class="model-heading-actions">
+              <UiButton variant="outline" size="sm" @click="focusModelProviderList('available')">
+                <Plus :size="14" />
+                <span>{{ t('settings.addProvider') }}</span>
+              </UiButton>
+              <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || modelCenterBusy" @click="loadModelCenter">
+                <Server :size="14" />
+                <span>{{ t('settings.refresh') }}</span>
+              </UiButton>
+            </div>
           </div>
 
-          <section v-if="modelReadiness" class="model-readiness-panel">
-            <div class="model-readiness-head">
+          <div v-if="modelCenterError" class="center-message error">
+            <Info :size="16" />
+            <span>{{ modelCenterError }}</span>
+            <UiButton variant="outline" size="sm" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
+          </div>
+          <div v-if="modelCenterNotice" class="center-message warning">
+            <Info :size="16" />
+            <span>{{ modelCenterNotice }}</span>
+          </div>
+          <div v-if="modelCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
+            <Info :size="16" />
+            <div class="center-message-content">
+              <strong>{{ t('settings.centerDiagnostics') }}</strong>
+              <ul>
+                <li v-for="diagnostic in modelCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.status ?? ''}`">
+                  {{ centerDiagnosticLabel(diagnostic) }}
+                </li>
+              </ul>
+            </div>
+            <UiButton variant="outline" size="sm" :disabled="modelCenterLoading" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
+          </div>
+
+          <section v-if="modelReadiness || modelCatalogReadiness" class="model-health-overview">
+            <div class="model-health-head">
               <div>
-                <h3>Provider Readiness</h3>
-                <span>{{ modelReadiness.receipt_id }}</span>
+                <h3>{{ t('settings.modelHealth') }}</h3>
+                <span>{{ t('settings.modelHealthHint') }}</span>
               </div>
-              <UiBadge :variant="readinessVariant(modelReadiness.status)">
+              <UiBadge v-if="modelReadiness" :variant="readinessVariant(modelReadiness.status)">
                 <Circle :size="8" />
-                {{ modelReadiness.status }}
+                {{ readinessStatusLabel(modelReadiness.status) }}
               </UiBadge>
             </div>
-            <div class="model-readiness-metrics">
+            <div class="model-health-metrics">
               <div>
-                <strong>{{ modelReadiness.ready_provider_count }}</strong>
-                <span>ready providers</span>
+                <span>{{ t('settings.readyProvidersMetric') }}</span>
+                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '鈥? }}</strong>
+              </div>
+              <div :class="{ attention: (modelReadiness?.blocked_route_count ?? 0) > 0 }">
+                <span>{{ t('settings.blockedRoutesMetric') }}</span>
+                <strong>{{ modelReadiness?.blocked_route_count ?? '鈥? }}</strong>
               </div>
               <div>
-                <strong>{{ modelReadiness.blocked_provider_count }}</strong>
-                <span>blocked providers</span>
+                <span>{{ t('settings.readyTemplatesMetric') }}</span>
+                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '鈥? }}</strong>
               </div>
               <div>
-                <strong>{{ modelReadiness.ready_route_count }}</strong>
-                <span>ready routes</span>
-              </div>
-              <div>
-                <strong>{{ modelReadiness.blocked_route_count }}</strong>
-                <span>blocked routes</span>
+                <span>{{ t('settings.runtimeModulesMetric') }}</span>
+                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '鈥? }}</strong>
               </div>
             </div>
-            <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
-              <span v-for="route in blockedModelRoutes.slice(0, 6)" :key="route.purpose">
-                {{ route.purpose }} · {{ route.provider_display_name ?? route.provider_instance_id }}
-              </span>
+            <div v-if="modelReadiness && modelReadiness.status !== 'ready'" class="model-health-alert">
+              <Info :size="16" />
+              <div>
+                <strong>
+                  {{ firstNeedsKeyProvider
+                    ? t('settings.missingKeySummary', { name: firstNeedsKeyProvider.display_name })
+                    : t('settings.modelIssuesSummary') }}
+                </strong>
+                <span>{{ t('settings.modelIssueHint') }}</span>
+              </div>
+              <UiButton v-if="firstNeedsKeyProvider" variant="outline" size="sm" @click="openEditModal(firstNeedsKeyProvider)">
+                {{ t('settings.configureNow') }}
+              </UiButton>
+              <UiButton v-else-if="modelCenterIssueCount > 0" variant="outline" size="sm" @click="focusModelProviderList('issues')">
+                {{ t('settings.viewIssues') }}
+              </UiButton>
+              <UiButton v-else variant="outline" size="sm" @click="openModelDiagnostics">
+                {{ t('settings.advancedDiagnostics') }}
+              </UiButton>
             </div>
           </section>
 
-          <section v-if="modelCatalogReadiness" class="model-readiness-panel catalog-readiness-panel">
-            <div class="model-readiness-head">
-              <div>
-                <h3>Catalog Readiness</h3>
-                <span>{{ modelCatalogReadiness.receipt_id }}</span>
-              </div>
-              <UiBadge :variant="readinessVariant(modelCatalogReadiness.status)">
-                <Circle :size="8" />
-                {{ modelCatalogReadiness.status }}
-              </UiBadge>
-            </div>
-            <div class="model-readiness-metrics">
-              <div>
-                <strong>{{ modelCatalogReadiness.ready_template_count }}</strong>
-                <span>ready templates</span>
-              </div>
-              <div>
-                <strong>{{ modelCatalogReadiness.warning_template_count }}</strong>
-                <span>warnings</span>
-              </div>
-              <div>
-                <strong>{{ modelCatalogReadiness.runtime_module_count }}</strong>
-                <span>runtime modules</span>
-              </div>
-              <div>
-                <strong>{{ modelCatalogReadiness.advisory_probe_template_count }}</strong>
-                <span>advisory probes</span>
-              </div>
-            </div>
-            <div class="catalog-readiness-rows">
-              <div
-                v-for="template in (warningCatalogTemplates.length > 0 ? warningCatalogTemplates : advisoryCatalogTemplates).slice(0, 5)"
-                :key="template.driver"
-                class="catalog-readiness-row"
-              >
-                <div>
-                  <strong>{{ template.display_name }}</strong>
-                  <span>{{ template.runtime_module_family }} · {{ template.live_discovery_policy }}</span>
+          <details v-if="modelReadiness || modelCatalogReadiness" ref="modelDiagnosticsRef" class="model-diagnostics">
+            <summary>
+              <span>{{ t('settings.advancedDiagnostics') }}</span>
+              <ChevronRight :size="14" />
+            </summary>
+            <div class="model-diagnostics-grid">
+              <section v-if="modelReadiness" class="model-diagnostic-section">
+                <div class="model-diagnostic-head">
+                  <div>
+                    <strong>{{ t('settings.providerReceipt') }}</strong>
+                    <span>{{ modelReadiness.receipt_id }}</span>
+                  </div>
+                  <UiBadge :variant="readinessVariant(modelReadiness.status)">{{ readinessStatusLabel(modelReadiness.status) }}</UiBadge>
                 </div>
-                <UiBadge :variant="readinessVariant(template.status)">
-                  {{ template.runtime_module_status }}
-                </UiBadge>
-              </div>
+                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} 路 {{ modelReadiness.generated_at }}</p>
+                <div class="model-diagnostic-list">
+                  <strong>{{ t('settings.blockedRoutes') }}</strong>
+                  <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
+                    <span v-for="route in blockedModelRoutes" :key="route.purpose">
+                      {{ route.purpose }} 路 {{ route.provider_display_name ?? route.provider_instance_id }}
+                    </span>
+                  </div>
+                  <span v-else class="quiet">{{ t('settings.noBlockedRoutes') }}</span>
+                </div>
+                <ul v-if="modelReadiness.design_notes.length > 0" class="model-diagnostic-notes">
+                  <li v-for="note in modelReadiness.design_notes" :key="note">{{ note }}</li>
+                </ul>
+              </section>
+              <section v-if="modelCatalogReadiness" class="model-diagnostic-section">
+                <div class="model-diagnostic-head">
+                  <div>
+                    <strong>{{ t('settings.catalogReceipt') }}</strong>
+                    <span>{{ modelCatalogReadiness.receipt_id }}</span>
+                  </div>
+                  <UiBadge :variant="readinessVariant(modelCatalogReadiness.status)">{{ readinessStatusLabel(modelCatalogReadiness.status) }}</UiBadge>
+                </div>
+                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} 路 {{ modelCatalogReadiness.generated_at }}</p>
+                <div class="model-diagnostic-list">
+                  <strong>{{ t('settings.catalogWarnings') }}</strong>
+                  <div v-if="warningCatalogTemplates.length > 0" class="catalog-readiness-rows">
+                    <div v-for="template in warningCatalogTemplates" :key="template.driver" class="catalog-readiness-row">
+                      <div>
+                        <strong>{{ template.display_name }}</strong>
+                        <span>{{ template.runtime_module_family }} 路 {{ template.live_discovery_policy }}</span>
+                      </div>
+                      <UiBadge :variant="readinessVariant(template.status)">{{ template.runtime_module_status }}</UiBadge>
+                    </div>
+                  </div>
+                  <span v-else class="quiet">{{ t('settings.noCatalogWarnings') }}</span>
+                </div>
+                <ul v-if="modelCatalogReadiness.design_notes.length > 0" class="model-diagnostic-notes">
+                  <li v-for="note in modelCatalogReadiness.design_notes" :key="note">{{ note }}</li>
+                </ul>
+              </section>
             </div>
-          </section>
+          </details>
 
-          <div class="model-section-header">
-            <h3>{{ t('settings.addedProviders') }}</h3>
-            <UiButton variant="ghost" size="icon" :title="t('settings.newProvider')" @click="openAddModal()">
-              <Plus :size="15" />
-            </UiButton>
-          </div>
-
-          <div v-if="providers.length > 0" class="model-provider-grid">
-            <div
-              v-for="provider in providers"
-              :key="provider.id"
-              class="model-provider-card-wrapper"
+          <div class="model-center-tabs" role="tablist" :aria-label="t('settings.modelCenterResources')">
+            <button
+              v-for="section in modelCenterSections"
+              :key="section.key"
+              role="tab"
+              :aria-selected="modelCenterSection === section.key"
+              :class="{ active: modelCenterSection === section.key }"
+              @click="modelCenterSection = section.key"
             >
-              <button
-                class="model-provider-card"
-                :style="{ background: brandBg(provider.driver), borderColor: brandColor(provider.driver) + '40' }"
-                @click="toggleProviderDetail(provider.id)"
-              >
-                <span class="provider-brand-icon" :style="{ color: brandColor(provider.driver) }" v-html="findTemplate(provider.driver)?.icon ?? ''"></span>
-                <div class="model-provider-card-main">
-                  <span class="model-provider-name">{{ provider.display_name }}</span>
-                  <span class="model-provider-meta">{{ connectionKindLabel(provider.connection_kind) }} · {{ provider.model || provider.driver }}</span>
-                </div>
-                <div class="model-provider-card-actions">
-                  <UiBadge :variant="statusVariant(provider.status)">
-                    <Circle :size="8" />
-                    {{ statusLabel(provider.status) }}
-                  </UiBadge>
-                  <ChevronRight :size="14" class="provider-chevron" :class="{ open: selectedProviderDetailId === provider.id }" />
-                </div>
-              </button>
-              <Transition name="detail-slide">
-              <div v-if="selectedProviderDetailId === provider.id" class="provider-detail-panel">
-                <div class="provider-detail-head">
-                  <span class="provider-detail-logo" :style="{ background: brandBg(provider.driver), borderColor: brandColor(provider.driver) + '30' }" v-html="findTemplate(provider.driver)?.icon ?? ''"></span>
-                  <div class="provider-detail-info">
-                    <strong>{{ provider.display_name }}</strong>
-                    <span class="provider-detail-driver">{{ provider.driver }} · {{ connectionKindLabel(provider.connection_kind) }}</span>
-                  </div>
-                  <UiBadge :variant="statusVariant(provider.status)">
-                    <Circle :size="8" />
-                    {{ statusLabel(provider.status) }}
-                  </UiBadge>
-                </div>
-
-                <div class="provider-detail-section">
-                  <div class="provider-detail-section-title">{{ t('settings.connectionConfig') }}</div>
-                  <div class="provider-detail-grid">
-                    <div v-if="provider.base_url" class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.baseUrl') }}</span>
-                      <span class="provider-detail-value provider-detail-mono">{{ provider.base_url }}</span>
-                    </div>
-                    <div v-if="provider.model" class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.modelLabel') }}</span>
-                      <span class="provider-detail-value provider-detail-mono">{{ provider.model }}</span>
-                    </div>
-                    <div class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.apiKey') }}</span>
-                      <span class="provider-detail-value">
-                        <span :class="['provider-key-indicator', provider.has_api_key ? 'has-key' : 'no-key']"></span>
-                        {{ provider.has_api_key ? t('settings.apiKeyStored') : t('settings.apiKeyNotSet') }}
-                      </span>
-                    </div>
-                    <div class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.connectionKind') }}</span>
-                      <span class="provider-detail-value">{{ connectionKindLabel(provider.connection_kind) }}</span>
-                    </div>
-                    <div v-if="provider.binary_path" class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.binaryPath') }}</span>
-                      <span class="provider-detail-value provider-detail-mono">{{ provider.binary_path }}</span>
-                    </div>
-                    <div v-if="provider.server_url" class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.serverUrl') }}</span>
-                      <span class="provider-detail-value provider-detail-mono">{{ provider.server_url }}</span>
-                    </div>
-                    <div v-if="provider.home_path" class="provider-detail-cell">
-                      <span class="provider-detail-label">{{ t('settings.homePath') }}</span>
-                      <span class="provider-detail-value provider-detail-mono">{{ provider.home_path }}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="provider.capabilities.length > 0" class="provider-detail-section">
-                  <div class="provider-detail-section-title">{{ t('settings.capabilities') }}</div>
-                  <div class="model-capability-row">
-                    <span v-for="cap in provider.capabilities" :key="cap" class="provider-cap-tag">{{ cap }}</span>
-                  </div>
-                </div>
-
-                <div v-if="provider.status_message" class="provider-status-note">
-                  <Terminal :size="14" />
-                  <span>{{ provider.status_message }}</span>
-                </div>
-
-                <div v-if="catalogReadinessByDriver.get(provider.driver)" class="provider-readiness-detail">
-                  <div class="provider-readiness-detail-head">
-                    <span>Catalog receipt</span>
-                    <UiBadge :variant="readinessVariant(catalogReadinessByDriver.get(provider.driver)!.status)">
-                      <Circle :size="8" />
-                      {{ catalogReadinessByDriver.get(provider.driver)!.status }}
-                    </UiBadge>
-                  </div>
-                  <p>{{ catalogReadinessByDriver.get(provider.driver)!.summary }}</p>
-                  <div class="provider-readiness-evidence">
-                    <span>{{ catalogReadinessByDriver.get(provider.driver)!.runtime_module_family }}</span>
-                    <span>{{ catalogReadinessByDriver.get(provider.driver)!.runtime_module_status }}</span>
-                    <span>{{ catalogReadinessByDriver.get(provider.driver)!.live_discovery_policy }}</span>
-                  </div>
-                </div>
-
-                <div v-if="providerReadinessById.get(provider.id)" class="provider-readiness-detail">
-                  <div class="provider-readiness-detail-head">
-                    <span>Core receipt</span>
-                    <UiBadge :variant="readinessVariant(providerReadinessById.get(provider.id)!.status)">
-                      <Circle :size="8" />
-                      {{ providerReadinessById.get(provider.id)!.status }}
-                    </UiBadge>
-                  </div>
-                  <p>{{ providerReadinessById.get(provider.id)!.summary }}</p>
-                  <div class="provider-readiness-evidence">
-                    <span v-for="item in providerReadinessById.get(provider.id)!.evidence.slice(0, 5)" :key="item">{{ item }}</span>
-                  </div>
-                  <div v-if="providerReadinessById.get(provider.id)!.route_purposes.length > 0" class="provider-readiness-evidence route-list">
-                    <span v-for="purpose in providerReadinessById.get(provider.id)!.route_purposes" :key="purpose">{{ purpose }}</span>
-                  </div>
-                </div>
-
-                <div class="provider-detail-actions">
-                  <UiButton variant="outline" size="sm" @click="openEditModal(provider)">
-                    <Edit3 :size="14" />
-                    <span>{{ t('settings.editConfig') }}</span>
-                  </UiButton>
-                  <UiButton variant="outline" size="sm" @click="toggleProviderEnabled(provider)">
-                    <component :is="provider.enabled ? X : Check" :size="14" />
-                    <span>{{ provider.enabled ? t('settings.disable') : t('settings.enable') }}</span>
-                  </UiButton>
-                  <span class="provider-action-spacer"></span>
-                  <UiButton v-if="confirmDeleteId !== provider.id" variant="ghost" size="sm" class="provider-delete-btn" @click="confirmDeleteId = provider.id">
-                    <Trash2 :size="14" />
-                    <span>{{ t('settings.delete') }}</span>
-                  </UiButton>
-                  <template v-else>
-                    <span class="delete-confirm-text">{{ t('settings.confirmDeleteProvider') }}</span>
-                    <UiButton variant="destructive" size="sm" :disabled="busy" @click="deleteProvider(provider.id)">{{ t('settings.confirmDelete') }}</UiButton>
-                    <UiButton variant="ghost" size="sm" @click="confirmDeleteId = ''">{{ t('settings.cancel') }}</UiButton>
-                  </template>
-                </div>
-              </div>
-              </Transition>
-            </div>
+              <span>{{ section.label }}</span>
+              <UiBadge variant="secondary">{{ section.count }}</UiBadge>
+            </button>
           </div>
-          <p v-else class="quiet">{{ t('settings.noProvider') }}</p>
 
-          <template v-for="cat in PROVIDER_CATEGORIES" :key="cat.key">
-            <div class="model-section-header">
-              <h3>
-                <component :is="CATEGORY_ICONS[cat.key]" :size="14" style="vertical-align:-2px" />
-                {{ t(cat.labelKey) }}
-              </h3>
+          <section v-if="modelCenterSection === 'suppliers'" ref="modelProviderListRef" class="center-resource-section">
+            <div class="center-resource-heading">
+              <div>
+                <h3>{{ t('settings.centerSuppliers') }}</h3>
+                <p>{{ t('settings.suppliersHint') }}</p>
+              </div>
+              <UiBadge variant="outline">{{ t('settings.coreCatalog') }}</UiBadge>
             </div>
-            <div class="model-provider-grid">
-              <button
-                v-for="template in templatesByCategory.get(cat.key)"
-                :key="template.driver"
-                class="model-provider-card add"
-                :class="{ 'already-added': addedDriverSet.has(template.driver) }"
-                :style="{ background: template.brand_bg, borderColor: template.brand_color + '40' }"
-                @click="addedDriverSet.has(template.driver) ? toggleProviderDetail(providers.find(p => p.driver === template.driver)?.id ?? '') : openAddModal(template)"
-              >
-                <div class="add-label">
-                  <span class="provider-brand-icon" :style="{ color: template.brand_color }" v-html="template.icon"></span>
-                  <span>{{ t(template.display_name_key) }}</span>
-                  <small>{{ t(template.summary_key) }}</small>
-                  <span class="add-connection-kind">{{ connectionKindLabel(template.connection_kind) }}</span>
+            <div class="center-resource-grid supplier-grid">
+              <article v-for="supplier in modelCenterOverview?.suppliers ?? []" :key="supplier.supplier_id" class="center-resource-card">
+                <div class="center-resource-card-head">
+                  <span class="provider-brand-icon" :style="{ color: brandColor(supplier.driver), background: brandBg(supplier.driver) }" v-html="supplierTemplates.get(supplier.driver)?.icon ?? ''"></span>
+                  <div>
+                    <strong>{{ supplier.display_name }}</strong>
+                    <span>{{ supplier.provider_family }} 路 {{ supplier.driver }}</span>
+                  </div>
+                  <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)!.status)">
+                    {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)!.status) }}
+                  </UiBadge>
                 </div>
-                <CheckCircle2 v-if="addedDriverSet.has(template.driver)" :size="16" style="color:var(--accent-success); position:absolute; top:8px; right:8px" />
-              </button>
+                <p>{{ supplier.summary }}</p>
+                <div class="center-resource-meta">
+                  <span>{{ supplier.transport_kind }}</span>
+                  <span>{{ supplier.credential_kind }}</span>
+                  <span v-if="supplier.default_model">{{ supplier.default_model }}</span>
+                </div>
+                <div class="center-resource-actions">
+                  <UiButton variant="outline" size="sm" @click="openAddModal(providerTemplateFromSupplier(supplier))">
+                    <Plus :size="14" />
+                    {{ t('settings.addProvider') }}
+                  </UiButton>
+                </div>
+              </article>
             </div>
-          </template>
+            <div v-if="(modelCenterOverview?.suppliers.length ?? 0) === 0" class="center-empty-state">
+              <Server :size="20" />
+              <span>{{ t('settings.noSuppliers') }}</span>
+            </div>
+          </section>
+
+          <section v-if="modelCenterSection === 'models'" class="center-resource-section">
+            <div class="center-resource-heading">
+              <div>
+                <h3>{{ t('settings.centerModels') }}</h3>
+                <p>{{ t('settings.configuredModelsHint') }}</p>
+              </div>
+              <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
+            </div>
+            <div class="center-resource-list">
+              <article v-for="model in modelCenterOverview?.models ?? []" :key="model.id" class="center-resource-list-row">
+                <div class="center-resource-primary">
+                  <Cpu :size="17" />
+                  <div>
+                    <strong>{{ model.model_id }}</strong>
+                    <span>{{ model.provider_display_name ?? model.provider_instance_id }}</span>
+                  </div>
+                </div>
+                <div class="center-resource-meta">
+                  <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
+                  <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
+                </div>
+                <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
+                <UiButton
+                  variant="outline"
+                  size="sm"
+                  :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
+                  :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.refreshModels') : t('settings.modelDiscoveryUnsupported')"
+                  @click="refreshProviderModels(model.provider_instance_id)"
+                >
+                  <Server :size="14" />
+                  {{ t('settings.refreshModels') }}
+                </UiButton>
+              </article>
+            </div>
+            <div v-if="(modelCenterOverview?.models.length ?? 0) === 0" class="center-empty-state">
+              <Cpu :size="20" />
+              <span>{{ t('settings.noConfiguredModels') }}</span>
+            </div>
+          </section>
+
+          <section v-if="modelCenterSection === 'cli'" class="center-resource-section">
+            <div class="center-resource-heading">
+              <div>
+                <h3>CLI</h3>
+                <p>{{ t('settings.cliRuntimeHint') }}</p>
+              </div>
+            </div>
+            <div class="center-resource-list">
+              <article v-for="runtime in modelCenterOverview?.cli_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
+                <div class="center-resource-primary">
+                  <Terminal :size="17" />
+                  <div>
+                    <strong>{{ runtime.display_name }}</strong>
+                    <span>{{ runtime.driver }} 路 {{ runtime.runtime_id }}</span>
+                  </div>
+                </div>
+                <div class="center-resource-paths">
+                  <code>{{ runtime.binary_path || t('settings.pathNotConfigured') }}</code>
+                  <code>{{ runtime.home_path || t('settings.workspaceNotConfigured') }}</code>
+                </div>
+                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
+                <UiButton
+                  v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
+                  variant="outline"
+                  size="sm"
+                  @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
+                >
+                  <Settings2 :size="14" />
+                  {{ t('settings.editConfig') }}
+                </UiButton>
+              </article>
+            </div>
+            <div v-if="(modelCenterOverview?.cli_runtimes.length ?? 0) === 0" class="center-empty-state">
+              <Terminal :size="20" />
+              <span>{{ t('settings.noCliRuntimes') }}</span>
+            </div>
+          </section>
+
+          <section v-if="modelCenterSection === 'acp'" class="center-resource-section">
+            <div class="center-resource-heading">
+              <div>
+                <h3>ACP</h3>
+                <p>{{ t('settings.acpRuntimeHint') }}</p>
+              </div>
+              <UiButton variant="outline" size="sm" @click="router.push('/market')">
+                <Plus :size="14" />
+                {{ t('settings.manageInMarketplace') }}
+              </UiButton>
+            </div>
+            <div class="center-resource-list">
+              <article v-for="runtime in modelCenterOverview?.acp_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
+                <div class="center-resource-primary">
+                  <Workflow :size="17" />
+                  <div>
+                    <strong>{{ runtime.display_name }}</strong>
+                    <span>{{ acpRuntimeSourceLabel(runtime.source) }} 路 {{ runtime.runtime_id }}</span>
+                  </div>
+                </div>
+                <div class="center-resource-meta">
+                  <span v-for="capability in runtime.capabilities.slice(0, 4)" :key="capability">{{ capability }}</span>
+                </div>
+                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
+                <UiButton
+                  v-if="runtime.adapter_id"
+                  variant="outline"
+                  size="sm"
+                  :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.acp_probe"
+                  @click="probeAcpRuntime(runtime)"
+                >
+                  <Server :size="14" />
+                  {{ t('settings.probe') }}
+                </UiButton>
+              </article>
+            </div>
+            <div v-if="(modelCenterOverview?.acp_runtimes.length ?? 0) === 0" class="center-empty-state">
+              <Workflow :size="20" />
+              <span>{{ t('settings.noAcpRuntimes') }}</span>
+            </div>
+          </section>
+
+          <section v-if="modelCenterSection === 'api'" ref="modelProviderListRef" class="model-provider-section">
+            <div class="model-provider-toolbar">
+              <div class="model-provider-search">
+                <Search :size="15" />
+                <UiInput v-model="modelProviderQuery" :placeholder="t('settings.providerSearchPlaceholder')" />
+              </div>
+              <div class="model-provider-filters" role="group" :aria-label="t('settings.providerFilters')">
+                <button :class="{ active: modelProviderFilter === 'all' }" :aria-pressed="modelProviderFilter === 'all'" @click="modelProviderFilter = 'all'">
+                  {{ t('settings.filterAll') }}
+                </button>
+                <button :class="{ active: modelProviderFilter === 'issues' }" :aria-pressed="modelProviderFilter === 'issues'" @click="modelProviderFilter = 'issues'">
+                  {{ t('settings.filterIssues') }}
+                  <span v-if="modelCenterIssueCount > 0">{{ modelCenterIssueCount }}</span>
+                </button>
+                <button :class="{ active: modelProviderFilter === 'configured' }" :aria-pressed="modelProviderFilter === 'configured'" @click="modelProviderFilter = 'configured'">
+                  {{ t('settings.filterConfigured') }}
+                </button>
+              </div>
+              <span class="model-provider-count">{{ t('settings.providerResultCount', { visible: filteredModelCenterRows.length, total: modelCenterRows.length }) }}</span>
+            </div>
+
+            <div class="model-provider-table">
+              <div class="model-provider-table-head" aria-hidden="true">
+                <span>{{ t('settings.providerName') }}</span>
+                <span>{{ t('settings.connectionKind') }}</span>
+                <span>{{ t('settings.modelLabel') }}</span>
+                <span>{{ t('settings.status') }}</span>
+                <span>{{ t('settings.actions') }}</span>
+              </div>
+              <template v-for="row in filteredModelCenterRows" :key="row.key">
+                <div class="model-provider-row" :class="{ issue: row.kind === 'instance' && ['blocked', 'warning'].includes(row.readiness?.status ?? '') }">
+                  <button
+                    class="model-provider-identity"
+                    :aria-expanded="row.kind === 'instance' ? selectedProviderDetailId === row.provider.id : undefined"
+                    @click="row.kind === 'instance' ? toggleProviderDetail(row.provider.id) : openAddModal(row.template)"
+                  >
+                    <span class="provider-brand-icon" :style="{ color: brandColor(row.driver), background: brandBg(row.driver) }" v-html="row.template?.icon ?? ''"></span>
+                    <span>
+                      <strong :title="row.display_name">{{ row.display_name }}</strong>
+                      <small :title="row.driver">{{ row.driver }}</small>
+                    </span>
+                  </button>
+                  <span class="model-provider-cell model-provider-connection">{{ connectionKindLabel(row.connection_kind) }}</span>
+                  <span class="model-provider-cell model-provider-model" :title="row.model || t('settings.noModel')">{{ row.model || t('settings.noModel') }}</span>
+                  <div class="model-provider-status">
+                    <UiBadge v-if="row.kind === 'instance'" :variant="statusVariant(row.provider.status)">
+                      <Circle :size="8" />
+                      {{ statusLabel(row.provider.status) }}
+                    </UiBadge>
+                    <UiBadge v-else variant="outline">{{ t('settings.notAdded') }}</UiBadge>
+                  </div>
+                  <div class="model-provider-actions">
+                    <template v-if="row.kind === 'instance'">
+                      <UiButton
+                        v-if="row.template"
+                        variant="ghost"
+                        size="icon"
+                        :title="t('settings.addSameProvider')"
+                        @click="openAddModal(row.template)"
+                      >
+                        <Plus :size="14" />
+                      </UiButton>
+                      <UiButton variant="ghost" size="icon" :title="t('settings.editConfig')" @click="openEditModal(row.provider)">
+                        <Settings2 :size="14" />
+                      </UiButton>
+                      <UiButton
+                        variant="ghost"
+                        size="icon"
+                        :title="selectedProviderDetailId === row.provider.id ? t('settings.collapseDetails') : t('settings.expandDetails')"
+                        :aria-expanded="selectedProviderDetailId === row.provider.id"
+                        @click="toggleProviderDetail(row.provider.id)"
+                      >
+                        <ChevronRight :size="14" class="provider-chevron" :class="{ open: selectedProviderDetailId === row.provider.id }" />
+                      </UiButton>
+                    </template>
+                    <UiButton v-else variant="outline" size="sm" @click="openAddModal(row.template)">
+                      <Plus :size="14" />
+                      {{ t('settings.addProvider') }}
+                    </UiButton>
+                  </div>
+                  <span class="model-provider-mobile-meta">
+                    {{ connectionKindLabel(row.connection_kind) }} 路 {{ row.model || row.driver }}
+                  </span>
+                </div>
+
+                <Transition name="detail-slide">
+                <div v-if="row.kind === 'instance' && selectedProviderDetailId === row.provider.id" class="provider-detail-panel">
+                  <div class="provider-detail-head">
+                    <span class="provider-detail-logo" :style="{ background: brandBg(row.provider.driver), borderColor: brandColor(row.provider.driver) + '30' }" v-html="row.template?.icon ?? ''"></span>
+                    <div class="provider-detail-info">
+                      <strong>{{ row.provider.display_name }}</strong>
+                      <span class="provider-detail-driver">{{ row.provider.driver }} 路 {{ connectionKindLabel(row.provider.connection_kind) }}</span>
+                    </div>
+                    <UiBadge :variant="statusVariant(row.provider.status)">
+                      <Circle :size="8" />
+                      {{ statusLabel(row.provider.status) }}
+                    </UiBadge>
+                  </div>
+
+                  <div class="provider-detail-section">
+                    <div class="provider-detail-section-title">{{ t('settings.connectionConfig') }}</div>
+                    <div class="provider-detail-grid">
+                      <div v-if="row.provider.base_url" class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.baseUrl') }}</span>
+                        <span class="provider-detail-value provider-detail-mono">{{ row.provider.base_url }}</span>
+                      </div>
+                      <div v-if="row.provider.model" class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.modelLabel') }}</span>
+                        <span class="provider-detail-value provider-detail-mono">{{ row.provider.model }}</span>
+                      </div>
+                      <div class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.apiKey') }}</span>
+                        <span class="provider-detail-value">
+                          <span :class="['provider-key-indicator', row.provider.has_api_key ? 'has-key' : 'no-key']"></span>
+                          {{ row.provider.has_api_key ? t('settings.apiKeyStored') : t('settings.apiKeyNotSet') }}
+                        </span>
+                      </div>
+                      <div class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.connectionKind') }}</span>
+                        <span class="provider-detail-value">{{ connectionKindLabel(row.provider.connection_kind) }}</span>
+                      </div>
+                      <div v-if="row.provider.binary_path" class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.binaryPath') }}</span>
+                        <span class="provider-detail-value provider-detail-mono">{{ row.provider.binary_path }}</span>
+                      </div>
+                      <div v-if="row.provider.server_url" class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.serverUrl') }}</span>
+                        <span class="provider-detail-value provider-detail-mono">{{ row.provider.server_url }}</span>
+                      </div>
+                      <div v-if="row.provider.home_path" class="provider-detail-cell">
+                        <span class="provider-detail-label">{{ t('settings.homePath') }}</span>
+                        <span class="provider-detail-value provider-detail-mono">{{ row.provider.home_path }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="row.provider.capabilities.length > 0" class="provider-detail-section">
+                    <div class="provider-detail-section-title">{{ t('settings.capabilities') }}</div>
+                    <div class="model-capability-row">
+                      <span v-for="cap in row.provider.capabilities" :key="cap" class="provider-cap-tag">{{ cap }}</span>
+                    </div>
+                  </div>
+
+                  <div v-if="row.provider.status_message" class="provider-status-note">
+                    <Terminal :size="14" />
+                    <span>{{ row.provider.status_message }}</span>
+                  </div>
+
+                  <details
+                    v-if="catalogReadinessByDriver.get(row.provider.driver) || providerReadinessById.get(row.provider.id)"
+                    class="provider-diagnostics"
+                  >
+                    <summary>
+                      <span>{{ t('settings.providerDiagnostics') }}</span>
+                      <ChevronRight :size="13" />
+                    </summary>
+                    <div class="provider-diagnostics-content">
+                      <div v-if="catalogReadinessByDriver.get(row.provider.driver)" class="provider-readiness-detail">
+                        <div class="provider-readiness-detail-head">
+                          <span>{{ t('settings.catalogReceipt') }}</span>
+                          <UiBadge :variant="readinessVariant(catalogReadinessByDriver.get(row.provider.driver)!.status)">
+                            {{ readinessStatusLabel(catalogReadinessByDriver.get(row.provider.driver)!.status) }}
+                          </UiBadge>
+                        </div>
+                        <p>{{ catalogReadinessByDriver.get(row.provider.driver)!.summary }}</p>
+                        <div class="provider-readiness-evidence">
+                          <span>{{ catalogReadinessByDriver.get(row.provider.driver)!.runtime_module_family }}</span>
+                          <span>{{ catalogReadinessByDriver.get(row.provider.driver)!.runtime_module_status }}</span>
+                          <span>{{ catalogReadinessByDriver.get(row.provider.driver)!.live_discovery_policy }}</span>
+                        </div>
+                      </div>
+                      <div v-if="providerReadinessById.get(row.provider.id)" class="provider-readiness-detail">
+                        <div class="provider-readiness-detail-head">
+                          <span>{{ t('settings.providerReceipt') }}</span>
+                          <UiBadge :variant="readinessVariant(providerReadinessById.get(row.provider.id)!.status)">
+                            {{ readinessStatusLabel(providerReadinessById.get(row.provider.id)!.status) }}
+                          </UiBadge>
+                        </div>
+                        <p>{{ providerReadinessById.get(row.provider.id)!.summary }}</p>
+                        <div class="provider-readiness-evidence">
+                          <span v-for="item in providerReadinessById.get(row.provider.id)!.evidence.slice(0, 5)" :key="item">{{ item }}</span>
+                        </div>
+                        <div v-if="providerReadinessById.get(row.provider.id)!.route_purposes.length > 0" class="provider-readiness-evidence route-list">
+                          <span v-for="purpose in providerReadinessById.get(row.provider.id)!.route_purposes" :key="purpose">{{ purpose }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+
+                  <div class="provider-detail-actions">
+                    <UiButton variant="outline" size="sm" @click="openEditModal(row.provider)">
+                      <Edit3 :size="14" />
+                      <span>{{ t('settings.editConfig') }}</span>
+                    </UiButton>
+                    <UiButton variant="outline" size="sm" :disabled="modelCenterBusy" @click="toggleProviderEnabled(row.provider)">
+                      <component :is="row.provider.enabled ? X : Check" :size="14" />
+                      <span>{{ row.provider.enabled ? t('settings.disable') : t('settings.enable') }}</span>
+                    </UiButton>
+                    <span class="provider-action-spacer"></span>
+                    <UiButton v-if="confirmDeleteId !== row.provider.id" variant="ghost" size="sm" class="provider-delete-btn" @click="confirmDeleteId = row.provider.id">
+                      <Trash2 :size="14" />
+                      <span>{{ t('settings.delete') }}</span>
+                    </UiButton>
+                    <template v-else>
+                      <span class="delete-confirm-text">{{ t('settings.confirmDeleteProvider') }}</span>
+                      <UiButton variant="destructive" size="sm" :disabled="modelCenterBusy" @click="deleteProvider(row.provider.id)">{{ t('settings.confirmDelete') }}</UiButton>
+                      <UiButton variant="ghost" size="sm" @click="confirmDeleteId = ''">{{ t('settings.cancel') }}</UiButton>
+                    </template>
+                  </div>
+                </div>
+                </Transition>
+              </template>
+              <div v-if="filteredModelCenterRows.length === 0" class="model-provider-empty">
+                <Search :size="18" />
+                <span>{{ t('settings.noProviderResults') }}</span>
+              </div>
+            </div>
+          </section>
         </template>
 
         <template v-if="activeSection === 'agents'">
@@ -1303,11 +1793,29 @@ loadPromptContextCenter()
                   <List :size="15" />
                 </button>
               </div>
-              <UiButton variant="outline" size="sm" :disabled="loading" @click="loadAgentCenter">
+              <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || agentRuntimeBusy" @click="loadAgentCenter">
                 <Server :size="14" />
                 <span>{{ t('settings.refresh') }}</span>
               </UiButton>
             </div>
+          </div>
+
+          <div v-if="agentCenterError" class="center-message error">
+            <Info :size="16" />
+            <span>{{ agentCenterError }}</span>
+            <UiButton variant="outline" size="sm" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
+          </div>
+          <div v-if="agentCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
+            <Info :size="16" />
+            <div class="center-message-content">
+              <strong>{{ t('settings.centerDiagnostics') }}</strong>
+              <ul>
+                <li v-for="diagnostic in agentCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.route_purpose ?? ''}:${diagnostic.agent_ids?.join(',') ?? ''}:${diagnostic.status ?? ''}`">
+                  {{ centerDiagnosticLabel(diagnostic) }}
+                </li>
+              </ul>
+            </div>
+            <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
           </div>
 
           <section v-if="gitManagerAgent" class="git-manager-panel">
@@ -1343,8 +1851,8 @@ loadPromptContextCenter()
                 <Workflow :size="16" />
                 <div>
                   <span>{{ t('settings.gitManagerRouteTitle') }}</span>
-                  <strong>{{ agentRouteProvider(gitManagerAgent)?.display_name ?? t('settings.noProvider') }}</strong>
-                  <p>{{ gitManagerMode?.display_name ?? agentModeLabel(gitManagerAgent.mode) }} · {{ gitManagerAgent.model_route_purpose }}</p>
+                  <strong>{{ runtimeSourceSummary(agentRuntimeBindings[gitManagerAgent.id]) || t('settings.runtimeUnresolved') }}</strong>
+                  <p>{{ gitManagerMode?.display_name ?? agentModeLabel(gitManagerAgent.mode) }} 路 {{ gitManagerAgent.model_route_purpose }}</p>
                 </div>
               </div>
               <div class="git-manager-metric">
@@ -1379,6 +1887,7 @@ loadPromptContextCenter()
               :candidates="agentCandidates"
               :providers="providers"
               :routes="routes"
+              :runtime-bindings="agentRuntimeBindings"
               :selected-agent-id="selectedAgentId"
               @select-agent="selectedAgentId = $event"
               @configure-agent="openAgentConfig(agents.find(a => a.id === $event)!)"
@@ -1403,7 +1912,8 @@ loadPromptContextCenter()
                   </div>
                   <div class="agent-card-main">
                     <strong>{{ agent.name }}</strong>
-                    <span>{{ agentTypeLabel(agent.agent_type) }} · {{ agentModeLabel(agent.mode) }}</span>
+                    <span>{{ agentTypeLabel(agent.agent_type) }} 路 {{ agentModeLabel(agent.mode) }}</span>
+                    <small>{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
                     {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
@@ -1432,7 +1942,8 @@ loadPromptContextCenter()
                   </div>
                   <div class="agent-card-main">
                     <strong>{{ agent.name }}</strong>
-                    <span>{{ agentTypeLabel(agent.agent_type) }} · {{ agentModeLabel(agent.mode) }}</span>
+                    <span>{{ agentTypeLabel(agent.agent_type) }} 路 {{ agentModeLabel(agent.mode) }}</span>
+                    <small>{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
                     {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
@@ -1452,15 +1963,15 @@ loadPromptContextCenter()
                   <component :is="configuringAgent.layer === 'planning' ? Workflow : Cpu" :size="20" />
                 </div>
                 <div>
-                  <h3>{{ t('settings.agentConfiguration') }} · {{ configuringAgent.name }}</h3>
-                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} · {{ agentLayerLabel(configuringAgent.layer) }}</p>
+                  <h3>{{ t('settings.agentConfiguration') }} 路 {{ configuringAgent.name }}</h3>
+                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} 路 {{ agentLayerLabel(configuringAgent.layer) }}</p>
                 </div>
                 <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="configuringAgentId = ''">
                   <X :size="16" />
                 </UiButton>
               </div>
 
-              <!-- 启用开关 -->
+              <!-- 鍚敤寮€鍏?-->
               <div class="agent-config-switch">
                 <div>
                   <strong>{{ t('settings.agentEnabled') }}</strong>
@@ -1473,7 +1984,7 @@ loadPromptContextCenter()
                 />
               </div>
 
-              <!-- 运行模式 -->
+              <!-- 杩愯妯″紡 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentModeTitle') }}</div>
                 <div class="agent-mode-grid">
@@ -1488,7 +1999,7 @@ loadPromptContextCenter()
                     <span>{{ mode.summary }}</span>
                     <small>
                       {{ t('settings.parallelExecutors') }} {{ mode.max_parallel_executors }}
-                      · {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
+                      路 {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
                     </small>
                   </button>
                 </div>
@@ -1496,48 +2007,143 @@ loadPromptContextCenter()
                   <ShieldCheck :size="16" />
                   <span>
                     {{ configuredAgentMode.approval_required ? t('settings.approvalGateOn') : t('settings.approvalGateOff') }}
-                    · {{ configuredAgentMode.budget_policy }}
+                    路 {{ configuredAgentMode.budget_policy }}
                   </span>
                 </div>
               </div>
 
-              <!-- 模型配置 -->
+              <!-- 杩愯鏉ユ簮 -->
               <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentModelConfig') }}</div>
+                <div class="agent-config-section-title">{{ t('settings.agentRuntimeSource') }}</div>
                 <div class="agent-detail-grid">
                   <div>
                     <span>{{ t('settings.routePurpose') }}</span>
-                    <strong>{{ configuringAgent.model_route_purpose }}</strong>
+                    <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose }}</strong>
                   </div>
                   <div>
-                    <span>{{ t('settings.routeProvider') }}</span>
-                    <strong>{{ agentRouteProvider(configuringAgent)?.display_name ?? t('settings.noProvider') }}</strong>
+                    <span>{{ t('settings.effectiveRuntime') }}</span>
+                    <strong>{{ runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }}</strong>
                   </div>
                 </div>
-                <div class="model-form-grid" style="margin-top:12px">
-                  <div class="settings-field">
-                    <UiLabel>{{ t('settings.routeProvider') }}</UiLabel>
-                    <select v-if="providers.length > 0" v-model="agentRouteProviderId" class="settings-select">
-                      <option v-for="provider in providers" :key="provider.id" :value="provider.id">
-                        {{ provider.display_name }} · {{ provider.model || provider.driver }}
-                      </option>
-                    </select>
-                    <p v-else class="quiet">{{ t('settings.noProvidersHint') }}</p>
+
+                <div v-if="configuringLegacyWarning" class="runtime-binding-warning">
+                  <Info :size="16" />
+                  <div>
+                    <strong>{{ t('settings.sharedLegacyRoute', { purpose: configuringLegacyWarning.purpose }) }}</strong>
+                    <span>{{ t('settings.sharedLegacyRouteHint', { count: configuringLegacyWarning.agent_ids.length }) }}</span>
                   </div>
-                  <div class="settings-field">
-                    <UiLabel>{{ t('settings.routeModel') }}</UiLabel>
-                    <UiInput v-model="agentRouteModel" :placeholder="agentRouteProvider(configuringAgent)?.model ?? t('settings.noModel')" />
+                </div>
+
+                <div class="runtime-source-grid">
+                  <button :class="{ active: agentRuntimeSelection === 'inherit' }" @click="agentRuntimeSelection = 'inherit'">
+                    <Workflow :size="16" />
+                    <strong>{{ t('settings.runtimeInherit') }}</strong>
+                    <span>{{ t('settings.runtimeInheritHint') }}</span>
+                  </button>
+                  <button :class="{ active: agentRuntimeSelection === 'fixed_model' }" @click="agentRuntimeSelection = 'fixed_model'">
+                    <Cpu :size="16" />
+                    <strong>{{ t('settings.runtimeFixedModel') }}</strong>
+                    <span>{{ t('settings.runtimeFixedModelHint') }}</span>
+                  </button>
+                  <button :class="{ active: agentRuntimeSelection === 'provider_auto' }" @click="agentRuntimeSelection = 'provider_auto'">
+                    <Server :size="16" />
+                    <strong>{{ t('settings.runtimeProviderAuto') }}</strong>
+                    <span>{{ t('settings.runtimeProviderAutoHint') }}</span>
+                  </button>
+                  <button :class="{ active: agentRuntimeSelection === 'cli' }" @click="agentRuntimeSelection = 'cli'">
+                    <Terminal :size="16" />
+                    <strong>CLI</strong>
+                    <span>{{ t('settings.runtimeCliHint') }}</span>
+                  </button>
+                  <button :class="{ active: agentRuntimeSelection === 'acp' }" @click="agentRuntimeSelection = 'acp'">
+                    <Bot :size="16" />
+                    <strong>ACP</strong>
+                    <span>{{ t('settings.runtimeAcpHint') }}</span>
+                  </button>
+                </div>
+
+                <div v-if="agentRuntimeSelection === 'inherit'" class="runtime-source-current">
+                  <ShieldCheck :size="16" />
+                  <span>{{ t('settings.runtimeInheritedCurrent', { source: runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }) }}</span>
+                </div>
+                <div v-else-if="agentRuntimeSelection === 'fixed_model'" class="settings-field runtime-source-picker">
+                  <UiLabel>{{ t('settings.runtimeFixedModel') }}</UiLabel>
+                  <div class="runtime-source-search">
+                    <Search :size="14" />
+                    <UiInput v-model="agentRuntimeModelQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerModels') })" />
                   </div>
+                  <select v-model="agentRuntimeModelKey" class="settings-select">
+                    <option value="" disabled>{{ t('settings.selectModel') }}</option>
+                    <option v-for="model in filteredRuntimeModels" :key="model.id" :value="modelOptionKey(model.provider_instance_id, model.model_id)">
+                      {{ model.model_id }} 路 {{ model.provider_display_name ?? model.provider_instance_id }} 路 {{ statusLabel(model.status) }}
+                    </option>
+                  </select>
+                  <p v-if="filteredRuntimeModels.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                </div>
+                <div v-else-if="agentRuntimeSelection === 'provider_auto'" class="settings-field runtime-source-picker">
+                  <UiLabel>{{ t('settings.routeProvider') }}</UiLabel>
+                  <div class="runtime-source-search">
+                    <Search :size="14" />
+                    <UiInput v-model="agentRuntimeProviderQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerApiConnections') })" />
+                  </div>
+                  <select v-model="agentRuntimeProviderId" class="settings-select">
+                    <option value="" disabled>{{ t('settings.selectProvider') }}</option>
+                    <option v-for="provider in filteredRuntimeProviders" :key="provider.provider_instance_id" :value="provider.provider_instance_id">
+                      {{ provider.display_name }} 路 {{ statusLabel(provider.status) }}
+                    </option>
+                  </select>
+                  <p v-if="filteredRuntimeProviders.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                  <p class="agent-config-hint">{{ t('settings.providerAutoOwnedByCore') }}</p>
+                </div>
+                <div v-else-if="agentRuntimeSelection === 'cli'" class="settings-field runtime-source-picker">
+                  <UiLabel>CLI</UiLabel>
+                  <div class="runtime-source-search">
+                    <Search :size="14" />
+                    <UiInput v-model="agentRuntimeCliQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'CLI' })" />
+                  </div>
+                  <select v-model="agentRuntimeCliId" class="settings-select">
+                    <option value="" disabled>{{ t('settings.selectCliRuntime') }}</option>
+                    <option v-for="runtime in filteredRuntimeCliOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
+                      {{ runtime.display_name }} 路 {{ statusLabel(runtime.status) }}
+                    </option>
+                  </select>
+                  <p v-if="filteredRuntimeCliOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                </div>
+                <div v-else class="settings-field runtime-source-picker">
+                  <UiLabel>ACP</UiLabel>
+                  <div class="runtime-source-search">
+                    <Search :size="14" />
+                    <UiInput v-model="agentRuntimeAcpQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'ACP' })" />
+                  </div>
+                  <select v-model="agentRuntimeAcpId" class="settings-select">
+                    <option value="" disabled>{{ t('settings.selectAcpRuntime') }}</option>
+                    <option v-for="runtime in filteredRuntimeAcpOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
+                      {{ runtime.display_name }} 路 {{ acpRuntimeSourceLabel(runtime.source) }} 路 {{ statusLabel(runtime.status) }}
+                    </option>
+                  </select>
+                  <p v-if="filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                </div>
+
+                <div v-if="!runtimeBindingWritable" class="runtime-binding-readonly">
+                  <Info :size="16" />
+                  <div>
+                    <strong>{{ t('settings.runtimeBindingPendingCore') }}</strong>
+                    <span>{{ t('settings.runtimeBindingPendingCoreHint') }}</span>
+                  </div>
+                </div>
+                <div v-if="agentRuntimeNotice" class="runtime-binding-warning">
+                  <Info :size="16" />
+                  <span>{{ agentRuntimeNotice }}</span>
                 </div>
                 <div class="modal-actions compact">
-                  <UiButton :disabled="busy || !agentRouteProviderId" size="sm" @click="saveAgentRoute(configuringAgent)">
+                  <UiButton :disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()" size="sm" @click="saveAgentRuntimeBinding(configuringAgent)">
                     <Save :size="14" />
-                    <span>{{ t('settings.saveRoute') }}</span>
+                    <span>{{ t('settings.saveRuntimeBinding') }}</span>
                   </UiButton>
                 </div>
               </div>
 
-              <!-- 描述 -->
+              <!-- 鎻忚堪 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentDescription') }}</div>
                 <div class="settings-field">
@@ -1550,7 +2156,7 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 工具绑定 -->
+              <!-- 宸ュ叿缁戝畾 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentTools') }}</div>
                 <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
@@ -1571,14 +2177,14 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 能力标签 -->
+              <!-- 鑳藉姏鏍囩 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentCapabilities') }}</div>
                 <p class="agent-config-hint">{{ t('settings.agentCapabilitiesHint') }}</p>
                 <div class="agent-capability-list">
                   <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
                     {{ cap }}
-                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">×</button>
+                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">脳</button>
                   </span>
                 </div>
                 <div class="agent-cap-add-row">
@@ -1604,7 +2210,7 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 保存按钮 -->
+              <!-- 淇濆瓨鎸夐挳 -->
               <div class="agent-save-bar">
                 <UiButton :disabled="busy" @click="saveAgentProfile">
                   <Save :size="14" />
@@ -1625,7 +2231,7 @@ loadPromptContextCenter()
                 <div class="agent-candidate-head">
                   <div>
                     <strong>{{ candidate.name }}</strong>
-                    <span>{{ agentLayerLabel(candidate.layer) }} · {{ agentTypeLabel(candidate.agent_type) }} · {{ candidate.status }}</span>
+                    <span>{{ agentLayerLabel(candidate.layer) }} 路 {{ agentTypeLabel(candidate.agent_type) }} 路 {{ candidate.status }}</span>
                   </div>
                   <UiBadge variant="secondary">{{ t('settings.generatedByEvolution') }}</UiBadge>
                 </div>
@@ -1906,7 +2512,7 @@ loadPromptContextCenter()
 
           <div v-if="harnessManifest" class="provider-status-note harness-manifest-note">
             <ShieldCheck :size="14" />
-            <span>{{ harnessManifest.runtime }} · {{ harnessManifest.ownership_model }}</span>
+            <span>{{ harnessManifest.runtime }} 路 {{ harnessManifest.ownership_model }}</span>
           </div>
 
           <section v-if="toolLayerReadiness" class="tool-layer-readiness-panel">
@@ -1946,7 +2552,7 @@ loadPromptContextCenter()
               >
                 <div>
                   <strong>{{ tool.display_name }}</strong>
-                  <span>{{ tool.source }} · {{ tool.provider_layer }} · {{ tool.risk }}</span>
+                  <span>{{ tool.source }} 路 {{ tool.provider_layer }} 路 {{ tool.risk }}</span>
                 </div>
                 <UiBadge :variant="readinessVariant(tool.status)">{{ tool.status }}</UiBadge>
               </div>
@@ -1957,7 +2563,7 @@ loadPromptContextCenter()
               >
                 <div>
                   <strong>{{ agent.agent_name }}</strong>
-                  <span>{{ agent.dispatchable_tool_count }} tools · {{ agent.unresolved_scope_count }} unresolved</span>
+                  <span>{{ agent.dispatchable_tool_count }} tools 路 {{ agent.unresolved_scope_count }} unresolved</span>
                 </div>
                 <UiBadge :variant="readinessVariant(agent.status)">{{ agent.status }}</UiBadge>
               </div>
@@ -2037,7 +2643,7 @@ loadPromptContextCenter()
                 <span class="harness-panel-title">{{ provider.display_name }}</span>
                 <UiBadge :variant="provider.status === 'active' ? 'secondary' : 'outline'">{{ provider.status }}</UiBadge>
               </div>
-              <p class="harness-panel-meta">{{ provider.layer }} · {{ provider.source }}</p>
+              <p class="harness-panel-meta">{{ provider.layer }} 路 {{ provider.source }}</p>
               <div class="harness-panel-stats">
                 <span>{{ t('settings.toolsCount') }} {{ provider.tool_count }}</span>
                 <span>{{ t('settings.approvalCount') }} {{ provider.approval_required_count }}</span>
@@ -2062,7 +2668,7 @@ loadPromptContextCenter()
               :class="{ risky: risk.requires_human_checkpoint }"
             >
               <span class="agent-tool-name">{{ risk.risk }}</span>
-              <span class="agent-tool-risk">{{ risk.tool_count }} · {{ risk.policy_summary }}</span>
+              <span class="agent-tool-risk">{{ risk.tool_count }} 路 {{ risk.policy_summary }}</span>
             </button>
           </div>
 
@@ -2099,7 +2705,7 @@ loadPromptContextCenter()
               :class="{ risky: result.requires_human_checkpoint }"
             >
               <span class="tool-discovery-title">{{ result.tool.display_name }}</span>
-              <span class="tool-discovery-meta">{{ result.tool.source }} · {{ result.provider_layer }} · {{ result.tool.risk }}</span>
+              <span class="tool-discovery-meta">{{ result.tool.source }} 路 {{ result.provider_layer }} 路 {{ result.tool.risk }}</span>
               <span class="tool-discovery-meta">{{ result.approval_summary }}</span>
               <span class="tool-discovery-fields">
                 {{ t('settings.matchedFields') }} {{ result.matched_fields.join(', ') }}
@@ -2131,7 +2737,7 @@ loadPromptContextCenter()
               class="agent-tool-chip"
             >
               <span class="agent-tool-name">{{ template.name }}</span>
-              <span class="agent-tool-risk">{{ template.language }} · {{ template.package_manager }}</span>
+              <span class="agent-tool-risk">{{ template.language }} 路 {{ template.package_manager }}</span>
             </button>
           </div>
 
@@ -2144,7 +2750,7 @@ loadPromptContextCenter()
             >
               <span class="agent-tool-name">{{ tool.display_name }}</span>
               <span class="agent-tool-risk">
-                {{ tool.requires_approval ? t('settings.approvalRequired') : t('settings.readOnlyTool') }} · {{ tool.risk }}
+                {{ tool.requires_approval ? t('settings.approvalRequired') : t('settings.readOnlyTool') }} 路 {{ tool.risk }}
               </span>
             </button>
           </div>
@@ -2163,7 +2769,7 @@ loadPromptContextCenter()
               :class="{ risky: tool.requires_approval }"
             >
               <span class="agent-tool-name">{{ tool.display_name }}</span>
-              <span class="agent-tool-risk">{{ tool.source }} · {{ tool.risk }}</span>
+              <span class="agent-tool-risk">{{ tool.source }} 路 {{ tool.risk }}</span>
             </button>
           </div>
         </template>
@@ -2395,7 +3001,7 @@ loadPromptContextCenter()
               :class="['lang-option', { active: locale === 'zh-CN' }]"
               @click="setLocale('zh-CN')"
             >
-              中文
+              涓枃
             </UiButton>
             <UiButton
               variant="outline"
@@ -2418,7 +3024,7 @@ loadPromptContextCenter()
           <!-- App identity -->
           <div class="about-brand">
             <div class="about-brand-icon">
-              <img src="/tinadec-logo.svg" alt="TinadecOffice" width="28" height="22" />
+              <BrandLogo :size="28" />
             </div>
             <div class="about-brand-text">
               <span class="about-brand-name">TinadecOffice</span>
@@ -2505,11 +3111,11 @@ loadPromptContextCenter()
 
           <!-- Links -->
           <div class="about-links">
-            <UiButton variant="outline" size="sm" class="about-link-btn" @click="window.open('https://github.com/apanzinc/TinadecCode', '_blank')">
+            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal('https://github.com/apanzinc/TinadecCode')">
               <Globe :size="14" />
               <span>GitHub</span>
             </UiButton>
-            <UiButton variant="outline" size="sm" class="about-link-btn" @click="window.open('http://127.0.0.1:48730/docs', '_blank')">
+            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal('http://127.0.0.1:48730/docs')">
               <FileText :size="14" />
               <span>{{ t('settings.apiDocs') }}</span>
             </UiButton>
@@ -2634,7 +3240,7 @@ loadPromptContextCenter()
             <UiButton variant="outline" @click="closeModal">
               {{ t('settings.cancel') }}
             </UiButton>
-            <UiButton :disabled="busy" @click="saveProvider()">
+            <UiButton :disabled="modelCenterBusy" @click="saveProvider()">
               <Save :size="14" />
               <span>{{ t('settings.save') }}</span>
             </UiButton>

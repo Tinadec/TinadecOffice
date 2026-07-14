@@ -178,7 +178,11 @@ public static class AgentCatalog
             "balanced",
             "Manages approved Git workflows, prepares push plans, explains diffs and branch state, and records user-facing Git handoff notes.",
             "git",
-            ["git_worktree_manager", "review_format", "read_file", "grep_content", "event.write"],
+            [
+                "git_worktree_manager", "git_stage", "git_unstage", "git_commit", "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_worktree_create", "git_worktree_remove", "git_fetch", "git_push", "git_pull", "git_merge", "git_rebase", "git_conflict_resolve", "git_status", "git_push_readiness", "git_diff", "git_log_list", "git_log_detail",
+                "git_file_history", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame",
+                "git_file_at_revision", "git_conflict_preview", "review_format", "read_file", "grep_content", "event.write"
+            ],
             [
                 "git.status", "git.diff", "git.stage", "git.unstage", "git.branch", "git.worktree", "git.commit",
                 "git.push", "git.merge", "git.rebase", "conflict.resolve", "handoff.explain"

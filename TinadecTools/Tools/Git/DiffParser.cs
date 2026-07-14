@@ -13,6 +13,27 @@ internal static class DiffParser
     public static List<(string Status, int Score, string? OldPath, string NewPath)> ParseNameStatus(string output)
     {
         var result = new List<(string, int, string?, string)>();
+        if (output.Contains('\0'))
+        {
+            var records = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < records.Length;)
+            {
+                var statusField = records[index++];
+                if (statusField.Length > 1 && statusField[0] is 'R' or 'C')
+                {
+                    var oldPath = index < records.Length ? records[index++] : string.Empty;
+                    var newPath = index < records.Length ? records[index++] : oldPath;
+                    result.Add((statusField[..1], int.Parse(statusField[1..], CultureInfo.InvariantCulture), oldPath, newPath));
+                }
+                else
+                {
+                    var newPath = index < records.Length ? records[index++] : string.Empty;
+                    result.Add((statusField, 0, statusField == "A" ? null : newPath, newPath));
+                }
+            }
+            return result;
+        }
+
         foreach (var line in output.Split("\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (string.IsNullOrEmpty(line))
@@ -52,6 +73,22 @@ internal static class DiffParser
     public static List<(int Additions, int Deletions, bool IsBinary)> ParseNumstat(string output)
     {
         var result = new List<(int, int, bool)>();
+        if (output.Contains('\0'))
+        {
+            var records = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < records.Length; index++)
+            {
+                var parts = records[index].Split('\t');
+                if (parts.Length < 2) continue;
+                var isBinary = parts[0] == "-" && parts[1] == "-";
+                var add = isBinary ? 0 : int.Parse(parts[0], CultureInfo.InvariantCulture);
+                var del = isBinary ? 0 : int.Parse(parts[1], CultureInfo.InvariantCulture);
+                if (parts.Length > 2 && string.IsNullOrEmpty(parts[2])) index += 2;
+                result.Add((add, del, isBinary));
+            }
+            return result;
+        }
+
         foreach (var line in output.Split("\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (string.IsNullOrEmpty(line))

@@ -69,7 +69,7 @@ public static class FileReader
 
             using (await slot.RwLock.ReadLockAsync(cancellationToken).ConfigureAwait(false))
             {
-                using var file = FileToolRuntime.OpenRead(path);
+                using var file = FileToolRuntime.OpenRead(path, cancellationToken);
                 var fileHash = await file.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
                 if (file.LineCount == 0 || startLine > file.LineCount)
                 {

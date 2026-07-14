@@ -61,7 +61,19 @@ internal static class RipgrepRunner
             return fromEnv;
 
         var exe = OperatingSystem.IsWindows() ? "rg.exe" : "rg";
-        return Path.Combine(AppContext.BaseDirectory, exe);
+        var bundled = Path.Combine(AppContext.BaseDirectory, exe);
+        if (File.Exists(bundled)) return bundled;
+
+        var pathEntries = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator)
+            ?? Array.Empty<string>();
+        foreach (var entry in pathEntries)
+        {
+            if (string.IsNullOrWhiteSpace(entry)) continue;
+            var candidate = Path.Combine(entry.Trim(), exe);
+            if (File.Exists(candidate)) return candidate;
+        }
+
+        return bundled;
     }
 
     public static async ValueTask<FileSearchResponse> RunAsync(
@@ -70,16 +82,8 @@ internal static class RipgrepRunner
     {
         var searchPath = WorkspacePathResolver.ResolveDirectory(args.Path);
         var rgPath = ResolveRgPath();
-        string? autoDownloadNote = null;
         if (!File.Exists(rgPath))
-        {
-            var (ok, detail) = await RipgrepDownloader.TryDownloadAsync(rgPath, cancellationToken)
-                .ConfigureAwait(false);
-            if (!ok)
-                return Fail($"ripgrep not found at '{rgPath}' and auto-download failed: {detail}\n" +
-                            $"Set {RgPathEnvVar} env var or place rg binary next to the executable.");
-            autoDownloadNote = $"ripgrep {detail} auto-downloaded from GitHub releases.";
-        }
+            return Fail($"ripgrep not found at '{rgPath}'. Set {RgPathEnvVar} or place rg next to the executable.");
 
         var psi = BuildProcessStartInfo(rgPath, args, searchPath);
         using var process = new Process { StartInfo = psi };
@@ -174,8 +178,7 @@ internal static class RipgrepRunner
             Lines            = lines,
             FileHashes       = fileHashes,
             Truncated        = truncated,
-            TotalMatchCount  = truncated ? Math.Max(totalCount, matchCount) : totalCount,
-            AutoDownloadNote = autoDownloadNote
+            TotalMatchCount  = truncated ? Math.Max(totalCount, matchCount) : totalCount
         };
     }
 

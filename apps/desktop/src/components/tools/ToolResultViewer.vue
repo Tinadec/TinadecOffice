@@ -50,7 +50,7 @@ const isDiffTool = computed(() =>
   ['apply_patch', 'code_editor', 'git_worktree_manager'].includes(props.toolExecution.tool_id)
 )
 const isShellTool = computed(() => props.toolExecution.tool_id === 'sandbox_exec')
-const isGitTool = computed(() => props.toolExecution.tool_id === 'git_worktree_manager')
+const isGitTool = computed(() => props.toolExecution.tool_id === 'git_worktree_manager' || props.toolExecution.tool_id.startsWith('git_'))
 
 const fileList = computed<string[]>(() => {
   if (!isFileListTool.value) return []

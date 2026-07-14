@@ -48,7 +48,7 @@ function toolIcon(toolId: string) {
   if (toolId === 'list_directory') return Folder
   if (toolId === 'glob_search' || toolId === 'grep_content') return Search
   if (toolId === 'apply_patch' || toolId === 'code_editor') return FileCode2
-  if (toolId === 'git_worktree_manager') return GitBranch
+  if (toolId === 'git_worktree_manager' || toolId.startsWith('git_')) return GitBranch
   if (toolId === 'sandbox_exec') return Terminal
   return Wrench
 }

@@ -107,6 +107,23 @@ public sealed class CodeCapabilityProvider : ICapabilityProvider
         "runtime.java"
     ];
 
+    private static readonly IReadOnlyList<ToolDescriptorDto> GitReadTools =
+    [
+        GitRead("git_status", "Git Status", "git.status", "git.conflict"),
+        GitRead("git_log_list", "Git Log List", "git.log.read"),
+        GitRead("git_log_detail", "Git Log Detail", "git.log.read", "git.diff"),
+        GitRead("git_file_history", "Git File History", "git.history.read"),
+        GitRead("git_push_readiness", "Git Push Readiness", "git.push.readiness"),
+        GitRead("git_diff", "Git Diff", "git.diff"),
+        GitRead("git_branch_list", "Git Branch List", "git.branch.read"),
+        GitRead("git_worktree_list", "Git Worktree List", "git.worktree.read"),
+        GitRead("git_ref_list", "Git Ref List", "git.ref.read"),
+        GitRead("git_remote_list", "Git Remote List", "git.remote.read"),
+        GitRead("git_blame", "Git Blame", "git.blame"),
+        GitRead("git_file_at_revision", "Git File At Revision", "git.file.revision"),
+        GitRead("git_conflict_preview", "Git Conflict Preview", "git.conflict.preview")
+    ];
+
     private static readonly IReadOnlyList<ToolDescriptorDto> CodeTools =
     [
         new(
@@ -174,8 +191,50 @@ public sealed class CodeCapabilityProvider : ICapabilityProvider
             [
                 "git.status", "git.diff", "git.stage", "git.unstage", "git.worktree", "git.branch", "git.commit",
                 "git.push", "workspace.isolation", "tool-layer.code-suite"
-            ])
+            ]),
+        GitWrite("git_stage", "Git Stage", "git.stage", "git.index.write"),
+        GitWrite("git_unstage", "Git Unstage", "git.unstage", "git.index.write"),
+        GitWrite("git_commit", "Git Commit", "git.commit"),
+        GitWrite("git_checkout", "Git Checkout", "git.checkout", "git.branch.write"),
+        GitWrite("git_branch_create", "Git Branch Create", "git.branch.create", "git.branch.write"),
+        GitWrite("git_branch_delete", "Git Branch Delete", "git.branch.delete", "git.branch.write"),
+        GitWrite("git_branch_rename", "Git Branch Rename", "git.branch.rename", "git.branch.write"),
+        GitWrite("git_worktree_create", "Git Worktree Create", "git.worktree.create", "git.worktree.write"),
+        GitWrite("git_worktree_remove", "Git Worktree Remove", "git.worktree.remove", "git.worktree.write"),
+        GitWrite("git_fetch", "Git Fetch", "git.fetch", "git.remote.write"),
+        GitWrite("git_push", "Git Push", "git.push", "git.remote.write"),
+        GitWrite("git_pull", "Git Pull", "git.pull", "git.remote.write"),
+        GitWrite("git_merge", "Git Merge", "git.merge"),
+        GitWrite("git_rebase", "Git Rebase", "git.rebase", "git.history.rewrite"),
+        GitWrite("git_conflict_resolve", "Git Conflict Resolve", "git.conflict.resolve", "git.index.write"),
+        .. GitReadTools
     ];
+
+    private static ToolDescriptorDto GitRead(string id, string displayName, params string[] capabilities)
+    {
+        return new ToolDescriptorDto(
+            id,
+            displayName,
+            "programming",
+            "code",
+            "git-read",
+            true,
+            $"/api/v1/code/tools/{id}/execute",
+            [.. capabilities, "tool-layer.code-suite"]);
+    }
+
+    private static ToolDescriptorDto GitWrite(string id, string displayName, params string[] capabilities)
+    {
+        return new ToolDescriptorDto(
+            id,
+            displayName,
+            "programming",
+            "code",
+            "git-write",
+            true,
+            $"/api/v1/code/tools/{id}/execute",
+            [.. capabilities, "tool-layer.code-suite"]);
+    }
 
     public IReadOnlyList<ToolDescriptorDto> ListCapabilities()
     {
@@ -410,6 +469,93 @@ public sealed class ToolRegistryService : IToolRegistry
                         { ["type"] = "object", ["description"] = "Action-specific arguments." }
                 },
                 ["required"] = new[] { "action" }
+            },
+            "git_stage" or "git_unstage" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["paths"] = new Dictionary<string, object?> { ["type"] = "array", ["items"] = new Dictionary<string, object?> { ["type"] = "string" } },
+                    ["patch"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Validated unified text patch for a partial Git index update." },
+                    ["max_patch_bytes"] = new Dictionary<string, object?> { ["type"] = "integer" }
+                }
+            },
+            "git_commit" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["message"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["paths"] = new Dictionary<string, object?> { ["type"] = "array", ["items"] = new Dictionary<string, object?> { ["type"] = "string" } },
+                    ["include_all"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["commit_staged_only"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_commit"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                },
+                ["required"] = new[] { "message", "confirm_commit" }
+            },
+            "git_checkout" or "git_branch_create" or "git_branch_delete" or "git_branch_rename" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["new_name"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["force"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_checkout"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_create_branch"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_delete_branch"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_rename_branch"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_worktree_create" or "git_worktree_remove" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["path"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "Managed path inside .tinadec/worktrees." },
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["start_ref"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["force"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_create_worktree"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_remove_worktree"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_fetch" or "git_push" or "git_pull" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["remote"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["prune"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["set_upstream"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_fetch"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_push"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_pull"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_merge" or "git_rebase" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["operation"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["branch"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["strategy"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["confirm_merge"] = new Dictionary<string, object?> { ["type"] = "boolean" },
+                    ["confirm_rebase"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                }
+            },
+            "git_conflict_resolve" => new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["path"] = new Dictionary<string, object?> { ["type"] = "string" },
+                    ["strategy"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "auto, ours, theirs, or both." },
+                    ["confirm_resolve"] = new Dictionary<string, object?> { ["type"] = "boolean" }
+                },
+                ["required"] = new[] { "path", "strategy", "confirm_resolve" }
             },
             _ => new Dictionary<string, object?>
             {

@@ -137,26 +137,31 @@ public static class FileSystemTools
             {
                 if (!File.Exists(path))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                     await using var writer = new StreamWriter(output, Utf8NoBom);
-                    await writer.WriteAsync(NormalizeLineEndings(args.Content).AsMemory(), cancellationToken).ConfigureAwait(false);
-                    await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    await writer.WriteAsync(NormalizeLineEndings(args.Content)).ConfigureAwait(false);
+                    await writer.FlushAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(args.FileHash))
                         throw new InvalidOperationException("REJECT write_file: file_hash is required when overwriting an existing file.");
 
-                    using var existingFile = FileToolRuntime.OpenRead(path);
-                    var actualHash = await existingFile.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
+                    using var writableFile = FileToolRuntime.OpenWrite(path, cancellationToken);
+                    var actualHash = await writableFile.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
                     if (!string.Equals(args.FileHash, actualHash, StringComparison.Ordinal))
                         throw new InvalidOperationException(
                             $"REJECT write_file: file_hash mismatch, expected {args.FileHash}, actual {actualHash}.");
 
-                    await slot.File.ReplaceBytes(0, slot.File.Length, Encoding.UTF8.GetBytes(args.Content)).ConfigureAwait(false);
+                    await writableFile.ReplaceBytes(0, writableFile.Length,
+                        Encoding.UTF8.GetBytes(NormalizeLineEndings(args.Content))).ConfigureAwait(false);
+                    var overwrittenHash = await writableFile.ComputeFileHashAsync(CancellationToken.None).ConfigureAwait(false);
+                    return new FileMutationResponse { Success = true, FileHash = overwrittenHash };
                 }
 
-                var fileHash = await slot.File.ComputeFileHashAsync(cancellationToken).ConfigureAwait(false);
+                using var writtenFile = FileToolRuntime.OpenRead(path, cancellationToken);
+                var fileHash = await writtenFile.ComputeFileHashAsync(CancellationToken.None).ConfigureAwait(false);
                 return new FileMutationResponse { Success = true, FileHash = fileHash };
             }
         }

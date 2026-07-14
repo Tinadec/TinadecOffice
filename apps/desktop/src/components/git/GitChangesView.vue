@@ -32,6 +32,7 @@ import CommitMessageEditor from './CommitMessageEditor.vue'
 import DiffViewer from './DiffViewer.vue'
 import { reconstructFromHunks, type DiffFileEntry } from './diffUtils'
 import { parseUnifiedDiff } from '../../gitDiffParser'
+import { buildGitIndexPatch, changeBlockLineIds } from '../../gitIndexPatch'
 
 interface Props {
   cwd: string | undefined
@@ -49,6 +50,16 @@ interface Props {
   // Diff sections
   diffText: string
   diffFiles: Array<{
+    path: string
+    previous_path?: string | null
+    change_type: string
+    additions: number
+    deletions: number
+    binary: boolean
+    truncated: boolean
+  }>
+  stagedDiffText: string
+  stagedDiffFiles: Array<{
     path: string
     previous_path?: string | null
     change_type: string
@@ -85,8 +96,8 @@ const emit = defineEmits<{
   'refresh': []
   'toggle-path': [path: string]
   'toggle-select-all': []
-  'request-stage': []
-  'request-unstage': []
+  'request-stage': [selection?: { patch?: string; paths?: string[] }]
+  'request-unstage': [selection?: { patch?: string; paths?: string[] }]
   'execute-index': []
   'request-commit': []
   'execute-commit': []
@@ -103,26 +114,31 @@ const { t } = useI18n()
 // ---- Diff preview ----
 const showDiffPreview = ref(false)
 const selectedDiffFile = ref<string | null>(null)
+const indexMode = ref<'stage' | 'unstage'>('stage')
 
-const parsedDiff = computed(() => parseUnifiedDiff(props.diffText))
+const indexDiffText = computed(() => indexMode.value === 'stage' ? props.diffText : props.stagedDiffText)
+const indexDiffFiles = computed(() => indexMode.value === 'stage' ? props.diffFiles : props.stagedDiffFiles)
+const parsedDiff = computed(() => parseUnifiedDiff(indexDiffText.value))
+const selectedLineIds = ref<Set<string>>(new Set())
+const selectedTextPatch = computed(() => buildGitIndexPatch(parsedDiff.value, selectedLineIds.value))
 
 const diffSections = computed<GitDiffSection[]>(() => [
   {
     id: 'working-tree',
     kind: 'working_tree',
     title: 'Working tree diff',
-    diff: props.diffText,
-    files: props.diffFiles,
-    file_count: props.diffFiles.length,
-    additions: props.diffFiles.reduce((a, f) => a + (f.additions ?? 0), 0),
-    deletions: props.diffFiles.reduce((a, f) => a + (f.deletions ?? 0), 0),
+    diff: indexDiffText.value,
+    files: indexDiffFiles.value,
+    file_count: indexDiffFiles.value.length,
+    additions: indexDiffFiles.value.reduce((a, f) => a + (f.additions ?? 0), 0),
+    deletions: indexDiffFiles.value.reduce((a, f) => a + (f.deletions ?? 0), 0),
     notices: [],
   },
 ])
 
 const diffEntries = computed<DiffFileEntry[]>(() => {
   return parsedDiff.value.files.map((file) => {
-    const meta = props.diffFiles.find((item) => item.path === file.path)
+    const meta = indexDiffFiles.value.find((item) => item.path === file.path)
     const { original, modified } = reconstructFromHunks(file)
     return {
       path: file.path,
@@ -143,6 +159,49 @@ watch(diffEntries, (entries) => {
     selectedDiffFile.value = entries[0]?.path ?? null
   }
 }, { immediate: true })
+
+watch(indexDiffText, () => {
+  selectedLineIds.value = new Set()
+})
+
+function toggleChangeLine(hunkId: string, lineId: string) {
+  const hunk = parsedDiff.value.files.flatMap((file) => file.hunks).find((item) => item.id === hunkId)
+  if (!hunk) return
+  const block = changeBlockLineIds(hunk, lineId)
+  if (block.length === 0) return
+  const next = new Set(selectedLineIds.value)
+  const shouldSelect = !block.every((id) => next.has(id))
+  for (const id of block) shouldSelect ? next.add(id) : next.delete(id)
+  selectedLineIds.value = next
+}
+
+function toggleHunk(hunkId: string) {
+  const hunk = parsedDiff.value.files.flatMap((file) => file.hunks).find((item) => item.id === hunkId)
+  if (!hunk) return
+  const ids = hunk.lines.filter((line) => line.change !== 'context').map((line) => line.id)
+  const next = new Set(selectedLineIds.value)
+  const shouldSelect = !ids.every((id) => next.has(id))
+  for (const id of ids) shouldSelect ? next.add(id) : next.delete(id)
+  selectedLineIds.value = next
+}
+
+function requestSelectedLines() {
+  if (!selectedTextPatch.value) return
+  if (indexMode.value === 'stage') emit('request-stage', { patch: selectedTextPatch.value })
+  else emit('request-unstage', { patch: selectedTextPatch.value })
+}
+
+function requestFileHunks(path: string) {
+  const next = new Set(selectedLineIds.value)
+  for (const file of parsedDiff.value.files.filter((file) => file.path === path)) {
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) if (line.change !== 'context') next.add(line.id)
+    }
+  }
+  selectedLineIds.value = next
+  const patch = buildGitIndexPatch(parsedDiff.value, next)
+  if (patch) emit('request-stage', { patch })
+}
 
 // ---- AI commit message ----
 const sessionIdRef = computed(() => props.sessionId)
@@ -412,10 +471,49 @@ const sortedStatusFiles = computed(() => {
           <DiffViewer
             :files="diffEntries"
             :selected-file-path="selectedDiffFile"
-            :enable-hunk-actions="true"
+            :enable-hunk-actions="indexMode === 'stage'"
             @update:selected-file-path="selectedDiffFile = $event"
-            @stage-hunk="(payload) => emit('toggle-path', payload.filePath)"
+            @stage-hunk="(payload) => requestFileHunks(payload.filePath)"
           />
+          <div v-if="parsedDiff.files.length > 0" class="git-line-shelf">
+            <div class="git-line-shelf-head">
+              <div class="git-line-shelf-mode">
+                <button type="button" :class="{ active: indexMode === 'stage' }" @click="indexMode = 'stage'">Working tree</button>
+                <button type="button" :class="{ active: indexMode === 'unstage' }" :disabled="!stagedDiffText" @click="indexMode = 'unstage'">Staged index</button>
+              </div>
+              <button
+                type="button"
+                class="secondary-button git-action-btn"
+                :disabled="operationLoading || !selectedTextPatch"
+                @click="requestSelectedLines"
+              >
+                <Plus :size="13" />
+                <span>{{ indexMode === 'stage' ? 'Stage selected lines' : 'Unstage selected lines' }}</span>
+              </button>
+            </div>
+            <div v-for="file in parsedDiff.files" :key="file.id" class="git-line-shelf-file">
+              <strong>{{ file.path }}</strong>
+              <template v-for="hunk in file.hunks" :key="hunk.id">
+                <label class="git-line-shelf-hunk">
+                  <input
+                    type="checkbox"
+                    :checked="hunk.lines.filter((line) => line.change !== 'context').every((line) => selectedLineIds.has(line.id))"
+                    @change="toggleHunk(hunk.id)"
+                  />
+                  <code>{{ hunk.header }}</code>
+                </label>
+                <label
+                  v-for="line in hunk.lines.filter((item) => item.change !== 'context')"
+                  :key="line.id"
+                  class="git-line-shelf-line"
+                  :class="`is-${line.change}`"
+                >
+                  <input type="checkbox" :checked="selectedLineIds.has(line.id)" @change="toggleChangeLine(hunk.id, line.id)" />
+                  <code>{{ line.change === 'add' ? '+' : '-' }}{{ line.content }}</code>
+                </label>
+              </template>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1233,4 +1331,73 @@ const sortedStatusFiles = computed(() => {
 .git-ai-list .severity-critical {
   color: #f85149;
 }
+
+.git-line-shelf {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.git-line-shelf-head,
+.git-line-shelf-hunk,
+.git-line-shelf-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.git-line-shelf-head {
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.git-line-shelf-mode {
+  display: flex;
+  gap: 4px;
+}
+
+.git-line-shelf-mode button {
+  border: 0;
+  padding: 3px 6px;
+  color: var(--text-muted);
+  background: transparent;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.git-line-shelf-mode button.active {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.git-line-shelf-file {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.git-line-shelf-hunk {
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.git-line-shelf-line {
+  padding-left: 14px;
+  overflow: hidden;
+}
+
+.git-line-shelf-line code,
+.git-line-shelf-hunk code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.git-line-shelf-line.is-add { color: #3fb950; }
+.git-line-shelf-line.is-delete { color: #f85149; }
 </style>

@@ -176,6 +176,11 @@ public sealed class CoreStoreTests
         Assert.Equal("Git Manager Subagent", gitAgent.Name);
         Assert.Equal("git", gitAgent.ModelRoutePurpose);
         Assert.Contains("git_worktree_manager", gitAgent.AllowedTools);
+        Assert.Contains("git_stage", gitAgent.AllowedTools);
+        Assert.Contains("git_unstage", gitAgent.AllowedTools);
+        Assert.Contains("git_commit", gitAgent.AllowedTools);
+        Assert.Contains("git_status", gitAgent.AllowedTools);
+        Assert.Contains("git_conflict_preview", gitAgent.AllowedTools);
         Assert.Contains("git.push", gitAgent.Capabilities);
         Assert.Contains("handoff.explain", gitAgent.Capabilities);
         Assert.Contains("Never push", gitAgent.SystemPrompt ?? "");

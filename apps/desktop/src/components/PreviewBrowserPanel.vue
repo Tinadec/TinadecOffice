@@ -13,7 +13,7 @@ const emit = defineEmits<{
   'update:url': [url: string]
 }>()
 
-const GATEWAY_URL = 'http://localhost:48730/docs'
+const gatewayDocsUrl = (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/docs'
 const VITE_DEV_URL = 'http://localhost:5173'
 
 const urlInput = ref(props.initialUrl ?? '')
@@ -28,7 +28,7 @@ const canGoBack = computed(() => historyIndex.value > 0)
 const canGoForward = computed(() => historyIndex.value < history.value.length - 1)
 
 const quickLinks = computed(() => [
-  { label: 'Gateway API', url: GATEWAY_URL },
+  { label: 'Gateway API', url: gatewayDocsUrl },
   { label: 'Dev Server', url: VITE_DEV_URL },
   { label: 'Core Health', url: 'http://localhost:48731/api/v1/health' },
 ])

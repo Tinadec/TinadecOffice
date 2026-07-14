@@ -24,7 +24,7 @@ This runs:
 
 ```powershell
 npm run dev:core
-npm run dev:code
+npm run dev:gateway
 npm run dev:desktop
 ```
 
@@ -46,7 +46,7 @@ Start Gateway:
 
 ```powershell
 $env:TINADEC_GATEWAY_PORT = '48730'
-npm run dev -w @tinadec/code
+npm run dev -w @tinadec/gateway
 ```
 
 Start Desktop/Vite:
@@ -86,7 +86,7 @@ Start-Process -FilePath powershell `
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location 'D:\github\TinadecOffice'; `$env:TINADEC_GATEWAY_PORT='48730'; npm run dev -w @tinadec/code"
+    "Set-Location 'D:\github\TinadecOffice'; `$env:TINADEC_GATEWAY_PORT='48730'; npm run dev -w @tinadec/gateway"
   )
 ```
 
@@ -146,7 +146,7 @@ If Settings > Agents is empty:
 
 1. Verify Gateway is reachable at `http://127.0.0.1:48730/api/v1/health`.
 2. Verify Gateway can proxy agents with `http://127.0.0.1:48730/api/v1/agents`.
-3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `npm run dev -w @tinadec/code`.
+3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `npm run dev -w @tinadec/gateway`.
 4. If Gateway health returns `500`, Core is down or still building. Start or restart Core on port `48731`.
 5. If old names appear, restart Core so `CoreStore.Initialize()` can run the built-in seed normalization.
 6. Refresh the Vite/Electron settings page after Core and Gateway are both healthy.
@@ -183,39 +183,3 @@ npm run test --workspaces --if-present
 npm run build --workspaces --if-present
 ```
 
-## Native Codex Rust Glue
-
-TinadecOffice keeps `Core = general agent runtime` and `Code = programming-domain layer`. Rust is an implementation source, not a layering rule.
-
-The native workspace lives under `native/`:
-
-- `native/glue/core-cdylib` is the Core-side cdylib/PInvoke glue for cross-product agent runtime capabilities.
-- `native/glue/code-native` is the Code-side programming tool glue. Gateway looks for `native/target/debug/tinadec-code-native(.exe)` or the path in `TINADEC_CODE_NATIVE_BIN`; if it is missing, Code falls back to TypeScript stubs.
-- `native/codex-src` is reserved for the pinned Codex upstream subtree and is intentionally gitignored until imported.
-
-This machine uses D-drive Rust storage:
-
-- `RUSTUP_HOME=D:\tools\rust\rustup`
-- `CARGO_HOME=D:\tools\rust\cargo`
-- `C:\Users\USER154971\.rustup` is a junction to `D:\tools\rust\rustup`
-- `C:\Users\USER154971\.cargo` is a junction to `D:\tools\rust\cargo`
-
-The junctions keep tools that hard-code the user profile paths working while their actual downloads, registry cache, git cache, and toolchains stay on D.
-
-Build native glue after installing Rust:
-
-```powershell
-npm run build:native
-```
-
-On Windows, the repo script uses the `stable-x86_64-pc-windows-gnullvm` Rust toolchain with `rust-lld` from `D:\tools\rust`, avoiding a dependency on C-drive Visual Studio Build Tools. Keep `RUSTUP_HOME=D:\tools\rust\rustup` and `CARGO_HOME=D:\tools\rust\cargo` for this machine.
-
-The current local Codex upstream is `D:\github\CodeX Rust`, commit `14953023471159aaed89f360c0f3da2346cb4bc0`. `native/glue/code-native` already uses `codex-file-search` from that checkout for the `search_files` tool.
-
-If this workspace later vendors Codex instead of using the local checkout, import upstream only with an explicit commit:
-
-```powershell
-git subtree add --prefix native/codex-src https://github.com/openai/codex.git <commit-sha> --squash
-```
-
-Then replace the glue implementations incrementally while keeping the existing Core/Code DTOs and `/api/v1/code/tools/*/execute` contracts stable.
