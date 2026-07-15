@@ -125,9 +125,9 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 
-// Background management — backgroundSettings is a singleton shared with
+// Background management 鈥?backgroundSettings is a singleton shared with
 // App.vue (which renders the background layer globally).  The setters below
-// are used by the Settings → Appearance section.
+// are used by the Settings 鈫?Appearance section.
 const {
 settings: backgroundSettings,
 setBackgroundType,
@@ -519,12 +519,12 @@ function centerDiagnosticLabel(diagnostic: CenterDiagnosticDto) {
   if (diagnostic.code === 'CORE_CAPABILITY_UNAVAILABLE') {
     return t('settings.optionalCapabilityUnavailable', {
       source: diagnostic.source ?? 'Core',
-      status: diagnostic.status ?? '-'
+      status: diagnostic.status ?? '鈥?
     })
   }
   if (diagnostic.code === 'LEGACY_SHARED_ROUTE') {
     return t('settings.sharedRouteDiagnostic', {
-      purpose: diagnostic.route_purpose ?? '-',
+      purpose: diagnostic.route_purpose ?? '鈥?,
       count: diagnostic.agent_ids?.length ?? 0
     })
   }
@@ -1282,19 +1282,19 @@ loadPromptContextCenter()
             <div class="model-health-metrics">
               <div>
                 <span>{{ t('settings.readyProvidersMetric') }}</span>
-                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '-' }}</strong>
+                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '鈥? }}</strong>
               </div>
               <div :class="{ attention: (modelReadiness?.blocked_route_count ?? 0) > 0 }">
                 <span>{{ t('settings.blockedRoutesMetric') }}</span>
-                <strong>{{ modelReadiness?.blocked_route_count ?? '-' }}</strong>
+                <strong>{{ modelReadiness?.blocked_route_count ?? '鈥? }}</strong>
               </div>
               <div>
                 <span>{{ t('settings.readyTemplatesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '-' }}</strong>
+                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '鈥? }}</strong>
               </div>
               <div>
                 <span>{{ t('settings.runtimeModulesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '-' }}</strong>
+                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '鈥? }}</strong>
               </div>
             </div>
             <div v-if="modelReadiness && modelReadiness.status !== 'ready'" class="model-health-alert">
