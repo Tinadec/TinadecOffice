@@ -12,6 +12,12 @@ import { findTemplate, type ProviderCategory, type ProviderTemplate } from './pr
 
 export type ModelCenterSection = 'suppliers' | 'api' | 'models' | 'cli' | 'acp'
 
+const supplierPresentationAliases = new Map<string, string>([
+  ['local-http', 'custom'],
+  ['local-http-openai-compatible', 'openai-compatible'],
+  ['local-http-ollama', 'ollama']
+])
+
 function uniqueProviders(providers: ModelProviderInstanceDto[]) {
   const byId = new Map<string, ModelProviderInstanceDto>()
   for (const provider of providers) byId.set(provider.id, provider)
@@ -100,7 +106,8 @@ function categoryForSupplier(supplier: ModelCenterSupplierDto): ProviderCategory
 }
 
 export function providerTemplateFromSupplier(supplier: ModelCenterSupplierDto): ProviderTemplate {
-  const presentation = findTemplate(supplier.driver)
+  const presentationAlias = supplierPresentationAliases.get(supplier.driver)
+  const presentation = findTemplate(supplier.driver) ?? (presentationAlias ? findTemplate(presentationAlias) : undefined)
   const cliLike = supplier.transport_kind === 'cli' || supplier.transport_kind === 'acp'
   const apiKey = ['api-key', 'api_key'].includes(supplier.credential_kind)
   const local = supplier.transport_kind === 'local_http'
