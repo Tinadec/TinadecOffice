@@ -1,14 +1,25 @@
 <Solution>
   <Project Path="TinadecTools.Generators/TinadecTools.Generators.csproj" />
-  <Folder Name="/src/">
-    <Project Path="src/Tinadec.Contracts/Tinadec.Contracts.csproj" />
-    <Project Path="src/TinadecModel/TinadecModel.csproj" />
-    <Project Path="src/TinadecCore/TinadecCore.csproj" />
+  <Project Path="TinadecTools/TinadecTools.csproj" />
+  <Folder Name="/TinadecCore/">
+    <Project Path="TinadecCore/Contracts/TinadecCore.Contracts.csproj" />
+    <Project Path="TinadecCore/Abstractions/TinadecCore.Abstractions.csproj" />
+    <Project Path="TinadecCore/Strategies/TinadecCore.Strategies.fsproj" />
+    <Project Path="TinadecCore/DmaEA/TinadecCore.DmaEA.csproj" />
+    <Project Path="TinadecCore/Models/TinadecCore.Models.csproj" />
+    <Project Path="TinadecCore/Context/TinadecCore.Context.csproj" />
+    <Project Path="TinadecCore/Prompts/TinadecCore.Prompts.csproj" />
+    <Project Path="TinadecCore/Memory/TinadecCore.Memory.csproj" />
+    <Project Path="TinadecCore/Skills/TinadecCore.Skills.csproj" />
+    <Project Path="TinadecCore/LoopGuard/TinadecCore.LoopGuard.csproj" />
+    <Project Path="TinadecCore/Lifecycle/TinadecCore.Lifecycle.csproj" />
+    <Project Path="TinadecCore/Runtime/TinadecCore.Runtime.csproj" />
+    <Project Path="TinadecCore/Api/TinadecCore.Api.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/TinadecCore.Tests/TinadecCore.Tests.csproj" />
-    <Project Path="tests/Tinadec.Contracts.Tests/Tinadec.Contracts.Tests.csproj" />
+    <Project Path="TinadecCore/tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj" />
+    <Project Path="TinadecCore/tests/TinadecCore.AgentFramework.Tests/TinadecCore.AgentFramework.Tests.csproj" />
+    <Project Path="TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj" />
     <Project Path="tests/TinadecTools.Tests/TinadecTools.Tests.csproj" />
   </Folder>
-  <Project Path="TinadecTools/TinadecTools.csproj" />
 </Solution>

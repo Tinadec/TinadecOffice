@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Strategies\TinadecCore.Strategies.fsproj" />
+    <ProjectReference Include="..\..\DmaEA\TinadecCore.DmaEA.csproj" />
+    <ProjectReference Include="..\..\Models\TinadecCore.Models.csproj" />
+    <ProjectReference Include="..\..\LoopGuard\TinadecCore.LoopGuard.csproj" />
+    <ProjectReference Include="..\..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\..\Runtime\TinadecCore.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

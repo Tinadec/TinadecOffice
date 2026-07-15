@@ -1,0 +1,12 @@
+# Bun configuration for TinadecGateway
+
+[install]
+# Use bun.lock for dependency resolution
+exact = false
+auto = true
+
+[test]
+# Bun test runner configuration
+coverage = false
+# Only run tests from src/ to avoid picking up stale dist/ artifacts
+root = "src"
