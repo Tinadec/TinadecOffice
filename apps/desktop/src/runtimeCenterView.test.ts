@@ -12,6 +12,7 @@ import {
   providersFromOverview,
   runtimeSourceSummary
 } from './runtimeCenterView'
+import { findTemplate } from './providerTemplates'
 
 const provider: ModelProviderInstanceDto = {
   id: 'provider-http',
@@ -26,6 +27,30 @@ const provider: ModelProviderInstanceDto = {
   status_message: '',
   created_at: '2026-07-13T00:00:00Z',
   updated_at: '2026-07-13T00:00:00Z'
+}
+
+const localHttpSupplier: ModelCenterSupplierDto = {
+  supplier_id: 'local-http',
+  provider_family: 'local-http',
+  driver: 'local-http',
+  display_name: 'Local HTTP',
+  connection_kind: 'http',
+  summary: 'Local runtime',
+  contributor_description: '',
+  transport_kind: 'local_http',
+  credential_kind: 'none',
+  default_base_url: 'http://127.0.0.1:9000/v1',
+  default_model: 'default',
+  default_timeout_seconds: 120,
+  capabilities: {
+    supports_streaming: true,
+    supports_tools: false,
+    supports_json_mode: false,
+    supports_system_prompt: true,
+    requires_workspace: false,
+    credential_kind: 'none',
+    health_status: 'unknown'
+  }
 }
 
 function overview(): ModelCenterOverviewDto {
@@ -153,6 +178,20 @@ describe('runtime center view', () => {
     const template = providerTemplateFromSupplier(supplier)
     expect(template.fields).toMatchObject({ binary_path: true, home_path: true, launch_args: true })
     expect(template.capabilities).toContain('workspace')
+  })
+
+  it.each([
+    ['local-http', 'custom'],
+    ['local-http-openai-compatible', 'openai-compatible'],
+    ['local-http-ollama', 'ollama']
+  ])('maps %s to existing %s presentation metadata', (driver, presentationDriver) => {
+    const template = providerTemplateFromSupplier({
+      ...localHttpSupplier,
+      supplier_id: driver,
+      driver
+    })
+
+    expect(template.icon).toBe(findTemplate(presentationDriver)?.icon)
   })
 
   it('reports shared legacy route impact without changing the binding', () => {
