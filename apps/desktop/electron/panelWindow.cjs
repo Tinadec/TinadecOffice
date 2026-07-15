@@ -174,7 +174,7 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
     y,
     backgroundColor: '#0d1117',
     title: title || 'Panel',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec-logo.png'),
+    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
     frame: false,
     autoHideMenuBar: true,
     show: false,

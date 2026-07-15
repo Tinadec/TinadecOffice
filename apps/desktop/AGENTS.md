@@ -39,6 +39,7 @@ apps/desktop/
 
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.
+- Windows system surfaces use `public/tinadec.ico`: main, Debug Studio, and detached `BrowserWindow` instances must reference it in both dev and built `dist`; keep `app.setAppUserModelId('com.tinadec.office')` for taskbar grouping.
 - Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window).
 - No Pinia/store layer exists; use composables and local refs.
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.

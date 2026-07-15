@@ -20,6 +20,10 @@ const {
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.tinadec.office');
+}
+
 // When GPU compositing is unavailable (e.g. sandboxed environments that
 // block disk cache), transparent windows fail to render.  Setting
 // TINADEC_DISABLE_TRANSPARENCY=1 falls back to an opaque frameless window
@@ -37,7 +41,7 @@ async function createWindow() {
     transparent: !noTransparency,
     backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
     title: 'TinadecOffice',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec-logo.png'),
+    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
     frame: false,
     autoHideMenuBar: true,
     show: false,

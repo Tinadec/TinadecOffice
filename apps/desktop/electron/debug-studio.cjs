@@ -22,7 +22,7 @@ async function createDebugStudioWindow() {
     minHeight: 600,
     backgroundColor: '#0d1117',
     title: 'Agent Debug Studio',
-    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec-logo.png'),
+    icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
     frame: false,
     autoHideMenuBar: true,
     show: false,
