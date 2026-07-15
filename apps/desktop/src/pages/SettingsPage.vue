@@ -125,9 +125,9 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 
-// Background management 鈥?backgroundSettings is a singleton shared with
+// Background management — backgroundSettings is a singleton shared with
 // App.vue (which renders the background layer globally).  The setters below
-// are used by the Settings 鈫?Appearance section.
+// are used by the Settings → Appearance section.
 const {
 settings: backgroundSettings,
 setBackgroundType,
@@ -519,12 +519,12 @@ function centerDiagnosticLabel(diagnostic: CenterDiagnosticDto) {
   if (diagnostic.code === 'CORE_CAPABILITY_UNAVAILABLE') {
     return t('settings.optionalCapabilityUnavailable', {
       source: diagnostic.source ?? 'Core',
-      status: diagnostic.status ?? '鈥?
+      status: diagnostic.status ?? '—'
     })
   }
   if (diagnostic.code === 'LEGACY_SHARED_ROUTE') {
     return t('settings.sharedRouteDiagnostic', {
-      purpose: diagnostic.route_purpose ?? '鈥?,
+      purpose: diagnostic.route_purpose ?? '—',
       count: diagnostic.agent_ids?.length ?? 0
     })
   }
@@ -1104,14 +1104,14 @@ function connectionKindLabel(kind: string) {
 
 function agentTypeLabel(type: string) {
   const map: Record<string, string> = {
-    // Layer 1 路 Planning 涓诲姩鏅鸿兘浣?
+    // Layer 1 · Planning 主动智能体
     meeting: t('settings.agentTypeMeeting'),
     'context-compressor': t('settings.agentTypeContextCompressor'),
     evolver: t('settings.agentTypeEvolver'),
     'tool-assistant': t('settings.agentTypeToolAssistant'),
     supervisor: t('settings.agentTypeSupervisor'),
     'skill-learner': t('settings.agentTypeSkillLearner'),
-    // Layer 2 路 Execution 琚姩鎵ц绫绘櫤鑳戒綋
+    // Layer 2 · Execution 被动执行类智能体
     'task-planner': t('settings.agentTypeTaskPlanner'),
     'test-multimodal': t('settings.agentTypeTestMultimodal'),
     'code-explorer': t('settings.agentTypeCodeExplorer'),
@@ -1282,19 +1282,19 @@ loadPromptContextCenter()
             <div class="model-health-metrics">
               <div>
                 <span>{{ t('settings.readyProvidersMetric') }}</span>
-                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '鈥? }}</strong>
+                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '—' }}</strong>
               </div>
               <div :class="{ attention: (modelReadiness?.blocked_route_count ?? 0) > 0 }">
                 <span>{{ t('settings.blockedRoutesMetric') }}</span>
-                <strong>{{ modelReadiness?.blocked_route_count ?? '鈥? }}</strong>
+                <strong>{{ modelReadiness?.blocked_route_count ?? '—' }}</strong>
               </div>
               <div>
                 <span>{{ t('settings.readyTemplatesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '鈥? }}</strong>
+                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '—' }}</strong>
               </div>
               <div>
                 <span>{{ t('settings.runtimeModulesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '鈥? }}</strong>
+                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '—' }}</strong>
               </div>
             </div>
             <div v-if="modelReadiness && modelReadiness.status !== 'ready'" class="model-health-alert">
@@ -1333,12 +1333,12 @@ loadPromptContextCenter()
                   </div>
                   <UiBadge :variant="readinessVariant(modelReadiness.status)">{{ readinessStatusLabel(modelReadiness.status) }}</UiBadge>
                 </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} 路 {{ modelReadiness.generated_at }}</p>
+                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelReadiness.generated_at }}</p>
                 <div class="model-diagnostic-list">
                   <strong>{{ t('settings.blockedRoutes') }}</strong>
                   <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
                     <span v-for="route in blockedModelRoutes" :key="route.purpose">
-                      {{ route.purpose }} 路 {{ route.provider_display_name ?? route.provider_instance_id }}
+                      {{ route.purpose }} · {{ route.provider_display_name ?? route.provider_instance_id }}
                     </span>
                   </div>
                   <span v-else class="quiet">{{ t('settings.noBlockedRoutes') }}</span>
@@ -1355,14 +1355,14 @@ loadPromptContextCenter()
                   </div>
                   <UiBadge :variant="readinessVariant(modelCatalogReadiness.status)">{{ readinessStatusLabel(modelCatalogReadiness.status) }}</UiBadge>
                 </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} 路 {{ modelCatalogReadiness.generated_at }}</p>
+                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelCatalogReadiness.generated_at }}</p>
                 <div class="model-diagnostic-list">
                   <strong>{{ t('settings.catalogWarnings') }}</strong>
                   <div v-if="warningCatalogTemplates.length > 0" class="catalog-readiness-rows">
                     <div v-for="template in warningCatalogTemplates" :key="template.driver" class="catalog-readiness-row">
                       <div>
                         <strong>{{ template.display_name }}</strong>
-                        <span>{{ template.runtime_module_family }} 路 {{ template.live_discovery_policy }}</span>
+                        <span>{{ template.runtime_module_family }} · {{ template.live_discovery_policy }}</span>
                       </div>
                       <UiBadge :variant="readinessVariant(template.status)">{{ template.runtime_module_status }}</UiBadge>
                     </div>
@@ -1404,7 +1404,7 @@ loadPromptContextCenter()
                   <span class="provider-brand-icon" :style="{ color: brandColor(supplier.driver), background: brandBg(supplier.driver) }" v-html="supplierTemplates.get(supplier.driver)?.icon ?? ''"></span>
                   <div>
                     <strong>{{ supplier.display_name }}</strong>
-                    <span>{{ supplier.provider_family }} 路 {{ supplier.driver }}</span>
+                    <span>{{ supplier.provider_family }} · {{ supplier.driver }}</span>
                   </div>
                   <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)!.status)">
                     {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)!.status) }}
@@ -1483,7 +1483,7 @@ loadPromptContextCenter()
                   <Terminal :size="17" />
                   <div>
                     <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ runtime.driver }} 路 {{ runtime.runtime_id }}</span>
+                    <span>{{ runtime.driver }} · {{ runtime.runtime_id }}</span>
                   </div>
                 </div>
                 <div class="center-resource-paths">
@@ -1525,7 +1525,7 @@ loadPromptContextCenter()
                   <Workflow :size="17" />
                   <div>
                     <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ acpRuntimeSourceLabel(runtime.source) }} 路 {{ runtime.runtime_id }}</span>
+                    <span>{{ acpRuntimeSourceLabel(runtime.source) }} · {{ runtime.runtime_id }}</span>
                   </div>
                 </div>
                 <div class="center-resource-meta">
@@ -1631,7 +1631,7 @@ loadPromptContextCenter()
                     </UiButton>
                   </div>
                   <span class="model-provider-mobile-meta">
-                    {{ connectionKindLabel(row.connection_kind) }} 路 {{ row.model || row.driver }}
+                    {{ connectionKindLabel(row.connection_kind) }} · {{ row.model || row.driver }}
                   </span>
                 </div>
 
@@ -1641,7 +1641,7 @@ loadPromptContextCenter()
                     <span class="provider-detail-logo" :style="{ background: brandBg(row.provider.driver), borderColor: brandColor(row.provider.driver) + '30' }" v-html="row.template?.icon ?? ''"></span>
                     <div class="provider-detail-info">
                       <strong>{{ row.provider.display_name }}</strong>
-                      <span class="provider-detail-driver">{{ row.provider.driver }} 路 {{ connectionKindLabel(row.provider.connection_kind) }}</span>
+                      <span class="provider-detail-driver">{{ row.provider.driver }} · {{ connectionKindLabel(row.provider.connection_kind) }}</span>
                     </div>
                     <UiBadge :variant="statusVariant(row.provider.status)">
                       <Circle :size="8" />
@@ -1852,7 +1852,7 @@ loadPromptContextCenter()
                 <div>
                   <span>{{ t('settings.gitManagerRouteTitle') }}</span>
                   <strong>{{ runtimeSourceSummary(agentRuntimeBindings[gitManagerAgent.id]) || t('settings.runtimeUnresolved') }}</strong>
-                  <p>{{ gitManagerMode?.display_name ?? agentModeLabel(gitManagerAgent.mode) }} 路 {{ gitManagerAgent.model_route_purpose }}</p>
+                  <p>{{ gitManagerMode?.display_name ?? agentModeLabel(gitManagerAgent.mode) }} · {{ gitManagerAgent.model_route_purpose }}</p>
                 </div>
               </div>
               <div class="git-manager-metric">
@@ -1912,7 +1912,7 @@ loadPromptContextCenter()
                   </div>
                   <div class="agent-card-main">
                     <strong>{{ agent.name }}</strong>
-                    <span>{{ agentTypeLabel(agent.agent_type) }} 路 {{ agentModeLabel(agent.mode) }}</span>
+                    <span>{{ agentTypeLabel(agent.agent_type) }} · {{ agentModeLabel(agent.mode) }}</span>
                     <small>{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
@@ -1942,7 +1942,7 @@ loadPromptContextCenter()
                   </div>
                   <div class="agent-card-main">
                     <strong>{{ agent.name }}</strong>
-                    <span>{{ agentTypeLabel(agent.agent_type) }} 路 {{ agentModeLabel(agent.mode) }}</span>
+                    <span>{{ agentTypeLabel(agent.agent_type) }} · {{ agentModeLabel(agent.mode) }}</span>
                     <small>{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
@@ -1963,15 +1963,15 @@ loadPromptContextCenter()
                   <component :is="configuringAgent.layer === 'planning' ? Workflow : Cpu" :size="20" />
                 </div>
                 <div>
-                  <h3>{{ t('settings.agentConfiguration') }} 路 {{ configuringAgent.name }}</h3>
-                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} 路 {{ agentLayerLabel(configuringAgent.layer) }}</p>
+                  <h3>{{ t('settings.agentConfiguration') }} · {{ configuringAgent.name }}</h3>
+                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} · {{ agentLayerLabel(configuringAgent.layer) }}</p>
                 </div>
                 <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="configuringAgentId = ''">
                   <X :size="16" />
                 </UiButton>
               </div>
 
-              <!-- 鍚敤寮€鍏?-->
+              <!-- 启用开关 -->
               <div class="agent-config-switch">
                 <div>
                   <strong>{{ t('settings.agentEnabled') }}</strong>
@@ -1984,7 +1984,7 @@ loadPromptContextCenter()
                 />
               </div>
 
-              <!-- 杩愯妯″紡 -->
+              <!-- 运行模式 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentModeTitle') }}</div>
                 <div class="agent-mode-grid">
@@ -1999,7 +1999,7 @@ loadPromptContextCenter()
                     <span>{{ mode.summary }}</span>
                     <small>
                       {{ t('settings.parallelExecutors') }} {{ mode.max_parallel_executors }}
-                      路 {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
+                      · {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
                     </small>
                   </button>
                 </div>
@@ -2007,12 +2007,12 @@ loadPromptContextCenter()
                   <ShieldCheck :size="16" />
                   <span>
                     {{ configuredAgentMode.approval_required ? t('settings.approvalGateOn') : t('settings.approvalGateOff') }}
-                    路 {{ configuredAgentMode.budget_policy }}
+                    · {{ configuredAgentMode.budget_policy }}
                   </span>
                 </div>
               </div>
 
-              <!-- 杩愯鏉ユ簮 -->
+              <!-- 运行来源 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentRuntimeSource') }}</div>
                 <div class="agent-detail-grid">
@@ -2075,7 +2075,7 @@ loadPromptContextCenter()
                   <select v-model="agentRuntimeModelKey" class="settings-select">
                     <option value="" disabled>{{ t('settings.selectModel') }}</option>
                     <option v-for="model in filteredRuntimeModels" :key="model.id" :value="modelOptionKey(model.provider_instance_id, model.model_id)">
-                      {{ model.model_id }} 路 {{ model.provider_display_name ?? model.provider_instance_id }} 路 {{ statusLabel(model.status) }}
+                      {{ model.model_id }} · {{ model.provider_display_name ?? model.provider_instance_id }} · {{ statusLabel(model.status) }}
                     </option>
                   </select>
                   <p v-if="filteredRuntimeModels.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
@@ -2089,7 +2089,7 @@ loadPromptContextCenter()
                   <select v-model="agentRuntimeProviderId" class="settings-select">
                     <option value="" disabled>{{ t('settings.selectProvider') }}</option>
                     <option v-for="provider in filteredRuntimeProviders" :key="provider.provider_instance_id" :value="provider.provider_instance_id">
-                      {{ provider.display_name }} 路 {{ statusLabel(provider.status) }}
+                      {{ provider.display_name }} · {{ statusLabel(provider.status) }}
                     </option>
                   </select>
                   <p v-if="filteredRuntimeProviders.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
@@ -2104,7 +2104,7 @@ loadPromptContextCenter()
                   <select v-model="agentRuntimeCliId" class="settings-select">
                     <option value="" disabled>{{ t('settings.selectCliRuntime') }}</option>
                     <option v-for="runtime in filteredRuntimeCliOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} 路 {{ statusLabel(runtime.status) }}
+                      {{ runtime.display_name }} · {{ statusLabel(runtime.status) }}
                     </option>
                   </select>
                   <p v-if="filteredRuntimeCliOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
@@ -2118,7 +2118,7 @@ loadPromptContextCenter()
                   <select v-model="agentRuntimeAcpId" class="settings-select">
                     <option value="" disabled>{{ t('settings.selectAcpRuntime') }}</option>
                     <option v-for="runtime in filteredRuntimeAcpOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} 路 {{ acpRuntimeSourceLabel(runtime.source) }} 路 {{ statusLabel(runtime.status) }}
+                      {{ runtime.display_name }} · {{ acpRuntimeSourceLabel(runtime.source) }} · {{ statusLabel(runtime.status) }}
                     </option>
                   </select>
                   <p v-if="filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
@@ -2143,7 +2143,7 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 鎻忚堪 -->
+              <!-- 描述 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentDescription') }}</div>
                 <div class="settings-field">
@@ -2156,7 +2156,7 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 宸ュ叿缁戝畾 -->
+              <!-- 工具绑定 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentTools') }}</div>
                 <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
@@ -2177,14 +2177,14 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 鑳藉姏鏍囩 -->
+              <!-- 能力标签 -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentCapabilities') }}</div>
                 <p class="agent-config-hint">{{ t('settings.agentCapabilitiesHint') }}</p>
                 <div class="agent-capability-list">
                   <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
                     {{ cap }}
-                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">脳</button>
+                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">×</button>
                   </span>
                 </div>
                 <div class="agent-cap-add-row">
@@ -2210,7 +2210,7 @@ loadPromptContextCenter()
                 </div>
               </div>
 
-              <!-- 淇濆瓨鎸夐挳 -->
+              <!-- 保存按钮 -->
               <div class="agent-save-bar">
                 <UiButton :disabled="busy" @click="saveAgentProfile">
                   <Save :size="14" />
@@ -2231,7 +2231,7 @@ loadPromptContextCenter()
                 <div class="agent-candidate-head">
                   <div>
                     <strong>{{ candidate.name }}</strong>
-                    <span>{{ agentLayerLabel(candidate.layer) }} 路 {{ agentTypeLabel(candidate.agent_type) }} 路 {{ candidate.status }}</span>
+                    <span>{{ agentLayerLabel(candidate.layer) }} · {{ agentTypeLabel(candidate.agent_type) }} · {{ candidate.status }}</span>
                   </div>
                   <UiBadge variant="secondary">{{ t('settings.generatedByEvolution') }}</UiBadge>
                 </div>
@@ -2512,7 +2512,7 @@ loadPromptContextCenter()
 
           <div v-if="harnessManifest" class="provider-status-note harness-manifest-note">
             <ShieldCheck :size="14" />
-            <span>{{ harnessManifest.runtime }} 路 {{ harnessManifest.ownership_model }}</span>
+            <span>{{ harnessManifest.runtime }} · {{ harnessManifest.ownership_model }}</span>
           </div>
 
           <section v-if="toolLayerReadiness" class="tool-layer-readiness-panel">
@@ -2552,7 +2552,7 @@ loadPromptContextCenter()
               >
                 <div>
                   <strong>{{ tool.display_name }}</strong>
-                  <span>{{ tool.source }} 路 {{ tool.provider_layer }} 路 {{ tool.risk }}</span>
+                  <span>{{ tool.source }} · {{ tool.provider_layer }} · {{ tool.risk }}</span>
                 </div>
                 <UiBadge :variant="readinessVariant(tool.status)">{{ tool.status }}</UiBadge>
               </div>
@@ -2563,7 +2563,7 @@ loadPromptContextCenter()
               >
                 <div>
                   <strong>{{ agent.agent_name }}</strong>
-                  <span>{{ agent.dispatchable_tool_count }} tools 路 {{ agent.unresolved_scope_count }} unresolved</span>
+                  <span>{{ agent.dispatchable_tool_count }} tools · {{ agent.unresolved_scope_count }} unresolved</span>
                 </div>
                 <UiBadge :variant="readinessVariant(agent.status)">{{ agent.status }}</UiBadge>
               </div>
@@ -2643,7 +2643,7 @@ loadPromptContextCenter()
                 <span class="harness-panel-title">{{ provider.display_name }}</span>
                 <UiBadge :variant="provider.status === 'active' ? 'secondary' : 'outline'">{{ provider.status }}</UiBadge>
               </div>
-              <p class="harness-panel-meta">{{ provider.layer }} 路 {{ provider.source }}</p>
+              <p class="harness-panel-meta">{{ provider.layer }} · {{ provider.source }}</p>
               <div class="harness-panel-stats">
                 <span>{{ t('settings.toolsCount') }} {{ provider.tool_count }}</span>
                 <span>{{ t('settings.approvalCount') }} {{ provider.approval_required_count }}</span>
@@ -2668,7 +2668,7 @@ loadPromptContextCenter()
               :class="{ risky: risk.requires_human_checkpoint }"
             >
               <span class="agent-tool-name">{{ risk.risk }}</span>
-              <span class="agent-tool-risk">{{ risk.tool_count }} 路 {{ risk.policy_summary }}</span>
+              <span class="agent-tool-risk">{{ risk.tool_count }} · {{ risk.policy_summary }}</span>
             </button>
           </div>
 
@@ -2705,7 +2705,7 @@ loadPromptContextCenter()
               :class="{ risky: result.requires_human_checkpoint }"
             >
               <span class="tool-discovery-title">{{ result.tool.display_name }}</span>
-              <span class="tool-discovery-meta">{{ result.tool.source }} 路 {{ result.provider_layer }} 路 {{ result.tool.risk }}</span>
+              <span class="tool-discovery-meta">{{ result.tool.source }} · {{ result.provider_layer }} · {{ result.tool.risk }}</span>
               <span class="tool-discovery-meta">{{ result.approval_summary }}</span>
               <span class="tool-discovery-fields">
                 {{ t('settings.matchedFields') }} {{ result.matched_fields.join(', ') }}
@@ -2737,7 +2737,7 @@ loadPromptContextCenter()
               class="agent-tool-chip"
             >
               <span class="agent-tool-name">{{ template.name }}</span>
-              <span class="agent-tool-risk">{{ template.language }} 路 {{ template.package_manager }}</span>
+              <span class="agent-tool-risk">{{ template.language }} · {{ template.package_manager }}</span>
             </button>
           </div>
 
@@ -2750,7 +2750,7 @@ loadPromptContextCenter()
             >
               <span class="agent-tool-name">{{ tool.display_name }}</span>
               <span class="agent-tool-risk">
-                {{ tool.requires_approval ? t('settings.approvalRequired') : t('settings.readOnlyTool') }} 路 {{ tool.risk }}
+                {{ tool.requires_approval ? t('settings.approvalRequired') : t('settings.readOnlyTool') }} · {{ tool.risk }}
               </span>
             </button>
           </div>
@@ -2769,7 +2769,7 @@ loadPromptContextCenter()
               :class="{ risky: tool.requires_approval }"
             >
               <span class="agent-tool-name">{{ tool.display_name }}</span>
-              <span class="agent-tool-risk">{{ tool.source }} 路 {{ tool.risk }}</span>
+              <span class="agent-tool-risk">{{ tool.source }} · {{ tool.risk }}</span>
             </button>
           </div>
         </template>
@@ -3001,7 +3001,7 @@ loadPromptContextCenter()
               :class="['lang-option', { active: locale === 'zh-CN' }]"
               @click="setLocale('zh-CN')"
             >
-              涓枃
+              中文
             </UiButton>
             <UiButton
               variant="outline"
