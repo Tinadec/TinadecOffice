@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TinadecCore.Lifecycle</RootNamespace>
+    <Description>Lifecycle: run/task/agent/tool/approval state and audit events.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\Strategies\TinadecCore.Strategies.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.Abstractions" />
+  </ItemGroup>
+
+</Project>

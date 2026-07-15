@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TinadecCore.Prompts</RootNamespace>
+    <Description>Prompts: deterministic assembly of fragments, agent instructions, and skill contributions.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\Strategies\TinadecCore.Strategies.fsproj" />
+  </ItemGroup>
+
+</Project>

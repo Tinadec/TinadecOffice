@@ -1,0 +1,52 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Agent Framework (MAF) – locked to 1.13.0 stable -->
+    <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.13.0" />
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.13.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.13.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.13.0" />
+
+    <!-- Microsoft.Extensions.AI – stable -->
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.0" />
+
+    <!-- ASP.NET Core -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.6.6" />
+
+    <!-- Microsoft.Extensions (runtime packages use 10.0.x versioning, separate from AI packages) -->
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.10" />
+
+    <!-- OpenTelemetry -->
+    <PackageVersion Include="OpenTelemetry" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+
+    <!-- F# core -->
+    <PackageVersion Include="FSharp.Core" Version="9.0.303" />
+
+    <!-- Testing -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
