@@ -109,7 +109,7 @@ function openDebugStudio() {
   <aside class="sidebar" :style="panelStyle" v-bind="panelDataAttrs">
     <div class="sidebar-topbar">
       <div class="brand">
-        <BrandLogo :size="18" />
+        <BrandLogo :size="14" />
         <span>Tinadec</span>
       </div>
     </div>

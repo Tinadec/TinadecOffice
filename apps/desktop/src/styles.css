@@ -1591,7 +1591,7 @@ box-shadow: var(--shadow-subtle);
   gap: 12px;
   padding: 0 12px;
   height: 40px;
-  background: var(--bg-tertiary);
+  background: transparent;
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -2225,9 +2225,9 @@ border-radius: 8px 8px 0 0;
 }
 
 .sidebar-divider {
-  height: 1px;
+  height: 0;
   margin: 0 12px;
-  background: var(--border-muted);
+  background: transparent;
 }
 
 .sidebar-list {
