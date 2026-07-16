@@ -1,10 +1,15 @@
 <Solution>
-  <Project Path="TinadecTools.Generators/TinadecTools.Generators.csproj" />
-  <Project Path="TinadecTools/TinadecTools.csproj" />
-  <Folder Name="/TinadecCore/">
+  <Folder Name="/tools/">
+    <Project Path="TinadecTools.Generators/TinadecTools.Generators.csproj" />
+    <Project Path="TinadecTools/TinadecTools.csproj" />
+  </Folder>
+  <Folder Name="/TinadecCore/foundation/">
     <Project Path="TinadecCore/Contracts/TinadecCore.Contracts.csproj" />
     <Project Path="TinadecCore/Abstractions/TinadecCore.Abstractions.csproj" />
+    <Project Path="TinadecCore/Persistence/TinadecCore.Persistence.csproj" />
     <Project Path="TinadecCore/Strategies/TinadecCore.Strategies.fsproj" />
+  </Folder>
+  <Folder Name="/TinadecCore/modules/">
     <Project Path="TinadecCore/DmaEA/TinadecCore.DmaEA.csproj" />
     <Project Path="TinadecCore/Models/TinadecCore.Models.csproj" />
     <Project Path="TinadecCore/Context/TinadecCore.Context.csproj" />
@@ -13,6 +18,8 @@
     <Project Path="TinadecCore/Skills/TinadecCore.Skills.csproj" />
     <Project Path="TinadecCore/LoopGuard/TinadecCore.LoopGuard.csproj" />
     <Project Path="TinadecCore/Lifecycle/TinadecCore.Lifecycle.csproj" />
+  </Folder>
+  <Folder Name="/TinadecCore/host/">
     <Project Path="TinadecCore/Runtime/TinadecCore.Runtime.csproj" />
     <Project Path="TinadecCore/Api/TinadecCore.Api.csproj" />
   </Folder>

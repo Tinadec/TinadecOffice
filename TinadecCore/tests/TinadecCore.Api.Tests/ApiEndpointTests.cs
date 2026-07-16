@@ -137,6 +137,13 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(root.TryGetProperty("status", out var status));
         Assert.Equal("warning", status.GetString());
 
+        // Storage receipt (shared database abstraction)
+        Assert.True(root.TryGetProperty("storage", out var storage));
+        Assert.True(storage.TryGetProperty("provider", out var storageProvider));
+        Assert.Equal("sqlite", storageProvider.GetString());
+        Assert.True(storage.TryGetProperty("state", out var storageState));
+        Assert.Equal("ready", storageState.GetString());
+
         // Modules
         Assert.True(root.TryGetProperty("modules", out var modules));
         var moduleList = modules.EnumerateArray().ToList();

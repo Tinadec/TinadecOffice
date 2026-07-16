@@ -1,8 +1,11 @@
 <Solution>
-  <Folder Name="/src/">
+  <Folder Name="/src/foundation/">
     <Project Path="Contracts/TinadecCore.Contracts.csproj" />
     <Project Path="Abstractions/TinadecCore.Abstractions.csproj" />
+    <Project Path="Persistence/TinadecCore.Persistence.csproj" />
     <Project Path="Strategies/TinadecCore.Strategies.fsproj" />
+  </Folder>
+  <Folder Name="/src/modules/">
     <Project Path="DmaEA/TinadecCore.DmaEA.csproj" />
     <Project Path="Models/TinadecCore.Models.csproj" />
     <Project Path="Context/TinadecCore.Context.csproj" />
@@ -11,6 +14,8 @@
     <Project Path="Skills/TinadecCore.Skills.csproj" />
     <Project Path="LoopGuard/TinadecCore.LoopGuard.csproj" />
     <Project Path="Lifecycle/TinadecCore.Lifecycle.csproj" />
+  </Folder>
+  <Folder Name="/src/host/">
     <Project Path="Runtime/TinadecCore.Runtime.csproj" />
     <Project Path="Api/TinadecCore.Api.csproj" />
   </Folder>

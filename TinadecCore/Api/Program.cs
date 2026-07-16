@@ -3,6 +3,7 @@ using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Api.Endpoints;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Persistence;
 using TinadecCore.Runtime;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.DefaultIgnoreCondition =
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
 });
+
+// Shared database abstraction (SQLite default; PostgreSQL optional) before business modules.
+builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environment.ContentRootPath);
 
 // Register all TinadecCore modules.
 builder.Services.AddTinadecCore();
@@ -101,19 +105,31 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
 // ============================================================
 // GET /api/v1/readiness — MAF assemblies loadable = ready; unconfigured modules use warning
 // ============================================================
-app.MapGet("/api/v1/readiness", (ITinadecCoreBuilder coreBuilder) =>
+app.MapGet("/api/v1/readiness", async (
+    ITinadecCoreBuilder coreBuilder,
+    IDatabaseReadiness databaseReadiness,
+    CancellationToken cancellationToken) =>
 {
     var modules = coreBuilder.GetRegisteredModules();
-    var moduleDtos = modules.Select(m => m.ToDto()).ToList();
+    var storageProbe = await databaseReadiness.ProbeAsync(cancellationToken).ConfigureAwait(false);
+    var storage = new ReadinessStorageDto
+    {
+        Provider = storageProbe.Provider,
+        State = storageProbe.StateName,
+        Detail = storageProbe.Detail
+    };
 
-    var hasWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
+    var hasModuleWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
+    var hasStorageWarning = storageProbe.State != DatabaseReadinessState.Ready;
+    var status = hasModuleWarnings || hasStorageWarning ? "warning" : "ready";
 
     var response = new ReadinessResponseDto
     {
-        Status = hasWarnings ? "warning" : "ready",
+        Status = status,
         FrameworkReady = true,
         FrameworkName = "Microsoft Agent Framework",
         FrameworkVersion = "1.13.0",
+        Storage = storage,
         Modules = modules.Select(m => new ReadinessModuleDto
         {
             ModuleId = m.ModuleId,
