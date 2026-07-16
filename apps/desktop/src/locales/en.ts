@@ -653,6 +653,11 @@ retry: 'Retry',
     bgVideoFormats: 'Supported formats: MP4, WebM',
     bgHtmlHint: 'HTML content will be rendered as background, no interaction supported',
     bgPerformanceWarning: 'Complex backgrounds may affect performance',
+
+    // Module boundary
+    moduleLoading: 'Loading settings\u2026',
+    moduleError: 'This section failed to load.',
+    retryModule: 'Retry loading',
   },
   providers: {
     openaiCompatible: 'OpenAI Compatible',

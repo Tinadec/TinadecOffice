@@ -653,6 +653,11 @@ retry: '重试',
     bgVideoFormats: '支持格式：MP4、WebM',
     bgHtmlHint: 'HTML内容将作为背景渲染，不支持交互',
     bgPerformanceWarning: '复杂的背景可能影响性能',
+
+    // Module boundary
+    moduleLoading: '正在加载设置\u2026',
+    moduleError: '此部分加载失败。',
+    retryModule: '重新加载',
   },
   providers: {
     openaiCompatible: 'OpenAI 兼容',

@@ -1245,6 +1245,8 @@ function readinessStatusLabel(status: string) {
 loadModelCenter()
 loadAgentCenter()
 loadPromptContextCenter()
+
+import '../settings/settings.css'
 </script>
 
 <template>
@@ -1596,8 +1598,8 @@ loadPromptContextCenter()
                     <strong>{{ supplier.display_name }}</strong>
                     <span>{{ supplier.provider_family }} · {{ supplier.driver }}</span>
                   </div>
-                  <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)?.status !== 'ready'" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)!.status)">
-                    {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)!.status) }}
+                  <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)?.status !== 'ready'" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown')">
+                    {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown') }}
                   </UiBadge>
                 </div>
                 <p>{{ supplierSummary(supplier) }}</p>
