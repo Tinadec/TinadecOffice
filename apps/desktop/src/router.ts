@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { settingsRouteChildren } from './pages/settings/settingsRoutes'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -10,8 +11,9 @@ const router = createRouter({
     },
     {
       path: '/settings',
-      name: 'settings',
-      component: () => import('./pages/SettingsPage.vue'),
+      component: () => import('./pages/settings/SettingsLayout.vue'),
+      redirect: { name: 'settings-model' },
+      children: settingsRouteChildren,
     },
     {
       path: '/market',

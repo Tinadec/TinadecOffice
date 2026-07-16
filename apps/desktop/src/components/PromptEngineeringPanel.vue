@@ -5,6 +5,7 @@ import {
   FileText,
   GitBranch,
   History,
+  Info,
   Plus,
   RefreshCw,
   ThumbsDown,
@@ -21,8 +22,11 @@ import {
   type PromptFragmentVersionDto
 } from '../api'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
+import { useDialogFocus } from '@/composables/useDialogFocus'
+import { useSettingsLabels } from '@/pages/settings/settingsLabels'
 
 const { t } = useI18n()
+const { settingsErrorLabel } = useSettingsLabels()
 
 const fragments = ref<PromptFragmentDto[]>([])
 const effectivenessList = ref<PromptFragmentEffectivenessDto[]>([])
@@ -50,6 +54,12 @@ const compareResult = ref<PromptFragmentAbTestResultDto | null>(null)
 
 // Rollback confirm
 const confirmRollbackVersion = ref<number | null>(null)
+const {
+  closeDialog: closeNewVersionDialog,
+  dialogRef: newVersionDialogRef,
+  onDialogKeydown: onNewVersionDialogKeydown,
+  openDialog: focusNewVersionDialog
+} = useDialogFocus(() => { showNewVersion.value = false })
 
 const selectedFragment = computed(() =>
   fragments.value.find((f) => f.id === selectedFragmentId.value) ?? null
@@ -131,6 +141,11 @@ function openNewVersion() {
   newVersionContent.value = selectedFragment.value?.content ?? ''
   newVersionChangedFields.value = 'content'
   newVersionSummary.value = ''
+  focusNewVersionDialog()
+}
+
+function closeNewVersion() {
+  closeNewVersionDialog()
 }
 
 async function createVersion() {
@@ -144,9 +159,9 @@ async function createVersion() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
-      change_summary: newVersionSummary.value || 'Updated content'
+      change_summary: newVersionSummary.value || t('settings.promptDefaultChangeSummary')
     })
-    showNewVersion.value = false
+    closeNewVersion()
     await selectFragment(selectedFragment.value)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -219,28 +234,30 @@ onMounted(() => {
   <section class="prompt-engineering-panel">
     <div class="pe-header">
       <div>
-        <h2><FileText :size="18" /> Prompt Engineering</h2>
-        <p>Version snapshots, A/B testing, and effectiveness tracking for prompt fragments.</p>
+        <h1><FileText :size="18" /> {{ t('settings.promptEngineeringTitle') }}</h1>
+        <p>{{ t('settings.promptEngineeringSubtitle') }}</p>
       </div>
       <UiButton variant="outline" size="sm" :disabled="loading" @click="loadAll">
         <RefreshCw :size="14" />
-        <span>Refresh</span>
+        <span>{{ t('settings.refresh') }}</span>
       </UiButton>
     </div>
 
-    <div v-if="error" class="pe-error">
-      <span>{{ error }}</span>
+    <div v-if="error" class="center-message error">
+      <Info :size="16" />
+      <span>{{ settingsErrorLabel(error) }}</span>
+      <UiButton variant="outline" size="sm" @click="loadAll">{{ t('settings.retry') }}</UiButton>
     </div>
 
-    <div class="pe-layout">
+    <div v-if="!error || fragments.length > 0" class="pe-layout">
       <!-- Fragment list -->
       <div class="pe-fragment-list">
         <div class="pe-list-header">
-          <h3>Fragments</h3>
+          <h2>{{ t('settings.promptFragmentsList') }}</h2>
           <UiBadge variant="outline">{{ fragments.length }}</UiBadge>
         </div>
-        <p v-if="loading" class="quiet">Loading…</p>
-        <p v-else-if="fragments.length === 0" class="quiet">No fragments found.</p>
+        <p v-if="loading" class="quiet">{{ t('settings.promptLoading') }}</p>
+        <p v-else-if="fragments.length === 0" class="quiet">{{ t('settings.promptNoFragments') }}</p>
         <button
           v-for="fragment in fragments"
           :key="fragment.id"
@@ -256,24 +273,24 @@ onMounted(() => {
           </div>
           <span class="pe-fragment-meta">
             {{ fragment.scope }} / {{ fragment.category }}
-            <template v-if="fragment.is_builtin"> / built-in</template>
+            <template v-if="fragment.is_builtin"> / {{ t('settings.promptBuiltinLabel') }}</template>
           </span>
         </button>
       </div>
 
       <!-- Detail panel -->
       <div class="pe-detail">
-        <p v-if="!selectedFragment" class="quiet">Select a fragment to view versions and effectiveness.</p>
+        <p v-if="!selectedFragment" class="quiet">{{ t('settings.promptSelectFragment') }}</p>
         <template v-else>
           <UiCard class="pe-detail-card">
             <template #content>
               <div class="pe-detail-head">
                 <div>
-                  <h3>{{ selectedFragment.title }}</h3>
+                  <h2>{{ selectedFragment.title }}</h2>
                   <p>{{ selectedFragment.key }} · {{ selectedFragment.scope }} / {{ selectedFragment.category }}</p>
                 </div>
                 <UiBadge :variant="selectedFragment.enabled ? 'default' : 'secondary'">
-                  {{ selectedFragment.enabled ? 'enabled' : 'disabled' }}
+                  {{ selectedFragment.enabled ? t('settings.enabled') : t('settings.promptDisabled') }}
                 </UiBadge>
               </div>
 
@@ -281,35 +298,35 @@ onMounted(() => {
                 <div class="pe-metric">
                   <Activity :size="14" />
                   <div>
-                    <span>Effectiveness</span>
+                    <span>{{ t('settings.promptEffectiveness') }}</span>
                     <strong>{{ (effectiveness.effectiveness_score * 100).toFixed(0) }}%</strong>
                   </div>
                 </div>
                 <div class="pe-metric">
                   <History :size="14" />
                   <div>
-                    <span>Active Version</span>
+                    <span>{{ t('settings.promptActiveVersion') }}</span>
                     <strong>v{{ effectiveness.active_version }}</strong>
                   </div>
                 </div>
                 <div class="pe-metric">
                   <ThumbsUp :size="14" />
                   <div>
-                    <span>Positive Signals</span>
+                    <span>{{ t('settings.promptPositiveSignals') }}</span>
                     <strong>{{ effectiveness.positive_signals }}</strong>
                   </div>
                 </div>
                 <div class="pe-metric">
                   <ThumbsDown :size="14" />
                   <div>
-                    <span>Negative Signals</span>
+                    <span>{{ t('settings.promptNegativeSignals') }}</span>
                     <strong>{{ effectiveness.negative_signals }}</strong>
                   </div>
                 </div>
                 <div class="pe-metric">
                   <FileText :size="14" />
                   <div>
-                    <span>Total Invocations</span>
+                    <span>{{ t('settings.promptTotalInvocations') }}</span>
                     <strong>{{ effectiveness.total_invocations }}</strong>
                   </div>
                 </div>
@@ -319,11 +336,11 @@ onMounted(() => {
                 <div class="pe-section-head">
                   <div class="pe-section-title">
                     <GitBranch :size="14" />
-                    <span>Current Content</span>
+                    <span>{{ t('settings.promptCurrentContent') }}</span>
                   </div>
                   <UiButton size="sm" variant="outline" @click="openNewVersion">
                     <Plus :size="14" />
-                    <span>New Version</span>
+                    <span>{{ t('settings.promptNewVersion') }}</span>
                   </UiButton>
                 </div>
                 <textarea
@@ -342,11 +359,11 @@ onMounted(() => {
               <div class="pe-section-head">
                 <div class="pe-section-title">
                   <History :size="14" />
-                  <span>Version History</span>
+                  <span>{{ t('settings.promptVersionHistory') }}</span>
                 </div>
                 <UiBadge variant="outline">{{ versions.length }}</UiBadge>
               </div>
-              <p v-if="versions.length === 0" class="quiet">No version snapshots yet. Create one to start tracking.</p>
+              <p v-if="versions.length === 0" class="quiet">{{ t('settings.promptNoVersions') }}</p>
               <div v-else class="pe-version-list">
                 <div
                   v-for="version in sortedVersions"
@@ -357,7 +374,7 @@ onMounted(() => {
                   <div class="pe-version-main">
                     <div class="pe-version-head">
                       <strong>v{{ version.version }}</strong>
-                      <UiBadge v-if="version.is_active" variant="default">active</UiBadge>
+                      <UiBadge v-if="version.is_active" variant="default">{{ t('settings.promptActive') }}</UiBadge>
                       <span class="pe-version-date">{{ formatDate(version.created_at) }}</span>
                     </div>
                     <p class="pe-version-summary">{{ version.change_summary }}</p>
@@ -367,11 +384,11 @@ onMounted(() => {
                   </div>
                   <div class="pe-version-actions">
                     <template v-if="confirmRollbackVersion === version.version">
-                      <span class="pe-confirm-text">Rollback to v{{ version.version }}?</span>
+                      <span class="pe-confirm-text">{{ t('settings.promptRollbackQuestion', { version: version.version }) }}</span>
                       <UiButton size="sm" variant="destructive" :disabled="busy" @click="rollbackVersion(version.version)">
-                        Confirm
+                        {{ t('settings.promptConfirm') }}
                       </UiButton>
-                      <UiButton size="sm" variant="ghost" @click="confirmRollbackVersion = null">Cancel</UiButton>
+                      <UiButton size="sm" variant="ghost" @click="confirmRollbackVersion = null">{{ t('settings.cancel') }}</UiButton>
                     </template>
                     <template v-else>
                       <UiButton
@@ -379,11 +396,11 @@ onMounted(() => {
                         size="sm"
                         variant="ghost"
                         :disabled="busy"
-                        :title="`Rollback to v${version.version}`"
+                        :title="t('settings.promptRollbackTo', { version: version.version })"
                         @click="confirmRollbackVersion = version.version"
                       >
                         <Undo2 :size="14" />
-                        <span>Rollback</span>
+                        <span>{{ t('settings.promptRollback') }}</span>
                       </UiButton>
                     </template>
                   </div>
@@ -397,32 +414,32 @@ onMounted(() => {
             <template #content>
               <div class="pe-section-title">
                 <Activity :size="14" />
-                <span>Record Signal</span>
+                <span>{{ t('settings.promptRecordSignal') }}</span>
               </div>
-              <p class="pe-hint">Track effectiveness by recording positive/negative signals for this fragment.</p>
+              <p class="pe-hint">{{ t('settings.promptSignalHint') }}</p>
               <div class="pe-signal-form">
                 <div class="pe-signal-field">
-                  <UiLabel>Version (optional)</UiLabel>
+                  <UiLabel>{{ t('settings.promptVersionOptional') }}</UiLabel>
                   <select v-model="signalVersion" class="pe-select">
-                    <option :value="null">Active version</option>
+                    <option :value="null">{{ t('settings.promptActiveVersionOption') }}</option>
                     <option v-for="version in versions" :key="version.id" :value="version.version">
-                      v{{ version.version }}{{ version.is_active ? ' (active)' : '' }}
+                      v{{ version.version }}{{ version.is_active ? ` (${t('settings.promptActive')})` : '' }}
                     </option>
                   </select>
                 </div>
                 <div class="pe-signal-field pe-signal-note">
-                  <UiLabel>Note (optional)</UiLabel>
-                  <UiInput v-model="signalNote" placeholder="context for this signal" />
+                  <UiLabel>{{ t('settings.promptNoteOptional') }}</UiLabel>
+                  <UiInput v-model="signalNote" :placeholder="t('settings.promptSignalPlaceholder')" />
                 </div>
               </div>
               <div class="pe-signal-actions">
                 <UiButton variant="outline" size="sm" :disabled="busy" @click="recordSignal('positive')">
                   <ThumbsUp :size="14" />
-                  <span>Positive</span>
+                  <span>{{ t('settings.promptPositive') }}</span>
                 </UiButton>
                 <UiButton variant="outline" size="sm" :disabled="busy" @click="recordSignal('negative')">
                   <ThumbsDown :size="14" />
-                  <span>Negative</span>
+                  <span>{{ t('settings.promptNegative') }}</span>
                 </UiButton>
               </div>
             </template>
@@ -433,47 +450,47 @@ onMounted(() => {
             <template #content>
               <div class="pe-section-title">
                 <ArrowLeftRight :size="14" />
-                <span>A/B Compare</span>
+                <span>{{ t('settings.promptCompareTitle') }}</span>
               </div>
-              <p class="pe-hint">Compare effectiveness scores between two versions.</p>
+              <p class="pe-hint">{{ t('settings.promptCompareHint') }}</p>
               <div class="pe-compare-form">
                 <div class="pe-signal-field">
-                  <UiLabel>Version A</UiLabel>
+                  <UiLabel>{{ t('settings.promptVersionA') }}</UiLabel>
                   <select v-model="compareVersionA" class="pe-select">
                     <option v-for="version in versions" :key="version.id" :value="version.version">v{{ version.version }}</option>
                   </select>
                 </div>
                 <div class="pe-signal-field">
-                  <UiLabel>Version B</UiLabel>
+                  <UiLabel>{{ t('settings.promptVersionB') }}</UiLabel>
                   <select v-model="compareVersionB" class="pe-select">
                     <option v-for="version in versions" :key="version.id" :value="version.version">v{{ version.version }}</option>
                   </select>
                 </div>
                 <UiButton size="sm" :disabled="busy || compareVersionA === compareVersionB" @click="compareVersions">
                   <ArrowLeftRight :size="14" />
-                  <span>Compare</span>
+                  <span>{{ t('settings.promptCompare') }}</span>
                 </UiButton>
               </div>
 
               <div v-if="compareResult" class="pe-compare-result">
                 <div class="pe-compare-grid">
                   <div class="pe-compare-cell">
-                    <span>Version A (v{{ compareResult.version_a }})</span>
+                    <span>{{ t('settings.promptVersionA') }} (v{{ compareResult.version_a }})</span>
                     <strong>{{ (compareResult.score_a * 100).toFixed(0) }}%</strong>
                   </div>
                   <div class="pe-compare-cell">
-                    <span>Version B (v{{ compareResult.version_b }})</span>
+                    <span>{{ t('settings.promptVersionB') }} (v{{ compareResult.version_b }})</span>
                     <strong>{{ (compareResult.score_b * 100).toFixed(0) }}%</strong>
                   </div>
                   <div class="pe-compare-cell">
-                    <span>Difference</span>
+                    <span>{{ t('settings.promptDifference') }}</span>
                     <strong :class="compareResult.score_difference >= 0 ? 'positive' : 'negative'">
                       {{ compareResult.score_difference >= 0 ? '+' : '' }}{{ (compareResult.score_difference * 100).toFixed(0) }}%
                     </strong>
                   </div>
                 </div>
                 <p class="pe-compare-recommendation">
-                  <strong>Recommendation:</strong> {{ compareResult.recommendation }}
+                  <strong>{{ t('settings.promptRecommendation') }}</strong> {{ compareResult.recommendation }}
                 </p>
               </div>
             </template>
@@ -483,15 +500,16 @@ onMounted(() => {
     </div>
 
     <!-- Effectiveness overview -->
-    <UiCard class="pe-overview-card">
+    <UiCard v-if="!error || fragments.length > 0" class="pe-overview-card">
       <template #content>
         <div class="pe-section-title">
           <Activity :size="14" />
-          <span>Effectiveness Overview</span>
+          <span>{{ t('settings.promptEffectivenessOverview') }}</span>
         </div>
-        <p v-if="sortedEffectivenessList.length === 0" class="quiet">No effectiveness data yet.</p>
+        <p v-if="sortedEffectivenessList.length === 0" class="quiet">{{ t('settings.promptNoEffectiveness') }}</p>
         <div v-else class="pe-overview-grid">
-          <div
+          <button
+            type="button"
             v-for="eff in sortedEffectivenessList"
             :key="eff.fragment_id"
             class="pe-overview-row"
@@ -499,7 +517,7 @@ onMounted(() => {
           >
             <div class="pe-overview-name">
               <strong>{{ fragments.find((f) => f.id === eff.fragment_id)?.title ?? eff.fragment_id }}</strong>
-              <span>v{{ eff.active_version }} · {{ eff.total_invocations }} invocations</span>
+              <span>v{{ eff.active_version }} · {{ t('settings.promptInvocationCount', { count: eff.total_invocations }) }}</span>
             </div>
             <div class="pe-overview-score">
               <div class="pe-score-bar">
@@ -517,29 +535,30 @@ onMounted(() => {
               <span class="positive"><ThumbsUp :size="12" /> {{ eff.positive_signals }}</span>
               <span class="negative"><ThumbsDown :size="12" /> {{ eff.negative_signals }}</span>
             </div>
-          </div>
+          </button>
         </div>
       </template>
     </UiCard>
 
     <!-- New version modal -->
     <Transition name="modal-fade">
-      <div v-if="showNewVersion" class="pe-modal" @click.self="showNewVersion = false">
+      <div v-if="showNewVersion" class="pe-modal" @click.self="closeNewVersion">
+        <div ref="newVersionDialogRef" role="dialog" aria-modal="true" aria-labelledby="prompt-new-version-title" tabindex="-1" @keydown="onNewVersionDialogKeydown">
         <UiCard class="pe-modal-content">
           <template #header>
             <div class="pe-modal-header">
-              <h3>New Version Snapshot</h3>
-              <UiButton variant="ghost" size="icon" @click="showNewVersion = false">
+              <h2 id="prompt-new-version-title">{{ t('settings.promptNewSnapshot') }}</h2>
+              <UiButton variant="ghost" size="icon" :aria-label="t('app.close')" @click="closeNewVersion">
                 <span>×</span>
               </UiButton>
             </div>
           </template>
           <template #content>
             <p class="pe-modal-subtitle">
-              Create a versioned snapshot for <strong>{{ selectedFragment?.title }}</strong>.
+              {{ t('settings.promptSnapshotDescription', { name: selectedFragment?.title }) }}
             </p>
             <div class="pe-modal-section">
-              <UiLabel>Content</UiLabel>
+              <UiLabel>{{ t('settings.promptContent') }}</UiLabel>
               <textarea
                 v-model="newVersionContent"
                 class="pe-content-textarea"
@@ -547,24 +566,25 @@ onMounted(() => {
               ></textarea>
             </div>
             <div class="pe-modal-section">
-              <UiLabel>Changed Fields (comma-separated)</UiLabel>
-              <UiInput v-model="newVersionChangedFields" placeholder="content, priority, enabled" />
+              <UiLabel>{{ t('settings.promptChangedFields') }}</UiLabel>
+              <UiInput v-model="newVersionChangedFields" :placeholder="t('settings.promptChangedFieldsPlaceholder')" />
             </div>
             <div class="pe-modal-section">
-              <UiLabel>Change Summary</UiLabel>
-              <UiInput v-model="newVersionSummary" placeholder="brief description of this change" />
+              <UiLabel>{{ t('settings.promptChangeSummary') }}</UiLabel>
+              <UiInput v-model="newVersionSummary" :placeholder="t('settings.promptChangeSummaryPlaceholder')" />
             </div>
           </template>
           <template #footer>
             <div class="modal-actions">
-              <UiButton variant="outline" @click="showNewVersion = false">Cancel</UiButton>
+              <UiButton variant="outline" @click="closeNewVersion">{{ t('settings.cancel') }}</UiButton>
               <UiButton :disabled="busy || !newVersionContent.trim()" @click="createVersion">
                 <Plus :size="14" />
-                <span>Create Version</span>
+                <span>{{ t('settings.promptCreateVersion') }}</span>
               </UiButton>
             </div>
           </template>
         </UiCard>
+        </div>
       </div>
     </Transition>
   </section>
@@ -582,24 +602,19 @@ onMounted(() => {
   align-items: flex-start;
   gap: 12px;
 }
-.pe-header h2 {
+.pe-header h1 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 4px;
-  font-size: 18px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
 }
 .pe-header p {
   margin: 0;
-  color: var(--text-muted, #888);
-  font-size: 13px;
-}
-.pe-error {
-  padding: 8px 12px;
-  background: rgba(255, 99, 99, 0.1);
-  border: 1px solid rgba(255, 99, 99, 0.3);
-  border-radius: 6px;
-  color: var(--accent-danger, #ff6363);
+  color: var(--text-muted);
   font-size: 13px;
 }
 .pe-layout {
@@ -622,7 +637,7 @@ onMounted(() => {
   gap: 8px;
   margin-bottom: 4px;
 }
-.pe-list-header h3 {
+.pe-list-header h2 {
   margin: 0;
   font-size: 13px;
 }
@@ -631,8 +646,8 @@ onMounted(() => {
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
   cursor: pointer;
   text-align: left;
@@ -640,11 +655,11 @@ onMounted(() => {
   transition: border-color 0.15s;
 }
 .pe-fragment-card:hover {
-  border-color: var(--accent-primary, #58a6ff);
+  border-color: var(--accent-primary);
 }
 .pe-fragment-card.active {
-  border-color: var(--accent-primary, #58a6ff);
-  background: rgba(88, 166, 255, 0.08);
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 .pe-fragment-head {
   display: flex;
@@ -657,7 +672,7 @@ onMounted(() => {
 }
 .pe-fragment-meta {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-detail {
   display: flex;
@@ -674,14 +689,14 @@ onMounted(() => {
   gap: 12px;
   margin-bottom: 12px;
 }
-.pe-detail-head h3 {
+.pe-detail-head h2 {
   margin: 0;
   font-size: 16px;
 }
 .pe-detail-head p {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-metrics {
   display: grid;
@@ -694,13 +709,13 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
 }
 .pe-metric span {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   display: block;
 }
 .pe-metric strong {
@@ -721,15 +736,15 @@ onMounted(() => {
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .pe-content-textarea {
   width: 100%;
   padding: 8px 10px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  background: var(--bg-input);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
   color: inherit;
   font-size: 12px;
@@ -747,13 +762,13 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
 }
 .pe-version-row.active {
-  border-color: var(--accent-success, #2ec4b6);
-  background: rgba(46, 196, 182, 0.06);
+  border-color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 6%, transparent);
 }
 .pe-version-head {
   display: flex;
@@ -766,12 +781,12 @@ onMounted(() => {
 }
 .pe-version-date {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-version-summary {
   margin: 0 0 4px;
   font-size: 12px;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
 }
 .pe-version-fields {
   display: flex;
@@ -780,7 +795,7 @@ onMounted(() => {
 }
 .pe-version-field {
   padding: 1px 6px;
-  background: rgba(88, 166, 255, 0.1);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   border-radius: 3px;
   font-size: 10px;
   font-family: var(--font-mono, monospace);
@@ -793,12 +808,12 @@ onMounted(() => {
 }
 .pe-confirm-text {
   font-size: 12px;
-  color: var(--accent-danger, #ff6363);
+  color: var(--accent-danger);
 }
 .pe-hint {
   margin: 4px 0 10px;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-signal-form {
   display: grid;
@@ -814,8 +829,8 @@ onMounted(() => {
 .pe-select {
   height: 32px;
   padding: 0 8px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  background: var(--bg-input);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
   color: inherit;
   font-size: 13px;
@@ -833,8 +848,8 @@ onMounted(() => {
 }
 .pe-compare-result {
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
 }
 .pe-compare-grid {
@@ -850,21 +865,21 @@ onMounted(() => {
 }
 .pe-compare-cell span {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-compare-cell strong {
   font-size: 18px;
 }
 .pe-compare-cell strong.positive {
-  color: var(--accent-success, #2ec4b6);
+  color: var(--accent-success);
 }
 .pe-compare-cell strong.negative {
-  color: var(--accent-danger, #ff6363);
+  color: var(--accent-danger);
 }
 .pe-compare-recommendation {
   margin: 0;
   font-size: 12px;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
 }
 .pe-overview-card :deep(.ui-card-content) {
   padding: 16px 18px;
@@ -875,19 +890,23 @@ onMounted(() => {
   gap: 6px;
 }
 .pe-overview-row {
+  width: 100%;
   display: grid;
   grid-template-columns: 1fr 200px auto;
   gap: 12px;
   align-items: center;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
   cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   transition: border-color 0.15s;
 }
 .pe-overview-row:hover {
-  border-color: var(--accent-primary, #58a6ff);
+  border-color: var(--accent-primary);
 }
 .pe-overview-name strong {
   font-size: 13px;
@@ -895,7 +914,7 @@ onMounted(() => {
 }
 .pe-overview-name span {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .pe-overview-score {
   display: flex;
@@ -905,22 +924,21 @@ onMounted(() => {
 .pe-score-bar {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border-radius: 3px;
   overflow: hidden;
 }
 .pe-score-fill {
   height: 100%;
-  transition: width 0.3s ease;
 }
 .pe-score-fill.high {
-  background: var(--accent-success, #2ec4b6);
+  background: var(--accent-success);
 }
 .pe-score-fill.mid {
-  background: var(--accent-warning, #f0a020);
+  background: var(--accent-warning);
 }
 .pe-score-fill.low {
-  background: var(--accent-danger, #ff6363);
+  background: var(--accent-danger);
 }
 .pe-overview-signals {
   display: flex;
@@ -928,13 +946,13 @@ onMounted(() => {
   font-size: 11px;
 }
 .pe-overview-signals .positive {
-  color: var(--accent-success, #2ec4b6);
+  color: var(--accent-success);
   display: flex;
   align-items: center;
   gap: 3px;
 }
 .pe-overview-signals .negative {
-  color: var(--accent-danger, #ff6363);
+  color: var(--accent-danger);
   display: flex;
   align-items: center;
   gap: 3px;
@@ -942,7 +960,7 @@ onMounted(() => {
 .pe-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -960,14 +978,14 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
 }
-.pe-modal-header h3 {
+.pe-modal-header h2 {
   margin: 0;
   font-size: 16px;
 }
 .pe-modal-subtitle {
   margin: 0 0 14px;
   font-size: 13px;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
 }
 .pe-modal-section {
   margin-bottom: 14px;
@@ -981,7 +999,7 @@ onMounted(() => {
   gap: 8px;
 }
 .quiet {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 13px;
 }
 .modal-fade-enter-active,
@@ -991,5 +1009,40 @@ onMounted(() => {
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-fade-enter-active,
+  .modal-fade-leave-active {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .pe-layout,
+  .pe-signal-form,
+  .pe-compare-form,
+  .pe-compare-grid,
+  .pe-overview-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pe-fragment-list {
+    max-height: none;
+    min-width: 0;
+  }
+
+  .pe-detail,
+  .pe-version-main,
+  .pe-overview-name {
+    min-width: 0;
+  }
+
+  .pe-version-row,
+  .pe-version-actions,
+  .pe-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 </style>

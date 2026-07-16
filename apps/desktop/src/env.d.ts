@@ -103,6 +103,7 @@ declare global {
     tinadec: {
       gatewayUrl: () => string;
       openProjectDialog: () => Promise<string | null>;
+      selectBackgroundFile: (type: string) => Promise<string | null>;
       minimizeWindow: () => void;
       maximizeWindow: () => void;
       closeWindow: () => void;

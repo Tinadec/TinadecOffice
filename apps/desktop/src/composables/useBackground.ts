@@ -76,7 +76,7 @@ export function normalizeFileSource(source: string): string {
  */
 async function selectBackgroundFile(type: BackgroundType): Promise<string | null> {
   // Check if Electron API is available
-  const tinadec = (window as any).tinadec
+  const { tinadec } = window
   if (!tinadec?.selectBackgroundFile) {
     console.warn('Electron file dialog API not available')
     return null

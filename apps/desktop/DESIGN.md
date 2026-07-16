@@ -52,12 +52,27 @@ Rules:
 
 - Base unit: 4px.
 - Main center width: 1180px maximum, fluid below it.
-- Settings shell: 220px navigation plus a flexible work surface.
+- Settings shell: 232px grouped navigation plus a flexible routed work surface.
 - Center rhythm: 8px compact, 12px control, 16px group, 24px major separation.
 - Corners: 6px controls, 8px panels and repeated resource cards. Pills are status/count-only.
-- The settings navigation becomes horizontal at 900px. Center inspectors remain beside their resource surface above 700px and collapse below it.
+- The settings navigation becomes a labeled native mobile navigator below 900px; labels are never hidden. Center inspectors remain beside their resource surface above 700px and collapse below it.
+- The renderer supports a 320px CSS viewport even when Electron enforces a larger production window minimum.
 
 ## 5. Components
+
+### Settings Route Shell
+- Structure: window chrome, back action, product identity, grouped desktop navigation, labeled mobile navigator, and nested route outlet.
+- Variants: desktop rail above 900px; mobile command row and native destination select below 900px.
+- States: default, hover, focus-visible, active route, narrow viewport.
+- Accessibility: one settings `nav` landmark; active links expose `aria-current="page"`; the mobile selector has a visible label; Chinese and English labels remain visible and may wrap.
+- Motion: route content uses the existing 280ms opacity/transform transition; navigation state uses the standard 180ms transition.
+
+### Settings Page Frame
+- Structure: page header with title and supporting copy followed by one or more domain sections.
+- Variants: standard 760px reading width, wide 1180px workbench, edge-to-edge documentation frame.
+- States: loading, populated, degraded, empty, error, read-only preview.
+- Accessibility: one `h1` per route, sequential section headings, status messages expose text, and the main region is programmatically named.
+- Motion: no decorative entry motion; only route transition and interactive feedback.
 
 ### Center Workbench
 - Structure: compact command bar, low-height overview receipt, resource rail, contextual inspector, and compact diagnostics.
@@ -102,6 +117,12 @@ Rules:
 - States: editable, busy, disabled, validation/notice.
 - Accessibility: labels precede inputs; destructive actions stay visually isolated.
 
+### Settings Destination Row
+- Structure: line icon, translated label, optional translated description, and current-route marker.
+- States: default, hover, active, focus-visible.
+- Accessibility: full-row link target, minimum 40px touch height below 900px, and no icon-only destination state.
+- Motion: standard background/color transition only.
+
 ## 6. Motion & Interaction
 
 | Type | Duration | Easing | Usage |
@@ -130,6 +151,7 @@ Strategy: mixed tonal shift plus hairline boundaries.
 - Every interactive element has a visible `:focus-visible` treatment.
 - Touch targets are at least 32px in the desktop shell and 40px on narrow layouts.
 - Chinese and English labels must wrap without overlapping controls.
+- Every settings destination and page heading must exist in both locale bundles; locale changes persist across reloads.
 - Runtime binding preview must never look successfully persisted while `agent_runtime_binding_write=false`.
 
 ### Accepted Debt

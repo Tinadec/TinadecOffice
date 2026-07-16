@@ -15,6 +15,7 @@
       "DOM.Iterable"
     ],
     "types": [
+      "node",
       "vite/client",
       "vitest/globals"
     ],
