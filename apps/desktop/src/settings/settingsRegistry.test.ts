@@ -45,6 +45,11 @@ describe('settings registry', () => {
     ])
   })
 
+  it('exposes immutable metadata rather than a mutable registry singleton', () => {
+    expect(Object.isFrozen(SETTINGS_METADATA)).toBe(true)
+    expect(SETTINGS_METADATA.every(Object.isFrozen)).toBe(true)
+  })
+
   it('does not invoke injected loaders while creating the registry', () => {
     // Given a complete loader map whose calls are observable
     const loader = vi.fn(async () => ({ name: 'FakeSettingsPage' }))
