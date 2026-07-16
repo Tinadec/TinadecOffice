@@ -9,7 +9,7 @@ const props = defineProps<Props>()
 </script>
 
 <template>
-  <div :class="cn('rounded-lg border bg-card text-card-foreground shadow', props.class)">
+  <div :class="cn('rounded-xl border bg-card text-card-foreground shadow', props.class)">
     <div v-if="$slots.header" class="card-header">
       <slot name="header" />
     </div>
@@ -27,13 +27,13 @@ const props = defineProps<Props>()
 <style scoped>
 .card-header {
   padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default, rgba(255,255,255,0.08));
 }
 .card-content {
   padding: 16px 20px;
 }
 .card-footer {
   padding: 12px 20px 16px;
-  border-top: 1px solid var(--border-default);
+  border-top: 1px solid var(--border-default, rgba(255,255,255,0.08));
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronRight, Cpu, Dna, Info, Sparkles, ThumbsDown, Workflow, X } from '@lucide/vue'
+import { Check, ChevronRight, Cpu, Dna, Sparkles, ThumbsDown, Workflow, X } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -10,11 +10,8 @@ import {
   type PromoteAgentCandidateInput
 } from '../api'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
-import { useDialogFocus } from '@/composables/useDialogFocus'
-import { useSettingsLabels } from '@/pages/settings/settingsLabels'
 
 const { t } = useI18n()
-const { settingsErrorLabel } = useSettingsLabels()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
 const agents = ref<AgentProfileDto[]>([])
@@ -40,12 +37,6 @@ const promoteForm = ref<PromoteAgentCandidateInput>({
 })
 const promoteToolInput = ref('')
 const promoteCapabilityInput = ref('')
-const {
-  closeDialog: closePromoteDialog,
-  dialogRef: promoteDialogRef,
-  onDialogKeydown: onPromoteDialogKeydown,
-  openDialog: focusPromoteDialog
-} = useDialogFocus(() => { showPromotePanel.value = '' })
 
 const selectedProposal = computed(() =>
   proposals.value.find((p) => p.id === selectedProposalId.value) ?? null
@@ -70,10 +61,10 @@ function confidenceVariant(score: number): 'default' | 'secondary' | 'destructiv
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    proposed: t('settings.evolutionStatusProposed'),
-    promoted: t('settings.evolutionStatusPromoted'),
-    rejected: t('settings.evolutionStatusRejected'),
-    evaluating: t('settings.evolutionStatusEvaluating')
+    proposed: 'Proposed',
+    promoted: 'Promoted',
+    rejected: 'Rejected',
+    evaluating: 'Evaluating'
   }
   return map[status] ?? status
 }
@@ -141,11 +132,10 @@ function openPromotePanel(proposal: AgentEvolutionProposalDto) {
   }
   promoteToolInput.value = ''
   promoteCapabilityInput.value = ''
-  focusPromoteDialog()
 }
 
 function closePromotePanel() {
-  closePromoteDialog()
+  showPromotePanel.value = ''
 }
 
 function addPromoteTool() {
@@ -181,7 +171,7 @@ async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
   try {
     await api.promoteAgentCandidate(proposal.id, promoteForm.value)
     await loadProposals()
-    closePromotePanel()
+    showPromotePanel.value = ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -213,49 +203,50 @@ onMounted(() => {
   <section class="agent-evolution-panel">
     <div class="evolution-header">
       <div>
-        <h1><Dna :size="18" /> {{ t('settings.evolutionTitle') }}</h1>
-        <p>{{ t('settings.evolutionSubtitle') }}</p>
+        <h2><Dna :size="18" /> Agent Evolution</h2>
+        <p>Heuristically generate agent candidates from observed workflow patterns.</p>
       </div>
       <UiButton variant="outline" size="sm" :disabled="loading" @click="loadProposals">
         <Sparkles :size="14" />
-        <span>{{ t('settings.refresh') }}</span>
+        <span>Refresh</span>
       </UiButton>
     </div>
 
-    <UiCard v-if="!error || proposals.length > 0" class="evolution-generate-card">
+    <UiCard class="evolution-generate-card">
       <template #content>
         <div class="evolution-generate-row">
           <div class="evolution-generate-field">
-            <UiLabel>{{ t('settings.evolutionSessionId') }}</UiLabel>
-            <UiInput v-model="generateSessionId" :placeholder="t('settings.evolutionSessionPlaceholder')" />
+            <UiLabel>Session ID (optional)</UiLabel>
+            <UiInput v-model="generateSessionId" placeholder="session id for pattern mining" />
           </div>
           <div class="evolution-generate-field">
-            <UiLabel>{{ t('settings.evolutionLookback') }}</UiLabel>
+            <UiLabel>Lookback Events</UiLabel>
             <UiInput v-model.number="generateLookback" type="number" placeholder="200" />
           </div>
           <UiButton :disabled="busy" @click="generateProposals">
             <Dna :size="14" />
-            <span>{{ t('settings.evolutionGenerate') }}</span>
+            <span>Generate Proposals</span>
           </UiButton>
         </div>
       </template>
     </UiCard>
 
-    <div v-if="error" class="center-message error">
-      <Info :size="16" />
-      <span>{{ settingsErrorLabel(error) }}</span>
-      <UiButton variant="outline" size="sm" @click="loadProposals">{{ t('settings.retry') }}</UiButton>
+    <div v-if="error" class="evolution-error">
+      <X :size="14" />
+      <span>{{ error }}</span>
     </div>
 
-    <div v-if="!error || proposals.length > 0" class="evolution-list-header">
-      <h2>{{ t('settings.evolutionProposals') }}</h2>
+    <div class="evolution-list-header">
+      <h3>Proposals</h3>
       <UiBadge variant="outline">{{ proposals.length }}</UiBadge>
     </div>
 
-    <p v-if="loading" class="quiet">{{ t('settings.evolutionLoading') }}</p>
-    <p v-else-if="!error && proposals.length === 0" class="quiet">{{ t('settings.evolutionEmpty') }}</p>
+    <p v-if="loading" class="quiet">Loading proposals…</p>
+    <p v-else-if="proposals.length === 0" class="quiet">
+      No evolution proposals yet. Click "Generate Proposals" to mine workflow patterns.
+    </p>
 
-    <div v-if="!error || proposals.length > 0" class="evolution-proposal-grid">
+    <div class="evolution-proposal-grid">
       <button
         v-for="proposal in sortedProposals"
         :key="proposal.id"
@@ -278,7 +269,7 @@ onMounted(() => {
         <p class="evolution-proposal-desc">{{ proposal.description }}</p>
         <div class="evolution-proposal-meta">
           <UiBadge :variant="statusVariant(proposal.status)">{{ statusLabel(proposal.status) }}</UiBadge>
-          <span class="evolution-proposal-by">{{ t('settings.evolutionBy', { agent: proposal.generated_by_agent_id }) }}</span>
+          <span class="evolution-proposal-by">by {{ proposal.generated_by_agent_id }}</span>
         </div>
       </button>
     </div>
@@ -290,35 +281,35 @@ onMounted(() => {
             <component :is="selectedProposal.layer === 'planning' ? Workflow : Cpu" :size="20" />
           </div>
           <div>
-            <h2>{{ selectedProposal.name }}</h2>
+            <h3>{{ selectedProposal.name }}</h3>
             <p>{{ agentLayerLabel(selectedProposal.layer) }} · {{ selectedProposal.agent_type }} · {{ statusLabel(selectedProposal.status) }}</p>
           </div>
           <UiBadge :variant="confidenceVariant(selectedProposal.confidence_score)">
-            {{ t('settings.evolutionConfidence', { score: (selectedProposal.confidence_score * 100).toFixed(0) }) }}
+            Confidence {{ (selectedProposal.confidence_score * 100).toFixed(0) }}%
           </UiBadge>
         </div>
 
         <div class="evolution-detail-section">
-          <div class="evolution-detail-section-title">{{ t('settings.evolutionDescription') }}</div>
+          <div class="evolution-detail-section-title">Description</div>
           <p>{{ selectedProposal.description }}</p>
         </div>
 
         <div v-if="selectedProposal.observed_patterns.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">{{ t('settings.evolutionPatterns') }}</div>
+          <div class="evolution-detail-section-title">Observed Patterns</div>
           <ul class="evolution-pattern-list">
             <li v-for="pattern in selectedProposal.observed_patterns" :key="pattern">{{ pattern }}</li>
           </ul>
         </div>
 
         <div v-if="selectedProposal.suggested_tools.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">{{ t('settings.evolutionSuggestedTools') }}</div>
+          <div class="evolution-detail-section-title">Suggested Tools</div>
           <div class="evolution-tag-row">
             <span v-for="tool in selectedProposal.suggested_tools" :key="tool" class="evolution-tag">{{ tool }}</span>
           </div>
         </div>
 
         <div v-if="selectedProposal.evaluation_notes.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">{{ t('settings.evolutionEvaluationNotes') }}</div>
+          <div class="evolution-detail-section-title">Evaluation Notes</div>
           <ul class="evolution-pattern-list">
             <li v-for="note in selectedProposal.evaluation_notes" :key="note">{{ note }}</li>
           </ul>
@@ -327,20 +318,20 @@ onMounted(() => {
         <div v-if="selectedProposal.status === 'proposed' || selectedProposal.status === 'evaluating'" class="evolution-detail-actions">
           <UiButton :disabled="busy" @click="openPromotePanel(selectedProposal)">
             <Check :size="14" />
-            <span>{{ t('settings.evolutionPromote') }}</span>
+            <span>Promote to Agent</span>
           </UiButton>
           <template v-if="confirmRejectId !== selectedProposal.id">
             <UiButton variant="ghost" :disabled="busy" @click="confirmRejectId = selectedProposal.id">
               <ThumbsDown :size="14" />
-              <span>{{ t('settings.evolutionReject') }}</span>
+              <span>Reject</span>
             </UiButton>
           </template>
           <template v-else>
-            <UiInput v-model="rejectReason" :placeholder="t('settings.evolutionRejectReason')" size="sm" />
+            <UiInput v-model="rejectReason" placeholder="rejection reason (optional)" size="sm" />
             <UiButton variant="destructive" size="sm" :disabled="busy" @click="rejectCandidate(selectedProposal)">
-              {{ t('settings.evolutionConfirmReject') }}
+              Confirm Reject
             </UiButton>
-            <UiButton variant="ghost" size="sm" @click="confirmRejectId = ''">{{ t('settings.cancel') }}</UiButton>
+            <UiButton variant="ghost" size="sm" @click="confirmRejectId = ''">Cancel</UiButton>
           </template>
         </div>
       </template>
@@ -348,12 +339,11 @@ onMounted(() => {
 
     <Transition name="modal-fade">
       <div v-if="showPromotePanel" class="evolution-promote-modal" @click.self="closePromotePanel">
-        <div ref="promoteDialogRef" role="dialog" aria-modal="true" aria-labelledby="evolution-promote-title" tabindex="-1" @keydown="onPromoteDialogKeydown">
         <UiCard class="evolution-promote-modal-content">
           <template #header>
             <div class="evolution-modal-header">
-              <h2 id="evolution-promote-title">{{ t('settings.evolutionPromoteCandidate') }}</h2>
-              <UiButton variant="ghost" size="icon" :aria-label="t('app.close')" @click="closePromotePanel">
+              <h3>Promote Candidate</h3>
+              <UiButton variant="ghost" size="icon" @click="closePromotePanel">
                 <X :size="16" />
               </UiButton>
             </div>
@@ -361,16 +351,16 @@ onMounted(() => {
 
           <template #content>
             <p class="evolution-modal-subtitle">
-              {{ t('settings.evolutionPromoteDescription', { name: selectedProposal?.name }) }}
+              Promote <strong>{{ selectedProposal?.name }}</strong> to a full agent profile.
             </p>
 
             <div class="evolution-form-grid">
               <div class="settings-field">
-                <UiLabel>{{ t('settings.evolutionAgentId') }}</UiLabel>
+                <UiLabel>Agent ID</UiLabel>
                 <UiInput v-model="promoteForm.agent_id" placeholder="agent_xxx" />
               </div>
               <div class="settings-field">
-                <UiLabel>{{ t('settings.evolutionMode') }}</UiLabel>
+                <UiLabel>Mode</UiLabel>
                 <select v-model="promoteForm.mode" class="settings-select">
                   <option v-for="mode in agentModes" :key="mode.id" :value="mode.id">
                     {{ mode.display_name }} · {{ mode.summary }}
@@ -378,13 +368,13 @@ onMounted(() => {
                 </select>
               </div>
               <div class="settings-field">
-                <UiLabel>{{ t('settings.evolutionRoutePurpose') }}</UiLabel>
+                <UiLabel>Model Route Purpose</UiLabel>
                 <UiInput v-model="promoteForm.model_route_purpose" placeholder="chat / planner / executor / reviewer" />
               </div>
             </div>
 
             <div class="evolution-modal-section">
-              <UiLabel>{{ t('settings.evolutionAllowedTools') }}</UiLabel>
+              <UiLabel>Allowed Tools</UiLabel>
               <div class="evolution-tag-list">
                 <span v-for="tool in promoteForm.allowed_tools" :key="tool" class="evolution-tag removable">
                   {{ tool }}
@@ -392,13 +382,13 @@ onMounted(() => {
                 </span>
               </div>
               <div class="evolution-add-row">
-                <UiInput v-model="promoteToolInput" :placeholder="t('settings.evolutionToolId')" size="sm" @keydown.enter="addPromoteTool" />
-                <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">{{ t('settings.evolutionAdd') }}</UiButton>
+                <UiInput v-model="promoteToolInput" placeholder="tool id" size="sm" @keydown.enter="addPromoteTool" />
+                <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">Add</UiButton>
               </div>
             </div>
 
             <div class="evolution-modal-section">
-              <UiLabel>{{ t('settings.capabilities') }}</UiLabel>
+              <UiLabel>Capabilities</UiLabel>
               <div class="evolution-tag-list">
                 <span v-for="cap in promoteForm.capabilities" :key="cap" class="evolution-tag removable">
                   {{ cap }}
@@ -406,33 +396,32 @@ onMounted(() => {
                 </span>
               </div>
               <div class="evolution-add-row">
-                <UiInput v-model="promoteCapabilityInput" :placeholder="t('settings.capabilities')" size="sm" @keydown.enter="addPromoteCapability" />
-                <UiButton variant="outline" size="sm" :disabled="!promoteCapabilityInput.trim()" @click="addPromoteCapability">{{ t('settings.evolutionAdd') }}</UiButton>
+                <UiInput v-model="promoteCapabilityInput" placeholder="capability" size="sm" @keydown.enter="addPromoteCapability" />
+                <UiButton variant="outline" size="sm" :disabled="!promoteCapabilityInput.trim()" @click="addPromoteCapability">Add</UiButton>
               </div>
             </div>
 
             <div class="evolution-modal-section">
-              <UiLabel>{{ t('settings.evolutionSystemPrompt') }}</UiLabel>
+              <UiLabel>System Prompt (optional)</UiLabel>
               <textarea
                 v-model="promoteForm.system_prompt"
                 class="settings-textarea"
                 rows="4"
-                :placeholder="t('settings.evolutionSystemPromptPlaceholder')"
+                placeholder="Custom system prompt override"
               ></textarea>
             </div>
           </template>
 
           <template #footer>
             <div class="modal-actions">
-              <UiButton variant="outline" @click="closePromotePanel">{{ t('settings.cancel') }}</UiButton>
+              <UiButton variant="outline" @click="closePromotePanel">Cancel</UiButton>
               <UiButton :disabled="busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
                 <Check :size="14" />
-                <span>{{ t('settings.evolutionPromoteAgent') }}</span>
+                <span>Promote Agent</span>
               </UiButton>
             </div>
           </template>
         </UiCard>
-        </div>
       </div>
     </Transition>
   </section>
@@ -450,19 +439,16 @@ onMounted(() => {
   align-items: flex-start;
   gap: 12px;
 }
-.evolution-header h1 {
+.evolution-header h2 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 4px;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: 0;
+  font-size: 18px;
 }
 .evolution-header p {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-muted, #888);
   font-size: 13px;
 }
 .evolution-generate-card :deep(.ui-card-content) {
@@ -481,12 +467,23 @@ onMounted(() => {
   flex-direction: column;
   gap: 4px;
 }
+.evolution-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 99, 99, 0.1);
+  border: 1px solid rgba(255, 99, 99, 0.3);
+  border-radius: 6px;
+  color: var(--accent-danger, #ff6363);
+  font-size: 13px;
+}
 .evolution-list-header {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.evolution-list-header h2 {
+.evolution-list-header h3 {
   margin: 0;
   font-size: 14px;
 }
@@ -500,8 +497,8 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-muted);
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
@@ -509,11 +506,11 @@ onMounted(() => {
   transition: border-color 0.15s, background 0.15s;
 }
 .evolution-proposal-card:hover {
-  border-color: var(--accent-primary);
+  border-color: var(--accent-primary, #58a6ff);
 }
 .evolution-proposal-card.active {
-  border-color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: var(--accent-primary, #58a6ff);
+  background: rgba(88, 166, 255, 0.08);
 }
 .evolution-proposal-head {
   display: flex;
@@ -527,12 +524,12 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-  color: var(--accent-primary);
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-primary, #58a6ff);
 }
 .evolution-proposal-icon.execution {
-  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
-  color: var(--accent-success);
+  background: rgba(46, 196, 182, 0.12);
+  color: var(--accent-success, #2ec4b6);
 }
 .evolution-proposal-main {
   flex: 1;
@@ -549,12 +546,12 @@ onMounted(() => {
 }
 .evolution-proposal-main span {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-muted, #888);
 }
 .evolution-proposal-desc {
   margin: 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-muted, #aaa);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -568,7 +565,7 @@ onMounted(() => {
   font-size: 11px;
 }
 .evolution-proposal-by {
-  color: var(--text-muted);
+  color: var(--text-muted, #888);
 }
 .evolution-detail-panel :deep(.ui-card-content) {
   padding: 18px 20px;
@@ -579,14 +576,14 @@ onMounted(() => {
   gap: 12px;
   margin-bottom: 14px;
 }
-.evolution-detail-head h2 {
+.evolution-detail-head h3 {
   margin: 0;
   font-size: 16px;
 }
 .evolution-detail-head p {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-muted, #888);
 }
 .evolution-detail-section {
   margin-top: 12px;
@@ -594,7 +591,7 @@ onMounted(() => {
 .evolution-detail-section-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-muted, #aaa);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 6px;
@@ -615,15 +612,15 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.2);
   border-radius: 4px;
   font-size: 11px;
   font-family: var(--font-mono, monospace);
 }
 .evolution-tag.removable {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .evolution-tag-remove {
   background: none;
@@ -640,13 +637,13 @@ onMounted(() => {
   align-items: center;
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid var(--border-muted);
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   flex-wrap: wrap;
 }
 .evolution-promote-modal {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -664,14 +661,14 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
 }
-.evolution-modal-header h2 {
+.evolution-modal-header h3 {
   margin: 0;
   font-size: 16px;
 }
 .evolution-modal-subtitle {
   margin: 0 0 14px;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-muted, #aaa);
 }
 .evolution-form-grid {
   display: grid;
@@ -699,7 +696,7 @@ onMounted(() => {
   gap: 8px;
 }
 .quiet {
-  color: var(--text-muted);
+  color: var(--text-muted, #888);
   font-size: 13px;
 }
 .settings-field {
@@ -710,8 +707,8 @@ onMounted(() => {
 .settings-select {
   height: 32px;
   padding: 0 8px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-muted);
+  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;
   font-size: 13px;
@@ -719,8 +716,8 @@ onMounted(() => {
 .settings-textarea {
   width: 100%;
   padding: 8px 10px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-muted);
+  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;
   font-size: 13px;
@@ -734,11 +731,5 @@ onMounted(() => {
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .modal-fade-enter-active,
-  .modal-fade-leave-active {
-    transition: none;
-  }
 }
 </style>

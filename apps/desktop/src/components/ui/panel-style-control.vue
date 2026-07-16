@@ -51,12 +51,12 @@ const previewStyle = computed(() => {
       style.background = 'var(--bg-primary)'
       break
     case 'translucent':
-      style.backgroundColor = `rgba(var(--bg-primary-rgb), ${alpha})`
+      style.backgroundColor = `rgba(var(--bg-primary-rgb, 10, 14, 20), ${alpha})`
       break
     case 'blur':
       style.backdropFilter = `blur(${props.settings.blur}px)`
       style.WebkitBackdropFilter = `blur(${props.settings.blur}px)`
-      style.backgroundColor = `rgba(var(--bg-primary-rgb), ${alpha})`
+      style.backgroundColor = `rgba(var(--bg-primary-rgb, 10, 14, 20), ${alpha})`
       break
   }
 
@@ -147,7 +147,7 @@ function reset(): void {
 .panel-style-control {
   padding: 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-secondary);
   box-shadow: var(--shadow-subtle);
 }
