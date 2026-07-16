@@ -102,15 +102,6 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapProjectSessionStubs(this WebApplication app)
     {
-        app.MapGet("/api/v1/projects", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/projects", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Project creation is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/sessions", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/sessions", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Session creation is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/sessions/{sessionId}/messages", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/sessions/{sessionId}/messages", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Message posting is not implemented in skeleton mode." }, statusCode: 501));
-
         app.MapPost("/api/v1/sessions/{sessionId}/invoke-stream", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Invoke-stream is not implemented in skeleton mode." }, statusCode: 501));
 
         app.MapGet("/api/v1/sessions/{sessionId}/orchestration", () => Results.Ok(new
@@ -125,16 +116,10 @@ public static class StubEndpoints
         }));
 
         app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/sessions/{sessionId}/runs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/task-nodes", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/context-packs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/supervision-findings", () => Results.Ok(Array.Empty<object>()));
 
-        // SSE events endpoint — return empty SSE stream
-        app.MapGet("/api/v1/events", () =>
-        {
-            return Results.Text("event: end\ndata: {}\n\n", "text/event-stream");
-        });
     }
 
     // ──────────────────────────────────────────────────────────

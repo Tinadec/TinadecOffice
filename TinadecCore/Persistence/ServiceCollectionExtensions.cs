@@ -37,6 +37,9 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton<ITinadecDatabaseConfigurer, TinadecDatabaseConfigurer>();
         services.TryAddSingleton<IDatabaseReadiness, DatabaseReadiness>();
+        services.TryAddSingleton<StoragePaths>(sp =>
+            new StoragePaths(root, sp.GetRequiredService<IOptions<TinadecPersistenceOptions>>()));
+        services.TryAddSingleton<IStorageMigrationRunner, StorageMigrationRunner>();
         return services;
     }
 

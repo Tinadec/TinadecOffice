@@ -18,6 +18,15 @@ public sealed class TinadecPersistenceOptions
 
     public PostgreSqlOptions PostgreSql { get; set; } = new();
 
+    /// <summary>Relative or absolute root for Core-owned session, event, task, and artifact files.</summary>
+    public string DataRoot { get; set; } = "data";
+
+    /// <summary>
+    /// SQLite applies migrations during local startup. PostgreSQL requires this explicit opt-in
+    /// so a multi-instance deployment does not race schema changes.
+    /// </summary>
+    public bool ApplyMigrationsOnStartup { get; set; } = true;
+
     /// <summary>Probe timeout for readiness checks (seconds).</summary>
     public int ProbeTimeoutSeconds { get; set; } = 3;
 }

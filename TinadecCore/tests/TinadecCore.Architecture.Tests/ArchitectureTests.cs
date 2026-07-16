@@ -157,6 +157,19 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void SharedStorageModelsDoNotDependOnPostgreSqlTypes()
+    {
+        foreach (var assembly in new[] { MemoryAssembly, LifecycleAssembly })
+        {
+            var result = Types.InAssembly(assembly)
+                .Should().NotHaveDependencyOn("Npgsql")
+                .GetResult();
+            Assert.True(result.IsSuccessful,
+                $"{assembly.GetName().Name} should retain provider-neutral shared entity mappings.\n{FormatFailures(result)}");
+        }
+    }
+
+    [Fact]
     public void ContractsDoesNotDependOnEfCoreOrDatabaseProviders()
     {
         var result = Types.InAssembly(ContractsAssembly)

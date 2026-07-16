@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Memory;
 
@@ -13,6 +14,10 @@ public sealed class MemoryModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        builder.Services.AddDbContextFactory<MemoryDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<ProjectSessionStore>();
+        builder.Services.AddSingleton<ISessionLocator>(sp => sp.GetRequiredService<ProjectSessionStore>());
+        builder.Services.AddSingleton<TinadecCore.Persistence.IStorageMigrationParticipant>(sp => sp.GetRequiredService<ProjectSessionStore>());
         builder.Services.AddSingleton<IMemoryStore, MemoryStore>();
         builder.RegisterModule(new ModuleDescriptor
         {
@@ -22,7 +27,7 @@ public sealed class MemoryModuleRegistrar : IModuleRegistrar
             Capabilities = ["session_serialization", "chat_history", "retention_policy", "provenance"],
             Language = "C#",
             MafPrimitives = ["memory", "session"],
-            RegistrationStatus = ModuleRegistrationStatus.NotConfigured
+            RegistrationStatus = ModuleRegistrationStatus.Registered
         });
     }
 }

@@ -5,6 +5,7 @@ using TinadecCore.Api.Endpoints;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Persistence;
 using TinadecCore.Runtime;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +24,18 @@ builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environmen
 builder.Services.AddTinadecCore();
 
 var app = builder.Build();
+
+// SQLite migrates at local startup. PostgreSQL only does so when explicitly configured.
+using (var scope = app.Services.CreateScope())
+{
+    var storageOptions = scope.ServiceProvider.GetRequiredService<IOptions<TinadecPersistenceOptions>>().Value;
+    var connection = scope.ServiceProvider.GetRequiredService<IDatabaseConnectionInfo>();
+    if (storageOptions.Enabled && connection.IsConfigured)
+    {
+        await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+        await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
+    }
+}
 
 // ============================================================
 // GET /api/v1/health — legacy-compatible {name, status, version, time}
@@ -154,6 +167,7 @@ app.MapGet("/api/v1/readiness", async (
 // GET endpoints return 200 with empty collections.
 // Write endpoints return 501 Not Implemented.
 // ============================================================
+app.MapStorageEndpoints();
 app.MapStubEndpoints();
 
 app.Run();
