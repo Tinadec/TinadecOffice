@@ -5,9 +5,59 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="/tinadec.ico" />
     <title>TinadecOffice</title>
+    <script>
+      // 早期主题应用 —— 让原生 splash 在 Vue 挂载前就跟随用户设置。
+      // 逻辑与 useTheme.ts 的 applyTheme/applyAccentColor 一致；main.ts 执行后会幂等覆盖。
+      (function () {
+        var theme = localStorage.getItem('tinadec-theme') || 'dark';
+        var accent = localStorage.getItem('tinadec-accent-color') || 'blue';
+        if (theme === 'system') {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+        // accentBrand 颜色映射（与 useTheme.ts ACCENT_COLORS 一致）
+        var brandColors = {
+          blue:   { dark: '#58a6ff', light: '#1f6feb' },
+          green:  { dark: '#3fb950', light: '#1a7f37' },
+          purple: { dark: '#bc8cff', light: '#8250df' },
+          orange: { dark: '#f0883e', light: '#bc4c00' },
+          pink:   { dark: '#f778ba', light: '#bf3989' },
+          red:    { dark: '#f85149', light: '#cf222e' },
+          cyan:   { dark: '#56d4dd', light: '#087990' },
+          yellow: { dark: '#d29922', light: '#9a6700' },
+        };
+        var c = (brandColors[accent] || brandColors.blue)[theme === 'dark' ? 'dark' : 'light'];
+        document.documentElement.style.setProperty('--accent-brand', c);
+      })();
+    </script>
+    <style>
+      /* Splash 占位层 —— Vue 挂载 #app 时自动替换此内容 */
+      .splash-placeholder {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0a0e14; /* 暗色默认；亮色由下方属性选择器覆盖 */
+      }
+      :root[data-theme="light"] .splash-placeholder {
+        background: #ffffff;
+      }
+      .splash-placeholder svg {
+        height: 88px;
+        width: auto;
+        color: var(--accent-brand, #2ec4b6); /* 跟随主题强调色，fallback 为青色 */
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="splash-placeholder">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 453.04 350" fill="currentColor" aria-hidden="true">
+          <path d="M0,152.01929L0,231.13193C0,267.12656,23.88369,298.75122,58.504963,308.59903L182.44873,343.85413C211.25745,352.04858,241.78033,352.04858,270.58905,343.85413L394.53281,308.59903C429.15408,298.75122,453.03775,267.12656,453.03775,231.13193L453.03775,152.01929C453.03775,131.48445,440.98279,113.76516,423.5636,105.55234L394.22815,35.020775C385.58447,14.237647,359.06622,0.0035646637,328.98392,0L317.35669,0C304.81461,0,294.64725,7.3336515,294.64725,16.380161C294.64725,25.426661,304.81461,32.760319,317.35669,32.760319L328.98392,32.760319C339.01624,32.759811,347.86035,37.507561,350.73959,44.439369L374.11868,100.67502L78.907547,100.67502L102.29823,44.439369C105.17747,37.507561,114.02158,32.759811,124.05387,32.760319L135.68109,32.760319C148.22321,32.760319,158.39055,25.426661,158.39055,16.380161C158.39055,7.3336515,148.22321,0,135.68109,0L124.05387,0C93.971581,0.0035561048,67.45327,14.237639,58.809616,35.020775L29.474157,105.55235C12.054992,113.76519,0,131.48445,0,152.01929Z" />
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -28,7 +28,7 @@ export const ACCENT_COLORS: AccentColor[] = [
     labelKey: 'accentColors.blue',
     dark: {
       accentPrimary: '#58a6ff',
-      accentBrand: '#39d353',
+      accentBrand: '#58a6ff',
       textBrand: '#58a6ff',
       borderInputFocus: '#58a6ff',
       shadowFocus: '0 0 0 3px rgba(88, 166, 255, 0.3)',
