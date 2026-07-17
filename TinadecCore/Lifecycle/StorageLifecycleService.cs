@@ -38,7 +38,9 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         }
 
         var now = DateTimeOffset.UtcNow;
-        var run = new RunRecord { Id = Guid.NewGuid(), SessionId = sessionId, TriggerMessageId = triggerMessageId, Status = "running", CreatedAt = now, UpdatedAt = now };
+        var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Session was not found.");
+        var run = new RunRecord { Id = Guid.NewGuid(), TenantId = session.TenantId, WorkspaceId = session.WorkspaceId, SessionId = sessionId, TriggerMessageId = triggerMessageId, Status = "running", CreatedAt = now, UpdatedAt = now };
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         db.Runs.Add(run);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -50,7 +52,9 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<RunRecord>> ListRunsAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var runs = await db.Runs.AsNoTracking().Where(x => x.SessionId == sessionId).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return [];
+        var runs = await db.Runs.AsNoTracking().Where(x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId).ToListAsync(cancellationToken).ConfigureAwait(false);
         return runs.OrderByDescending(x => x.CreatedAt).ToList();
     }
 
@@ -120,7 +124,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             var location = await AppendLineAsync(runId, serialized, cancellationToken).ConfigureAwait(false);
             var index = new EventIndexRecord
             {
-                EventId = record.EventId, RunId = runId, SessionId = record.SessionId, ProjectId = record.ProjectId,
+                EventId = record.EventId, TenantId = session.TenantId, WorkspaceId = session.WorkspaceId, RunId = runId, SessionId = record.SessionId, ProjectId = record.ProjectId,
                 EventType = eventType, Severity = severity, Sequence = sequence, TaskId = taskId, ApprovalId = approvalId,
                 ToolId = toolId, Summary = summary, SchemaVersion = record.Version,
                 PayloadHash = Convert.ToHexString(SHA256.HashData(serialized)).ToLowerInvariant(),
@@ -143,7 +147,12 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.EventIndex.AsNoTracking().Where(x => x.Sequence > afterSequence);
-        if (sessionId is { } id) query = query.Where(x => x.SessionId == id);
+        if (sessionId is { } id)
+        {
+            var session = await _sessions.FindAsync(id, cancellationToken).ConfigureAwait(false);
+            if (session is null) return [];
+            query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+        }
         var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         rows = rows.OrderBy(x => x.Timestamp).ThenBy(x => x.Sequence).ToList();
         var events = new List<EventEnvelope>(rows.Count);
@@ -194,7 +203,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                         ?? throw new JsonException("Event record was empty.");
                     if (!await db.EventIndex.AnyAsync(x => x.EventId == record.EventId, cancellationToken).ConfigureAwait(false))
                     {
-                        db.EventIndex.Add(new EventIndexRecord { EventId = record.EventId, RunId = record.RunId, SessionId = record.SessionId, ProjectId = record.ProjectId, EventType = record.EventType, Severity = record.Severity, Sequence = record.Sequence, TaskId = record.TaskId, ApprovalId = record.ApprovalId, ToolId = record.ToolId, Summary = record.Summary, SchemaVersion = record.Version, PayloadHash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, newline - offset))).ToLowerInvariant(), RelativeFilePath = Path.Combine("events", run.Id + ".events.jsonl"), ByteOffset = offset, ByteLength = length, Timestamp = record.Timestamp });
+                        db.EventIndex.Add(new EventIndexRecord { EventId = record.EventId, TenantId = run.TenantId, WorkspaceId = run.WorkspaceId, RunId = record.RunId, SessionId = record.SessionId, ProjectId = record.ProjectId, EventType = record.EventType, Severity = record.Severity, Sequence = record.Sequence, TaskId = record.TaskId, ApprovalId = record.ApprovalId, ToolId = record.ToolId, Summary = record.Summary, SchemaVersion = record.Version, PayloadHash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, newline - offset))).ToLowerInvariant(), RelativeFilePath = Path.Combine("events", run.Id + ".events.jsonl"), ByteOffset = offset, ByteLength = length, Timestamp = record.Timestamp });
                     }
                 }
                 catch (JsonException)
@@ -211,6 +220,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<(long Offset, int Length)> AppendLineAsync(Guid runId, byte[] record, CancellationToken cancellationToken)

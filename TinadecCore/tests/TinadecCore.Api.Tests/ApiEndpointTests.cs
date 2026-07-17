@@ -79,9 +79,9 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(framework.TryGetProperty("primitives", out var primitives));
         Assert.True(primitives.GetArrayLength() > 0);
 
-        // modules (incremental field — eight modules)
+        // modules (incremental field — nine modules, including tenancy)
         Assert.True(root.TryGetProperty("modules", out var modules));
-        Assert.Equal(8, modules.GetArrayLength());
+        Assert.Equal(9, modules.GetArrayLength());
 
         // design_notes
         Assert.True(root.TryGetProperty("design_notes", out _));
@@ -147,7 +147,7 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         // Modules
         Assert.True(root.TryGetProperty("modules", out var modules));
         var moduleList = modules.EnumerateArray().ToList();
-        Assert.Equal(8, moduleList.Count);
+        Assert.Equal(9, moduleList.Count);
 
         // At least some modules should be "not_configured"
         var notConfiguredCount = moduleList.Count(m =>

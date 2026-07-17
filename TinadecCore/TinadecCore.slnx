@@ -3,6 +3,7 @@
     <Project Path="Contracts/TinadecCore.Contracts.csproj" />
     <Project Path="Abstractions/TinadecCore.Abstractions.csproj" />
     <Project Path="Persistence/TinadecCore.Persistence.csproj" />
+    <Project Path="Tenancy/TinadecCore.Tenancy.csproj" />
     <Project Path="Storage.Migrations.Sqlite/TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <Project Path="Storage.Migrations.PostgreSql/TinadecCore.Storage.Migrations.PostgreSql.csproj" />
     <Project Path="Strategies/TinadecCore.Strategies.fsproj" />

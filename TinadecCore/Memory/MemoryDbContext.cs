@@ -17,6 +17,8 @@ public sealed class MemoryDbContext : DbContext
             entity.ToTable("projects");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.TenantId).HasColumnName("tenant_id");
+            entity.Property(x => x.WorkspaceId).HasColumnName("workspace_id");
             entity.Property(x => x.Name).HasColumnName("name");
             entity.Property(x => x.RootPath).HasColumnName("root_path");
             entity.Property(x => x.NormalizedRootPath).HasColumnName("normalized_root_path");
@@ -28,7 +30,8 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.RootPath).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.NormalizedRootPath).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.Kind).HasMaxLength(64).IsRequired();
-            entity.HasIndex(x => x.NormalizedRootPath).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.NormalizedRootPath }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Archived, x.UpdatedAt });
             entity.HasIndex(x => new { x.Archived, x.UpdatedAt });
         });
 
@@ -37,6 +40,8 @@ public sealed class MemoryDbContext : DbContext
             entity.ToTable("sessions");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.TenantId).HasColumnName("tenant_id");
+            entity.Property(x => x.WorkspaceId).HasColumnName("workspace_id");
             entity.Property(x => x.ProjectId).HasColumnName("project_id");
             entity.Property(x => x.Title).HasColumnName("title");
             entity.Property(x => x.Status).HasColumnName("status");
@@ -50,7 +55,7 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Mode).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096);
-            entity.HasIndex(x => new { x.ProjectId, x.Archived, x.UpdatedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProjectId, x.Archived, x.UpdatedAt });
         });
     }
 }
@@ -58,6 +63,8 @@ public sealed class MemoryDbContext : DbContext
 public sealed class ProjectRecord
 {
     public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string RootPath { get; set; } = string.Empty;
     public string NormalizedRootPath { get; set; } = string.Empty;
@@ -70,6 +77,8 @@ public sealed class ProjectRecord
 public sealed class SessionRecord
 {
     public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
     public Guid ProjectId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Status { get; set; } = "active";

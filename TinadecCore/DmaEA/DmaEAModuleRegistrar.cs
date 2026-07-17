@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.DmaEA;
 
@@ -13,12 +15,14 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        builder.Services.AddDbContextFactory<AgentControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<AgentControlDbContext>>();
         builder.Services.AddSingleton<IAgentOrchestrator, DualLayerAgentOrchestrator>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
-            Dependencies = ["abstractions"],
+            Dependencies = ["abstractions", "persistence"],
             Capabilities = ["dual_layer_orchestration", "task_dispatch", "collaboration", "scheduling", "result_aggregation"],
             Language = "C#",
             MafPrimitives = ["agent", "workflow"],

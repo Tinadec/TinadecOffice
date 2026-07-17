@@ -23,6 +23,21 @@ public sealed class StoragePaths
     public string EventLog(Guid runId) => Under("events", runId + ".events.jsonl");
     public string Artifacts(Guid runId) => Under("artifacts", runId.ToString());
 
+    public string ContentTemporary(Guid tenantId, Guid? workspaceId, string kind) =>
+        Under("content", Path.Combine("tenants", tenantId.ToString("N"), workspaceId?.ToString("N") ?? "tenant", SanitizeSegment(kind), ".tmp", Guid.NewGuid().ToString("N")));
+
+    public string ContentReference(Guid tenantId, Guid? workspaceId, string kind, string sha256) =>
+        $"content/tenants/{tenantId:N}/{(workspaceId?.ToString("N") ?? "tenant")}/{SanitizeSegment(kind)}/{sha256}";
+
+    public string ResolveContentReference(string reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) || Path.IsPathRooted(reference))
+        {
+            throw new InvalidOperationException("Content reference must be a relative Core-owned reference.");
+        }
+        return Under("", reference.Replace('/', Path.DirectorySeparatorChar));
+    }
+
     private string Under(string directory, string fileName)
     {
         var path = Path.GetFullPath(Path.Combine(Root, directory, fileName));
@@ -33,5 +48,14 @@ public sealed class StoragePaths
         }
 
         return path;
+    }
+
+    private static string SanitizeSegment(string value)
+    {
+        if (value.Any(c => !(char.IsLetterOrDigit(c) || c is '-' or '_')))
+        {
+            throw new ArgumentException("Storage content kind contains invalid characters.", nameof(value));
+        }
+        return value;
     }
 }

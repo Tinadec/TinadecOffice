@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Prompts;
 
@@ -13,12 +15,14 @@ public sealed class PromptsModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        builder.Services.AddDbContextFactory<PromptControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<PromptControlDbContext>>();
         builder.Services.AddSingleton<IPromptAssembler, PromptAssembler>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
-            Dependencies = ["abstractions", "strategies"],
+            Dependencies = ["abstractions", "strategies", "persistence"],
             Capabilities = ["fragment_assembly", "agent_instructions", "skill_contributions", "deterministic_assembly"],
             Language = "C#",
             MafPrimitives = [],

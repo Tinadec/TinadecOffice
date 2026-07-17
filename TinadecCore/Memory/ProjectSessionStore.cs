@@ -12,11 +12,13 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
     private readonly IDbContextFactory<MemoryDbContext> _dbFactory;
     private readonly StoragePaths _paths;
+    private readonly ITenantContextAccessor _tenantContext;
 
-    public ProjectSessionStore(IDbContextFactory<MemoryDbContext> dbFactory, StoragePaths paths)
+    public ProjectSessionStore(IDbContextFactory<MemoryDbContext> dbFactory, StoragePaths paths, ITenantContextAccessor tenantContext)
     {
         _dbFactory = dbFactory;
         _paths = paths;
+        _tenantContext = tenantContext;
     }
 
     public async Task<ProjectRecord> CreateProjectAsync(string name, string path, CancellationToken cancellationToken = default)
@@ -33,9 +35,12 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
         }
 
         var now = DateTimeOffset.UtcNow;
+        var scope = _tenantContext.Current;
         var project = new ProjectRecord
         {
             Id = Guid.NewGuid(),
+            TenantId = scope.TenantId,
+            WorkspaceId = scope.WorkspaceId,
             Name = name.Trim(),
             RootPath = Path.TrimEndingDirectorySeparator(rootPath),
             NormalizedRootPath = NormalizeRootPath(rootPath),
@@ -44,7 +49,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
         };
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        if (await db.Projects.AnyAsync(x => x.NormalizedRootPath == project.NormalizedRootPath, cancellationToken).ConfigureAwait(false))
+        if (await db.Projects.AnyAsync(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.NormalizedRootPath == project.NormalizedRootPath, cancellationToken).ConfigureAwait(false))
         {
             throw new InvalidOperationException("A project already exists for this root path.");
         }
@@ -57,20 +62,22 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
     public async Task<IReadOnlyList<ProjectRecord>> ListProjectsAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var projects = await db.Projects.AsNoTracking().Where(x => !x.Archived).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var projects = await db.Projects.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived).ToListAsync(cancellationToken).ConfigureAwait(false);
         return projects.OrderByDescending(x => x.UpdatedAt).ToList();
     }
 
     public async Task<SessionRecord> CreateSessionAsync(Guid projectId, string? title, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        if (!await db.Projects.AnyAsync(x => x.Id == projectId && !x.Archived, cancellationToken).ConfigureAwait(false))
+        var scope = _tenantContext.Current;
+        if (!await db.Projects.AnyAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false))
         {
             throw new KeyNotFoundException("Project was not found.");
         }
 
         var now = DateTimeOffset.UtcNow;
-        var session = new SessionRecord { Id = Guid.NewGuid(), ProjectId = projectId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : title.Trim(), CreatedAt = now, UpdatedAt = now };
+        var session = new SessionRecord { Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = projectId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : title.Trim(), CreatedAt = now, UpdatedAt = now };
         db.Sessions.Add(session);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await WriteHistoryAsync(session.Id, new SessionHistoryFile { SessionId = session.Id }, cancellationToken).ConfigureAwait(false);
@@ -80,7 +87,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
     public async Task<IReadOnlyList<SessionRecord>> ListSessionsAsync(Guid? projectId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.Sessions.AsNoTracking().Where(x => !x.Archived);
+        var scope = _tenantContext.Current;
+        var query = db.Sessions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived);
         if (projectId is { } id) query = query.Where(x => x.ProjectId == id);
         var sessions = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         return sessions.OrderByDescending(x => x.UpdatedAt).ToList();
@@ -90,7 +98,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
     {
         if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("Session title is required.");
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && !x.Archived, cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
         if (session is null) return null;
         session.Title = title.Trim();
         session.UpdatedAt = DateTimeOffset.UtcNow;
@@ -132,14 +141,21 @@ public sealed class ProjectSessionStore : ISessionLocator, IStorageMigrationPart
     public async Task<SessionReference?> FindAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await db.Sessions.AsNoTracking().Where(x => x.Id == sessionId && !x.Archived)
-            .Select(x => new SessionReference(x.Id, x.ProjectId)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Sessions.AsNoTracking().Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived)
+            .Select(x => new SessionReference(x.Id, x.ProjectId, x.TenantId, x.WorkspaceId)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task MigrateAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var legacyProjects = await db.Projects.Where(x => x.TenantId == Guid.Empty && x.WorkspaceId == Guid.Empty).ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var project in legacyProjects) { project.TenantId = scope.TenantId; project.WorkspaceId = scope.WorkspaceId; }
+        var legacySessions = await db.Sessions.Where(x => x.TenantId == Guid.Empty && x.WorkspaceId == Guid.Empty).ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var session in legacySessions) { session.TenantId = scope.TenantId; session.WorkspaceId = scope.WorkspaceId; }
+        if (legacyProjects.Count != 0 || legacySessions.Count != 0) await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task EnsureSessionExistsAsync(Guid sessionId, CancellationToken cancellationToken)

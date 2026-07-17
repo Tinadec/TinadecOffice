@@ -6,4 +6,4 @@ public interface ISessionLocator
     Task<SessionReference?> FindAsync(Guid sessionId, CancellationToken cancellationToken = default);
 }
 
-public sealed record SessionReference(Guid SessionId, Guid ProjectId);
+public sealed record SessionReference(Guid SessionId, Guid ProjectId, Guid TenantId, Guid WorkspaceId);
