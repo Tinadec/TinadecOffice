@@ -245,13 +245,16 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
 
   // Load the URL — do NOT await before registering ready-to-show.
   // The loadURL promise resolves after ready-to-show has already fired.
+  // ?splash=0 tells App.vue to skip the startup splash + main-rise animation —
+  // child windows must not replay the first-launch sequence.
   if (isDev) {
-    await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}#${hashPath}`).catch((err) => {
+    await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}?splash=0#${hashPath}`).catch((err) => {
       console.error('[panelWindow] loadURL error:', err.message);
     });
   } else {
     await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
       hash: hashPath,
+      query: { splash: '0' },
     }).catch((err) => {
       console.error('[panelWindow] loadFile error:', err.message);
     });

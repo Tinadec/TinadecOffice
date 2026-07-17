@@ -44,12 +44,15 @@ async function createDebugStudioWindow() {
     }
   });
 
-  // Load the Debug Studio page (uses hash routing)
+  // Load the Debug Studio page (uses hash routing).
+  // ?splash=0 tells App.vue to skip the startup splash + main-rise animation —
+  // child windows must not replay the first-launch sequence.
   if (isDev) {
-    await debugStudioWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/debug-studio`);
+    await debugStudioWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?splash=0#/debug-studio`);
   } else {
     await debugStudioWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
-      hash: '/debug-studio'
+      hash: '/debug-studio',
+      query: { splash: '0' }
     });
   }
 

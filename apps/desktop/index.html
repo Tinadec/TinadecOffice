@@ -28,6 +28,12 @@
         };
         var c = (brandColors[accent] || brandColors.blue)[theme === 'dark' ? 'dark' : 'light'];
         document.documentElement.style.setProperty('--accent-brand', c);
+
+        // 子窗口（?splash=0）跳过 HTML splash 的 fade-in 动画。
+        // 用属性标记，CSS 选择器据此禁用 animation；App.vue 也读同一参数跳过 Vue splash。
+        if (new URLSearchParams(window.location.search).get('splash') === '0') {
+          document.documentElement.setAttribute('data-skip-splash', '');
+        }
       })();
     </script>
     <style>
@@ -43,6 +49,10 @@
       }
       :root[data-theme="light"] .splash-placeholder {
         background: #ffffff;
+      }
+      /* 子窗口（?splash=0）禁用 fade-in，仅静态显示 logo 占位 */
+      :root[data-skip-splash] .splash-placeholder {
+        animation: none;
       }
       .splash-placeholder svg {
         height: 88px;
