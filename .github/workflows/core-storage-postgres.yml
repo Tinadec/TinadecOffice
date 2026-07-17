@@ -1,0 +1,39 @@
+name: Core storage PostgreSQL
+
+on:
+  pull_request:
+    paths:
+      - 'TinadecCore/**'
+      - '.github/workflows/core-storage-postgres.yml'
+  push:
+    paths:
+      - 'TinadecCore/**'
+      - '.github/workflows/core-storage-postgres.yml'
+
+jobs:
+  postgres-storage:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tinadec_core_test
+          POSTGRES_USER: tinadec
+          POSTGRES_PASSWORD: tinadec
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tinadec -d tinadec_core_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TINADEC_TEST_POSTGRES: '1'
+      TINADEC_TEST_POSTGRES_CONNECTION: Host=127.0.0.1;Port=5432;Database=tinadec_core_test;Username=tinadec;Password=tinadec
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.300
+      - run: dotnet restore TinadecCore/TinadecCore.slnx
+      - run: dotnet test TinadecCore/tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj --no-restore --filter FullyQualifiedName~PostgreSqlStorageTests -m:1

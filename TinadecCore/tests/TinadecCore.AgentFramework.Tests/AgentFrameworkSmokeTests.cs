@@ -34,13 +34,13 @@ public sealed class AgentFrameworkSmokeTests
     }
 
     [Fact]
-    public void FullCompositionRegistersAllEightModules()
+    public void FullCompositionRegistersAllNineModules()
     {
         var services = new ServiceCollection();
         var builder = services.AddTinadecCore();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(8, modules.Count);
+        Assert.Equal(9, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
@@ -51,10 +51,11 @@ public sealed class AgentFrameworkSmokeTests
         Assert.Contains("skills", moduleIds);
         Assert.Contains("loop_guard", moduleIds);
         Assert.Contains("lifecycle", moduleIds);
+        Assert.Contains("tenancy", moduleIds);
     }
 
     [Fact]
-    public void MinimalCompositionRegistersOnlyThreeModules()
+    public void MinimalCompositionRegistersTenancyAndThreeRuntimeModules()
     {
         // Trimming test: only DmaEA, Models, Lifecycle are registered.
         // Memory/Skills/etc. are not runtime-required dependencies.
@@ -62,12 +63,13 @@ public sealed class AgentFrameworkSmokeTests
         var builder = services.AddTinadecCoreMinimal();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(3, modules.Count);
+        Assert.Equal(4, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
         Assert.Contains("models", moduleIds);
         Assert.Contains("lifecycle", moduleIds);
+        Assert.Contains("tenancy", moduleIds);
 
         // Verify that Memory/Skills/Context/Prompts/LoopGuard are NOT registered.
         Assert.DoesNotContain("memory", moduleIds);

@@ -17,10 +17,6 @@ public static class StubEndpoints
         app.MapReadinessStubs();
         app.MapProjectSessionStubs();
         app.MapToolStubs();
-        app.MapApprovalStubs();
-        app.MapModelStubs();
-        app.MapPromptStubs();
-        app.MapAgentStubs();
         app.MapMarketExtensionStubs();
         app.MapMcpAcpStubs();
         app.MapDebugStubs();
@@ -102,15 +98,6 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapProjectSessionStubs(this WebApplication app)
     {
-        app.MapGet("/api/v1/projects", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/projects", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Project creation is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/sessions", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/sessions", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Session creation is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/sessions/{sessionId}/messages", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/sessions/{sessionId}/messages", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Message posting is not implemented in skeleton mode." }, statusCode: 501));
-
         app.MapPost("/api/v1/sessions/{sessionId}/invoke-stream", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Invoke-stream is not implemented in skeleton mode." }, statusCode: 501));
 
         app.MapGet("/api/v1/sessions/{sessionId}/orchestration", () => Results.Ok(new
@@ -125,16 +112,10 @@ public static class StubEndpoints
         }));
 
         app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/sessions/{sessionId}/runs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/task-nodes", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/context-packs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/supervision-findings", () => Results.Ok(Array.Empty<object>()));
 
-        // SSE events endpoint — return empty SSE stream
-        app.MapGet("/api/v1/events", () =>
-        {
-            return Results.Text("event: end\ndata: {}\n\n", "text/event-stream");
-        });
     }
 
     // ──────────────────────────────────────────────────────────
@@ -156,9 +137,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapApprovalStubs(this WebApplication app)
     {
-        app.MapGet("/api/v1/approvals", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/approvals", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Approval creation is not implemented in skeleton mode." }, statusCode: 501));
-        app.MapPost("/api/v1/approvals/{approvalId}/decision", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Approval decision is not implemented in skeleton mode." }, statusCode: 501));
+        // Approval routes are mapped by ControlPlaneEndpoints.
     }
 
     // ──────────────────────────────────────────────────────────
@@ -169,23 +148,7 @@ public static class StubEndpoints
         // These three are REQUIRED by the Gateway modelAgentCenter BFF.
         app.MapGet("/api/v1/model-provider-templates", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/model-providers", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/model-routes", () => Results.Ok(Array.Empty<object>()));
-
-        app.MapPost("/api/v1/model-providers", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Provider creation is not implemented in skeleton mode." }, statusCode: 501));
-        app.MapPut("/api/v1/model-providers/{providerInstanceId}", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Provider update is not implemented in skeleton mode." }, statusCode: 501));
-        app.MapDelete("/api/v1/model-providers/{providerInstanceId}", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Provider deletion is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapPut("/api/v1/model-routes/{purpose}", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Route update is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/model-settings", () => Results.Ok(new
-        {
-            base_url = "",
-            model = "",
-            has_api_key = false,
-            updated_at = DateTimeOffset.UtcNow
-        }));
-
-        app.MapPut("/api/v1/model-settings", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Settings update is not implemented in skeleton mode." }, statusCode: 501));
+        // Model provider, route, and settings routes are mapped by ControlPlaneEndpoints.
     }
 
     // ──────────────────────────────────────────────────────────
@@ -193,21 +156,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapPromptStubs(this WebApplication app)
     {
-        app.MapGet("/api/v1/prompt-fragments", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/prompt-fragments", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPut("/api/v1/prompt-fragments/{fragmentId}", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapDelete("/api/v1/prompt-fragments/{fragmentId}", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-fragments/{fragmentId}/clone", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-context/preview", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-
-        // Prompt engineering versions/effectiveness
-        app.MapGet("/api/v1/prompt-fragments/{fragmentId}/versions", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/prompt-fragments/{fragmentId}/versions", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-fragments/{fragmentId}/rollback", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapGet("/api/v1/prompt-fragments/{fragmentId}/effectiveness", () => Results.Ok(new { fragment_id = "", signal_count = 0, last_signal_at = (string?)null }));
-        app.MapGet("/api/v1/prompt-fragments/effectiveness", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/prompt-fragments/{fragmentId}/signals", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/prompt-fragments/{fragmentId}/compare", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
+        // Prompt fragment routes are mapped by ControlPlaneEndpoints.
     }
 
     // ──────────────────────────────────────────────────────────
@@ -216,12 +165,7 @@ public static class StubEndpoints
     private static void MapAgentStubs(this WebApplication app)
     {
         // Required by Gateway agent-center BFF
-        app.MapGet("/api/v1/agents", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/agent-modes", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/agent-candidates", () => Results.Ok(Array.Empty<object>()));
-
-        app.MapPut("/api/v1/agents/{agentId}", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPut("/api/v1/agents/{agentId}/mode", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
+        // Agent routes are mapped by ControlPlaneEndpoints.
 
         // Agent evolution
         app.MapGet("/api/v1/agent-evolution/proposals", () => Results.Ok(Array.Empty<object>()));

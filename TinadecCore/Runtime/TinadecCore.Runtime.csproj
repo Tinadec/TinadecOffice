@@ -7,8 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="ControlPlaneService.cs" />
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Contracts\TinadecCore.Contracts.csproj" />
+    <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
+    <ProjectReference Include="..\Tenancy\TinadecCore.Tenancy.csproj" />
     <ProjectReference Include="..\DmaEA\TinadecCore.DmaEA.csproj" />
     <ProjectReference Include="..\Models\TinadecCore.Models.csproj" />
     <ProjectReference Include="..\Context\TinadecCore.Context.csproj" />
@@ -17,6 +20,8 @@
     <ProjectReference Include="..\Skills\TinadecCore.Skills.csproj" />
     <ProjectReference Include="..\LoopGuard\TinadecCore.LoopGuard.csproj" />
     <ProjectReference Include="..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\Storage.Migrations.PostgreSql\TinadecCore.Storage.Migrations.PostgreSql.csproj" />
   </ItemGroup>
 
   <ItemGroup>

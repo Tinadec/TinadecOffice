@@ -2,7 +2,7 @@
 
 TinadecOffice is split into three product responsibilities:
 
-- `src/TinadecCore`: portable C# Core framework and runtime. It owns agents, runs, task graphs, context packs, supervision, approvals, model routes, events, secrets, permissions, capability discovery, SQLite persistence, and **Agent Debug Studio tracing**.
+- `TinadecCore`: portable C# Core framework and runtime. It owns agents, runs, task graphs, context packs, supervision, approvals, model routes, events, secrets, permissions, capability discovery, shared database abstraction (default SQLite, optional PostgreSQL via EF Core), and **Agent Debug Studio tracing**.
 - `gateway`: TinadecOffice Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
 - `apps/desktop`: TinadecOffice Desktop, built with Electron + Vue. The renderer receives only the `window.tinadec.*` preload API and talks to TinadecOffice over HTTP/SSE. Includes the **Agent Debug Studio** as a separate BrowserWindow.
 
@@ -26,7 +26,7 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 | `GET /api/v1/tools` | Raw Core tool descriptor list. |
 | `GET /api/v1/tools/search` | Core-owned searchable tool discovery with matched metadata fields, provider layer, score, and human-checkpoint summary. Supports `query`, `domain`, `source`, `risk`, and `limit`. |
 | `GET /api/v1/sessions/{sessionId}/tool-executions` | Core-owned tool execution timeline built from tool execution events, provider descriptors, checkpoint summaries, durations, and step-result evidence. Supports `runId` and `limit`. |
-| `GET /api/v1/readiness` | Core-owned runtime readiness receipt covering SQLite storage, dual agent layers, canonical tool registry, model routes/providers, and extension runtime registries. Gateway/Desktop must proxy or display it without recomputing the status. |
+| `GET /api/v1/readiness` | Core-owned runtime readiness receipt covering storage (`storage.provider` / `storage.state` for SQLite or PostgreSQL), dual agent layers, canonical tool registry, model routes/providers, and extension runtime registries. Gateway/Desktop must proxy or display it without recomputing the status. |
 | `GET /api/v1/tool-layer-readiness` | Core-owned Tool-layer receipt covering canonical tool dispatchability, provider layers, future-tool markers, human-checkpoint requirements, and execution-agent scope resolution. |
 | `GET /api/v1/model-readiness` | Core-owned model provider and route readiness receipt covering provider status, credential availability, route coverage, blocked routes, and advisory discovery notes. |
 | `GET /api/v1/model-catalog-readiness` | Core-owned model catalog receipt covering static templates, runtime module coverage, configured instance counts, and advisory live-discovery policy. Static templates stay visible when live discovery is unavailable. |

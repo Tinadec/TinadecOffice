@@ -1,7 +1,9 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Models;
 
@@ -14,12 +16,14 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        builder.Services.AddDbContextFactory<ModelControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
+        builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<ModelControlDbContext>>();
         builder.Services.AddSingleton<IModelProvider, ModelProvider>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
-            Dependencies = ["abstractions"],
+            Dependencies = ["abstractions", "persistence"],
             Capabilities = ["provider_management", "model_routing", "credential_references", "error_normalization", "readiness"],
             Language = "C#",
             MafPrimitives = ["agent", "chat_client"],
