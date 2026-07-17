@@ -1,4 +1,4 @@
-﻿/* ===== Settings Page Styles =====
+/* ===== Settings Page Styles =====
    Extracted from styles.css into a dedicated module stylesheet.
    Imported by SettingsPage.vue.  All declarations are preserved
    byte-for-byte from the original extraction. */
@@ -2874,10 +2874,6 @@ box-shadow: 0 0 0 1px var(--accent-primary), var(--shadow-subtle);
 
 .agent-column.compact .agent-card {
   min-height: 56px;
-}
-
-.agent-topology-section {
-  margin: 0;
 }
 
 .agent-list-summary {

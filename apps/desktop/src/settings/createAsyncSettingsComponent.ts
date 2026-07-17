@@ -31,6 +31,7 @@ export function createAsyncSettingsComponent(
     loadingComponent: SettingsModuleLoading,
     errorComponent: SettingsModuleError,
     delay: 0,
+    // 错误恢复由 SettingsModuleBoundary 通过 boundaryKey 变更重新挂载处理，异步组件内部不重试。
     onError(error, _retry, fail, _attempts) {
       fail()
     },

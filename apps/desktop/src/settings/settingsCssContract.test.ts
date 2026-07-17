@@ -9,8 +9,12 @@ function assertCssBlock(css: string, pattern: RegExp): string {
   return m[1]
 }
 
+function normalizeLineEndings(css: string): string {
+  return css.replace(/\r\n/g, '\n')
+}
+
 describe('settings.css contract', () => {
-  const css = settingsCss
+  const css = normalizeLineEndings(settingsCss)
 
   it('contains the settings shell selectors', () => {
     expect(css).toContain('.settings-page')
@@ -208,7 +212,7 @@ describe('settings.css contract', () => {
 })
 
 describe('styles.css extraction contract', () => {
-  const css = stylesCss
+  const css = normalizeLineEndings(stylesCss)
 
   it('still contains page-level route transitions', () => {
     expect(css).toContain('.page-slide-left-enter-active')
