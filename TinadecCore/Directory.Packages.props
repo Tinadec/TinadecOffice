@@ -24,6 +24,7 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.8" />
 
     <!-- Database abstraction (EF Core + SQLite default + PostgreSQL optional) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />

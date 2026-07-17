@@ -22,6 +22,7 @@ builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environmen
 
 // Register all TinadecCore modules.
 builder.Services.AddTinadecCore();
+builder.Services.AddScoped<ControlPlaneService>();
 
 var app = builder.Build();
 
@@ -168,6 +169,7 @@ app.MapGet("/api/v1/readiness", async (
 // Write endpoints return 501 Not Implemented.
 // ============================================================
 app.MapStorageEndpoints();
+app.MapControlPlaneEndpoints();
 app.MapStubEndpoints();
 
 app.Run();

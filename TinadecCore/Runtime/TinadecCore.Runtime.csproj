@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="ControlPlaneService.cs" />
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Contracts\TinadecCore.Contracts.csproj" />
     <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
