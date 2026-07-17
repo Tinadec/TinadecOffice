@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Contracts\TinadecCore.Contracts.csproj" />
     <ProjectReference Include="..\..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Persistence\TinadecCore.Persistence.csproj" />
     <ProjectReference Include="..\..\Strategies\TinadecCore.Strategies.fsproj" />
     <ProjectReference Include="..\..\DmaEA\TinadecCore.DmaEA.csproj" />
     <ProjectReference Include="..\..\Models\TinadecCore.Models.csproj" />

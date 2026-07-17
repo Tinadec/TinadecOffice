@@ -3,7 +3,9 @@ using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Api.Endpoints;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Persistence;
 using TinadecCore.Runtime;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,10 +17,26 @@ builder.Services.ConfigureHttpJsonOptions(options =>
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
 });
 
+// Shared database abstraction (SQLite default; PostgreSQL optional) before business modules.
+builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environment.ContentRootPath);
+
 // Register all TinadecCore modules.
 builder.Services.AddTinadecCore();
+builder.Services.AddScoped<ControlPlaneService>();
 
 var app = builder.Build();
+
+// SQLite migrates at local startup. PostgreSQL only does so when explicitly configured.
+using (var scope = app.Services.CreateScope())
+{
+    var storageOptions = scope.ServiceProvider.GetRequiredService<IOptions<TinadecPersistenceOptions>>().Value;
+    var connection = scope.ServiceProvider.GetRequiredService<IDatabaseConnectionInfo>();
+    if (storageOptions.Enabled && connection.IsConfigured)
+    {
+        await scope.ServiceProvider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
+        await scope.ServiceProvider.GetRequiredService<TinadecCore.Lifecycle.StorageLifecycleService>().ReconcileAsync();
+    }
+}
 
 // ============================================================
 // GET /api/v1/health — legacy-compatible {name, status, version, time}
@@ -101,19 +119,31 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
 // ============================================================
 // GET /api/v1/readiness — MAF assemblies loadable = ready; unconfigured modules use warning
 // ============================================================
-app.MapGet("/api/v1/readiness", (ITinadecCoreBuilder coreBuilder) =>
+app.MapGet("/api/v1/readiness", async (
+    ITinadecCoreBuilder coreBuilder,
+    IDatabaseReadiness databaseReadiness,
+    CancellationToken cancellationToken) =>
 {
     var modules = coreBuilder.GetRegisteredModules();
-    var moduleDtos = modules.Select(m => m.ToDto()).ToList();
+    var storageProbe = await databaseReadiness.ProbeAsync(cancellationToken).ConfigureAwait(false);
+    var storage = new ReadinessStorageDto
+    {
+        Provider = storageProbe.Provider,
+        State = storageProbe.StateName,
+        Detail = storageProbe.Detail
+    };
 
-    var hasWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
+    var hasModuleWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
+    var hasStorageWarning = storageProbe.State != DatabaseReadinessState.Ready;
+    var status = hasModuleWarnings || hasStorageWarning ? "warning" : "ready";
 
     var response = new ReadinessResponseDto
     {
-        Status = hasWarnings ? "warning" : "ready",
+        Status = status,
         FrameworkReady = true,
         FrameworkName = "Microsoft Agent Framework",
         FrameworkVersion = "1.13.0",
+        Storage = storage,
         Modules = modules.Select(m => new ReadinessModuleDto
         {
             ModuleId = m.ModuleId,
@@ -138,6 +168,8 @@ app.MapGet("/api/v1/readiness", (ITinadecCoreBuilder coreBuilder) =>
 // GET endpoints return 200 with empty collections.
 // Write endpoints return 501 Not Implemented.
 // ============================================================
+app.MapStorageEndpoints();
+app.MapControlPlaneEndpoints();
 app.MapStubEndpoints();
 
 app.Run();

@@ -9,6 +9,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Strategies\TinadecCore.Strategies.fsproj" />
+    <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 
 </Project>

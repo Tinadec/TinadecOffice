@@ -7,6 +7,7 @@ public sealed class ArchitectureTests
 {
     private static readonly Assembly ContractsAssembly = typeof(Contracts.Dtos.HealthResponseDto).Assembly;
     private static readonly Assembly AbstractionsAssembly = typeof(Abstractions.ITinadecCoreBuilder).Assembly;
+    private static readonly Assembly PersistenceAssembly = typeof(Persistence.ServiceCollectionExtensions).Assembly;
     private static readonly Assembly StrategiesAssembly = typeof(Strategies.ContextBudget).Assembly;
     private static readonly Assembly DmaEAAssembly = typeof(DmaEA.DmaEAModuleRegistrar).Assembly;
     private static readonly Assembly ModelsAssembly = typeof(Models.ModelsModuleRegistrar).Assembly;
@@ -21,7 +22,7 @@ public sealed class ArchitectureTests
 
     private static readonly Assembly[] AllModuleAssemblies =
     [
-        ContractsAssembly, AbstractionsAssembly, StrategiesAssembly,
+        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
         RuntimeAssembly, ApiAssembly
@@ -29,7 +30,7 @@ public sealed class ArchitectureTests
 
     private static readonly Assembly[] NonApiModuleAssemblies =
     [
-        ContractsAssembly, AbstractionsAssembly, StrategiesAssembly,
+        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
         RuntimeAssembly
@@ -121,6 +122,60 @@ public sealed class ArchitectureTests
         var result = Types.InAssembly(ContractsAssembly)
             .Should().NotHaveDependencyOn("Microsoft.Agents.AI")
             .And().NotHaveDependencyOn("Microsoft.Extensions.AI")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful, FormatFailures(result));
+    }
+
+    [Fact]
+    public void PersistenceDoesNotDependOnBusinessModulesOrApi()
+    {
+        var forbidden = new[]
+        {
+            "TinadecCore.DmaEA",
+            "TinadecCore.Models",
+            "TinadecCore.Context",
+            "TinadecCore.Prompts",
+            "TinadecCore.Memory",
+            "TinadecCore.Skills",
+            "TinadecCore.LoopGuard",
+            "TinadecCore.Lifecycle",
+            "TinadecCore.Runtime",
+            "TinadecCore.Api",
+            "TinadecGateway",
+            "TinadecTools"
+        };
+
+        foreach (var dep in forbidden)
+        {
+            var result = Types.InAssembly(PersistenceAssembly)
+                .Should().NotHaveDependencyOn(dep)
+                .GetResult();
+            Assert.True(result.IsSuccessful,
+                $"Persistence should not depend on {dep}.\n{FormatFailures(result)}");
+        }
+    }
+
+    [Fact]
+    public void SharedStorageModelsDoNotDependOnPostgreSqlTypes()
+    {
+        foreach (var assembly in new[] { MemoryAssembly, LifecycleAssembly })
+        {
+            var result = Types.InAssembly(assembly)
+                .Should().NotHaveDependencyOn("Npgsql")
+                .GetResult();
+            Assert.True(result.IsSuccessful,
+                $"{assembly.GetName().Name} should retain provider-neutral shared entity mappings.\n{FormatFailures(result)}");
+        }
+    }
+
+    [Fact]
+    public void ContractsDoesNotDependOnEfCoreOrDatabaseProviders()
+    {
+        var result = Types.InAssembly(ContractsAssembly)
+            .Should().NotHaveDependencyOn("Microsoft.EntityFrameworkCore")
+            .And().NotHaveDependencyOn("Microsoft.Data.Sqlite")
+            .And().NotHaveDependencyOn("Npgsql")
             .GetResult();
 
         Assert.True(result.IsSuccessful, FormatFailures(result));
