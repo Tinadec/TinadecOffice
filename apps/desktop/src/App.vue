@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import router from './router'
 import { useBackground } from '@/composables/useBackground'
 import { useConnection } from '@/composables/useConnection'
@@ -24,6 +24,7 @@ watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true
 // ---- Backend connection gating ----
 // Splash stays visible until backend connects or 30s timeout.
 const { connectionState, start: startConnection } = useConnection()
+const isConnecting = computed(() => connectionState.value === 'connecting')
 onMounted(() => {
   startConnection()
 })
@@ -54,59 +55,72 @@ router.beforeEach((to, from, next) => {
 
 <template>
   <!-- Splash: shown until backend connects or 30s timeout.
-       Visual matches index.html native splash for seamless transition. -->
-  <AppSplash v-if="connectionState === 'connecting'" />
+       Visual matches index.html native splash for seamless transition.
+       splash-exit Transition: logo slides up out of window + container fades. -->
+  <Transition name="splash-exit">
+    <AppSplash v-if="isConnecting" />
+  </Transition>
 
-  <!-- Main UI: rendered once connection succeeds or timeout falls through. -->
-  <template v-else>
-    <!-- Background Layer — ALWAYS rendered, outside <Transition>, never moves.
-         When type === 'none' it shows the theme's --bg-primary colour.
-         This div is the stable, static foundation of the entire window. -->
-    <div class="background-layer" :class="{ 'background-layer--none': backgroundSettings.type === 'none' }">
-      <!-- Image Background -->
-      <div
-        v-if="backgroundSettings.type === 'image'"
-        class="background-image"
-        :style="{
-          backgroundImage: backgroundSettings.source ? `url('${backgroundSettings.source}')` : 'none',
-          backgroundSize: backgroundSettings.size,
-          backgroundPosition: backgroundSettings.position,
-          backgroundRepeat: backgroundSettings.repeat,
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-      <!-- Video Background -->
-      <video
-        v-else-if="backgroundSettings.type === 'video' && backgroundSettings.source"
-        class="background-video"
-        :src="backgroundSettings.source"
-        autoplay
-        loop
-        muted
-        :style="{
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-      <!-- HTML Background -->
-      <div
-        v-else-if="backgroundSettings.type === 'html' && backgroundSettings.source"
-        class="background-html"
-        v-html="backgroundSettings.source"
-        :style="{
-          opacity: backgroundSettings.opacity / 100,
-          filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
-        }"
-      />
-      <!-- When type === 'none', the layer is empty but still has --bg-primary
-           from .background-layer--none CSS class. -->
+  <!-- Background Layer — rendered as soon as splash dismisses.
+       INTENTIONALLY OUTSIDE any <Transition> / transformed ancestor:
+       CSS position:fixed degrades to absolute inside a transformed parent,
+       which would make the background slide with the page (see comment below).
+       This div is the stable, static foundation of the entire window. -->
+  <div
+    v-if="!isConnecting"
+    class="background-layer"
+    :class="{ 'background-layer--none': backgroundSettings.type === 'none' }"
+  >
+    <!-- Image Background -->
+    <div
+      v-if="backgroundSettings.type === 'image'"
+      class="background-image"
+      :style="{
+        backgroundImage: backgroundSettings.source ? `url('${backgroundSettings.source}')` : 'none',
+        backgroundSize: backgroundSettings.size,
+        backgroundPosition: backgroundSettings.position,
+        backgroundRepeat: backgroundSettings.repeat,
+        opacity: backgroundSettings.opacity / 100,
+        filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
+      }"
+    />
+    <!-- Video Background -->
+    <video
+      v-else-if="backgroundSettings.type === 'video' && backgroundSettings.source"
+      class="background-video"
+      :src="backgroundSettings.source"
+      autoplay
+      loop
+      muted
+      :style="{
+        opacity: backgroundSettings.opacity / 100,
+        filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
+      }"
+    />
+    <!-- HTML Background -->
+    <div
+      v-else-if="backgroundSettings.type === 'html' && backgroundSettings.source"
+      class="background-html"
+      v-html="backgroundSettings.source"
+      :style="{
+        opacity: backgroundSettings.opacity / 100,
+        filter: backgroundSettings.blur > 0 ? `blur(${backgroundSettings.blur}px)` : 'none',
+      }"
+    />
+    <!-- When type === 'none', the layer is empty but still has --bg-primary
+         from .background-layer--none CSS class. -->
+  </div>
+
+  <!-- Main content shell — wrapped in <Transition name="main-rise" appear>
+       so the floating-island UI slides up from below on first render.
+       background-layer is deliberately outside this wrapper (see above). -->
+  <Transition name="main-rise" appear>
+    <div v-if="!isConnecting" class="main-content">
+      <RouterView v-slot="{ Component }">
+        <Transition :name="transitionName" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </RouterView>
     </div>
-
-    <RouterView v-slot="{ Component }">
-      <Transition :name="transitionName" mode="out-in">
-        <component :is="Component" />
-      </Transition>
-    </RouterView>
-  </template>
+  </Transition>
 </template>
