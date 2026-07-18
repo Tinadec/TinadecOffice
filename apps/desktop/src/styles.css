@@ -5098,5 +5098,80 @@ background: rgba(var(--bg-primary-rgb, 10, 14, 20), 0.6);
   background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
 }
 
+/* ============================================================
+   Splash → Main UI transition (splash-exit + main-rise staggered)
+   ============================================================
+   - splash-exit: logo translateY(-100vh) + container opacity fade
+   - main-rise:   容器瞬时显示，内部子元素 staggered 升起
+                  （sidebar → ChatPanel → ContextPanel，从左至右）
+   - background-layer is intentionally NOT wrapped (stays static).
+   - Honors prefers-reduced-motion (see bottom of this block).
+   ============================================================ */
+
+/* --- splash 退出：logo 向上飞出窗口 + 容器淡出 --- */
+.splash-exit-leave-active {
+  transition:
+    transform 600ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 400ms ease-out;
+}
+.splash-exit-leave-to {
+  transform: translateY(-100vh);
+  opacity: 0;
+}
+
+/* --- main-rise：容器瞬时显示，内部 staggered 升起 --- */
+/* 容器本身无 transition（避免与子元素 animation 冲突） */
+@keyframes rise-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* AppHeader (.topbar)：顶部框架，最先就位 */
+.main-rise-enter-active .topbar {
+  animation: rise-up 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0ms;
+}
+
+/* 侧边栏 (.sidebar)：从左至右第 1 位 */
+.main-rise-enter-active .sidebar {
+  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 80ms;
+}
+
+/* ChatPanel (.conversation)：中间主面板，第 2 位 */
+.main-rise-enter-active .conversation {
+  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 200ms;
+}
+
+/* ContextPanel (.browser-tabs-panel)：右侧面板，第 3 位 */
+.main-rise-enter-active .browser-tabs-panel {
+  animation: rise-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 320ms;
+}
+
+/* Reduced motion: 禁用 transform 与 filter，仅保留 opacity 淡入淡出 */
+@media (prefers-reduced-motion: reduce) {
+  .splash-exit-leave-active {
+    transition: opacity 200ms ease-out;
+  }
+  .splash-exit-leave-to {
+    transform: none;
+    opacity: 0;
+  }
+  .main-rise-enter-active .topbar,
+  .main-rise-enter-active .sidebar,
+  .main-rise-enter-active .conversation,
+  .main-rise-enter-active .browser-tabs-panel {
+    animation: none;
+  }
+}
+
 
 
