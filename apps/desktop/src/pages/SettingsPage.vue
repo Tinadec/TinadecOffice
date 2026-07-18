@@ -227,6 +227,9 @@ const visiblePetCatalog = computed(() => matchingPetCatalog.value.slice(0, petCa
 const canLoadMorePets = computed(() => visiblePetCatalog.value.length < matchingPetCatalog.value.length)
 
 let petLoadMoreObserver: IntersectionObserver | null = null
+const stopPetChanged = window.tinadec.pets.onChanged((pet) => {
+  downloadedPets.value = downloadedPets.value.map((item) => item.slug === pet.slug ? { ...item, enabled: pet.enabled } : item)
+})
 
 function loadMorePets() {
   petCatalogLimit.value = Math.min(matchingPetCatalog.value.length, petCatalogLimit.value + PET_CATALOG_PAGE_SIZE)
@@ -249,7 +252,10 @@ watch([petCatalogQuery, petCatalogKind], () => {
 watch([activeSection, () => visiblePetCatalog.value.length, canLoadMorePets], () => {
   void observePetLoadMore()
 })
-onBeforeUnmount(() => petLoadMoreObserver?.disconnect())
+onBeforeUnmount(() => {
+  petLoadMoreObserver?.disconnect()
+  stopPetChanged()
+})
 
 async function loadPets(force = false) {
   petCatalogLoading.value = true

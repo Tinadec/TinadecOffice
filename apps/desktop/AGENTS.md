@@ -22,7 +22,7 @@ apps/desktop/
 | Task | Location | Notes |
 |------|----------|-------|
 | Electron startup | `electron/main.cjs`, `electron/preload.cjs` | Hardened renderer: context isolation, sandbox, no nodeIntegration. |
-| Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/components/PetPreview.vue`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 catalog/download registry and transparent, always-on-top windows. Local files live under Electron `userData/pets/<slug>/`; downloaded pets appear first as an offline gallery. Market previews use the bounded `tinadec-pet-preview` protocol loader with loading/error/retry states; 48 cards mount per batch with infinite-scroll and load-more fallback. Never call Gateway/Core. |
+| Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/pets/petRuntime.ts`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 registry and transparent, always-on-top Canvas windows. `petRuntime.ts` is the renderer business module: it validates proportional 8-column sheets, maps the canonical nine Petdex state rows and active frame counts, loops with modulo, and calculates source rectangles. Petdex `pet.json` contains identity/path metadata, not animation definitions. Local files, enable state, bounds, and scale live under Electron `userData/pets/`; IPC is sender-scoped. Never call Gateway/Core. |
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; model/providers/agents settings. |

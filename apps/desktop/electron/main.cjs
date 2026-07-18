@@ -22,8 +22,12 @@ const {
   closePetWindow,
   closePetWindowForPet,
   closeAllPetWindows,
+  closeCurrentPetWindow,
+  getCurrentPetWindowPet,
   getPetWindowPet,
   listPetWindows,
+  setCurrentPetWindowBounds,
+  setCurrentPetWindowClickThrough,
 } = require('./petWindow.cjs');
 const {
   downloadPet,
@@ -145,6 +149,20 @@ ipcMain.handle('tinadec:pet-create', async (_event, petId) => createPetWindow(pe
 ipcMain.handle('tinadec:pet-close', async (_event, instanceId) => closePetWindow(instanceId));
 ipcMain.handle('tinadec:pet-list', async () => listPetWindows());
 ipcMain.handle('tinadec:pet-window-pet', async (_event, instanceId) => getPetWindowPet(instanceId));
+ipcMain.handle('tinadec:pet-current', async (event) => getCurrentPetWindowPet(event.sender));
+ipcMain.handle('tinadec:pet-current-bounds', async (event, bounds) => setCurrentPetWindowBounds(event.sender, bounds));
+ipcMain.handle('tinadec:pet-current-click-through', async (event, enabled) => setCurrentPetWindowClickThrough(event.sender, enabled));
+ipcMain.handle('tinadec:pet-current-close', async (event) => {
+  const pet = await closeCurrentPetWindow(event.sender);
+  if (pet) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && win.webContents.id !== event.sender.id) {
+        win.webContents.send('tinadec:pet-changed', { slug: pet.slug, enabled: pet.enabled });
+      }
+    }
+  }
+  return Boolean(pet);
+});
 ipcMain.handle('tinadec:pet-catalog', async (_event, force) => {
   const pets = await fetchCatalog(Boolean(force));
   return pets.map((pet) => ({

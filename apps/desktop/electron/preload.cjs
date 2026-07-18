@@ -14,6 +14,15 @@ contextBridge.exposeInMainWorld('tinadec', {
     close: (instanceId) => ipcRenderer.invoke('tinadec:pet-close', instanceId),
     list: () => ipcRenderer.invoke('tinadec:pet-list'),
     getWindowPet: (instanceId) => ipcRenderer.invoke('tinadec:pet-window-pet', instanceId),
+    getCurrent: () => ipcRenderer.invoke('tinadec:pet-current'),
+    setCurrentBounds: (bounds) => ipcRenderer.invoke('tinadec:pet-current-bounds', bounds),
+    setCurrentClickThrough: (enabled) => ipcRenderer.invoke('tinadec:pet-current-click-through', enabled),
+    closeCurrent: () => ipcRenderer.invoke('tinadec:pet-current-close'),
+    onChanged: (callback) => {
+      const handler = (_event, pet) => callback(pet);
+      ipcRenderer.on('tinadec:pet-changed', handler);
+      return () => ipcRenderer.removeListener('tinadec:pet-changed', handler);
+    },
     fetchCatalog: (force = false) => ipcRenderer.invoke('tinadec:pet-catalog', force),
     download: (slug) => ipcRenderer.invoke('tinadec:pet-download', slug),
     listDownloaded: () => ipcRenderer.invoke('tinadec:pet-downloaded'),

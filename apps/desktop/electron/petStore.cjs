@@ -336,51 +336,14 @@ async function savePetPreferences(slugInput, input) {
   return publicRecord(record);
 }
 
-function normalizePetDefinition(value) {
-  const frame = value?.frame && typeof value.frame === 'object' ? value.frame : {};
-  const width = Number(frame.width);
-  const height = Number(frame.height);
-  const columns = Number(frame.columns);
-  const rows = Number(frame.rows);
-  const normalizedFrame = {
-    width: Number.isInteger(width) && width > 0 && width <= 1024 ? width : 192,
-    height: Number.isInteger(height) && height > 0 && height <= 1024 ? height : 208,
-    columns: Number.isInteger(columns) && columns > 0 && columns <= 32 ? columns : 8,
-    rows: Number.isInteger(rows) && rows > 0 && rows <= 32 ? rows : 9,
-  };
-  const frameCount = normalizedFrame.columns * normalizedFrame.rows;
-  const animations = {};
-  if (value?.animations && typeof value.animations === 'object') {
-    for (const [name, animation] of Object.entries(value.animations)) {
-      if (!animation || typeof animation !== 'object') continue;
-      const frames = Array.isArray(animation.frames)
-        ? animation.frames.filter((index) => Number.isInteger(index) && index >= 0 && index < frameCount).slice(0, 256)
-        : [];
-      if (frames.length === 0) continue;
-      const fps = Number(animation.fps);
-      animations[name] = {
-        frames,
-        fps: Number.isFinite(fps) ? Math.min(60, Math.max(1, fps)) : 8,
-        loop: animation.loop !== false,
-        fallback: typeof animation.fallback === 'string' ? animation.fallback : 'idle',
-      };
-    }
-  }
-  return { frame: normalizedFrame, animations };
-}
-
 async function getPetForWindow(slugInput) {
   const slug = safeSlug(slugInput);
   const registry = await readRegistry();
   const record = registry.pets.find((pet) => pet.slug === slug);
   if (!record) return null;
   const image = await fs.readFile(path.join(petDirectory(slug), record.spriteFile));
-  let definition = normalizePetDefinition(null);
-  try {
-    definition = normalizePetDefinition(JSON.parse(await fs.readFile(path.join(petDirectory(slug), 'pet.json'), 'utf8')));
-  } catch { }
   const mime = record.spriteFile.endsWith('.png') ? 'image/png' : 'image/webp';
-  return { ...publicRecord(record), definition, imageDataUrl: `data:${mime};base64,${image.toString('base64')}` };
+  return { ...publicRecord(record), imageDataUrl: `data:${mime};base64,${image.toString('base64')}` };
 }
 
 module.exports = {

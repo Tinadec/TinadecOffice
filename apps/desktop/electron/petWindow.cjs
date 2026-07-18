@@ -1,7 +1,7 @@
 const { BrowserWindow, screen } = require('electron');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
-const { getPetForWindow } = require('./petStore.cjs');
+const { getPetForWindow, getPetPreferences, savePetPreferences, setEnabled } = require('./petStore.cjs');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const noTransparency = process.env.TINADEC_DISABLE_TRANSPARENCY === '1';
@@ -14,12 +14,15 @@ const petWindows = new Map();
 function clampBounds(bounds = {}, offset = 0) {
   const width = Math.round(Math.min(PET_WINDOW_MAX_SIZE, Math.max(PET_WINDOW_MIN_SIZE, Number(bounds.width) || PET_WINDOW_WIDTH)));
   const height = Math.round(Math.min(PET_WINDOW_MAX_SIZE, Math.max(PET_WINDOW_MIN_SIZE, Number(bounds.height) || PET_WINDOW_HEIGHT)));
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const hasPosition = Number.isFinite(bounds.x) && Number.isFinite(bounds.y);
+  const display = hasPosition
+    ? screen.getDisplayMatching({ x: Math.round(bounds.x), y: Math.round(bounds.y), width, height })
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const area = display.workArea;
   const defaultX = area.x + area.width - width - 28 - offset;
   const defaultY = area.y + area.height - height - 28 - offset;
-  const x = Number.isFinite(bounds.x) ? Math.round(bounds.x) : defaultX;
-  const y = Number.isFinite(bounds.y) ? Math.round(bounds.y) : defaultY;
+  const x = hasPosition ? Math.round(bounds.x) : defaultX;
+  const y = hasPosition ? Math.round(bounds.y) : defaultY;
 
   return {
     x: Math.max(area.x, Math.min(x, area.x + area.width - width)),
@@ -45,7 +48,13 @@ async function createPetWindow(petId) {
     }
   }
   const instanceId = randomUUID();
-  const bounds = clampBounds({}, petWindows.size * 24);
+  const preferences = await getPetPreferences(petId);
+  if (!preferences) throw new Error('Pet is not downloaded');
+  const scale = preferences.scale;
+  const bounds = clampBounds(preferences.window || {
+    width: 192 * scale,
+    height: 208 * scale,
+  }, petWindows.size * 24);
   const win = new BrowserWindow({
     ...bounds,
     title: 'Tinadec Pet',
@@ -74,8 +83,20 @@ async function createPetWindow(petId) {
 
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  petWindows.set(instanceId, { window: win, petId });
-  win.on('closed', () => petWindows.delete(instanceId));
+  const entry = { window: win, petId, scale, saveTimer: null };
+  petWindows.set(instanceId, entry);
+  const saveBounds = () => {
+    clearTimeout(entry.saveTimer);
+    entry.saveTimer = setTimeout(() => {
+      if (!win.isDestroyed()) savePetPreferences(petId, { scale: entry.scale, window: win.getBounds() }).catch(() => {});
+    }, 150);
+  };
+  win.on('move', saveBounds);
+  win.on('resize', saveBounds);
+  win.on('closed', () => {
+    clearTimeout(entry.saveTimer);
+    petWindows.delete(instanceId);
+  });
   win.once('ready-to-show', () => win.show());
 
   const target = petWindowUrl(instanceId);
@@ -123,4 +144,50 @@ async function getPetWindowPet(instanceId) {
   return entry ? getPetForWindow(entry.petId) : null;
 }
 
-module.exports = { createPetWindow, closePetWindow, closePetWindowForPet, closeAllPetWindows, getPetWindowPet, listPetWindows };
+function entryForSender(sender) {
+  for (const entry of petWindows.values()) {
+    if (!entry.window.isDestroyed() && entry.window.webContents.id === sender.id) return entry;
+  }
+  return null;
+}
+
+async function getCurrentPetWindowPet(sender) {
+  const entry = entryForSender(sender);
+  return entry ? getPetForWindow(entry.petId) : null;
+}
+
+function setCurrentPetWindowBounds(sender, input = {}) {
+  const entry = entryForSender(sender);
+  if (!entry) return false;
+  if (Number.isFinite(input.scale)) entry.scale = Math.min(1.2, Math.max(0.18, input.scale));
+  entry.window.setBounds(clampBounds({ ...entry.window.getBounds(), ...input }));
+  return true;
+}
+
+function setCurrentPetWindowClickThrough(sender, clickThrough) {
+  const entry = entryForSender(sender);
+  if (!entry) return false;
+  entry.window.setIgnoreMouseEvents(Boolean(clickThrough), { forward: true });
+  return true;
+}
+
+async function closeCurrentPetWindow(sender) {
+  const entry = entryForSender(sender);
+  if (!entry) return null;
+  const pet = await setEnabled(entry.petId, false);
+  entry.window.close();
+  return pet;
+}
+
+module.exports = {
+  createPetWindow,
+  closePetWindow,
+  closePetWindowForPet,
+  closeAllPetWindows,
+  closeCurrentPetWindow,
+  getCurrentPetWindowPet,
+  getPetWindowPet,
+  listPetWindows,
+  setCurrentPetWindowBounds,
+  setCurrentPetWindowClickThrough,
+};

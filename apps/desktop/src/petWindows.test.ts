@@ -18,6 +18,9 @@ describe('local pet window shell', () => {
     expect(petWindowManager).toContain('transparent: !noTransparency')
     expect(petWindowManager).toContain('skipTaskbar: true')
     expect(petWindowManager).toContain('alwaysOnTop: true')
+    expect(petWindowManager).toContain('getPetPreferences(petId)')
+    expect(petWindowManager).toContain('entry.window.webContents.id === sender.id')
+    expect(petWindowManager).toContain('setIgnoreMouseEvents(Boolean(clickThrough), { forward: true })')
     expect(petWindowManager).toContain("const hash = `/pet?instanceId=${encodeURIComponent(instanceId)}`")
   })
 
@@ -41,6 +44,14 @@ describe('local pet window shell', () => {
     expect(app).toContain("const isPetWindow = window.location.hash.startsWith('#/pet')")
     expect(app).toContain('if (!isPetWindow) startConnection()')
     expect(desktopPetPage).toContain('background: transparent !important')
+    expect(desktopPetPage).toContain("from '@/pets/petRuntime'")
+    expect(desktopPetPage).toContain('requestAnimationFrame(draw)')
+    expect(desktopPetPage).toContain('event.screenX')
+    expect(desktopPetPage).toContain('getImageData')
+    expect(desktopPetPage).toContain('Math.min(1.2, Math.max(0.18, next))')
+    expect(desktopPetPage).toContain("setState('running-right')")
+    expect(petStore).not.toContain('normalizePetDefinition')
+    expect(preload).toContain("ipcRenderer.on('tinadec:pet-changed', handler)")
   })
 
   it('keeps downloaded pets above a lazy, incrementally rendered market gallery', () => {

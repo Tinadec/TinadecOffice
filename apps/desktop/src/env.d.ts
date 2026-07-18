@@ -114,6 +114,8 @@ declare global {
     submittedBy: string;
     enabled: boolean;
     installedAt: number;
+    scale: number;
+    window?: WindowBounds;
     imageDataUrl?: string;
   }
 
@@ -129,6 +131,11 @@ declare global {
     close: (instanceId: string) => Promise<boolean>;
     list: () => Promise<PetWindowInfo[]>;
     getWindowPet: (instanceId: string) => Promise<DownloadedPet | null>;
+    getCurrent: () => Promise<DownloadedPet | null>;
+    setCurrentBounds: (bounds: Partial<WindowBounds> & { scale?: number }) => Promise<boolean>;
+    setCurrentClickThrough: (enabled: boolean) => Promise<boolean>;
+    closeCurrent: () => Promise<boolean>;
+    onChanged: (callback: (pet: Pick<DownloadedPet, 'slug' | 'enabled'>) => void) => () => void;
     fetchCatalog: (force?: boolean) => Promise<PetdexCatalogPet[]>;
     download: (slug: string) => Promise<DownloadedPet>;
     listDownloaded: () => Promise<DownloadedPet[]>;
