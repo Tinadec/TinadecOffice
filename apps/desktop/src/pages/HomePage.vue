@@ -16,6 +16,10 @@ import type { AgentMode, PermissionLevel } from '../types/mode'
 const router = useRouter()
 const { t } = useI18n()
 
+// 子窗口（?splash=0）跳过 main-rise 入场动画：复用主窗口已建立的连接，不重播启动序列。
+const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
+const riseTransitionName = isChildWindow ? 'no-transition' : 'main-rise'
+
 const projects = ref<ProjectDto[]>([])
 const sessions = ref<SessionDto[]>([])
 const messages = ref<MessageDto[]>([])
@@ -320,13 +324,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="shell" :style="backgroundStyle">
-    <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
+  <Transition :name="riseTransitionName" appear>
+    <main class="shell" :style="backgroundStyle">
+      <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
-    <!-- Full-width draggable bar for window dragging -->
-    <div class="top-drag-bar" />
+      <!-- Full-width draggable bar for window dragging -->
+      <div class="top-drag-bar" />
 
-    <AppHeader :busy="busy" />
+      <AppHeader :busy="busy" />
 
     <section v-if="error" class="error-strip">{{ error }}</section>
 
@@ -407,5 +412,6 @@ onUnmounted(() => {
         @update:shell-command="shellCommand = $event"
       />
     </section>
-  </main>
+    </main>
+  </Transition>
 </template>

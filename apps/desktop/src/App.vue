@@ -23,7 +23,7 @@ watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true
 
 // ---- Backend connection gating ----
 // Splash stays visible until backend connects or 30s timeout.
-// 子窗口（?splash=0，如 Debug Studio / Detached Panel）跳过 splash + main-rise 动画：
+// 子窗口（?splash=0，如 Debug Studio / Detached Panel）跳过 splash：
 // 它们复用主窗口已建立的后端连接，不应重播首次启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
 const { connectionState, start: startConnection } = useConnection()
@@ -114,17 +114,15 @@ router.beforeEach((to, from, next) => {
          from .background-layer--none CSS class. -->
   </div>
 
-  <!-- Main content shell — wrapped in <Transition name="main-rise" appear>
-       so the floating-island UI slides up from below on first render.
-       子窗口（isChildWindow）用不存在的 'no-transition' name 禁用入场动画，瞬时显示。
-       background-layer is deliberately outside this wrapper (see above). -->
-  <Transition :name="isChildWindow ? 'no-transition' : 'main-rise'" appear>
-    <div v-if="!isConnecting" class="main-content">
-      <RouterView v-slot="{ Component }">
-        <Transition :name="transitionName" mode="out-in">
-          <component :is="Component" />
-        </Transition>
-      </RouterView>
-    </div>
-  </Transition>
+  <!-- Main content shell.
+       main-rise 入场动画由各页面（如 HomePage）内部 <Transition> 触发，
+       而非在此处包裹 RouterView —— 因为路由组件是懒加载的，外层 Transition
+       会在子元素挂载前就移除 enter-active 类，导致动画失效。 -->
+  <div v-if="!isConnecting" class="main-content">
+    <RouterView v-slot="{ Component }">
+      <Transition :name="transitionName" mode="out-in">
+        <component :is="Component" />
+      </Transition>
+    </RouterView>
+  </div>
 </template>
