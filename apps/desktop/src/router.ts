@@ -33,6 +33,11 @@ const router = createRouter({
       name: 'detached-panel',
       component: () => import('./pages/DetachedPanelPage.vue'),
     },
+    {
+      path: '/pet',
+      name: 'desktop-pet',
+      component: () => import('./pages/DesktopPetPage.vue'),
+    },
   ],
 })
 

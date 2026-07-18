@@ -55,23 +55,24 @@ if (Test-Command "codegraph") {
     Write-Host "   Project path: $projectPath" -ForegroundColor Gray
 
     # Check if already initialized
-    if (Test-Path "$projectPath\.codegraph\codegraph.db") {
-        Write-Host "   ✅ CodeGraph already initialized" -ForegroundColor Green
-    } else {
-        Write-Host "   Initializing CodeGraph index..." -ForegroundColor Yellow
-        Push-Location $projectPath
-        try {
+    Push-Location $projectPath
+    try {
+        & codegraph status *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   ✅ CodeGraph index is already initialized" -ForegroundColor Green
+        } else {
+            Write-Host "   Initializing CodeGraph index..." -ForegroundColor Yellow
             & codegraph init
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "   ✅ CodeGraph initialized successfully" -ForegroundColor Green
             } else {
                 Write-Host "   ⚠️  CodeGraph initialization completed with warnings" -ForegroundColor Yellow
             }
-        } catch {
-            Write-Host "   ❌ Error initializing CodeGraph: $_" -ForegroundColor Red
-        } finally {
-            Pop-Location
         }
+    } catch {
+        Write-Host "   ❌ Error initializing CodeGraph: $_" -ForegroundColor Red
+    } finally {
+        Pop-Location
     }
 } else {
     Write-Host "   ⚠️  Skipping - CodeGraph not installed" -ForegroundColor Yellow
@@ -86,12 +87,9 @@ if (Test-Command "codegraph") {
     $projectPath = Split-Path -Parent $PSScriptRoot
     Push-Location $projectPath
     try {
-        Write-Host "   Configuring Claude Code integration..." -ForegroundColor Yellow
-        & codegraph install --target=claude --yes
-        Write-Host "   ✅ Claude Code integration configured" -ForegroundColor Green
-
         Write-Host "   Configuring OpenCode integration..." -ForegroundColor Yellow
-        & codegraph install --target=opencode --yes
+        & codegraph telemetry off
+        & codegraph install --target=opencode --location=local --yes
         Write-Host "   ✅ OpenCode integration configured" -ForegroundColor Green
     } catch {
         Write-Host "   ⚠️  Some integrations may need manual configuration" -ForegroundColor Yellow

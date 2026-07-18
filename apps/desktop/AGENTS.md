@@ -22,6 +22,7 @@ apps/desktop/
 | Task | Location | Notes |
 |------|----------|-------|
 | Electron startup | `electron/main.cjs`, `electron/preload.cjs` | Hardened renderer: context isolation, sandbox, no nodeIntegration. |
+| Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/pets/petRuntime.ts`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 registry and transparent, always-on-top Canvas windows. `petRuntime.ts` is the renderer business module: it validates proportional 8-column sheets, maps the canonical nine Petdex state rows and active frame counts, loops with modulo, and calculates source rectangles. Petdex `pet.json` contains identity/path metadata, not animation definitions. Local files, enable state, bounds, and scale live under Electron `userData/pets/`; IPC is sender-scoped. Never call Gateway/Core. |
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; model/providers/agents settings. |
@@ -40,7 +41,7 @@ apps/desktop/
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.
 - Windows system surfaces use `public/tinadec.ico`: main, Debug Studio, and detached `BrowserWindow` instances must reference it in both dev and built `dist`; keep `app.setAppUserModelId('com.tinadec.office')` for taskbar grouping.
-- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window).
+- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window), `/pet` (transparent local pet window).
 - No Pinia/store layer exists; use composables and local refs.
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.

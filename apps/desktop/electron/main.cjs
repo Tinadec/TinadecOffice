@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { createDebugStudioWindow } = require('./debug-studio.cjs');
 const {
@@ -17,6 +17,32 @@ const {
   registerTerminalIpc,
   destroyAllTerminals,
 } = require('./terminalManager.cjs');
+const {
+  createPetWindow,
+  closePetWindow,
+  closePetWindowForPet,
+  closeAllPetWindows,
+  closeCurrentPetWindow,
+  getCurrentPetWindowPet,
+  getPetWindowPet,
+  listPetWindows,
+  setCurrentPetWindowBounds,
+  setCurrentPetWindowClickThrough,
+} = require('./petWindow.cjs');
+const {
+  downloadPet,
+  fetchCatalog,
+  fetchPetPreview,
+  listDownloaded,
+  openPetFolder,
+  removePet,
+  setEnabled,
+} = require('./petStore.cjs');
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'tinadec-pet-preview',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+}]);
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -116,6 +142,53 @@ ipcMain.on('tinadec:close', (event) => {
 ipcMain.handle('tinadec:open-debug-studio', async () => {
   await createDebugStudioWindow();
   return true;
+});
+
+// --- Local pet window IPC ---
+ipcMain.handle('tinadec:pet-create', async (_event, petId) => createPetWindow(petId));
+ipcMain.handle('tinadec:pet-close', async (_event, instanceId) => closePetWindow(instanceId));
+ipcMain.handle('tinadec:pet-list', async () => listPetWindows());
+ipcMain.handle('tinadec:pet-window-pet', async (_event, instanceId) => getPetWindowPet(instanceId));
+ipcMain.handle('tinadec:pet-current', async (event) => getCurrentPetWindowPet(event.sender));
+ipcMain.handle('tinadec:pet-current-bounds', async (event, bounds) => setCurrentPetWindowBounds(event.sender, bounds));
+ipcMain.handle('tinadec:pet-current-click-through', async (event, enabled) => setCurrentPetWindowClickThrough(event.sender, enabled));
+ipcMain.handle('tinadec:pet-current-close', async (event) => {
+  const pet = await closeCurrentPetWindow(event.sender);
+  if (pet) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && win.webContents.id !== event.sender.id) {
+        win.webContents.send('tinadec:pet-changed', { slug: pet.slug, enabled: pet.enabled });
+      }
+    }
+  }
+  return Boolean(pet);
+});
+ipcMain.handle('tinadec:pet-catalog', async (_event, force) => {
+  const pets = await fetchCatalog(Boolean(force));
+  return pets.map((pet) => ({
+    slug: pet.slug,
+    displayName: pet.displayName,
+    kind: pet.kind,
+    submittedBy: pet.submittedBy,
+    previewUrl: `tinadec-pet-preview://pet/${encodeURIComponent(pet.slug)}`,
+  }));
+});
+ipcMain.handle('tinadec:pet-download', async (_event, slug) => downloadPet(slug));
+ipcMain.handle('tinadec:pet-downloaded', async () => listDownloaded());
+ipcMain.handle('tinadec:pet-enabled', async (_event, slug, enabled) => {
+  const pet = await setEnabled(slug, enabled);
+  if (pet.enabled) await createPetWindow(pet.slug);
+  else closePetWindowForPet(pet.slug);
+  return pet;
+});
+ipcMain.handle('tinadec:pet-open-folder', async (_event, slug) => {
+  const result = await shell.openPath(await openPetFolder(slug));
+  if (result) throw new Error(result);
+  return true;
+});
+ipcMain.handle('tinadec:pet-remove', async (_event, slug) => {
+  closePetWindowForPet(slug);
+  return removePet(slug);
 });
 
 // --- Background File Selection IPC ---
@@ -220,10 +293,32 @@ registerTerminalIpc();
 app.on('before-quit', () => {
   destroyAllTerminals();
   persistPanelStatesForQuit();
+  closeAllPetWindows();
 });
 
 app.whenReady().then(async () => {
+  protocol.handle('tinadec-pet-preview', async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== 'pet') return new Response(null, { status: 404 });
+      const slug = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+      const preview = await fetchPetPreview(slug);
+      return new Response(preview.buffer, {
+        headers: {
+          'Content-Type': preview.mime,
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    } catch {
+      return new Response(null, {
+        status: 404,
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    }
+  });
   await createWindow();
+  const downloadedPets = await listDownloaded().catch(() => []);
+  await Promise.all(downloadedPets.filter((pet) => pet.enabled).map((pet) => createPetWindow(pet.slug).catch(() => undefined)));
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -234,6 +329,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   closeAllPanelWindows();
+  closeAllPetWindows();
   if (process.platform !== 'darwin') {
     app.quit();
   }

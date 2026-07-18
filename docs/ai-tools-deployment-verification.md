@@ -249,8 +249,8 @@ npm run ai:tools:test
 ### 5.3 项目配置
 
 **配置文件**:
-- ✅ `.codegraph/config.json` - CodeGraph 配置
-- ✅ `.codegraph/mcp.json` - MCP 服务器配置
+- ✅ `.codegraph/` - 本机 CodeGraph 索引目录（不提交）
+- ✅ `opencode.jsonc` - 项目级 OpenCode MCP 配置
 - ✅ `.ponytail/config.json` - Ponytail 配置
 - ✅ `.ponytail/rules.md` - 编码规则
 - ✅ `.ponytail/validate.js` - 验证脚本
@@ -287,8 +287,8 @@ npm run ai:tools:test
 |------|------|------|
 | Ponytail 配置 | `.ponytail/config.json` | ✅ 完成 |
 | Ponytail 规则 | `.ponytail/rules.md` | ✅ 完成 |
-| CodeGraph 配置 | `.codegraph/config.json` | ✅ 完成 |
-| CodeGraph MCP | `.codegraph/mcp.json` | ✅ 完成 |
+| CodeGraph 索引 | `.codegraph/` | ✅ 完成 |
+| OpenCode MCP | `opencode.jsonc` | ✅ 完成 |
 
 ### 6.3 脚本文件
 

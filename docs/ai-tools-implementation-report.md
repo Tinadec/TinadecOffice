@@ -45,8 +45,8 @@
 ### 2.2 CodeGraph 集成
 
 **创建的文件**:
-- ✅ `.codegraph/config.json` - CodeGraph 配置文件
-- ✅ `.codegraph/mcp.json` - MCP 服务器配置
+- ✅ `.codegraph/` - 本机 CodeGraph 索引目录（不提交）
+- ✅ `opencode.jsonc` - 项目级 OpenCode MCP 配置
 
 **配置内容**:
 - 语言支持：TypeScript、JavaScript、C#、Rust、Vue
@@ -307,8 +307,8 @@ npm run ai:codegraph:status
 | Ponytail 配置 | `.ponytail/config.json` | Ponytail 工具配置 |
 | Ponytail 规则 | `.ponytail/rules.md` | 编码规则文档 |
 | Ponytail 验证 | `.ponytail/validate.js` | 配置验证脚本 |
-| CodeGraph 配置 | `.codegraph/config.json` | CodeGraph 工具配置 |
-| CodeGraph MCP | `.codegraph/mcp.json` | MCP 服务器配置 |
+| CodeGraph 索引 | `.codegraph/` | 本机索引数据（不提交） |
+| OpenCode MCP | `opencode.jsonc` | 项目级 MCP 服务器配置 |
 
 ### 7.3 脚本文件
 

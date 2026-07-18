@@ -278,7 +278,7 @@ codegraph status
 **问题**：AI 工具无法连接
 ```powershell
 # 重新安装集成
-codegraph install --target=claude
+codegraph install --target=opencode --location=local --yes
 
 # 重启 AI 工具
 ```

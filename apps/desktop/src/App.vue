@@ -26,10 +26,11 @@ watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true
 // 子窗口（?splash=0，如 Debug Studio / Detached Panel）跳过 splash：
 // 它们复用主窗口已建立的后端连接，不应重播首次启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
+const isPetWindow = window.location.hash.startsWith('#/pet')
 const { connectionState, start: startConnection } = useConnection()
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
 onMounted(() => {
-  startConnection()
+  if (!isPetWindow) startConnection()
 })
 
 // Track navigation direction for directional page transitions.
@@ -57,6 +58,9 @@ router.beforeEach((to, from, next) => {
 </script>
 
 <template>
+  <RouterView v-if="isPetWindow" />
+
+  <template v-else>
   <!-- Splash: shown until backend connects or 30s timeout.
        Visual matches index.html native splash for seamless transition.
        splash-exit Transition: logo slides up out of window + container fades. -->
@@ -125,4 +129,5 @@ router.beforeEach((to, from, next) => {
       </Transition>
     </RouterView>
   </div>
+  </template>
 </template>

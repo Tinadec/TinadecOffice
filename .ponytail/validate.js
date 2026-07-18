@@ -10,6 +10,8 @@ const path = require('path');
 
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const RULES_FILE = path.join(__dirname, 'rules.md');
+const OPENCODE_CONFIG_FILE = path.join(__dirname, '..', 'opencode.jsonc');
+const PONYTAIL_PLUGIN = '@dietrichgebert/ponytail@4.8.4';
 
 console.log('🔍 Validating Ponytail configuration...\n');
 
@@ -25,14 +27,25 @@ if (!fs.existsSync(RULES_FILE)) {
   process.exit(1);
 }
 
+if (!fs.existsSync(OPENCODE_CONFIG_FILE)) {
+  console.error('❌ Error: opencode.jsonc not found');
+  process.exit(1);
+}
+
 // Load and validate config
 try {
   const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   
   console.log('✅ Config file loaded successfully');
   console.log(`   Project: ${config.project}`);
-  console.log(`   Mode: ${config.mode}`);
-  console.log(`   Version: ${config.version}\n`);
+   console.log(`   Mode: ${config.mode}`);
+   console.log(`   Version: ${config.version}\n`);
+
+   const openCodeConfig = JSON.parse(fs.readFileSync(OPENCODE_CONFIG_FILE, 'utf8'));
+   if (!Array.isArray(openCodeConfig.plugin) || !openCodeConfig.plugin.includes(PONYTAIL_PLUGIN)) {
+     throw new Error(`OpenCode plugin ${PONYTAIL_PLUGIN} is not registered`);
+   }
+   console.log(`✅ OpenCode Ponytail plugin registered: ${PONYTAIL_PLUGIN}\n`);
   
   // Validate safety settings
   if (config.safety) {

@@ -91,14 +91,14 @@ Claude MUST apply Ponytail principles when:
 - Native层: 复用 Codex 原语，不重新实现文件操作
 ```
 
-#### 方案 B：插件集成（可选）
+#### 方案 B：OpenCode 插件集成
 
-如果使用支持插件的 AI 工具（如 OpenCode），可以通过插件形式集成。
+TinadecOffice 的 OpenCode 配置通过此插件实现每轮规则注入和 `/ponytail` 命令。
 
 **OpenCode 配置**：
 ```json
 {
-  "plugin": ["@dietrichgebert/ponytail"]
+  "plugin": ["@dietrichgebert/ponytail@4.8.4"]
 }
 ```
 
@@ -208,19 +208,21 @@ codegraph install --target=claude
 
 **OpenCode 集成**：
 ```powershell
-codegraph install --target=opencode
+codegraph telemetry off
+codegraph install --target=opencode --location=local --yes
 ```
 
 **通用配置（手动）**：
 
-在项目的 MCP 配置文件中添加：
+在项目根目录 `opencode.jsonc` 中添加：
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "codegraph": {
-      "type": "stdio",
-      "command": "codegraph",
-      "args": ["serve", "--mcp"]
+      "type": "local",
+      "command": ["codegraph", "serve", "--mcp"],
+      "enabled": true
     }
   }
 }
