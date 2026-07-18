@@ -14,6 +14,7 @@ export function useMetrics() {
 
   async function fetchMetrics(metricName: string, windowMs?: number, bucketMs?: number): Promise<void> {
     loading.value = true
+    error.value = null
     try {
       const params = new URLSearchParams()
       params.set('metricName', metricName)
@@ -23,6 +24,7 @@ export function useMetrics() {
       const response = await fetch(`${gatewayUrl}/api/v1/debug/metrics?${params.toString()}`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       metrics.value = await response.json()
+      error.value = null
     } catch (e) {
       error.value = `Failed to fetch metrics: ${e}`
     } finally {
@@ -32,10 +34,12 @@ export function useMetrics() {
 
   async function fetchDiagnostics(): Promise<void> {
     loading.value = true
+    error.value = null
     try {
       const response = await fetch(`${gatewayUrl}/api/v1/debug/diagnostics`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       diagnostics.value = await response.json()
+      error.value = null
     } catch (e) {
       error.value = `Failed to fetch diagnostics: ${e}`
     } finally {
@@ -44,10 +48,13 @@ export function useMetrics() {
   }
 
   async function fetchProcessInfo(): Promise<Record<string, unknown> | null> {
+    error.value = null
     try {
       const response = await fetch(`${gatewayUrl}/api/v1/debug/processes`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return await response.json()
+      const result = await response.json()
+      error.value = null
+      return result
     } catch (e) {
       error.value = `Failed to fetch process info: ${e}`
       return null

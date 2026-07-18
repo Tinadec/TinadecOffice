@@ -11,10 +11,12 @@ import ContextPanel from '../components/ContextPanel.vue'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '../types/mode'
 
 const router = useRouter()
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 // 子窗口（?splash=0）跳过 main-rise 入场动画：复用主窗口已建立的连接，不重播启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -116,14 +118,16 @@ async function run(label: string, action: () => Promise<void>) {
   try {
     await action()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : `${label} failed`
+    notify.error(err, { title: `${label} failed` })
   } finally {
     busy.value = false
   }
 }
 
 async function loadInitial() {
-  await run('load', async () => {
+  busy.value = true
+  error.value = null
+  try {
     const [projectList, settings, report, readinessReceipt] = await Promise.all([
       api.listProjects(),
       api.getModelSettings(),
@@ -138,7 +142,11 @@ async function loadInitial() {
     modelName.value = settings.model
     selectedProjectId.value = projectList[0]?.id ?? null
     await loadSessions()
-  })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'load failed'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function loadSessions() {

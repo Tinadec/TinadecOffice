@@ -267,8 +267,7 @@ animation-delay: 0.12s;
 }
 
 .pets-heading,
-.pets-section-heading,
-.pets-dialog-actions {
+.pets-section-heading {
   display: flex;
   align-items: center;
 }
@@ -481,11 +480,6 @@ animation-delay: 0.12s;
 
 .pet-menu-action.danger {
   color: var(--destructive);
-}
-
-.pets-dialog-actions {
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .pets-load-more,
@@ -2188,11 +2182,6 @@ box-shadow: 0 0 0 1px var(--swatch-color), var(--shadow-panel);
 
 .provider-delete-btn {
   color: var(--accent-danger) !important;
-}
-
-.delete-confirm-text {
-  font-size: 13px;
-  color: var(--accent-danger);
 }
 
 .add-connection-kind {

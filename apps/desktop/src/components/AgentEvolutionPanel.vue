@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, ChevronRight, Cpu, Dna, Sparkles, ThumbsDown, Workflow, X } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   api,
@@ -10,8 +10,10 @@ import {
   type PromoteAgentCandidateInput
 } from '../api'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
+const { notify, confirm } = useNotifications()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
 const agents = ref<AgentProfileDto[]>([])
@@ -22,7 +24,6 @@ const error = ref<string | null>(null)
 const selectedProposalId = ref('')
 const showPromotePanel = ref('')
 const rejectReason = ref('')
-const confirmRejectId = ref('')
 const generateSessionId = ref('')
 const generateLookback = ref('200')
 
@@ -41,6 +42,10 @@ const promoteCapabilityInput = ref('')
 const selectedProposal = computed(() =>
   proposals.value.find((p) => p.id === selectedProposalId.value) ?? null
 )
+
+watch(selectedProposalId, () => {
+  rejectReason.value = ''
+})
 
 const sortedProposals = computed(() =>
   [...proposals.value].sort((a, b) => b.confidence_score - a.confidence_score)
@@ -100,7 +105,6 @@ async function loadProposals() {
 
 async function generateProposals() {
   busy.value = true
-  error.value = null
   try {
     const params: { session_id?: string; lookback_event_count?: number } = {}
     if (generateSessionId.value.trim()) params.session_id = generateSessionId.value.trim()
@@ -111,8 +115,10 @@ async function generateProposals() {
     if (generated.length > 0) {
       selectedProposalId.value = generated[0].id
     }
+    error.value = null
+    notify.success(`Generated ${generated.length} proposal${generated.length === 1 ? '' : 's'}.`)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: 'Could not generate proposals' })
   } finally {
     busy.value = false
   }
@@ -167,28 +173,35 @@ function removePromoteCapability(cap: string) {
 async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
   if (!promoteForm.value.agent_id.trim()) return
   busy.value = true
-  error.value = null
   try {
     await api.promoteAgentCandidate(proposal.id, promoteForm.value)
     await loadProposals()
     showPromotePanel.value = ''
+    notify.success(`${proposal.name} promoted.`)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: `Could not promote ${proposal.name}` })
   } finally {
     busy.value = false
   }
 }
 
 async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
+  const reason = rejectReason.value.trim() || undefined
+  if (!await confirm({
+    title: 'Reject agent candidate',
+    message: reason ? `Reject ${proposal.name}?\nReason: ${reason}` : `Reject ${proposal.name}?`,
+    confirmLabel: 'Reject',
+    cancelLabel: 'Cancel',
+    destructive: true
+  })) return
   busy.value = true
-  error.value = null
   try {
-    await api.rejectAgentCandidate(proposal.id, rejectReason.value.trim() || undefined)
+    await api.rejectAgentCandidate(proposal.id, reason)
     rejectReason.value = ''
-    confirmRejectId.value = ''
     await loadProposals()
+    notify.success(`${proposal.name} rejected.`)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: `Could not reject ${proposal.name}` })
   } finally {
     busy.value = false
   }
@@ -320,19 +333,11 @@ onMounted(() => {
             <Check :size="14" />
             <span>Promote to Agent</span>
           </UiButton>
-          <template v-if="confirmRejectId !== selectedProposal.id">
-            <UiButton variant="ghost" :disabled="busy" @click="confirmRejectId = selectedProposal.id">
-              <ThumbsDown :size="14" />
-              <span>Reject</span>
-            </UiButton>
-          </template>
-          <template v-else>
-            <UiInput v-model="rejectReason" placeholder="rejection reason (optional)" size="sm" />
-            <UiButton variant="destructive" size="sm" :disabled="busy" @click="rejectCandidate(selectedProposal)">
-              Confirm Reject
-            </UiButton>
-            <UiButton variant="ghost" size="sm" @click="confirmRejectId = ''">Cancel</UiButton>
-          </template>
+          <UiInput v-model="rejectReason" placeholder="rejection reason (optional)" size="sm" />
+          <UiButton variant="ghost" :disabled="busy" @click="rejectCandidate(selectedProposal)">
+            <ThumbsDown :size="14" />
+            <span>Reject</span>
+          </UiButton>
         </div>
       </template>
     </UiCard>

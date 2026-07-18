@@ -21,8 +21,10 @@ import {
   type PromptFragmentVersionDto
 } from '../api'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
+const { notify, confirm } = useNotifications()
 
 const fragments = ref<PromptFragmentDto[]>([])
 const effectivenessList = ref<PromptFragmentEffectivenessDto[]>([])
@@ -47,9 +49,6 @@ const signalVersion = ref<number | null>(null)
 const compareVersionA = ref<number | null>(null)
 const compareVersionB = ref<number | null>(null)
 const compareResult = ref<PromptFragmentAbTestResultDto | null>(null)
-
-// Rollback confirm
-const confirmRollbackVersion = ref<number | null>(null)
 
 const selectedFragment = computed(() =>
   fragments.value.find((f) => f.id === selectedFragmentId.value) ?? null
@@ -103,7 +102,9 @@ async function loadAll() {
 }
 
 async function selectFragment(fragment: PromptFragmentDto) {
-  selectedFragmentId.value = fragment.id
+  const fragmentId = fragment.id
+  error.value = null
+  selectedFragmentId.value = fragmentId
   versions.value = []
   effectiveness.value = null
   compareResult.value = null
@@ -112,9 +113,10 @@ async function selectFragment(fragment: PromptFragmentDto) {
   signalVersion.value = null
   try {
     const [versionList, eff] = await Promise.all([
-      api.listPromptFragmentVersions(fragment.id),
-      api.getPromptFragmentEffectiveness(fragment.id).catch(() => null)
+      api.listPromptFragmentVersions(fragmentId),
+      api.getPromptFragmentEffectiveness(fragmentId).catch(() => null)
     ])
+    if (selectedFragmentId.value !== fragmentId) return
     versions.value = versionList
     effectiveness.value = eff
     if (versionList.length > 0) {
@@ -122,7 +124,9 @@ async function selectFragment(fragment: PromptFragmentDto) {
       compareVersionB.value = versionList[0].version
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    if (selectedFragmentId.value === fragmentId) {
+      error.value = err instanceof Error ? err.message : String(err)
+    }
   }
 }
 
@@ -136,7 +140,6 @@ function openNewVersion() {
 async function createVersion() {
   if (!selectedFragment.value || !newVersionContent.value.trim()) return
   busy.value = true
-  error.value = null
   try {
     await api.createPromptFragmentVersion(selectedFragment.value.id, {
       content: newVersionContent.value,
@@ -148,63 +151,74 @@ async function createVersion() {
     })
     showNewVersion.value = false
     await selectFragment(selectedFragment.value)
+    notify.success('Prompt version created.')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: 'Could not create prompt version' })
   } finally {
     busy.value = false
   }
 }
 
 async function rollbackVersion(targetVersion: number) {
-  if (!selectedFragment.value) return
+  const fragment = selectedFragment.value
+  if (!fragment) return
+  if (!await confirm({
+    title: 'Rollback prompt fragment',
+    message: `Rollback ${fragment.title} to v${targetVersion}?`,
+    confirmLabel: 'Rollback',
+    cancelLabel: 'Cancel',
+    destructive: true
+  })) return
   busy.value = true
-  error.value = null
   try {
-    const updated = await api.rollbackPromptFragment(selectedFragment.value.id, targetVersion)
+    const updated = await api.rollbackPromptFragment(fragment.id, targetVersion)
     // Update local fragment list
     const idx = fragments.value.findIndex((f) => f.id === updated.id)
     if (idx >= 0) fragments.value[idx] = updated
-    confirmRollbackVersion.value = null
     await selectFragment(updated)
+    notify.success(`Rolled back to v${targetVersion}.`)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: `Could not roll back to v${targetVersion}` })
   } finally {
     busy.value = false
   }
 }
 
 async function recordSignal(signal: 'positive' | 'negative') {
-  if (!selectedFragment.value) return
+  const fragment = selectedFragment.value
+  if (!fragment) return
   busy.value = true
-  error.value = null
   try {
-    effectiveness.value = await api.recordPromptFragmentSignal(selectedFragment.value.id, {
+    const result = await api.recordPromptFragmentSignal(fragment.id, {
       signal,
       note: signalNote.value || null,
       version: signalVersion.value ?? undefined
     })
+    if (selectedFragmentId.value === fragment.id) effectiveness.value = result
     signalNote.value = ''
     // Refresh the global effectiveness list too
     effectivenessList.value = await api.listAllPromptFragmentEffectiveness().catch(() => effectivenessList.value)
+    notify.success(`${signal === 'positive' ? 'Positive' : 'Negative'} signal recorded.`)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: 'Could not record signal' })
   } finally {
     busy.value = false
   }
 }
 
 async function compareVersions() {
-  if (!selectedFragment.value || compareVersionA.value === null || compareVersionB.value === null) return
+  const fragment = selectedFragment.value
+  const versionA = compareVersionA.value
+  const versionB = compareVersionB.value
+  if (!fragment || versionA === null || versionB === null) return
   busy.value = true
-  error.value = null
   try {
-    compareResult.value = await api.comparePromptFragmentVersions(
-      selectedFragment.value.id,
-      compareVersionA.value,
-      compareVersionB.value
-    )
+    const result = await api.comparePromptFragmentVersions(fragment.id, versionA, versionB)
+    if (selectedFragmentId.value === fragment.id && compareVersionA.value === versionA && compareVersionB.value === versionB) {
+      compareResult.value = result
+    }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    notify.error(err, { title: 'Could not compare prompt versions' })
   } finally {
     busy.value = false
   }
@@ -366,26 +380,17 @@ onMounted(() => {
                     </div>
                   </div>
                   <div class="pe-version-actions">
-                    <template v-if="confirmRollbackVersion === version.version">
-                      <span class="pe-confirm-text">Rollback to v{{ version.version }}?</span>
-                      <UiButton size="sm" variant="destructive" :disabled="busy" @click="rollbackVersion(version.version)">
-                        Confirm
-                      </UiButton>
-                      <UiButton size="sm" variant="ghost" @click="confirmRollbackVersion = null">Cancel</UiButton>
-                    </template>
-                    <template v-else>
-                      <UiButton
-                        v-if="!version.is_active"
-                        size="sm"
-                        variant="ghost"
-                        :disabled="busy"
-                        :title="`Rollback to v${version.version}`"
-                        @click="confirmRollbackVersion = version.version"
-                      >
-                        <Undo2 :size="14" />
-                        <span>Rollback</span>
-                      </UiButton>
-                    </template>
+                    <UiButton
+                      v-if="!version.is_active"
+                      size="sm"
+                      variant="ghost"
+                      :disabled="busy"
+                      :title="`Rollback to v${version.version}`"
+                      @click="rollbackVersion(version.version)"
+                    >
+                      <Undo2 :size="14" />
+                      <span>Rollback</span>
+                    </UiButton>
                   </div>
                 </div>
               </div>
@@ -790,10 +795,6 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-.pe-confirm-text {
-  font-size: 12px;
-  color: var(--accent-danger, #ff6363);
 }
 .pe-hint {
   margin: 4px 0 10px;

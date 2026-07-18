@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api, type ApprovalDto } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 const props = defineProps<{
   cwd: string
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 
 const { getMonaco, isDark } = useMonaco()
+const { notify } = useNotifications()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
@@ -142,7 +144,7 @@ async function handleSave(): Promise<void> {
     feedback.value = 'Approval requested. Awaiting decision...'
     emit('approval-requested', approval)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to create approval'
+    notify.error(err, { title: 'Failed to create approval' })
   } finally {
     saving.value = false
   }
@@ -154,17 +156,23 @@ async function executeSave(): Promise<void> {
 
   saving.value = true
   error.value = null
+  feedback.value = null
   try {
     const result = await api.codeEditorSave(props.cwd, props.filePath, content.value, pendingApproval.value.id)
+    if (result.status !== 'completed') {
+      error.value = result.summary
+      notify.error(result.summary, { title: 'Failed to save file' })
+      return
+    }
     const data = result.data as { size?: number; modified_at?: string }
     originalContent.value = content.value
     fileSize.value = typeof data.size === 'number' ? data.size : fileSize.value
     modifiedAt.value = typeof data.modified_at === 'string' ? data.modified_at : modifiedAt.value
-    feedback.value = `Saved ${props.filePath}.`
+    notify.success(`Saved ${props.filePath}.`)
     pendingApprovalId.value = null
     emit('saved', props.filePath)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to save file'
+    notify.error(err, { title: 'Failed to save file' })
   } finally {
     saving.value = false
   }

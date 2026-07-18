@@ -277,6 +277,7 @@ body {
 .main-content {
   position: relative;
   z-index: 1;
+  overflow: clip;
 }
 
 button,

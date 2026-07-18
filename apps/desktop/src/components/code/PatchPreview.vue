@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api, type ApprovalDto } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 const props = defineProps<{
   cwd: string
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 }>()
 
 const { getMonaco, isDark } = useMonaco()
+const { notify } = useNotifications()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
@@ -156,7 +158,7 @@ async function handleApplyPatch(): Promise<void> {
     // Store patch for when approval is granted
     pendingPatch.value = patch
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to create approval'
+    notify.error(err, { title: 'Failed to create approval' })
   } finally {
     applying.value = false
   }
@@ -170,14 +172,20 @@ async function executePatch(): Promise<void> {
 
   applying.value = true
   error.value = null
+  feedback.value = null
   try {
-    await api.codeEditorPatch(props.cwd, props.filePath, pendingPatch.value, pendingApproval.value.id)
-    feedback.value = `Patch applied to ${props.filePath}.`
+    const result = await api.codeEditorPatch(props.cwd, props.filePath, pendingPatch.value, pendingApproval.value.id)
+    if (result.status !== 'completed') {
+      error.value = result.summary
+      notify.error(result.summary, { title: 'Failed to apply patch' })
+      return
+    }
+    notify.success(`Patch applied to ${props.filePath}.`)
     pendingApprovalId.value = null
     pendingPatch.value = null
     emit('applied', props.filePath)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to apply patch'
+    notify.error(err, { title: 'Failed to apply patch' })
   } finally {
     applying.value = false
   }

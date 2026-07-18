@@ -1,6 +1,7 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api'
 import { useI18n } from 'vue-i18n'
+import { useNotifications } from './useNotifications'
 
 // ---- Type definitions ----
 
@@ -165,6 +166,7 @@ export function useGitOperation(
   approvals: () => ApprovalDto[],
 ) {
   const { t } = useI18n()
+  const { notify } = useNotifications()
 
   // ---- Reactive state ----
   const loading = ref(false)
@@ -348,6 +350,19 @@ export function useGitOperation(
   )
   const canRequestFetchApproval = computed(() => Boolean(cwd.value && sid.value))
 
+  function mutationCompleted(result: CodeToolExecuteResultDto): boolean {
+    if (result.status !== 'completed') {
+      feedback.value = result.summary
+      return false
+    }
+    notify.success(result.summary)
+    return true
+  }
+
+  function notifyOperationError(err: unknown, fallback: string) {
+    notify.error(err instanceof Error ? err : fallback)
+  }
+
   // ---- Actions ----
 
   async function loadStatus() {
@@ -471,7 +486,7 @@ export function useGitOperation(
       feedback.value = t('context.gitIndexApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -490,13 +505,13 @@ export function useGitOperation(
           ...(indexSelection.value?.patch ? { patch: indexSelection.value.patch } : { paths: indexSelection.value?.paths ?? selectedCommitPaths.value }),
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       indexApprovalId.value = null
       indexAction.value = null
       indexSelection.value = null
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitIndexUpdateFailed')
+      notifyOperationError(err, t('context.gitIndexUpdateFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -519,7 +534,7 @@ export function useGitOperation(
       feedback.value = t('context.gitCommitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -540,13 +555,13 @@ export function useGitOperation(
           message: commitMessage.value.trim(),
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       commitMessage.value = ''
       commitApprovalId.value = null
       await loadStatus()
       await loadLog()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitCommitFailed')
+      notifyOperationError(err, t('context.gitCommitFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -571,7 +586,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -592,11 +607,11 @@ export function useGitOperation(
           remote: 'origin',
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       pushApprovalId.value = null
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitPushFailed')
+      notifyOperationError(err, t('context.gitPushFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -621,7 +636,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -642,11 +657,11 @@ export function useGitOperation(
           remote: previewData.value.upstream?.split('/')[0] ?? 'origin',
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       pullApprovalId.value = null
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitPullFailed')
+      notifyOperationError(err, t('context.gitPullFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -668,7 +683,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -689,11 +704,11 @@ export function useGitOperation(
           branch,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       checkoutApprovalId.value = null
       await refreshAll()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitCheckoutFailed')
+      notifyOperationError(err, t('context.gitCheckoutFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -715,7 +730,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -736,11 +751,11 @@ export function useGitOperation(
           branch: branchName,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       branchApprovalId.value = null
       await refreshAll()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitBranchCreateFailed')
+      notifyOperationError(err, t('context.gitBranchCreateFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -762,7 +777,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -781,12 +796,12 @@ export function useGitOperation(
           confirm_fetch: true,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       fetchApprovalId.value = null
       await loadBranches()
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitFetchFailed')
+      notifyOperationError(err, t('context.gitFetchFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -808,7 +823,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -829,11 +844,11 @@ export function useGitOperation(
           branch,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       mergeApprovalId.value = null
       await refreshAll()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitMergeFailed')
+      notifyOperationError(err, t('context.gitMergeFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -855,7 +870,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -879,13 +894,13 @@ export function useGitOperation(
           ...(branch ? { branch } : {}),
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       if (operation !== 'start') {
         rebaseApprovalId.value = null
       }
       await refreshAll()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitRebaseFailed')
+      notifyOperationError(err, t('context.gitRebaseFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -913,7 +928,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -935,13 +950,13 @@ export function useGitOperation(
           strategy: resolveConflictStrategy.value,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       resolveConflictApprovalId.value = null
       resolveConflictPath.value = null
       resolveConflictStrategy.value = null
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitResolveConflictFailed')
+      notifyOperationError(err, t('context.gitResolveConflictFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -963,7 +978,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -987,12 +1002,12 @@ export function useGitOperation(
           force,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       deleteBranchApprovalId.value = null
       await loadBranches()
       await loadStatus()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitDeleteBranchFailed')
+      notifyOperationError(err, t('context.gitDeleteBranchFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -1014,7 +1029,7 @@ export function useGitOperation(
       feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -1035,11 +1050,11 @@ export function useGitOperation(
           new_name: newName,
         },
       })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       renameBranchApprovalId.value = null
       await refreshAll()
     } catch (err) {
-      feedback.value = err instanceof Error ? err.message : t('context.gitRenameBranchFailed')
+      notifyOperationError(err, t('context.gitRenameBranchFailed'))
     } finally {
       operationLoading.value = false
     }
@@ -1054,8 +1069,9 @@ export function useGitOperation(
       const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Create worktree ${operation.path} for ${operation.branch}`, command: `git worktree add ${operation.path} -b ${operation.branch}`, cwd: cwd.value })
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
+      feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
-    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed') }
+    } catch (err) { notifyOperationError(err, t('context.gitApprovalRequestFailed')) }
     finally { operationLoading.value = false }
   }
 
@@ -1068,8 +1084,9 @@ export function useGitOperation(
       const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Remove worktree ${operation.path}`, command: `git worktree remove ${operation.path}`, cwd: cwd.value })
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
+      feedback.value = t('context.gitApprovalRequested')
       emitApproval(approval)
-    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed') }
+    } catch (err) { notifyOperationError(err, t('context.gitApprovalRequestFailed')) }
     finally { operationLoading.value = false }
   }
 
@@ -1082,11 +1099,11 @@ export function useGitOperation(
       const result = operation.action === 'create'
         ? await api.executeCodeTool('git_worktree_create', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { branch: operation.branch, path: operation.path, confirm_create_worktree: true } })
         : await api.executeCodeTool('git_worktree_remove', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { path: operation.path, confirm_remove_worktree: true } })
-      feedback.value = result.summary
+      if (!mutationCompleted(result)) return
       worktreeApprovalId.value = null
       worktreeOperation.value = null
       await refreshAll()
-    } catch (err) { feedback.value = err instanceof Error ? err.message : t('context.gitWorktreeNeedsApproval') }
+    } catch (err) { notifyOperationError(err, t('context.gitWorktreeNeedsApproval')) }
     finally { operationLoading.value = false }
   }
 

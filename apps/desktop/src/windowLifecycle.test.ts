@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import app from './App.vue?raw'
+import appSplash from './components/AppSplash.vue?raw'
 import styles from './styles.css?raw'
 import indexHtml from '../index.html?raw'
 import debugStudioWindow from '../electron/debug-studio.cjs?raw'
@@ -7,8 +8,14 @@ import panelWindow from '../electron/panelWindow.cjs?raw'
 import viteConfig from '../vite.config.ts?raw'
 
 describe('child window lifecycle', () => {
-  it('keeps routed content above the global background', () => {
-    expect(styles).toMatch(/\.main-content\s*{[^}]*position:\s*relative;[^}]*z-index:\s*1;/s)
+  it('keeps both startup splash layers at the same responsive logo size', () => {
+    expect(indexHtml).toContain('--splash-logo-height: clamp(48px, 6vmin, 64px)')
+    expect(indexHtml).toContain('height: var(--splash-logo-height)')
+    expect(appSplash).toContain('height: var(--splash-logo-height)')
+  })
+
+  it('keeps routed content above the global background and clips route transforms', () => {
+    expect(styles).toMatch(/\.main-content\s*{[^}]*position:\s*relative;[^}]*z-index:\s*1;[^}]*overflow:\s*clip;/s)
   })
 
   it('removes main-window size constraints and splash behavior', () => {

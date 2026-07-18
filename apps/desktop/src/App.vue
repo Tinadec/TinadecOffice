@@ -5,6 +5,8 @@ import router from './router'
 import { useBackground } from '@/composables/useBackground'
 import { useConnection } from '@/composables/useConnection'
 import AppSplash from '@/components/AppSplash.vue'
+import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
+import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -129,5 +131,7 @@ router.beforeEach((to, from, next) => {
       </Transition>
     </RouterView>
   </div>
+  <NotificationIslandHost v-if="!isConnecting" />
+  <ConfirmationDialog v-if="!isConnecting" />
   </template>
 </template>

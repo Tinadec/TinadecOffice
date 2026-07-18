@@ -102,7 +102,7 @@ import {
 } from '../toolCatalog'
 import BrandLogo from '@/components/BrandLogo.vue'
 import PetPreview from '@/components/PetPreview.vue'
-import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDialog, UiDropdownMenu } from '@/components/ui'
+import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDropdownMenu } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
 import PromptEngineeringPanel from '@/components/PromptEngineeringPanel.vue'
@@ -110,6 +110,7 @@ import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { useNotifications } from '@/composables/useNotifications'
 
 type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
@@ -138,6 +139,7 @@ interface ProviderForm {
 const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
+const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification } = useNotifications()
 
 // Background management — backgroundSettings is a singleton shared with
 // App.vue (which renders the background layer globally).  The setters below
@@ -213,7 +215,6 @@ const gatewayConfigBusy = ref(false)
 const gatewayConfigNotice = ref('')
 const gatewayConfigError = ref('')
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
-const gatewayRestartRequired = ref(false)
 const PET_CATALOG_PAGE_SIZE = 48
 const petCatalog = ref<PetdexCatalogPet[]>([])
 const downloadedPets = ref<DownloadedPet[]>([])
@@ -224,7 +225,6 @@ const petLoadMoreRef = ref<HTMLElement | null>(null)
 const petCatalogLoading = ref(false)
 const petActionSlug = ref('')
 const petError = ref('')
-const deletePetCandidate = ref<DownloadedPet | null>(null)
 
 const downloadedPetBySlug = computed(() => new Map(downloadedPets.value.map((pet) => [pet.slug, pet])))
 const petCatalogKinds = computed(() => Array.from(new Set(petCatalog.value.map((pet) => pet.kind))).sort())
@@ -299,8 +299,9 @@ async function downloadPet(slug: string) {
   try {
     await window.tinadec.pets.download(slug)
     downloadedPets.value = await window.tinadec.pets.listDownloaded()
+    notify.success(t('settings.petDownloaded'))
   } catch (error) {
-    petError.value = error instanceof Error ? error.message : t('settings.petDownloadFailed')
+    notify.error(error, { title: t('settings.petDownloadFailed') })
   } finally {
     petActionSlug.value = ''
   }
@@ -312,8 +313,9 @@ async function setPetEnabled(pet: DownloadedPet, enabled: boolean) {
   try {
     const updated = await window.tinadec.pets.setEnabled(pet.slug, enabled)
     downloadedPets.value = downloadedPets.value.map((item) => item.slug === updated.slug ? updated : item)
+    notify.success(`${pet.displayName}: ${enabled ? t('settings.enablePet') : t('settings.disablePet')}`)
   } catch (error) {
-    petError.value = error instanceof Error ? error.message : t('settings.petUpdateFailed')
+    notify.error(error, { title: t('settings.petUpdateFailed') })
   } finally {
     petActionSlug.value = ''
   }
@@ -321,25 +323,32 @@ async function setPetEnabled(pet: DownloadedPet, enabled: boolean) {
 
 async function openPetFolder(pet: DownloadedPet) {
   petActionSlug.value = pet.slug
+  petError.value = ''
   try {
     await window.tinadec.pets.openFolder(pet.slug)
   } catch (error) {
-    petError.value = error instanceof Error ? error.message : t('settings.petUpdateFailed')
+    notify.error(error, { title: t('settings.petUpdateFailed') })
   } finally {
     petActionSlug.value = ''
   }
 }
 
-async function removePet() {
-  const pet = deletePetCandidate.value
-  if (!pet) return
+async function removePet(pet: DownloadedPet) {
+  if (!await confirm({
+    title: t('settings.deletePet'),
+    message: t('settings.deletePetConfirmation', { name: pet.displayName }),
+    confirmLabel: t('settings.deletePet'),
+    cancelLabel: t('settings.cancel'),
+    destructive: true
+  })) return
   petActionSlug.value = pet.slug
+  petError.value = ''
   try {
     await window.tinadec.pets.remove(pet.slug)
     downloadedPets.value = downloadedPets.value.filter((item) => item.slug !== pet.slug)
-    deletePetCandidate.value = null
+    notify.success(`${pet.displayName}: ${t('settings.deletePet')}`)
   } catch (error) {
-    petError.value = error instanceof Error ? error.message : t('settings.petUpdateFailed')
+    notify.error(error, { title: t('settings.petUpdateFailed') })
   } finally {
     petActionSlug.value = ''
   }
@@ -391,7 +400,6 @@ const agentRuntimeModelQuery = ref('')
 const agentRuntimeProviderQuery = ref('')
 const agentRuntimeCliQuery = ref('')
 const agentRuntimeAcpQuery = ref('')
-const agentRuntimeNotice = ref('')
 const agentEditTools = ref<string[]>([])
 const agentEditCapabilities = ref<string[]>([])
 const agentEditSystemPrompt = ref('')
@@ -402,7 +410,6 @@ const modelProviderFilter = ref<ModelCenterFilter>('all')
 const modelProviderQuery = ref('')
 const modelProviderListRef = ref<HTMLElement | null>(null)
 const modelDiagnosticsRef = ref<HTMLDetailsElement | null>(null)
-const confirmDeleteId = ref('')
 const busy = ref(false)
 const loading = ref(false)
 const modelCenterLoading = ref(false)
@@ -411,7 +418,6 @@ const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
 const modelCenterError = ref('')
 const agentCenterError = ref('')
-const modelCenterNotice = ref('')
 const showModal = ref(false)
 const agentViewMode = ref<'topology' | 'list'>('list')
 const promptSelectedFragmentId = ref('')
@@ -503,18 +509,31 @@ async function testGatewayConnection() {
 }
 
 async function saveGatewayConfiguration() {
+  gatewayConfigNotice.value = ''
+  try {
+    normalizedGatewayDraft()
+  } catch (error) {
+    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewayUrlInvalid')
+    return
+  }
   gatewayConfigBusy.value = true
   gatewayConfigError.value = ''
   gatewayConfigNotice.value = ''
   try {
     appConfig.value = await window.tinadec.saveGatewayUrl(gatewayUrlDraft.value)
     gatewayUrlDraft.value = appConfig.value.gateway_url
-    gatewayRestartRequired.value = appConfig.value.gateway_url !== api.gatewayUrl
-    gatewayConfigNotice.value = gatewayRestartRequired.value
-      ? t('settings.gatewaySavedRestart')
-      : t('settings.gatewaySaved')
+    if (appConfig.value.gateway_url !== api.gatewayUrl) {
+      banner.warning({
+        key: 'gateway-restart',
+        message: t('settings.gatewaySavedRestart'),
+        action: { label: t('settings.restartNow'), run: restartDesktop }
+      })
+    } else {
+      clearGatewayRestartBanner()
+      notify.success(t('settings.gatewaySaved'))
+    }
   } catch (error) {
-    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewaySaveFailed')
+    notify.error(error, { title: t('settings.gatewaySaveFailed') })
   } finally {
     gatewayConfigBusy.value = false
   }
@@ -523,16 +542,23 @@ async function saveGatewayConfiguration() {
 async function resetGatewayConfiguration() {
   gatewayConfigBusy.value = true
   gatewayConfigError.value = ''
+  gatewayConfigNotice.value = ''
   try {
     appConfig.value = await window.tinadec.resetGatewayUrl()
     gatewayUrlDraft.value = appConfig.value.gateway_url
-    gatewayRestartRequired.value = appConfig.value.gateway_url !== api.gatewayUrl
     gatewayConnectionState.value = 'idle'
-    gatewayConfigNotice.value = gatewayRestartRequired.value
-      ? t('settings.gatewayResetRestart')
-      : t('settings.gatewayReset')
+    if (appConfig.value.gateway_url !== api.gatewayUrl) {
+      banner.warning({
+        key: 'gateway-restart',
+        message: t('settings.gatewayResetRestart'),
+        action: { label: t('settings.restartNow'), run: restartDesktop }
+      })
+    } else {
+      clearGatewayRestartBanner()
+      notify.success(t('settings.gatewayReset'))
+    }
   } catch (error) {
-    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewaySaveFailed')
+    notify.error(error, { title: t('settings.gatewaySaveFailed') })
   } finally {
     gatewayConfigBusy.value = false
   }
@@ -540,6 +566,11 @@ async function resetGatewayConfiguration() {
 
 function restartDesktop() {
   void window.tinadec.restartApp()
+}
+
+function clearGatewayRestartBanner() {
+  const existing = notificationItems.value.find((item) => item.key === 'gateway-restart')
+  if (existing) dismissNotification(existing.id)
 }
 
 void loadAppConfig()
@@ -849,12 +880,23 @@ async function toggleProviderEnabled(provider: ModelProviderInstanceDto) {
     }
     await api.saveModelProvider(provider.id, payload)
     await Promise.all([loadModelCenter(), loadAgentCenter()])
+    notify.success(`${provider.display_name}: ${provider.enabled ? t('settings.disable') : t('settings.enable')}`)
+  } catch (error) {
+    notify.error(error, { title: provider.display_name })
   } finally {
     modelCenterBusy.value = false
   }
 }
 
 async function deleteProvider(providerId: string) {
+  const provider = providers.value.find((item) => item.id === providerId)
+  if (!await confirm({
+    title: t('settings.delete'),
+    message: `${t('settings.confirmDeleteProvider')}\n${provider?.display_name ?? providerId} (${providerId})`,
+    confirmLabel: t('settings.confirmDelete'),
+    cancelLabel: t('settings.cancel'),
+    destructive: true
+  })) return
   modelCenterBusy.value = true
   try {
     await api.deleteModelProvider(providerId)
@@ -862,9 +904,11 @@ async function deleteProvider(providerId: string) {
       selectedProviderDetailId.value = ''
     }
     await Promise.all([loadModelCenter(), loadAgentCenter()])
+    notify.success(`${provider?.display_name ?? providerId}: ${t('settings.delete')}`)
+  } catch (error) {
+    notify.error(error, { title: provider?.display_name ?? providerId })
   } finally {
     modelCenterBusy.value = false
-    confirmDeleteId.value = ''
   }
 }
 
@@ -878,7 +922,6 @@ async function loadModelCenter() {
   try {
     const overview = await api.getModelCenterOverview()
     modelCenterOverview.value = overview
-    modelCenterNotice.value = ''
     const instances = providersFromOverview(overview)
     providers.value = instances
     modelReadiness.value = overview.readiness.model ?? null
@@ -897,12 +940,12 @@ async function loadModelCenter() {
 
 async function refreshProviderModels(providerInstanceId: string) {
   modelCenterBusy.value = true
-  modelCenterNotice.value = ''
   try {
     await api.refreshProviderModels(providerInstanceId)
     await loadModelCenter()
+    notify.success(t('settings.refreshModels'))
   } catch (error) {
-    modelCenterNotice.value = error instanceof Error ? error.message : t('settings.modelDiscoveryUnsupported')
+    notify.error(error, { title: t('settings.modelDiscoveryUnsupported') })
   } finally {
     modelCenterBusy.value = false
   }
@@ -911,12 +954,12 @@ async function refreshProviderModels(providerInstanceId: string) {
 async function probeAcpRuntime(runtime: ModelCenterAcpRuntimeDto) {
   if (!runtime.adapter_id) return
   modelCenterBusy.value = true
-  modelCenterNotice.value = ''
   try {
     await api.probeAcpAdapter(runtime.adapter_id)
     await Promise.all([loadModelCenter(), loadAgentCenter()])
+    notify.success(runtime.display_name)
   } catch (error) {
-    modelCenterNotice.value = error instanceof Error ? error.message : t('settings.acpProbeFailed')
+    notify.error(error, { title: t('settings.acpProbeFailed') })
   } finally {
     modelCenterBusy.value = false
   }
@@ -1067,6 +1110,9 @@ async function savePromptFragment() {
       : await api.createPromptFragment(promptPayload())
     promptSelectedFragmentId.value = saved.id
     await loadPromptContextCenter()
+    notify.success(saved.title)
+  } catch (error) {
+    notify.error(error, { title: promptForm.title })
   } finally {
     busy.value = false
   }
@@ -1074,11 +1120,23 @@ async function savePromptFragment() {
 
 async function deletePromptFragment() {
   if (!promptForm.id || promptForm.is_builtin) return
+  const fragmentId = promptForm.id
+  const fragmentTitle = promptForm.title
+  if (!await confirm({
+    title: t('settings.delete'),
+    message: `${t('settings.confirmDelete')} ${promptForm.title}?`,
+    confirmLabel: t('settings.confirmDelete'),
+    cancelLabel: t('settings.cancel'),
+    destructive: true
+  })) return
   busy.value = true
   try {
-    await api.deletePromptFragment(promptForm.id)
+    await api.deletePromptFragment(fragmentId)
     promptSelectedFragmentId.value = ''
     await loadPromptContextCenter()
+    notify.success(`${fragmentTitle}: ${t('settings.delete')}`)
+  } catch (error) {
+    notify.error(error, { title: fragmentTitle })
   } finally {
     busy.value = false
   }
@@ -1091,6 +1149,9 @@ async function clonePromptFragment(fragmentId = promptForm.id) {
     const cloned = await api.clonePromptFragment(fragmentId)
     promptSelectedFragmentId.value = cloned.id
     await loadPromptContextCenter()
+    notify.success(cloned.title)
+  } catch (error) {
+    notify.error(error)
   } finally {
     busy.value = false
   }
@@ -1106,6 +1167,8 @@ async function generatePromptPreview() {
       run_id: promptPreviewRunId.value || null,
       user_content: promptPreviewUserContent.value || null
     })
+  } catch (error) {
+    notify.error(error, { title: t('settings.preview') })
   } finally {
     busy.value = false
   }
@@ -1116,6 +1179,9 @@ async function updateAgentMode(agent: AgentProfileDto, mode: string) {
   try {
     await api.updateAgentMode(agent.id, mode)
     await loadAgentCenter()
+    notify.success(agent.name)
+  } catch (error) {
+    notify.error(error, { title: agent.name })
   } finally {
     busy.value = false
   }
@@ -1137,26 +1203,30 @@ async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
       enabled
     })
     await loadAgentCenter()
+    notify.success(agent.name)
+  } catch (error) {
+    notify.error(error, { title: agent.name })
   } finally {
     busy.value = false
   }
 }
 
 async function saveAgentProfile() {
-  if (!configuringAgent.value) return
+  const agent = configuringAgent.value
+  if (!agent) return
   busy.value = true
   try {
-    await api.saveAgent(configuringAgent.value.id, {
-      name: configuringAgent.value.name,
-      layer: configuringAgent.value.layer,
-      agent_type: configuringAgent.value.agent_type,
-      mode: configuringAgent.value.mode,
+    await api.saveAgent(agent.id, {
+      name: agent.name,
+      layer: agent.layer,
+      agent_type: agent.agent_type,
+      mode: agent.mode,
       description: agentEditDescription.value,
-      model_route_purpose: configuringAgent.value.model_route_purpose,
+      model_route_purpose: agent.model_route_purpose,
       allowed_tools: agentEditTools.value,
       capabilities: agentEditCapabilities.value,
       system_prompt: agentEditSystemPrompt.value || null,
-      enabled: configuringAgent.value.enabled
+      enabled: agent.enabled
     })
     await loadAgentCenter()
     // Re-sync edit state from the saved agent
@@ -1167,6 +1237,9 @@ async function saveAgentProfile() {
       agentEditSystemPrompt.value = updated.system_prompt ?? ''
       agentEditDescription.value = updated.description
     }
+    notify.success(agent.name)
+  } catch (error) {
+    notify.error(error, { title: agent.name })
   } finally {
     busy.value = false
   }
@@ -1218,7 +1291,6 @@ function openAgentConfig(agent: AgentProfileDto) {
   agentRuntimeProviderQuery.value = ''
   agentRuntimeCliQuery.value = ''
   agentRuntimeAcpQuery.value = ''
-  agentRuntimeNotice.value = ''
   nextTick(() => {
     if (!window.matchMedia('(max-width: 760px)').matches) return
     const panel = document.querySelector('.agent-detail-panel')
@@ -1262,12 +1334,12 @@ async function saveAgentRuntimeBinding(agent: AgentProfileDto) {
   const binding = runtimeBindingInput()
   if (!binding) return
   agentRuntimeBusy.value = true
-  agentRuntimeNotice.value = ''
   try {
     await api.saveAgentRuntimeBinding(agent.id, binding)
     await loadAgentCenter()
+    notify.success(agent.name)
   } catch (error) {
-    agentRuntimeNotice.value = error instanceof Error ? error.message : t('settings.runtimeBindingUnsupported')
+    notify.error(error, { title: agent.name })
   } finally {
     agentRuntimeBusy.value = false
   }
@@ -1307,6 +1379,9 @@ async function saveProvider() {
     if (isNewProvider) {
       modelProviderFilter.value = 'configured'
     }
+    notify.success(saved.display_name)
+  } catch (error) {
+    notify.error(error, { title: providerForm.display_name })
   } finally {
     modelCenterBusy.value = false
   }
@@ -1572,10 +1647,6 @@ import '../settings/settings.css'
                 <Save :size="14" />
                 {{ t('settings.save') }}
               </UiButton>
-              <UiButton v-if="gatewayRestartRequired" variant="secondary" @click="restartDesktop">
-                <RefreshCw :size="14" />
-                {{ t('settings.restartNow') }}
-              </UiButton>
             </div>
           </section>
         </template>
@@ -1639,10 +1710,6 @@ import '../settings/settings.css'
             <Info :size="16" />
             <span>{{ modelCenterError }}</span>
             <UiButton variant="outline" size="sm" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-          <div v-if="modelCenterNotice" class="center-message warning">
-            <Info :size="16" />
-            <span>{{ modelCenterNotice }}</span>
           </div>
           <div v-if="modelCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
             <Info :size="16" />
@@ -1827,15 +1894,10 @@ import '../settings/settings.css'
                   <component :is="selectedProviderDetail.enabled ? X : Check" :size="14" />
                   <span>{{ selectedProviderDetail.enabled ? t('settings.disable') : t('settings.enable') }}</span>
                 </UiButton>
-                <UiButton v-if="confirmDeleteId !== selectedProviderDetail.id" variant="ghost" size="sm" class="provider-delete-btn" @click="confirmDeleteId = selectedProviderDetail.id">
+                <UiButton variant="ghost" size="sm" class="provider-delete-btn" :disabled="modelCenterBusy" @click="deleteProvider(selectedProviderDetail.id)">
                   <Trash2 :size="14" />
                   <span>{{ t('settings.delete') }}</span>
                 </UiButton>
-                <template v-else>
-                  <span class="delete-confirm-text">{{ t('settings.confirmDeleteProvider') }}</span>
-                  <UiButton variant="destructive" size="sm" :disabled="modelCenterBusy" @click="deleteProvider(selectedProviderDetail.id)">{{ t('settings.confirmDelete') }}</UiButton>
-                  <UiButton variant="ghost" size="sm" @click="confirmDeleteId = ''">{{ t('settings.cancel') }}</UiButton>
-                </template>
               </div>
             </section>
           </aside>
@@ -2501,10 +2563,6 @@ import '../settings/settings.css'
                     <strong>{{ t('settings.runtimeBindingPendingCore') }}</strong>
                     <span>{{ t('settings.runtimeBindingPendingCoreHint') }}</span>
                   </div>
-                </div>
-                <div v-if="agentRuntimeNotice" class="runtime-binding-warning">
-                  <Info :size="16" />
-                  <span>{{ agentRuntimeNotice }}</span>
                 </div>
                 <div class="modal-actions compact">
                   <UiButton :disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()" size="sm" @click="saveAgentRuntimeBinding(configuringAgent)">
@@ -3407,7 +3465,7 @@ import '../settings/settings.css'
                         <FolderOpen :size="15" />
                         {{ t('settings.openPetFolder') }}
                       </button>
-                      <button class="pet-menu-action danger" type="button" @click="deletePetCandidate = pet">
+                      <button class="pet-menu-action danger" type="button" @click="removePet(pet)">
                         <Trash2 :size="15" />
                         {{ t('settings.deletePet') }}
                       </button>
@@ -3465,14 +3523,6 @@ import '../settings/settings.css'
             </template>
           </section>
 
-          <UiDialog :open="Boolean(deletePetCandidate)" @update:open="(open) => { if (!open) deletePetCandidate = null }">
-            <h3>{{ t('settings.deletePet') }}</h3>
-            <p>{{ t('settings.deletePetConfirmation', { name: deletePetCandidate?.displayName ?? '' }) }}</p>
-            <div class="pets-dialog-actions">
-              <UiButton variant="outline" @click="deletePetCandidate = null">{{ t('settings.cancel') }}</UiButton>
-              <UiButton variant="destructive" :disabled="Boolean(petActionSlug)" @click="removePet">{{ t('settings.deletePet') }}</UiButton>
-            </div>
-          </UiDialog>
         </template>
 
         <template v-if="activeSection === 'language'">

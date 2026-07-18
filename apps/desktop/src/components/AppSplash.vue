@@ -41,19 +41,19 @@
   will-change: filter, opacity;
 }
 .app-splash__logo svg {
-  height: 88px;
+  height: var(--splash-logo-height);
   width: auto;
   display: block;
 }
 @keyframes splash-glow {
   0%, 100% {
     /* 光晕收束：模糊半径小，光晕紧贴 logo */
-    filter: drop-shadow(0 0 6px var(--accent-brand));
+    filter: drop-shadow(0 0 4px var(--accent-brand));
     opacity: 0.85;
   }
   50% {
     /* 光晕扩散：模糊半径大，光晕外溢 */
-    filter: drop-shadow(0 0 18px var(--accent-brand));
+    filter: drop-shadow(0 0 10px var(--accent-brand));
     opacity: 1;
   }
 }
@@ -61,7 +61,7 @@
   .app-splash__logo {
     animation: none;
     /* 静态显示 logo，保留基础光晕（非动画） */
-    filter: drop-shadow(0 0 8px var(--accent-brand));
+    filter: drop-shadow(0 0 5px var(--accent-brand));
     opacity: 1;
   }
 }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useNotifications } from '@/composables/useNotifications'
 import { useDebugWebSocket } from './composables/useDebugWebSocket'
 import { useTraceData } from './composables/useTraceData'
 import { useSimulation } from './composables/useSimulation'
@@ -15,14 +16,31 @@ import SessionSelector from './components/SessionSelector.vue'
 import LiveReplayToggle from './components/LiveReplayToggle.vue'
 import PreviewGallery from './preview/PreviewGallery.vue'
 import { Bug, Minus, Square, X, LayoutDashboard } from '@lucide/vue'
+import type { ForceApprovalDecisionRequest, SimulateMessageRequest } from './types/simulation'
 
 const { t } = useI18n()
+const { notify, banner, dismiss, confirm } = useNotifications()
 const ws = useDebugWebSocket()
 const traceData = useTraceData()
 const simulation = useSimulation()
 const metrics = useMetrics()
 
 const activeTab = ref<'timeline' | 'graph' | 'metrics' | 'diagnostics' | 'preview'>('timeline')
+
+function mirrorErrorToBanner(source: Ref<string | null>) {
+  let id: string | null = null
+  const stop = watch(source, (message) => {
+    if (id) dismiss(id)
+    id = message ? banner.error(message) : null
+  })
+  onBeforeUnmount(() => {
+    stop()
+    if (id) dismiss(id)
+  })
+}
+
+mirrorErrorToBanner(traceData.error)
+mirrorErrorToBanner(metrics.error)
 
 function minimizeWindow() {
   window.tinadec?.minimizeWindow?.()
@@ -32,6 +50,26 @@ function maximizeWindow() {
 }
 function closeWindow() {
   window.tinadec?.closeWindow?.()
+}
+
+async function injectMessage(request: SimulateMessageRequest) {
+  const response = await simulation.injectMessage(request)
+  if (response?.simulated) notify.success('Simulation message injected')
+  else notify.error(response ? 'Simulation message was rejected' : simulation.error.value ?? 'Simulation message failed')
+}
+
+async function forceApproval(request: ForceApprovalDecisionRequest) {
+  const confirmed = await confirm({
+    title: 'Force simulated approval decision',
+    message: `Force this approval to be ${request.decision}?`,
+    confirmLabel: request.decision === 'approved' ? 'Approve' : 'Reject',
+    destructive: true,
+  })
+  if (!confirmed) return
+
+  const response = await simulation.forceApprovalDecision(request)
+  if (response?.simulated) notify.success(`Simulated approval ${request.decision}`)
+  else notify.error(response ? 'Approval decision was rejected' : simulation.error.value ?? 'Approval decision failed')
 }
 
 onMounted(() => {
@@ -127,9 +165,9 @@ onMounted(() => {
       @run="ws.resumeSimulation"
       @pause="() => { simulation.mode.value = 'paused' }"
       @reset="ws.resetSimulation"
-      @inject-message="simulation.injectMessage"
+      @inject-message="injectMessage"
       @inject-tool-result="simulation.injectToolResult"
-      @force-approval="simulation.forceApprovalDecision"
+      @force-approval="forceApproval"
     />
   </div>
 </template>

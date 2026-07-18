@@ -26,8 +26,10 @@ import {
 } from '@lucide/vue'
 import TerminalView from './TerminalView.vue'
 import { useTerminal, type TerminalInstance } from '@/composables/useTerminal'
+import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 const props = defineProps<{
   /** Working directory for new terminals */
@@ -69,13 +71,10 @@ const terminalAvailable = computed(() => isTerminalAvailable())
 
 // ---- Actions ----
 
-const errorMessage = ref<string | null>(null)
-
 /**
  * Create a new terminal with the given shell profile.
  */
 async function handleNewTerminal(shellId?: string): Promise<void> {
-  errorMessage.value = null
   showShellMenu.value = false
   
   try {
@@ -86,7 +85,7 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
     })
     
     if (!result) {
-      errorMessage.value = t('terminal.createFailed', 'Failed to create terminal')
+      notify.error(t('terminal.createFailed', 'Failed to create terminal'))
       return
     }
     
@@ -97,7 +96,7 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
       setTimeout(() => focusTerminal(activeTerminalId.value!), 100)
     }
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : t('terminal.createFailed', 'Failed to create terminal')
+    notify.error(err, { title: t('terminal.createFailed', 'Failed to create terminal') })
   }
 }
 
@@ -108,16 +107,24 @@ async function handleRestart(id: string): Promise<void> {
   const oldInstance = terminals.value.find((t) => t.id === id)
   const shellId = oldInstance?.shellId
   const cwd = oldInstance?.cwd || props.cwd
-  closeTerminal(id)
-  await nextTick()
-  await createTerminal({
-    shellId: shellId || 'default',
-    cwd,
-    title: oldInstance?.title ?? 'Terminal',
-  })
-  await nextTick()
-  if (activeTerminalId.value) {
-    fitTerminal(activeTerminalId.value)
+  try {
+    closeTerminal(id)
+    await nextTick()
+    const result = await createTerminal({
+      shellId: shellId || 'default',
+      cwd,
+      title: oldInstance?.title ?? 'Terminal',
+    })
+    if (!result) {
+      notify.error(t('terminal.createFailed', 'Failed to create terminal'))
+      return
+    }
+    await nextTick()
+    if (activeTerminalId.value) {
+      fitTerminal(activeTerminalId.value)
+    }
+  } catch (err) {
+    notify.error(err, { title: t('terminal.createFailed', 'Failed to create terminal') })
   }
 }
 
@@ -255,12 +262,6 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 
 <template>
   <div class="terminal-panel">
-    <!-- Error message -->
-    <div v-if="errorMessage" class="terminal-error">
-      <span>{{ errorMessage }}</span>
-      <button @click="errorMessage = null">×</button>
-    </div>
-    
     <!-- Terminal not available (e.g. running in browser) -->
     <div v-if="!terminalAvailable" class="terminal-unavailable">
       <TerminalSquare :size="32" />
@@ -272,7 +273,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
       <!-- Tab bar -->
       <div class="terminal-tab-bar">
         <div class="terminal-tabs-scroll">
-          <button
+          <div
             v-for="instance in terminals"
             :key="instance.id"
             class="terminal-tab"
@@ -280,16 +281,16 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
               active: activeTerminalId === instance.id,
               exited: instance.exited,
             }"
-            :title="instance.title"
-            @click="handleSelectTerminal(instance.id)"
           >
-            <component
-              :is="instance.exited ? Square : Circle"
-              :size="8"
-              class="terminal-tab-status"
-              :class="instance.exited ? 'status-exited' : 'status-running'"
-            />
-            <span class="terminal-tab-label">{{ instance.title }}</span>
+            <button class="terminal-tab-select" :title="instance.title" @click="handleSelectTerminal(instance.id)">
+              <component
+                :is="instance.exited ? Square : Circle"
+                :size="8"
+                class="terminal-tab-status"
+                :class="instance.exited ? 'status-exited' : 'status-running'"
+              />
+              <span class="terminal-tab-label">{{ instance.title }}</span>
+            </button>
             <button
               class="terminal-tab-restart"
               :title="t('terminal.restart')"
@@ -304,7 +305,7 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
             >
               <X :size="11" />
             </button>
-          </button>
+          </div>
         </div>
 
         <!-- New terminal button with shell selector -->
@@ -391,33 +392,6 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   overflow: hidden;
 }
 
-/* ---- Error message ---- */
-.terminal-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--bg-error, #fee2e2);
-  color: var(--text-error, #dc2626);
-  font-size: 12px;
-  border-bottom: 1px solid var(--border-error, #fecaca);
-  flex-shrink: 0;
-}
-
-.terminal-error button {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 0 4px;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.terminal-error button:hover {
-  opacity: 0.7;
-}
-
 /* ---- Tab bar ---- */
 .terminal-tab-bar {
   display: flex;
@@ -477,6 +451,19 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 
 .terminal-tab.exited {
   opacity: 0.6;
+}
+
+.terminal-tab-select {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 .terminal-tab-status {

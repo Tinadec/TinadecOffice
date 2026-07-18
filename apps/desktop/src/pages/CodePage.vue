@@ -19,6 +19,7 @@ import CodeViewer from '@/components/code/CodeViewer.vue'
 import CodeEditor from '@/components/code/CodeEditor.vue'
 import PatchPreview from '@/components/code/PatchPreview.vue'
 import { UiButton, UiSelect } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 interface OpenTab {
   path: string
@@ -27,6 +28,7 @@ interface OpenTab {
 }
 
 const router = useRouter()
+const { notify } = useNotifications()
 
 const projects = ref<ProjectDto[]>([])
 const selectedProjectId = ref<string | null>(null)
@@ -80,7 +82,7 @@ async function loadSession(): Promise<void> {
 
 async function loadApprovals(): Promise<void> {
   try {
-    const list = await api.listApprovals(selectedSessionId.value ?? undefined, 'pending')
+    const list = await api.listApprovals(selectedSessionId.value ?? undefined)
     approvals.value = list
   } catch {
     approvals.value = []
@@ -133,7 +135,7 @@ async function decideApproval(approval: ApprovalDto, decision: 'approved' | 'rej
     await api.decideApproval(approval.id, decision)
     await loadApprovals()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to decide approval'
+    notify.error(err, { title: 'Failed to decide approval' })
   }
 }
 

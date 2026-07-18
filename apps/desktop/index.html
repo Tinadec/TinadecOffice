@@ -37,6 +37,9 @@
       })();
     </script>
     <style>
+      :root {
+        --splash-logo-height: clamp(48px, 6vmin, 64px);
+      }
       /* Splash 占位层 —— Vue 挂载 #app 时自动替换此内容 */
       .splash-placeholder {
         position: fixed;
@@ -54,7 +57,7 @@
         display: none;
       }
       .splash-placeholder svg {
-        height: 88px;
+        height: var(--splash-logo-height);
         width: auto;
         color: var(--accent-brand, #2ec4b6); /* 跟随主题强调色，fallback 为青色 */
       }

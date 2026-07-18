@@ -16,6 +16,7 @@ import {
 import { computed, ref, watch } from 'vue'
 import { api, type ApprovalDto } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 interface DirEntry {
   name: string
@@ -44,6 +45,7 @@ const props = defineProps<{
   approvals?: ApprovalDto[]
   selectedSessionId?: string | null
 }>()
+const { notify } = useNotifications()
 
 const emit = defineEmits<{
   select: [path: string]
@@ -207,7 +209,7 @@ async function requestDeleteApproval(node: TreeNode): Promise<void> {
     })
     emit('approval-created', approval)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to create approval'
+    notify.error(err, { title: 'Failed to create approval' })
   }
 }
 
@@ -227,7 +229,7 @@ async function requestRenameApproval(node: TreeNode): Promise<void> {
     })
     emit('approval-created', approval)
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to create approval'
+    notify.error(err, { title: 'Failed to create approval' })
   }
 }
 

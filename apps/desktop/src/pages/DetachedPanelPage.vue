@@ -6,6 +6,7 @@ import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
 import { api, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
+import { useNotifications } from '@/composables/useNotifications'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
 import EventsTab from '@/components/EventsTab.vue'
@@ -17,6 +18,7 @@ import TerminalPanel from '@/components/TerminalPanel.vue'
 
 const route = useRoute()
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 // ---- Parse query params ----
 const tabId = computed(() => (route.query.tabId as string) ?? '')
@@ -137,16 +139,20 @@ async function requestShellApproval() {
   try {
     const approval = await api.createShellApproval(sessionId.value, shellCommand.value, projectPath.value)
     approvals.value = [approval, ...approvals.value]
-  } catch {
-    // Non-fatal; user can retry
+  } catch (err) {
+    notify.error(err, { title: 'Failed to request shell approval' })
   } finally {
     busy.value = false
   }
 }
 
 async function decideApproval(approval: ApprovalDto, decision: 'approved' | 'rejected') {
-  await api.decideApproval(approval.id, decision)
-  await loadData()
+  try {
+    await api.decideApproval(approval.id, decision)
+    await loadData()
+  } catch (err) {
+    notify.error(err, { title: 'Failed to decide approval' })
+  }
 }
 
 function recordApproval(approval: ApprovalDto) {
