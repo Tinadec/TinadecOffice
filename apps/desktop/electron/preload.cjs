@@ -1,7 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('tinadec', {
-  gatewayUrl: () => process.env.TINADEC_GATEWAY_URL ?? 'http://127.0.0.1:48730',
+  gatewayUrl: () => process.env.TINADEC_RESOLVED_GATEWAY_URL ?? process.env.TINADEC_GATEWAY_URL ?? 'http://127.0.0.1:48730',
+  getAppConfig: () => ipcRenderer.invoke('tinadec:app-config'),
+  saveGatewayUrl: (gatewayUrl) => ipcRenderer.invoke('tinadec:gateway-url-save', gatewayUrl),
+  resetGatewayUrl: () => ipcRenderer.invoke('tinadec:gateway-url-reset'),
+  restartApp: () => ipcRenderer.invoke('tinadec:restart'),
   openProjectDialog: () => ipcRenderer.invoke('tinadec:open-project'),
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),

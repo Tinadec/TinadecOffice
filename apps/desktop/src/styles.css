@@ -249,21 +249,11 @@
   box-sizing: border-box;
 }
 
-/* ===== Custom-drawn window: rounded corners =====
-   The Electron BrowserWindow is created with transparent: true,
-   so these border-radius + overflow:hidden rules produce truly
-   transparent rounded corners on all platforms. */
-html {
-  border-radius: 12px;
-  overflow: hidden;
-}
-
 body {
   margin: 0;
   min-width: 1120px;
   min-height: 720px;
-  /* Transparent so the window rounding shows through; each page
-     provides its own background via .shell or .settings-page. */
+  /* Each page provides its own background via .shell or .settings-page. */
   background: transparent;
   color: var(--text-primary);
   font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

@@ -111,7 +111,13 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 
-type SettingsSection = 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+
+interface DesktopAppConfig {
+  gateway_url: string
+  source: 'default' | 'user' | 'environment'
+  managed: boolean
+}
 
 interface ProviderForm {
   id: string
@@ -200,7 +206,14 @@ function openExternal(url: string) {
   window.open(url, '_blank')
 }
 
-const activeSection = ref<SettingsSection>('model')
+const activeSection = ref<SettingsSection>('general')
+const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: 'default', managed: false })
+const gatewayUrlDraft = ref(api.gatewayUrl)
+const gatewayConfigBusy = ref(false)
+const gatewayConfigNotice = ref('')
+const gatewayConfigError = ref('')
+const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
+const gatewayRestartRequired = ref(false)
 const PET_CATALOG_PAGE_SIZE = 48
 const petCatalog = ref<PetdexCatalogPet[]>([])
 const downloadedPets = ref<DownloadedPet[]>([])
@@ -339,16 +352,14 @@ const aboutGatewayStatus = ref<string>('')
 
 async function checkAboutHealth() {
   try {
-    const res = await fetch('http://127.0.0.1:48731/api/v1/health')
-    const data = await res.json()
+    const data = await api.health()
     aboutCoreStatus.value = data.status === 'ok' ? 'ok' : ''
-    aboutCoreVersion.value = data.version || ''
-  } catch { aboutCoreStatus.value = '' }
-  try {
-    const res = await fetch('http://127.0.0.1:48730/api/v1/health')
-    const data = await res.json()
-    aboutGatewayStatus.value = data.status === 'ok' ? 'ok' : ''
-  } catch { aboutGatewayStatus.value = '' }
+    aboutCoreVersion.value = typeof data.version === 'string' ? data.version : ''
+    aboutGatewayStatus.value = data.gateway === 'ok' ? 'ok' : ''
+  } catch {
+    aboutCoreStatus.value = ''
+    aboutGatewayStatus.value = ''
+  }
 }
 checkAboutHealth()
 const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
@@ -447,6 +458,7 @@ const providerForm = reactive<ProviderForm>({
 })
 
 const navItems = computed(() => [
+  { key: 'general' as const, icon: Settings2, label: t('settings.general') },
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
   { key: 'agents' as const, icon: Workflow, label: t('settings.agents') },
   { key: 'agentEvolution' as const, icon: Dna, label: t('settings.agentEvolution') },
@@ -459,6 +471,78 @@ const navItems = computed(() => [
   { key: 'apiDocs' as const, icon: FileText, label: t('settings.apiDocs') },
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
+
+async function loadAppConfig() {
+  appConfig.value = await window.tinadec.getAppConfig()
+  gatewayUrlDraft.value = appConfig.value.gateway_url
+}
+
+function normalizedGatewayDraft() {
+  const url = new URL(gatewayUrlDraft.value.trim())
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(t('settings.gatewayUrlInvalid'))
+  return url.toString().replace(/\/$/, '')
+}
+
+async function testGatewayConnection() {
+  gatewayConfigError.value = ''
+  gatewayConfigNotice.value = ''
+  gatewayConnectionState.value = 'testing'
+  try {
+    const gatewayUrl = normalizedGatewayDraft()
+    const response = await fetch(`${gatewayUrl}/api/v1/health`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    })
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+    gatewayConnectionState.value = 'ready'
+    gatewayConfigNotice.value = t('settings.gatewayConnectionReady')
+  } catch (error) {
+    gatewayConnectionState.value = 'failed'
+    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewayConnectionFailed')
+  }
+}
+
+async function saveGatewayConfiguration() {
+  gatewayConfigBusy.value = true
+  gatewayConfigError.value = ''
+  gatewayConfigNotice.value = ''
+  try {
+    appConfig.value = await window.tinadec.saveGatewayUrl(gatewayUrlDraft.value)
+    gatewayUrlDraft.value = appConfig.value.gateway_url
+    gatewayRestartRequired.value = appConfig.value.gateway_url !== api.gatewayUrl
+    gatewayConfigNotice.value = gatewayRestartRequired.value
+      ? t('settings.gatewaySavedRestart')
+      : t('settings.gatewaySaved')
+  } catch (error) {
+    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewaySaveFailed')
+  } finally {
+    gatewayConfigBusy.value = false
+  }
+}
+
+async function resetGatewayConfiguration() {
+  gatewayConfigBusy.value = true
+  gatewayConfigError.value = ''
+  try {
+    appConfig.value = await window.tinadec.resetGatewayUrl()
+    gatewayUrlDraft.value = appConfig.value.gateway_url
+    gatewayRestartRequired.value = appConfig.value.gateway_url !== api.gatewayUrl
+    gatewayConnectionState.value = 'idle'
+    gatewayConfigNotice.value = gatewayRestartRequired.value
+      ? t('settings.gatewayResetRestart')
+      : t('settings.gatewayReset')
+  } catch (error) {
+    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewaySaveFailed')
+  } finally {
+    gatewayConfigBusy.value = false
+  }
+}
+
+function restartDesktop() {
+  void window.tinadec.restartApp()
+}
+
+void loadAppConfig()
 
 const modelCenterSections = computed(() => [
   { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.suppliers.length ?? 0 },
@@ -1428,6 +1512,74 @@ import '../settings/settings.css'
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
         <Transition name="section-fade" mode="out-in">
         <div :key="activeSection" class="settings-section-wrapper">
+        <template v-if="activeSection === 'general'">
+          <div class="general-settings-heading">
+            <div>
+              <h2>{{ t('settings.general') }}</h2>
+              <p>{{ t('settings.generalSubtitle') }}</p>
+            </div>
+          </div>
+
+          <section class="general-settings-group" aria-labelledby="gateway-settings-title">
+            <div class="general-settings-group-heading">
+              <div>
+                <h3 id="gateway-settings-title">{{ t('settings.gatewayConnection') }}</h3>
+                <p>{{ t('settings.gatewayConnectionHint') }}</p>
+              </div>
+              <UiBadge :variant="gatewayConnectionState === 'ready' ? 'secondary' : gatewayConnectionState === 'failed' ? 'destructive' : 'outline'">
+                {{ gatewayConnectionState === 'testing'
+                  ? t('settings.gatewayTesting')
+                  : gatewayConnectionState === 'ready'
+                    ? t('settings.gatewayConnected')
+                    : gatewayConnectionState === 'failed'
+                      ? t('settings.gatewayUnreachable')
+                      : t('settings.gatewayNotTested') }}
+              </UiBadge>
+            </div>
+
+            <div class="gateway-config-field">
+              <UiLabel for="gateway-url">{{ t('settings.gatewayUrl') }}</UiLabel>
+              <UiInput
+                id="gateway-url"
+                v-model="gatewayUrlDraft"
+                type="url"
+                :disabled="appConfig.managed || gatewayConfigBusy"
+                placeholder="https://tinadec.example.com"
+                @keydown.enter="testGatewayConnection"
+              />
+              <div class="gateway-config-meta">
+                <span>{{ t('settings.gatewayConfigSource') }}: {{ t(`settings.gatewaySource_${appConfig.source}`) }}</span>
+                <span>{{ t('settings.gatewayHttpsHint') }}</span>
+              </div>
+            </div>
+
+            <p v-if="appConfig.managed" class="gateway-config-managed">
+              <ShieldCheck :size="14" />
+              {{ t('settings.gatewayManaged') }}
+            </p>
+            <p v-if="gatewayConfigNotice" class="gateway-config-feedback success" role="status">{{ gatewayConfigNotice }}</p>
+            <p v-if="gatewayConfigError" class="gateway-config-feedback error" role="alert">{{ gatewayConfigError }}</p>
+
+            <div class="gateway-config-actions">
+              <UiButton variant="outline" :disabled="gatewayConnectionState === 'testing'" @click="testGatewayConnection">
+                <RefreshCw :size="14" :class="{ spinning: gatewayConnectionState === 'testing' }" />
+                {{ t('settings.testConnection') }}
+              </UiButton>
+              <UiButton variant="outline" :disabled="appConfig.managed || gatewayConfigBusy" @click="resetGatewayConfiguration">
+                {{ t('settings.restoreDefault') }}
+              </UiButton>
+              <UiButton :disabled="appConfig.managed || gatewayConfigBusy" @click="saveGatewayConfiguration">
+                <Save :size="14" />
+                {{ t('settings.save') }}
+              </UiButton>
+              <UiButton v-if="gatewayRestartRequired" variant="secondary" @click="restartDesktop">
+                <RefreshCw :size="14" />
+                {{ t('settings.restartNow') }}
+              </UiButton>
+            </div>
+          </section>
+        </template>
+
         <template v-if="activeSection === 'model'">
           <div class="center-page model-center-page">
           <div class="center-command-bar">
@@ -3445,7 +3597,7 @@ import '../settings/settings.css'
               <Globe :size="14" />
               <span>GitHub</span>
             </UiButton>
-            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal('http://127.0.0.1:48730/docs')">
+            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal(api.gatewayUrl + '/docs')">
               <FileText :size="14" />
               <span>{{ t('settings.apiDocs') }}</span>
             </UiButton>

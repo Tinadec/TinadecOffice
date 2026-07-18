@@ -147,6 +147,10 @@ declare global {
   interface Window {
     tinadec: {
       gatewayUrl: () => string;
+      getAppConfig: () => Promise<{ gateway_url: string; source: 'default' | 'user' | 'environment'; managed: boolean }>;
+      saveGatewayUrl: (gatewayUrl: string) => Promise<{ gateway_url: string; source: 'user'; managed: false }>;
+      resetGatewayUrl: () => Promise<{ gateway_url: string; source: 'default' | 'environment'; managed: boolean }>;
+      restartApp: () => Promise<void>;
       openProjectDialog: () => Promise<string | null>;
       minimizeWindow: () => void;
       maximizeWindow: () => void;

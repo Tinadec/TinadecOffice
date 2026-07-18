@@ -29,8 +29,8 @@ const canGoForward = computed(() => historyIndex.value < history.value.length - 
 
 const quickLinks = computed(() => [
   { label: 'Gateway API', url: gatewayDocsUrl },
+  { label: 'Gateway Health', url: (window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730') + '/api/v1/health' },
   { label: 'Dev Server', url: VITE_DEV_URL },
-  { label: 'Core Health', url: 'http://localhost:48731/api/v1/health' },
 ])
 
 function normalizeUrl(input: string): string {

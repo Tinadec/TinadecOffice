@@ -193,6 +193,79 @@ animation-delay: 0.12s;
   margin-bottom: 18px;
 }
 
+.general-settings-heading p,
+.general-settings-group-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.general-settings-heading h2 {
+  margin-bottom: 6px;
+}
+
+.general-settings-group {
+  max-width: 760px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.general-settings-group-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.general-settings-group-heading h3 {
+  margin: 0 0 4px;
+}
+
+.gateway-config-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.gateway-config-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.gateway-config-managed,
+.gateway-config-feedback {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+.gateway-config-managed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.gateway-config-feedback.success {
+  color: var(--accent-success);
+}
+
+.gateway-config-feedback.error {
+  color: var(--accent-danger);
+}
+
+.gateway-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 .pets-heading,
 .pets-section-heading,
 .pets-dialog-actions {

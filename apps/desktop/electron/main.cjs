@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
+const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
 const { createDebugStudioWindow } = require('./debug-studio.cjs');
 const {
   createPanelWindow,
@@ -50,11 +51,9 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.tinadec.office');
 }
 
-// When GPU compositing is unavailable (e.g. sandboxed environments that
-// block disk cache), transparent windows fail to render.  Setting
-// TINADEC_DISABLE_TRANSPARENCY=1 falls back to an opaque frameless window
-// with a solid background so the UI remains fully visible.
-const noTransparency = process.env.TINADEC_DISABLE_TRANSPARENCY === '1';
+function appConfigFile() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
 
 async function createWindow() {
   const win = new BrowserWindow({
@@ -62,13 +61,10 @@ async function createWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 720,
-    // transparent: true lets CSS border-radius on <html> create
-    // truly transparent rounded corners for the custom-drawn window.
-    transparent: !noTransparency,
-    backgroundColor: noTransparency ? '#1e1e2e' : '#00000000',
+    backgroundColor: '#1e1e2e',
     title: 'TinadecOffice',
     icon: path.join(__dirname, '..', isDev ? 'public' : 'dist', 'tinadec.ico'),
-    frame: false,
+    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -118,6 +114,14 @@ ipcMain.handle('tinadec:open-project', async () => {
   }
 
   return result.filePaths[0];
+});
+
+ipcMain.handle('tinadec:app-config', () => loadAppConfig(appConfigFile()));
+ipcMain.handle('tinadec:gateway-url-save', (_event, gatewayUrl) => saveGatewayUrl(appConfigFile(), gatewayUrl));
+ipcMain.handle('tinadec:gateway-url-reset', () => resetGatewayUrl(appConfigFile()));
+ipcMain.handle('tinadec:restart', () => {
+  app.relaunch();
+  app.exit(0);
 });
 
 ipcMain.on('tinadec:minimize', (event) => {
@@ -297,6 +301,7 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
+  process.env.TINADEC_RESOLVED_GATEWAY_URL = loadAppConfig(appConfigFile()).gateway_url;
   protocol.handle('tinadec-pet-preview', async (request) => {
     try {
       const url = new URL(request.url);
