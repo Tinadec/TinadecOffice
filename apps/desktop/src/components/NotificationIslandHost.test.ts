@@ -13,41 +13,45 @@ const notifications = useNotifications()
 
 afterEach(() => {
   for (const item of [...notifications.items.value]) notifications.dismiss(item.id)
+  notifications.closeDetail()
+  notifications.setHovered(null)
   document.body.innerHTML = ''
 })
 
 describe('NotificationIslandHost', () => {
-  it('renders nothing until notified, then expands and dismisses the primary item', async () => {
+  it('renders nothing until notified, hover peeks, click opens detail', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
-    expect(document.body.querySelector('.notification-host')).toBeNull()
+    expect(document.body.querySelector('.island-host')).toBeNull()
 
-    notifications.notify.info({ message: 'Saved', persistent: true })
+    const id = notifications.notify.info({ message: 'Saved', persistent: true })
     await nextTick()
-    const island = document.body.querySelector<HTMLButtonElement>('.notification-island--primary')
-    expect(island).not.toBeNull()
+    const capsule = document.body.querySelector<HTMLButtonElement>('.island-capsule--primary')
+    expect(capsule).not.toBeNull()
 
-    island?.click()
+    capsule?.dispatchEvent(new Event('mouseenter'))
     await nextTick()
-    expect(document.body.querySelector('.notification-card')?.textContent).toContain('Saved')
+    expect(notifications.hoveredId.value).toBe(id)
+    expect(capsule?.classList.contains('island-capsule--peek')).toBe(true)
 
-    document.body.querySelector<HTMLButtonElement>('.notification-card__dismiss')?.click()
+    capsule?.click()
     await nextTick()
-    expect(document.body.querySelector('.notification-host')).toBeNull()
+    expect(notifications.detailId.value).toBe(id)
+
+    notifications.dismiss(id)
+    await nextTick()
+    expect(document.body.querySelector('.island-host')).toBeNull()
     wrapper.unmount()
   })
 
-  it('shows the full queue when more than three notifications exist', async () => {
+  it('shows at most three capsules and overflow badge', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
     for (let index = 0; index < 5; index++) {
       notifications.notify.info({ message: `Notice ${index}`, persistent: true })
     }
     await nextTick()
 
-    expect(document.body.querySelectorAll('.notification-island')).toHaveLength(3)
-    expect(document.body.querySelector('.notification-island__count')?.textContent).toBe('+2')
-    document.body.querySelector<HTMLButtonElement>('.notification-island--primary')?.click()
-    await nextTick()
-    expect(document.body.querySelectorAll('.notification-card__queue-item')).toHaveLength(5)
+    expect(document.body.querySelectorAll('.island-capsule')).toHaveLength(3)
+    expect(document.body.querySelector('.island-capsule__badge')?.textContent).toBe('+2')
     wrapper.unmount()
   })
 })

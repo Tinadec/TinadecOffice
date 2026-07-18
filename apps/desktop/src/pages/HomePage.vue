@@ -16,7 +16,7 @@ import type { AgentMode, PermissionLevel } from '../types/mode'
 
 const router = useRouter()
 const { t } = useI18n()
-const { notify } = useNotifications()
+const { notify, banner } = useNotifications()
 
 // 子窗口（?splash=0）跳过 main-rise 入场动画：复用主窗口已建立的连接，不重播启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -42,7 +42,6 @@ const modelName = ref('gpt-5.4-mini')
 const modelApiKey = ref('')
 const shellCommand = ref('npm test')
 const busy = ref(false)
-const error = ref<string | null>(null)
 const eventSource = ref<EventSource | null>(null)
 const rightRailCollapsed = ref(false)
 const rightRailWidth = ref(420)
@@ -114,7 +113,6 @@ function generateTitle(content: string): string {
 
 async function run(label: string, action: () => Promise<void>) {
   busy.value = true
-  error.value = null
   try {
     await action()
   } catch (err) {
@@ -126,7 +124,6 @@ async function run(label: string, action: () => Promise<void>) {
 
 async function loadInitial() {
   busy.value = true
-  error.value = null
   try {
     const [projectList, settings, report, readinessReceipt] = await Promise.all([
       api.listProjects(),
@@ -143,7 +140,12 @@ async function loadInitial() {
     selectedProjectId.value = projectList[0]?.id ?? null
     await loadSessions()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'load failed'
+    banner.error({
+      key: 'home-load',
+      title: t('app.loadFailed'),
+      message: err instanceof Error ? err.message : t('app.loadFailed'),
+      action: { label: t('app.retry'), run: () => loadInitial() },
+    })
   } finally {
     busy.value = false
   }
@@ -340,8 +342,6 @@ onUnmounted(() => {
       <div class="top-drag-bar" />
 
       <AppHeader :busy="busy" />
-
-    <section v-if="error" class="error-strip">{{ error }}</section>
 
     <section
       class="workspace"

@@ -10,6 +10,8 @@ afterEach(() => {
   while (notifications.currentConfirmation.value) {
     resolveConfirmation(notifications.currentConfirmation.value.id, false)
   }
+  notifications.closeDetail()
+  notifications.setHovered(null)
   vi.useRealTimers()
 })
 
@@ -61,13 +63,15 @@ describe('useNotifications', () => {
     expect(notifications.items.value).toHaveLength(0)
   })
 
-  it('keeps an expanded primary, then restores priority on collapse', () => {
+  it('keeps detail primary, then restores priority on close', () => {
     const info = notifications.notify.info('details')
-    notifications.expand(info)
+    notifications.openDetail(info)
     const error = notifications.notify.error('failed')
 
     expect(notifications.primaryId.value).toBe(info)
-    notifications.collapse()
+    expect(notifications.detailId.value).toBe(info)
+    notifications.closeDetail()
+    expect(notifications.detailId.value).toBeNull()
     expect(notifications.primaryId.value).toBe(error)
   })
 
@@ -87,7 +91,9 @@ describe('useNotifications', () => {
     const unknown = notifications.notify.error({ reason: 'missing' })
 
     expect(notifications.items.value.find((item) => item.id === known)?.message).toBe('broken')
-    expect(notifications.items.value.find((item) => item.id === unknown)?.message).toBe('An unknown error occurred')
+    expect(notifications.items.value.find((item) => item.id === unknown)?.message).toBe(
+      'An unknown error occurred',
+    )
   })
 
   it('expires operation errors but keeps error banners', () => {
@@ -97,6 +103,15 @@ describe('useNotifications', () => {
     vi.advanceTimersByTime(10000)
     expect(notifications.items.value.some((item) => item.id === operation)).toBe(false)
     expect(notifications.items.value.some((item) => item.id === persistent)).toBe(true)
+  })
+
+  it('replaces keyed banners and dismissByKey clears them', () => {
+    notifications.banner.error({ key: 'backend-connection', message: 'first' })
+    notifications.banner.error({ key: 'backend-connection', message: 'second' })
+    expect(notifications.items.value.filter((item) => item.key === 'backend-connection')).toHaveLength(1)
+    expect(notifications.items.value.find((item) => item.key === 'backend-connection')?.message).toBe('second')
+    notifications.dismissByKey('backend-connection')
+    expect(notifications.items.value.some((item) => item.key === 'backend-connection')).toBe(false)
   })
 
   it('resolves confirmations in FIFO order', async () => {

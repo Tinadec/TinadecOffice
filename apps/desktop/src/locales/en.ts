@@ -17,6 +17,13 @@ export default {
     operationFailed: 'Operation failed',
     information: 'Information',
     warning: 'Warning',
+    retry: 'Retry',
+    retryConnection: 'Retry connection',
+    loadFailed: 'Failed to load',
+    backendNotConnected: 'Backend not connected',
+    backendNotConnectedMessage: 'Could not reach Core/Gateway within 30 seconds. Some features may be unavailable.',
+    backendDisconnected: 'Backend disconnected',
+    backendDisconnectedMessage: 'Lost connection to Core/Gateway. Retry when the service is available.',
   },
   nav: {
     chat: 'Chat',

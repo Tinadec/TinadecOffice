@@ -1,0 +1,370 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, TriangleAlert, X } from '@lucide/vue'
+import {
+  resolveConfirmation,
+  useNotifications,
+  type NotificationLevel,
+} from '@/composables/useNotifications'
+
+const { t } = useI18n()
+const {
+  currentConfirmation,
+  detailItem,
+  closeDetail,
+  dismiss,
+  notify,
+} = useNotifications()
+
+const dialog = ref<HTMLDialogElement | null>(null)
+const cancelButton = ref<HTMLButtonElement | null>(null)
+const resolving = ref(false)
+let returnFocus: HTMLElement | null = null
+let displayedConfirmId: string | null = null
+let displayedDetailId: string | null = null
+let unlockTimer: ReturnType<typeof setTimeout> | null = null
+
+const mode = computed<'confirm' | 'detail' | null>(() => {
+  if (currentConfirmation.value) return 'confirm'
+  if (detailItem.value) return 'detail'
+  return null
+})
+
+const levelIcons: Record<NotificationLevel, typeof Info> = {
+  info: Info,
+  success: CheckCircle2,
+  warning: TriangleAlert,
+  error: AlertCircle,
+}
+
+watch(
+  [currentConfirmation, detailItem],
+  async () => {
+    await nextTick()
+    const element = dialog.value
+    if (!element) return
+
+    if (mode.value === 'confirm' && currentConfirmation.value) {
+      const request = currentConfirmation.value
+      if (element.open && displayedConfirmId && displayedConfirmId !== request.id) {
+        element.close()
+      }
+      displayedConfirmId = request.id
+      displayedDetailId = null
+      if (!element.open) {
+        if (!returnFocus) {
+          returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }
+        element.showModal()
+      }
+      cancelButton.value?.focus()
+      return
+    }
+
+    if (mode.value === 'detail' && detailItem.value) {
+      const item = detailItem.value
+      displayedDetailId = item.id
+      displayedConfirmId = null
+      if (!element.open) {
+        if (!returnFocus) {
+          returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }
+        element.showModal()
+      }
+      cancelButton.value?.focus()
+      return
+    }
+
+    if (element.open) {
+      element.close()
+      returnFocus?.focus()
+      returnFocus = null
+      displayedConfirmId = null
+      displayedDetailId = null
+    }
+  },
+  { immediate: true },
+)
+
+function finishConfirm(value: boolean): void {
+  if (resolving.value || !displayedConfirmId) return
+  resolving.value = true
+  resolveConfirmation(displayedConfirmId, value)
+  if (unlockTimer) clearTimeout(unlockTimer)
+  unlockTimer = setTimeout(() => {
+    resolving.value = false
+    cancelButton.value?.focus()
+  }, 250)
+}
+
+function closeDetailDialog(): void {
+  if (detailItem.value) dismiss(detailItem.value.id)
+  else closeDetail()
+}
+
+async function runDetailAction(): Promise<void> {
+  const item = detailItem.value
+  if (!item?.action) return
+  try {
+    await item.action.run()
+    dismiss(item.id)
+  } catch (error) {
+    notify.error(error)
+  }
+}
+
+function onCancel(event: Event): void {
+  event.preventDefault()
+  if (mode.value === 'confirm') finishConfirm(false)
+  else closeDetailDialog()
+}
+
+function onBackdrop(event: MouseEvent): void {
+  const element = dialog.value
+  if (event.target !== element || !element) return
+  const rect = element.getBoundingClientRect()
+  if (
+    event.clientX < rect.left ||
+    event.clientX > rect.right ||
+    event.clientY < rect.top ||
+    event.clientY > rect.bottom
+  ) {
+    if (mode.value === 'confirm') finishConfirm(false)
+    else closeDetailDialog()
+  }
+}
+
+onBeforeUnmount(() => {
+  if (unlockTimer) clearTimeout(unlockTimer)
+})
+</script>
+
+<template>
+  <Teleport to="body">
+    <dialog
+      ref="dialog"
+      class="detail-dialog no-drag"
+      :class="{
+        'detail-dialog--destructive': currentConfirmation?.destructive,
+        [`detail-dialog--${detailItem?.level}`]: mode === 'detail' && detailItem,
+      }"
+      :aria-labelledby="mode === 'confirm' && currentConfirmation
+        ? `${currentConfirmation.id}-title`
+        : detailItem
+          ? `${detailItem.id}-title`
+          : undefined"
+      :aria-describedby="mode === 'confirm' && currentConfirmation
+        ? `${currentConfirmation.id}-description`
+        : detailItem
+          ? `${detailItem.id}-description`
+          : undefined"
+      @cancel="onCancel"
+      @click="onBackdrop"
+    >
+      <!-- Confirmation mode -->
+      <template v-if="mode === 'confirm' && currentConfirmation">
+        <div class="detail-dialog__heading">
+          <AlertTriangle v-if="currentConfirmation.destructive" :size="19" aria-hidden="true" />
+          <h2 :id="`${currentConfirmation.id}-title`">
+            {{ currentConfirmation.title || t('app.confirm') }}
+          </h2>
+        </div>
+        <p :id="`${currentConfirmation.id}-description`">{{ currentConfirmation.message }}</p>
+        <div class="detail-dialog__actions">
+          <button
+            ref="cancelButton"
+            type="button"
+            class="detail-dialog__secondary"
+            :disabled="resolving"
+            @click="finishConfirm(false)"
+          >
+            {{ currentConfirmation.cancelLabel || t('app.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="detail-dialog__primary"
+            :class="{ 'detail-dialog__primary--destructive': currentConfirmation.destructive }"
+            :disabled="resolving"
+            @click="finishConfirm(true)"
+          >
+            {{ currentConfirmation.confirmLabel || t('app.confirm') }}
+          </button>
+        </div>
+      </template>
+
+      <!-- Notification detail mode -->
+      <template v-else-if="mode === 'detail' && detailItem">
+        <div class="detail-dialog__heading">
+          <component
+            :is="levelIcons[detailItem.level]"
+            :size="19"
+            class="detail-dialog__level-icon"
+            aria-hidden="true"
+          />
+          <h2 :id="`${detailItem.id}-title`">
+            {{ detailItem.title || (detailItem.level === 'error'
+              ? t('app.operationFailed')
+              : detailItem.level === 'success'
+                ? t('app.operationCompleted')
+                : detailItem.level === 'warning'
+                  ? t('app.warning')
+                  : t('app.information')) }}
+          </h2>
+          <button
+            type="button"
+            class="detail-dialog__close"
+            :aria-label="t('app.dismiss')"
+            @click="closeDetailDialog"
+          >
+            <X :size="16" aria-hidden="true" />
+          </button>
+        </div>
+        <p :id="`${detailItem.id}-description`">{{ detailItem.message }}</p>
+        <div class="detail-dialog__actions">
+          <button
+            ref="cancelButton"
+            type="button"
+            class="detail-dialog__secondary"
+            @click="closeDetailDialog"
+          >
+            {{ t('app.dismiss') }}
+          </button>
+          <button
+            v-if="detailItem.action"
+            type="button"
+            class="detail-dialog__primary"
+            @click="runDetailAction"
+          >
+            {{ detailItem.action.label }}
+          </button>
+        </div>
+      </template>
+    </dialog>
+  </Teleport>
+</template>
+
+<style scoped>
+.detail-dialog {
+  width: min(calc(100vw - 32px), 430px);
+  margin: auto;
+  padding: 18px;
+  border: 1px solid var(--border-default, #1a1f29);
+  border-radius: 8px;
+  background: var(--bg-primary, #0a0e14);
+  color: var(--text-primary, #c9d1d9);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 40%);
+  -webkit-app-region: no-drag;
+}
+
+.detail-dialog::backdrop {
+  background: rgb(0 0 0 / 48%);
+}
+
+.detail-dialog__heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.detail-dialog__heading svg {
+  flex: none;
+}
+
+.detail-dialog--destructive .detail-dialog__heading svg,
+.detail-dialog--error .detail-dialog__level-icon {
+  color: var(--accent-danger, #f85149);
+}
+
+.detail-dialog--success .detail-dialog__level-icon {
+  color: var(--accent-success, #2ec4b6);
+}
+
+.detail-dialog--warning .detail-dialog__level-icon {
+  color: var(--accent-warning, #d29922);
+}
+
+.detail-dialog--info .detail-dialog__level-icon {
+  color: var(--accent-primary, #2ec4b6);
+}
+
+.detail-dialog h2 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.detail-dialog p {
+  margin: 10px 0 18px;
+  color: var(--text-secondary, #7d8590);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-dialog__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #7d8590);
+  cursor: pointer;
+}
+
+.detail-dialog__close:hover {
+  background: var(--bg-hover, #161b22);
+  color: var(--text-primary, #c9d1d9);
+}
+
+.detail-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.detail-dialog button {
+  min-height: 30px;
+  border: 1px solid var(--border-default, #1a1f29);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.detail-dialog__secondary {
+  background: var(--bg-secondary, #11151c);
+  color: var(--text-primary, #c9d1d9);
+}
+
+.detail-dialog__primary {
+  border-color: var(--accent-primary, #2ec4b6) !important;
+  background: var(--accent-primary, #2ec4b6);
+  color: #0a0e14;
+  font-weight: 600;
+}
+
+.detail-dialog__primary--destructive {
+  border-color: var(--accent-danger, #f85149) !important;
+  background: var(--accent-danger, #f85149);
+  color: #fff;
+}
+
+.detail-dialog button:focus-visible {
+  outline: 2px solid var(--accent-primary, #2ec4b6);
+  outline-offset: 2px;
+}
+
+.detail-dialog button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+</style>

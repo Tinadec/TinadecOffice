@@ -28,7 +28,7 @@ import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
 const router = useRouter()
-const { notify, confirm } = useNotifications()
+const { notify, banner, confirm } = useNotifications()
 
 const BUILT_IN_SOURCES = [
   {
@@ -54,7 +54,7 @@ const sourceFilter = ref('')
 const query = ref('')
 const busy = ref(false)
 const loading = ref(false)
-const error = ref<string | null>(null)
+
 const preview = ref<ExtensionInstallPreviewDto | null>(null)
 const directPreview = ref<ExtensionInstallPreviewDto | null>(null)
 
@@ -177,7 +177,6 @@ async function ensureBuiltInSources() {
 
 async function loadAll() {
   loading.value = true
-  error.value = null
   try {
     await ensureBuiltInSources()
     const [sourceList, installedList, servers, adapters] = await Promise.all([
@@ -196,7 +195,12 @@ async function loadAll() {
     }
     await loadCatalog()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('market.loadFailed')
+    banner.error({
+      key: 'market-load',
+      title: t('market.loadFailed'),
+      message: err instanceof Error ? err.message : t('market.loadFailed'),
+      action: { label: t('app.retry'), run: () => loadAll() },
+    })
   } finally {
     loading.value = false
   }
@@ -212,9 +216,12 @@ async function loadCatalog() {
     if (!catalog.value.some((item) => item.catalog_id === selectedCatalogId.value)) {
       selectedCatalogId.value = catalog.value[0]?.catalog_id ?? ''
     }
-    error.value = null
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('market.loadFailed')
+    banner.error({
+      key: 'market-catalog',
+      title: t('market.loadFailed'),
+      message: err instanceof Error ? err.message : t('market.loadFailed'),
+    })
   }
 }
 
@@ -225,9 +232,8 @@ async function loadPreview() {
   }
   try {
     preview.value = await api.previewExtensionInstall({ catalog_id: selectedItem.value.catalog_id })
-    error.value = null
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('market.loadFailed')
+    notify.error(err, { title: t('market.loadFailed') })
   }
 }
 
@@ -364,7 +370,6 @@ onMounted(() => {
 <!-- Full-width draggable bar for window dragging -->
 <div class="top-drag-bar" />
 <AppHeader :busy="busy || loading" />
-    <section v-if="error" class="error-strip">{{ error }}</section>
 
     <section class="market-workspace">
       <aside class="market-rail">

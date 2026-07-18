@@ -1,27 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { AlertCircle, Bell, CheckCircle2, Info, TriangleAlert, X } from '@lucide/vue'
-import { useNotifications, type NotificationItem, type NotificationLevel } from '@/composables/useNotifications'
+import { AlertCircle, Bell, CheckCircle2, Info, TriangleAlert } from '@lucide/vue'
+import {
+  useNotifications,
+  type NotificationItem,
+  type NotificationLevel,
+} from '@/composables/useNotifications'
 
 const route = useRoute()
 const { t } = useI18n()
 const {
   items,
   primaryId,
-  expandedId,
-  orderedItems,
+  detailId,
+  hoveredId,
   visibleItems,
-  primaryItem,
   overflowCount,
-  dismiss,
-  expand,
-  collapse,
+  openDetail,
+  setHovered,
   promote,
-  pause,
-  resume,
-  notify,
 } = useNotifications()
 
 const routeKind = computed(() => {
@@ -42,84 +41,75 @@ function icon(level: NotificationLevel) {
   return icons[level] ?? Bell
 }
 
-function heading(item: NotificationItem): string {
-  if (item.title) return item.title
-  if (item.level === 'success') return t('app.operationCompleted')
-  if (item.level === 'error') return t('app.operationFailed')
-  return item.level === 'warning' ? t('app.warning') : t('app.information')
-}
-
 function summary(item: NotificationItem): string {
   return item.title || item.message
 }
 
-function togglePrimary(item: NotificationItem): void {
-  expandedId.value === item.id ? collapse() : expand(item.id)
-}
-
-function selectSide(item: NotificationItem): void {
-  const wasExpanded = Boolean(expandedId.value)
-  promote(item.id)
-  if (wasExpanded) expand(item.id)
-}
-
-function selectQueueItem(item: NotificationItem): void {
-  promote(item.id)
-  expand(item.id)
-}
-
-function resumeUnlessExpanded(id: string, reason: string): void {
-  if (expandedId.value !== id) resume(id, reason)
-}
-
-function handleFocusOut(event: FocusEvent, id: string): void {
-  const current = event.currentTarget as HTMLElement
-  if (!current.contains(event.relatedTarget as Node | null)) resumeUnlessExpanded(id, 'focus')
-}
-
-async function runAction(item: NotificationItem): Promise<void> {
-  try {
-    await item.action?.run()
-  } catch (error) {
-    notify.error(error)
+function capsuleLabel(item: NotificationItem, index: number): string {
+  const base = summary(item)
+  if (index === 0 && overflowCount.value) {
+    return `${base}, +${overflowCount.value} ${t('app.more')}`
   }
+  return base
+}
+
+/** Compact label for side islands — icon + short text */
+function shortLabel(item: NotificationItem): string {
+  if (item.title) return item.title
+  const msg = item.message
+  return msg.length > 18 ? `${msg.slice(0, 16)}…` : msg
+}
+
+const localHoverId = ref<string | null>(null)
+let hoverLeaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function onEnter(item: NotificationItem): void {
+  if (hoverLeaveTimer) {
+    clearTimeout(hoverLeaveTimer)
+    hoverLeaveTimer = null
+  }
+  localHoverId.value = item.id
+  setHovered(item.id)
+  if (item.id !== primaryId.value) promote(item.id)
+}
+
+function onLeave(item: NotificationItem): void {
+  if (hoverLeaveTimer) clearTimeout(hoverLeaveTimer)
+  hoverLeaveTimer = setTimeout(() => {
+    if (localHoverId.value === item.id) {
+      localHoverId.value = null
+      setHovered(null)
+    }
+    hoverLeaveTimer = null
+  }, 80)
+}
+
+function onClick(item: NotificationItem): void {
+  openDetail(item.id)
+}
+
+function isPeek(item: NotificationItem, index: number): boolean {
+  if (index !== 0) return false
+  if (detailId.value === item.id) return false
+  return hoveredId.value === item.id || localHoverId.value === item.id
 }
 
 const announcedItem = ref<NotificationItem | null>(null)
 const announcedIds = new Set<string>()
-const queue = ref<HTMLElement | null>(null)
-const peekId = ref<string | null>(null)
-let peekTimer: ReturnType<typeof setTimeout> | null = null
 
-watch(primaryId, (id) => {
-  if (peekTimer) clearTimeout(peekTimer)
-  peekId.value = id
-  if (id) {
-    peekTimer = setTimeout(() => {
-      peekId.value = null
-      peekTimer = null
-    }, 2400)
-  }
-})
-
-watch(() => items.value.map((item) => item.id), () => {
-  const item = [...items.value].reverse().find((candidate) => !announcedIds.has(candidate.id))
-  if (!item) return
-  announcedIds.add(item.id)
-  announcedItem.value = item
-})
-
-async function dismissQueueItem(item: NotificationItem, index: number): Promise<void> {
-  dismiss(item.id)
-  await nextTick()
-  const controls = queue.value?.querySelectorAll<HTMLButtonElement>('.notification-card__queue-item > button:first-child')
-  const target = controls?.[Math.min(index, Math.max(0, controls.length - 1))]
-    ?? document.querySelector<HTMLButtonElement>('.notification-island--primary')
-  target?.focus()
-}
+watch(
+  () => items.value.map((item) => item.id),
+  () => {
+    const item = [...items.value].reverse().find((candidate) => !announcedIds.has(candidate.id))
+    if (!item) return
+    announcedIds.add(item.id)
+    announcedItem.value = item
+  },
+)
 
 onBeforeUnmount(() => {
-  if (peekTimer) clearTimeout(peekTimer)
+  if (hoverLeaveTimer) clearTimeout(hoverLeaveTimer)
+  setHovered(null)
 })
 </script>
 
@@ -131,267 +121,221 @@ onBeforeUnmount(() => {
     <div class="sr-only" aria-live="assertive" aria-atomic="true">
       {{ announcedItem?.level === 'error' ? announcedItem.message : '' }}
     </div>
+
     <section
       v-if="items.length && routeKind !== 'pet'"
-      class="notification-host"
-      :class="`notification-host--${routeKind}`"
+      class="island-host"
+      :class="`island-host--${routeKind}`"
       :aria-label="t('app.notificationRegion')"
     >
-      <div class="notification-islands">
+      <div class="island-row">
         <button
           v-for="(item, index) in visibleItems"
           :key="item.id"
           type="button"
-          class="notification-island no-drag"
+          class="island-capsule no-drag"
           :class="[
-            `notification-island--${item.level}`,
-            index === 0 ? 'notification-island--primary' : 'notification-island--side',
-            index === 0 && peekId === item.id && expandedId !== item.id ? 'notification-island--peek' : '',
+            `island-capsule--${item.level}`,
+            index === 0 ? 'island-capsule--primary' : 'island-capsule--side',
+            isPeek(item, index) ? 'island-capsule--peek' : '',
+            detailId === item.id ? 'island-capsule--active' : '',
           ]"
-          :aria-expanded="index === 0 ? expandedId === item.id : undefined"
-          :title="index === 0 ? undefined : summary(item)"
-          :aria-label="index === 0 && overflowCount ? `${summary(item)}, +${overflowCount} ${t('app.more')}` : summary(item)"
-          @click="index === 0 ? togglePrimary(item) : selectSide(item)"
-          @mouseenter="pause(item.id, 'hover')"
-          @mouseleave="resumeUnlessExpanded(item.id, 'hover')"
-          @focusin="pause(item.id, 'focus')"
-          @focusout="handleFocusOut($event, item.id)"
+          :aria-label="capsuleLabel(item, index)"
+          :title="summary(item)"
+          @mouseenter="onEnter(item)"
+          @mouseleave="onLeave(item)"
+          @focusin="onEnter(item)"
+          @focusout="onLeave(item)"
+          @click="onClick(item)"
         >
-          <component :is="icon(item.level)" :size="14" aria-hidden="true" />
-          <span class="notification-island__copy">
-            <strong>{{ summary(item) }}</strong>
-            <span v-if="index === 0 && item.title">{{ item.message }}</span>
+          <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
+          <span class="island-capsule__text">
+            <template v-if="index === 0">
+              <strong class="island-capsule__title">{{ item.title || shortLabel(item) }}</strong>
+              <span v-if="isPeek(item, index) && item.title" class="island-capsule__msg">{{ item.message }}</span>
+              <span v-else-if="isPeek(item, index) && !item.title" class="island-capsule__msg">{{ item.message }}</span>
+            </template>
+            <template v-else>
+              <strong class="island-capsule__title">{{ shortLabel(item) }}</strong>
+            </template>
           </span>
           <span
             v-if="index === 0 && overflowCount"
-            class="notification-island__count"
-            :title="t('app.more')"
+            class="island-capsule__badge"
           >+{{ overflowCount }}</span>
         </button>
       </div>
-
-      <Transition name="notification-card">
-        <article
-          v-if="expandedId && primaryItem"
-          class="notification-card no-drag"
-          :class="`notification-card--${primaryItem.level}`"
-          :role="primaryItem.level === 'error' ? 'alert' : 'status'"
-          :aria-live="primaryItem.level === 'error' ? 'assertive' : 'polite'"
-           @mouseenter="pause(primaryItem.id, 'hover')"
-           @mouseleave="resumeUnlessExpanded(primaryItem.id, 'hover')"
-           @focusin="pause(primaryItem.id, 'focus')"
-          @focusout="handleFocusOut($event, primaryItem.id)"
-        >
-          <div class="notification-card__heading">
-            <component :is="icon(primaryItem.level)" :size="17" aria-hidden="true" />
-            <strong>{{ heading(primaryItem) }}</strong>
-            <button
-              type="button"
-              class="notification-card__dismiss no-drag"
-              :aria-label="t('app.dismiss')"
-              :title="t('app.dismiss')"
-              @click="dismiss(primaryItem.id)"
-            >
-              <X :size="15" aria-hidden="true" />
-            </button>
-          </div>
-          <p>{{ primaryItem.message }}</p>
-          <button
-            v-if="primaryItem.action"
-            type="button"
-            class="notification-card__action no-drag"
-            @click="runAction(primaryItem)"
-          >
-            {{ primaryItem.action.label }}
-          </button>
-          <div v-if="orderedItems.length > 1" ref="queue" class="notification-card__queue">
-            <div v-for="(item, index) in orderedItems" :key="item.id" class="notification-card__queue-item">
-              <button type="button" @click="selectQueueItem(item)">
-                <component :is="icon(item.level)" :size="14" aria-hidden="true" />
-                <span>{{ summary(item) }}</span>
-              </button>
-              <button
-                type="button"
-                class="notification-card__queue-dismiss"
-                :aria-label="`${t('app.dismiss')}: ${summary(item)}`"
-                @click="dismissQueueItem(item, index)"
-              >
-                <X :size="13" aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-        </article>
-      </Transition>
     </section>
   </Teleport>
 </template>
 
 <style scoped>
-.notification-host {
+.island-host {
   position: fixed;
   z-index: 10050;
   pointer-events: none;
-  container-type: inline-size;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  color: var(--text-primary, #18181b);
-}
-
-.notification-host--standard { top: 4px; left: 276px; right: 136px; }
-.notification-host--detached { top: 44px; left: 8px; right: 8px; }
-.notification-host--debug { top: 80px; left: 12px; right: 12px; }
-
-.notification-islands {
-  width: min(100%, 620px);
-  height: 30px;
   display: flex;
   justify-content: center;
-  gap: 5px;
+  container-type: inline-size;
 }
 
-.notification-island {
-  --level: var(--accent-primary, #2563eb);
-  height: 28px;
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--level) 30%, var(--border-default, #d4d4d8));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--level) 8%, var(--bg-primary, #fff));
-  color: inherit;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
+.island-host--standard {
+  top: 6px;
+  left: 200px;
+  right: 140px;
+}
+
+.island-host--detached {
+  top: 42px;
+  left: 8px;
+  right: 8px;
+}
+
+.island-host--debug {
+  top: 78px;
+  left: 12px;
+  right: 12px;
+}
+
+.island-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 0 9px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  overflow: hidden;
-  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+  max-width: 100%;
+  pointer-events: none;
 }
 
-.notification-island:hover { transform: translateY(1px); }
-.notification-island:focus-visible,
-.notification-card button:focus-visible { outline: 2px solid var(--level, var(--accent-primary, #2563eb)); outline-offset: 2px; }
-.notification-island--primary { flex: 0 1 220px; max-width: 220px; }
-.notification-island--peek { flex-basis: 420px; max-width: 420px; }
-.notification-island--side { flex: 0 1 112px; }
-.notification-island--success, .notification-card--success { --level: var(--accent-success, #16845b); }
-.notification-island--warning, .notification-card--warning { --level: var(--accent-warning, #b46900); }
-.notification-island--error, .notification-card--error { --level: var(--accent-danger, #d13c4b); }
-
-.notification-island__copy {
-  min-width: 0;
-  display: flex;
-  gap: 5px;
-  align-items: baseline;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.notification-island__copy strong,
-.notification-island__copy span { overflow: hidden; text-overflow: ellipsis; }
-.notification-island__copy strong { flex: 0 1 auto; }
-.notification-island__copy span { color: var(--text-secondary, #52525b); }
-.notification-island__count { margin-left: auto; flex: none; color: var(--level); font-weight: 700; }
-
-.notification-card {
-  --level: var(--accent-primary, #2563eb);
-  width: min(100%, 500px);
-  margin-top: 6px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--level) 30%, var(--border-default, #d4d4d8));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--level) 5%, var(--bg-primary, #fff));
-  box-shadow: 0 10px 30px rgb(0 0 0 / 18%);
+.island-capsule {
+  --level: var(--accent-primary, #2ec4b6);
   pointer-events: auto;
   -webkit-app-region: no-drag;
-  overflow-wrap: anywhere;
-}
-
-.notification-card__heading { display: flex; align-items: center; gap: 8px; color: var(--level); }
-.notification-card__heading strong { min-width: 0; color: var(--text-primary, #18181b); font-size: 13px; }
-.notification-card p { margin: 7px 0 0 25px; color: var(--text-secondary, #52525b); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
-.notification-card__dismiss {
-  margin-left: auto;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary, #52525b);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-.notification-card__dismiss:hover { background: color-mix(in srgb, var(--level) 12%, transparent); }
-.notification-card__action {
-  margin: 10px 0 0 25px;
-  border: 1px solid color-mix(in srgb, var(--level) 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--level) 12%, transparent);
-  color: var(--text-primary, #18181b);
-  padding: 5px 9px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.notification-card__queue {
-  max-height: min(240px, 35vh);
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-muted, #e4e4e7);
-  overflow-y: auto;
-}
-.notification-card__queue-item { display: flex; align-items: center; gap: 4px; }
-.notification-card__queue-item > button:first-child {
-  min-width: 0;
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 7px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary, #18181b);
-  padding: 6px;
-  text-align: left;
+  height: 28px;
+  min-width: 0;
+  max-width: 160px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--level) 35%, var(--border-default, #1a1f29));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary, #11151c) 88%, var(--level));
+  color: var(--text-primary, #c9d1d9);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 18%),
+    0 6px 18px rgb(0 0 0 / 22%);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
   cursor: pointer;
-}
-.notification-card__queue-item > button:first-child:hover { background: var(--bg-secondary, #f4f4f5); }
-.notification-card__queue-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.notification-card__queue-dismiss {
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary, #52525b);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
+  overflow: hidden;
+  transition:
+    max-width 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
-.notification-card-enter-active,
-.notification-card-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
-.notification-card-enter-from,
-.notification-card-leave-to { opacity: 0; transform: translateY(-4px); }
-
-@container (max-width: 460px) {
-  .notification-island--side { flex-basis: 30px; padding: 0 7px; }
-  .notification-island--side .notification-island__copy { display: none; }
-  .notification-island--primary .notification-island__copy span { display: none; }
+.island-capsule--primary {
+  max-width: 200px;
+  flex: 0 1 auto;
 }
 
-@container (max-width: 280px) {
-  .notification-island--primary .notification-island__copy strong { display: none; }
+.island-capsule--side {
+  max-width: 96px;
+  padding: 0 10px;
+  opacity: 0.92;
+}
+
+.island-capsule--peek {
+  max-width: min(420px, 100cqw);
+  padding: 0 14px;
+  transform: translateY(1px);
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 20%),
+    0 10px 28px rgb(0 0 0 / 28%);
+  background: color-mix(in srgb, var(--bg-secondary, #11151c) 78%, var(--level));
+}
+
+.island-capsule--active {
+  border-color: color-mix(in srgb, var(--level) 55%, var(--border-default, #1a1f29));
+}
+
+.island-capsule--success { --level: var(--accent-success, #2ec4b6); }
+.island-capsule--warning { --level: var(--accent-warning, #d29922); }
+.island-capsule--error { --level: var(--accent-danger, #f85149); }
+.island-capsule--info { --level: var(--accent-primary, #2ec4b6); }
+
+.island-capsule__icon {
+  flex: none;
+  color: var(--level);
+}
+
+.island-capsule__text {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.island-capsule__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.island-capsule__msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary, #7d8590);
+  font-weight: 400;
+}
+
+.island-capsule__badge {
+  flex: none;
+  margin-left: 2px;
+  font-weight: 700;
+  color: var(--level);
+  font-size: 10px;
+}
+
+.island-capsule:focus-visible {
+  outline: 2px solid var(--level);
+  outline-offset: 2px;
+}
+
+@container (max-width: 420px) {
+  .island-capsule--side .island-capsule__text {
+    display: none;
+  }
+  .island-capsule--side {
+    max-width: 32px;
+    padding: 0 9px;
+  }
+  .island-capsule--primary {
+    max-width: min(280px, 100cqw);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .notification-island,
-  .notification-card-enter-active,
-  .notification-card-leave-active { transition: none; }
+  .island-capsule {
+    transition: none;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

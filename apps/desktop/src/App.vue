@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import router from './router'
 import { useBackground } from '@/composables/useBackground'
-import { useConnection } from '@/composables/useConnection'
+import {
+  useConnection,
+  CONNECTION_BANNER_KEY,
+  retryConnection,
+} from '@/composables/useConnection'
+import { useNotifications } from '@/composables/useNotifications'
 import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
-import ConfirmationDialog from '@/components/ConfirmationDialog.vue'
+import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -29,8 +35,36 @@ watch(backgroundSettings, () => applyBackground(), { deep: true, immediate: true
 // 它们复用主窗口已建立的后端连接，不应重播首次启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
 const isPetWindow = window.location.hash.startsWith('#/pet')
+const { t } = useI18n()
 const { connectionState, start: startConnection } = useConnection()
+const { banner, dismissByKey } = useNotifications()
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
+
+watch(connectionState, (state) => {
+  if (isPetWindow || isChildWindow) return
+  if (state === 'connected') {
+    dismissByKey(CONNECTION_BANNER_KEY)
+    return
+  }
+  if (state === 'timeout') {
+    banner.error({
+      key: CONNECTION_BANNER_KEY,
+      title: t('app.backendNotConnected'),
+      message: t('app.backendNotConnectedMessage'),
+      action: { label: t('app.retryConnection'), run: () => retryConnection() },
+    })
+    return
+  }
+  if (state === 'disconnected') {
+    banner.error({
+      key: CONNECTION_BANNER_KEY,
+      title: t('app.backendDisconnected'),
+      message: t('app.backendDisconnectedMessage'),
+      action: { label: t('app.retryConnection'), run: () => retryConnection() },
+    })
+  }
+})
+
 onMounted(() => {
   if (!isPetWindow && !isChildWindow) startConnection()
 })
@@ -132,6 +166,6 @@ router.beforeEach((to, from, next) => {
     </RouterView>
   </div>
   <NotificationIslandHost v-if="!isConnecting" />
-  <ConfirmationDialog v-if="!isConnecting" />
+  <NotificationDetailDialog v-if="!isConnecting" />
   </template>
 </template>

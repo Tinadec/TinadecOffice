@@ -52,7 +52,8 @@ type QueuedConfirmation = ConfirmationRequest & { resolve: (value: boolean) => v
 
 const items = ref<NotificationItem[]>([])
 const primaryId = ref<string | null>(null)
-const expandedId = ref<string | null>(null)
+const detailId = ref<string | null>(null)
+const hoveredId = ref<string | null>(null)
 const currentConfirmation = ref<ConfirmationRequest | null>(null)
 const timers = new Map<string, Timer>()
 const confirmations: QueuedConfirmation[] = []
@@ -86,8 +87,8 @@ function currentVisibleItems(): NotificationItem[] {
 }
 
 function selectPrimary(): void {
-  if (expandedId.value && items.value.some((item) => item.id === expandedId.value)) {
-    primaryId.value = expandedId.value
+  if (detailId.value && items.value.some((item) => item.id === detailId.value)) {
+    primaryId.value = detailId.value
     return
   }
   primaryId.value = rankItems()[0]?.id ?? null
@@ -95,30 +96,39 @@ function selectPrimary(): void {
 
 function syncTimerVisibility(): void {
   const visibleIds = new Set(currentVisibleItems().map((item) => item.id))
-  for (const id of timers.keys()) {
-    if (expandedId.value || !visibleIds.has(id)) pause(id, 'visibility')
-    else resume(id, 'visibility')
+  for (const timerId of timers.keys()) {
+    if (detailId.value === timerId || hoveredId.value === timerId || !visibleIds.has(timerId)) {
+      pause(timerId, 'visibility')
+    } else {
+      resume(timerId, 'visibility')
+    }
   }
 }
 
-function dismiss(id: string): void {
-  const timer = timers.get(id)
+function dismiss(targetId: string): void {
+  const timer = timers.get(targetId)
   if (timer?.handle) globalThis.clearTimeout(timer.handle)
-  timers.delete(id)
-  items.value = items.value.filter((item) => item.id !== id)
-  if (expandedId.value === id) expandedId.value = null
+  timers.delete(targetId)
+  items.value = items.value.filter((item) => item.id !== targetId)
+  if (detailId.value === targetId) detailId.value = null
+  if (hoveredId.value === targetId) hoveredId.value = null
   selectPrimary()
   syncTimerVisibility()
 }
 
-function startTimer(id: string, duration: number): void {
-  const timer: Timer = { handle: null, remaining: duration, startedAt: Date.now(), pauseReasons: new Set() }
-  timer.handle = globalThis.setTimeout(() => dismiss(id), duration)
-  timers.set(id, timer)
+function dismissByKey(key: string): void {
+  const existing = items.value.find((item) => item.key === key)
+  if (existing) dismiss(existing.id)
 }
 
-function pause(id: string, reason = 'manual'): void {
-  const timer = timers.get(id)
+function startTimer(targetId: string, duration: number): void {
+  const timer: Timer = { handle: null, remaining: duration, startedAt: Date.now(), pauseReasons: new Set() }
+  timer.handle = globalThis.setTimeout(() => dismiss(targetId), duration)
+  timers.set(targetId, timer)
+}
+
+function pause(targetId: string, reason = 'manual'): void {
+  const timer = timers.get(targetId)
   if (!timer || timer.pauseReasons.has(reason)) return
   timer.pauseReasons.add(reason)
   if (timer.handle) {
@@ -128,17 +138,17 @@ function pause(id: string, reason = 'manual'): void {
   }
 }
 
-function resume(id: string, reason = 'manual'): void {
-  const timer = timers.get(id)
+function resume(targetId: string, reason = 'manual'): void {
+  const timer = timers.get(targetId)
   if (!timer) return
   timer.pauseReasons.delete(reason)
   if (timer.pauseReasons.size || timer.handle) return
   if (timer.remaining <= 0) {
-    dismiss(id)
+    dismiss(targetId)
     return
   }
   timer.startedAt = Date.now()
-  timer.handle = globalThis.setTimeout(() => dismiss(id), timer.remaining)
+  timer.handle = globalThis.setTimeout(() => dismiss(targetId), timer.remaining)
 }
 
 function add(kind: NotificationKind, level: NotificationLevel, input: MessageOptions): string {
@@ -157,42 +167,68 @@ function add(kind: NotificationKind, level: NotificationLevel, input: MessageOpt
     createdAt: nextId,
   }
   items.value.push(item)
-  if (!persistent) startTimer(item.id, options.duration ?? (level === 'error' ? 10000 : level === 'warning' ? 7000 : 5000))
+  if (!persistent) {
+    startTimer(item.id, options.duration ?? (level === 'error' ? 10000 : level === 'warning' ? 7000 : 5000))
+  }
   selectPrimary()
   syncTimerVisibility()
   return item.id
 }
 
-function addError(kind: NotificationKind, input: ErrorInput, options: Omit<NotificationOptions, 'message'> = {}): string {
+function addError(
+  kind: NotificationKind,
+  input: ErrorInput,
+  options: Omit<NotificationOptions, 'message'> = {},
+): string {
   if (input && typeof input === 'object' && 'message' in input && !(input instanceof Error)) {
     const errorOptions = input as ErrorNotificationOptions
-    return add(kind, 'error', { ...errorOptions, message: normalizeError(errorOptions.message, errorOptions.title) })
+    return add(kind, 'error', {
+      ...errorOptions,
+      message: normalizeError(errorOptions.message, errorOptions.title),
+    })
   }
   return add(kind, 'error', { ...options, message: normalizeError(input, options.title) })
 }
 
-function expand(id: string): void {
-  if (!items.value.some((item) => item.id === id)) return
-  if (expandedId.value && expandedId.value !== id) resume(expandedId.value, 'expanded')
-  expandedId.value = id
-  primaryId.value = id
-  pause(id, 'expanded')
+/** Hover preview on capsule — does not open center dialog. */
+function setHovered(targetId: string | null): void {
+  if (hoveredId.value && hoveredId.value !== targetId) resume(hoveredId.value, 'hover')
+  hoveredId.value = targetId
+  if (targetId) pause(targetId, 'hover')
   syncTimerVisibility()
 }
 
-function collapse(): void {
-  const id = expandedId.value
-  expandedId.value = null
-  if (id) resume(id, 'expanded')
+/** Click capsule — open center detail dialog. */
+function openDetail(targetId: string): void {
+  if (!items.value.some((item) => item.id === targetId)) return
+  detailId.value = targetId
+  primaryId.value = targetId
+  pause(targetId, 'detail')
+  syncTimerVisibility()
+}
+
+function closeDetail(): void {
+  const closed = detailId.value
+  detailId.value = null
+  if (closed) resume(closed, 'detail')
   selectPrimary()
   syncTimerVisibility()
 }
 
-function promote(id: string): void {
-  if (items.value.some((item) => item.id === id)) {
-    primaryId.value = id
+function promote(targetId: string): void {
+  if (items.value.some((item) => item.id === targetId)) {
+    primaryId.value = targetId
     syncTimerVisibility()
   }
+}
+
+// Legacy aliases used by older call sites / tests
+function expand(targetId: string): void {
+  openDetail(targetId)
+}
+
+function collapse(): void {
+  closeDetail()
 }
 
 function showNextConfirmation(): void {
@@ -217,40 +253,51 @@ export function resolveConfirmation(requestId: string, value: boolean): void {
   showNextConfirmation()
 }
 
-const orderedItems = computed(() => currentVisibleItems().concat(
-  rankItems().filter((item) => !currentVisibleItems().some((visible) => visible.id === item.id)),
-))
+const orderedItems = computed(() =>
+  currentVisibleItems().concat(
+    rankItems().filter((item) => !currentVisibleItems().some((visible) => visible.id === item.id)),
+  ),
+)
 const visibleItems = computed(() => currentVisibleItems())
 const primaryItem = computed(() => items.value.find((item) => item.id === primaryId.value) ?? null)
+const detailItem = computed(() => items.value.find((item) => item.id === detailId.value) ?? null)
 const overflowCount = computed(() => Math.max(0, items.value.length - visibleItems.value.length))
 
 const notify = {
   info: (input: MessageOptions) => add('notification', 'info', input),
   success: (input: MessageOptions) => add('notification', 'success', input),
   warning: (input: MessageOptions) => add('notification', 'warning', input),
-  error: (input: ErrorInput, options?: Omit<NotificationOptions, 'message'>) => addError('notification', input, options),
+  error: (input: ErrorInput, options?: Omit<NotificationOptions, 'message'>) =>
+    addError('notification', input, options),
 }
 
 const banner = {
   info: (input: MessageOptions) => add('banner', 'info', input),
   success: (input: MessageOptions) => add('banner', 'success', input),
   warning: (input: MessageOptions) => add('banner', 'warning', input),
-  error: (input: ErrorInput, options?: Omit<NotificationOptions, 'message'>) => addError('banner', input, options),
+  error: (input: ErrorInput, options?: Omit<NotificationOptions, 'message'>) =>
+    addError('banner', input, options),
 }
 
 export function useNotifications() {
   return {
     items,
     primaryId,
-    expandedId,
+    detailId,
+    hoveredId,
     currentConfirmation,
     orderedItems,
     visibleItems,
     primaryItem,
+    detailItem,
     overflowCount,
     notify,
     banner,
     dismiss,
+    dismissByKey,
+    openDetail,
+    closeDetail,
+    setHovered,
     expand,
     collapse,
     promote,

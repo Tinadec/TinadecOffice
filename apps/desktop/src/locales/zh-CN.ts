@@ -17,6 +17,13 @@ export default {
     operationFailed: '操作失败',
     information: '信息',
     warning: '警告',
+    retry: '重试',
+    retryConnection: '重新连接',
+    loadFailed: '加载失败',
+    backendNotConnected: '后端未连接',
+    backendNotConnectedMessage: '30 秒内无法连接 Core/Gateway，部分功能可能不可用。',
+    backendDisconnected: '后端已断开',
+    backendDisconnectedMessage: '与 Core/Gateway 的连接已断开，服务可用后请重试。',
   },
   nav: {
     chat: '聊天',
