@@ -22,6 +22,7 @@ apps/desktop/
 | Task | Location | Notes |
 |------|----------|-------|
 | Electron startup | `electron/main.cjs`, `electron/preload.cjs` | Hardened renderer: context isolation, sandbox, no nodeIntegration. |
+| Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/components/PetPreview.vue`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 catalog/download registry and transparent, always-on-top windows. Local files live under Electron `userData/pets/<slug>/`; downloaded pets appear first as an offline gallery. Market previews use the bounded `tinadec-pet-preview` protocol loader with loading/error/retry states; 48 cards mount per batch with infinite-scroll and load-more fallback. Never call Gateway/Core. |
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; model/providers/agents settings. |
@@ -40,7 +41,7 @@ apps/desktop/
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.
 - Windows system surfaces use `public/tinadec.ico`: main, Debug Studio, and detached `BrowserWindow` instances must reference it in both dev and built `dist`; keep `app.setAppUserModelId('com.tinadec.office')` for taskbar grouping.
-- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window).
+- Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window), `/pet` (transparent local pet window).
 - No Pinia/store layer exists; use composables and local refs.
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.

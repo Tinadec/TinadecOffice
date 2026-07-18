@@ -56,6 +56,10 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("label: t('settings.agentEvolution')")
     expect(settingsPage).toContain("label: t('settings.promptContext')")
     expect(settingsPage).toContain("label: t('settings.promptEngineering')")
+    expect(settingsPage).toContain("label: t('settings.pets')")
+    expect(settingsPage).toContain("t('settings.petdexCatalog')")
+    expect(settingsPage).toContain("t('settings.openPetFolder')")
+    expect(settingsPage).toContain("t('settings.deletePet')")
   })
 
   it('keeps the topology readable and the inspector beside the work surface', () => {

@@ -99,6 +99,44 @@ interface TerminalApi {
 }
 
 declare global {
+  interface PetdexCatalogPet {
+    slug: string;
+    displayName: string;
+    kind: string;
+    submittedBy: string;
+    previewUrl: string;
+  }
+
+  interface DownloadedPet {
+    slug: string;
+    displayName: string;
+    kind: string;
+    submittedBy: string;
+    enabled: boolean;
+    installedAt: number;
+    imageDataUrl?: string;
+  }
+
+  interface PetWindowInfo {
+    instanceId: string;
+    petId: string;
+    windowId: number;
+    bounds: WindowBounds;
+  }
+
+  interface PetWindowApi {
+    create: (petId: string) => Promise<{ instanceId: string; windowId: number }>;
+    close: (instanceId: string) => Promise<boolean>;
+    list: () => Promise<PetWindowInfo[]>;
+    getWindowPet: (instanceId: string) => Promise<DownloadedPet | null>;
+    fetchCatalog: (force?: boolean) => Promise<PetdexCatalogPet[]>;
+    download: (slug: string) => Promise<DownloadedPet>;
+    listDownloaded: () => Promise<DownloadedPet[]>;
+    setEnabled: (slug: string, enabled: boolean) => Promise<DownloadedPet>;
+    openFolder: (slug: string) => Promise<boolean>;
+    remove: (slug: string) => Promise<boolean>;
+  }
+
   interface Window {
     tinadec: {
       gatewayUrl: () => string;
@@ -107,6 +145,8 @@ declare global {
       maximizeWindow: () => void;
       closeWindow: () => void;
       openDebugStudio: () => Promise<boolean>;
+      /** Local-only transparent pet windows. */
+      pets: PetWindowApi;
       /** Terminal management API */
       terminal: TerminalApi;
       /** Detach a tab into a new floating BrowserWindow */

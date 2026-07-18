@@ -56,8 +56,8 @@
 ### 2.1 配置文件验证
 
 **检查项**:
-- [x] `.codegraph/config.json` 存在且格式正确
-- [x] `.codegraph/mcp.json` 存在且配置正确
+- [x] `.codegraph/` 本机索引存在且 `codegraph status` 可验证
+- [x] `opencode.jsonc` 已注册 CodeGraph MCP 服务器
 - [x] 语言支持配置完整
 
 **语言支持验证**:

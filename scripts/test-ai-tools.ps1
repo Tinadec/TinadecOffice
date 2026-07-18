@@ -79,6 +79,15 @@ Run-Test "Ponytail config is valid JSON" {
     }
 }
 
+Run-Test "OpenCode registers the Ponytail plugin" {
+    try {
+        $config = Get-Content "$projectPath\opencode.jsonc" -Raw | ConvertFrom-Json
+        return ($config.plugin -contains '@dietrichgebert/ponytail@4.8.4')
+    } catch {
+        return $false
+    }
+}
+
 Write-Host ""
 
 # Test 2: CodeGraph Configuration Files
@@ -86,30 +95,26 @@ Write-Host "=" * 60 -ForegroundColor Cyan
 Write-Host "📁 Test Suite: CodeGraph Configuration" -ForegroundColor Cyan
 Write-Host "=" * 60 -ForegroundColor Cyan
 
-Run-Test "CodeGraph config.json exists" {
-    Test-Path "$projectPath\.codegraph\config.json"
+Run-Test "CodeGraph index directory exists" {
+    Test-Path "$projectPath\.codegraph"
 }
 
-Run-Test "CodeGraph mcp.json exists" {
-    Test-Path "$projectPath\.codegraph\mcp.json"
+Run-Test "OpenCode CodeGraph MCP config exists" {
+    Test-Path "$projectPath\opencode.jsonc"
 }
 
-Run-Test "CodeGraph config is valid JSON" {
+Run-Test "OpenCode CodeGraph MCP config is valid JSONC" {
     try {
-        $config = Get-Content "$projectPath\.codegraph\config.json" | ConvertFrom-Json
-        return ($config.project -eq "TinadecOffice")
+        $config = Get-Content "$projectPath\opencode.jsonc" -Raw | ConvertFrom-Json
+        return ($config.mcp.codegraph.type -eq "local" -and ($config.mcp.codegraph.command -join ' ') -eq 'codegraph serve --mcp')
     } catch {
         return $false
     }
 }
 
-Run-Test "CodeGraph MCP config is valid JSON" {
-    try {
-        $config = Get-Content "$projectPath\.codegraph\mcp.json" | ConvertFrom-Json
-        return ($config.mcpServers.codegraph.command -eq "codegraph")
-    } catch {
-        return $false
-    }
+Run-Test "CodeGraph index is current" {
+    & codegraph status *> $null
+    return ($LASTEXITCODE -eq 0)
 }
 
 Write-Host ""
@@ -204,11 +209,11 @@ Run-Test "Desktop layer path exists" {
 }
 
 Run-Test "Gateway layer path exists" {
-    Test-Path "$projectPath\gateway"
+    Test-Path "$projectPath\TinadecGateway"
 }
 
 Run-Test "Core layer path exists" {
-    Test-Path "$projectPath\src\TinadecCore"
+    Test-Path "$projectPath\TinadecCore"
 }
 
 Write-Host ""
@@ -231,10 +236,9 @@ if ($failed -eq 0) {
     Write-Host "✅ AI Tools Integration Status: READY" -ForegroundColor Green
     Write-Host ""
     Write-Host "Next Steps:" -ForegroundColor White
-    Write-Host "  1. Run 'npm run ai:tools:install' to install CodeGraph" -ForegroundColor Gray
-    Write-Host "  2. Run 'npm run ai:tools:check' to verify configuration" -ForegroundColor Gray
-    Write-Host "  3. Restart your AI tools" -ForegroundColor Gray
-    Write-Host "  4. Refer to docs/ai-tools-quick-start.md for usage" -ForegroundColor Gray
+    Write-Host "  1. Run 'npm run ai:tools:check' to verify configuration" -ForegroundColor Gray
+    Write-Host "  2. Restart OpenCode to load Ponytail and the CodeGraph MCP server" -ForegroundColor Gray
+    Write-Host "  3. Refer to docs/ai-tools-quick-start.md for usage" -ForegroundColor Gray
 } else {
     Write-Host "❌ Some tests failed" -ForegroundColor Red
     Write-Host ""

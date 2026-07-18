@@ -193,6 +193,252 @@ animation-delay: 0.12s;
   margin-bottom: 18px;
 }
 
+.pets-heading,
+.pets-section-heading,
+.pets-dialog-actions {
+  display: flex;
+  align-items: center;
+}
+
+.pets-heading {
+  justify-content: space-between;
+}
+
+.pets-heading h2 {
+  margin-bottom: 24px;
+}
+
+.pets-section {
+  margin-top: 28px;
+}
+
+.pets-section-heading {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.pets-section-heading h3,
+.pets-section > h3 {
+  margin: 0;
+}
+
+.pets-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pets-market-filters {
+  display: grid;
+  width: min(520px, 62%);
+  grid-template-columns: minmax(180px, 1fr) 150px;
+  gap: 8px;
+}
+
+.pets-kind-filter {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.pet-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.pet-gallery-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+}
+
+.pet-gallery-preview {
+  display: flex;
+  height: 132px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 7px 7px 0 0;
+  background-color: var(--bg-secondary);
+  background-image:
+    linear-gradient(45deg, rgb(127 127 127 / 8%) 25%, transparent 25%),
+    linear-gradient(-45deg, rgb(127 127 127 / 8%) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgb(127 127 127 / 8%) 75%),
+    linear-gradient(-45deg, transparent 75%, rgb(127 127 127 / 8%) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.pet-gallery-placeholder {
+  color: var(--text-muted);
+}
+
+.pet-gallery-body {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-height: 112px;
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 5px;
+  padding: 12px;
+}
+
+.pet-gallery-title-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pet-gallery-actions {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-self: end;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.pet-gallery-actions > .relative {
+  width: 36px;
+  min-width: 36px;
+  flex: 0 0 36px;
+}
+
+.pet-action-button {
+  max-width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.pet-action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-card-badge {
+  max-width: 46%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-item-name,
+.pet-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-item-name {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pet-item-meta,
+.pets-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pet-item-meta {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.pets-empty,
+.pets-error {
+  padding: 12px;
+  border: 1px dashed var(--border-muted);
+  border-radius: 8px;
+}
+
+.pets-error {
+  margin: 0;
+  border-color: var(--destructive);
+  color: var(--destructive);
+  font-size: 13px;
+}
+
+.pet-menu-action {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.pet-menu-action:hover {
+  background: var(--bg-hover);
+}
+
+.pet-menu-action.danger {
+  color: var(--destructive);
+}
+
+.pets-dialog-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pets-load-more,
+.pets-catalog-end {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 4px;
+}
+
+.pets-catalog-end {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .pets-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pets-market-filters {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+}
+
 .settings-field label {
   margin-bottom: 6px;
 }

@@ -7,6 +7,20 @@ contextBridge.exposeInMainWorld('tinadec', {
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
   openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
+
+  // --- Local Pet Window API ---
+  pets: {
+    create: (petId) => ipcRenderer.invoke('tinadec:pet-create', petId),
+    close: (instanceId) => ipcRenderer.invoke('tinadec:pet-close', instanceId),
+    list: () => ipcRenderer.invoke('tinadec:pet-list'),
+    getWindowPet: (instanceId) => ipcRenderer.invoke('tinadec:pet-window-pet', instanceId),
+    fetchCatalog: (force = false) => ipcRenderer.invoke('tinadec:pet-catalog', force),
+    download: (slug) => ipcRenderer.invoke('tinadec:pet-download', slug),
+    listDownloaded: () => ipcRenderer.invoke('tinadec:pet-downloaded'),
+    setEnabled: (slug, enabled) => ipcRenderer.invoke('tinadec:pet-enabled', slug, enabled),
+    openFolder: (slug) => ipcRenderer.invoke('tinadec:pet-open-folder', slug),
+    remove: (slug) => ipcRenderer.invoke('tinadec:pet-remove', slug),
+  },
   
   // --- Background File Selection API ---
   selectBackgroundFile: (type) => ipcRenderer.invoke('tinadec:select-background-file', type),
