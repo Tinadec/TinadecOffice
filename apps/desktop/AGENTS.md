@@ -45,6 +45,7 @@ apps/desktop/
 - Windows system surfaces use `public/tinadec.ico`: main, Debug Studio, and detached `BrowserWindow` instances must reference it in both dev and built `dist`; keep `app.setAppUserModelId('com.tinadec.office')` for taskbar grouping.
 - Main and Debug Studio windows use `titleBarStyle: 'hidden'` without `titleBarOverlay`, preserving the custom controls while leaving the native frame available for Windows DWM corners and shadows. Detached panels remain frameless because their drag and window-control hit testing depends on the custom title bar; pet windows remain transparent and frameless.
 - Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window), `/pet` (transparent local pet window).
+- Debug Studio and detached panels load with `?splash=0`: `App.vue` must skip connection polling and route transitions for them, global CSS must reset the main window's root minimum size, and `.main-content` must remain above `.background-layer`. Failed Debug Studio renderers are destroyed so the next open recreates them.
 - No Pinia/store layer exists; use composables and local refs.
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
@@ -59,6 +60,7 @@ apps/desktop/
 - Tool search UI must consume Core/Gateway `/api/v1/tools/search` results. Do not invent provider-layer, matched-field, or human-checkpoint semantics in the renderer.
 - Tool execution UI must consume Core/Gateway `/api/v1/sessions/{sessionId}/tool-executions` results. Do not reconstruct audit timelines, provider layers, durations, or checkpoint summaries from local event arrays in Desktop.
 - Dev server is pinned: `127.0.0.1:5173`, `strictPort: true`.
+- Vite `base` must remain `./` because packaged Electron windows load `dist/index.html` through `loadFile()`.
 - Terminal backend uses `node-pty` when available (requires `npm run rebuild:native` with Python + C++ build tools); falls back to `child_process.spawn` automatically. The fallback mode supports basic command execution but not interactive programs (vim, less) or terminal resize.
 - Terminal IPC channels: `terminal:create`, `terminal:write`, `terminal:resize`, `terminal:destroy`, `terminal:get-shells`, `terminal:list`. Data/exit events use per-terminal channels: `terminal:data:{id}`, `terminal:exit:{id}`.
 - Terminal state is managed by `useTerminal` composable (module-level singleton). Terminal processes are destroyed on component unmount (tab close, detach, or page navigation) to prevent orphaned PTY processes.

@@ -11,11 +11,13 @@ let debugStudioWindow = null;
  */
 async function createDebugStudioWindow() {
   if (debugStudioWindow && !debugStudioWindow.isDestroyed()) {
+    if (debugStudioWindow.isMinimized()) debugStudioWindow.restore();
+    debugStudioWindow.show();
     debugStudioWindow.focus();
     return debugStudioWindow;
   }
 
-  debugStudioWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
@@ -34,33 +36,50 @@ async function createDebugStudioWindow() {
       webSecurity: false
     }
   });
+  debugStudioWindow = win;
 
-  debugStudioWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-  debugStudioWindow.once('ready-to-show', () => {
-    debugStudioWindow.show();
+  win.once('ready-to-show', () => {
+    win.show();
     if (isDev) {
-      debugStudioWindow.webContents.openDevTools({ mode: 'detach' });
+      win.webContents.openDevTools({ mode: 'detach' });
     }
+  });
+
+  win.on('closed', () => {
+    if (debugStudioWindow === win) debugStudioWindow = null;
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[debug-studio] Renderer exited (${details.reason})`);
+    if (!win.isDestroyed()) win.destroy();
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    console.error(`[debug-studio] Failed to load (code ${errorCode}): ${errorDescription}`);
+    if (!win.isDestroyed()) win.destroy();
   });
 
   // Load the Debug Studio page (uses hash routing).
   // ?splash=0 tells App.vue to skip the startup splash + main-rise animation —
   // child windows must not replay the first-launch sequence.
-  if (isDev) {
-    await debugStudioWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?splash=0#/debug-studio`);
-  } else {
-    await debugStudioWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
-      hash: '/debug-studio',
-      query: { splash: '0' }
-    });
+  try {
+    if (isDev) {
+      await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}?splash=0#/debug-studio`);
+    } else {
+      await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+        hash: '/debug-studio',
+        query: { splash: '0' }
+      });
+    }
+  } catch (error) {
+    console.error('[debug-studio] Load failed:', error.message);
+    if (!win.isDestroyed()) win.destroy();
   }
 
-  debugStudioWindow.on('closed', () => {
-    debugStudioWindow = null;
-  });
-
-  return debugStudioWindow;
+  return win.isDestroyed() ? null : win;
 }
 
 /**

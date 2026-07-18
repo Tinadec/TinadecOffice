@@ -144,8 +144,7 @@ ipcMain.on('tinadec:close', (event) => {
 
 // --- Agent Debug Studio IPC ---
 ipcMain.handle('tinadec:open-debug-studio', async () => {
-  await createDebugStudioWindow();
-  return true;
+  return Boolean(await createDebugStudioWindow());
 });
 
 // --- Local pet window IPC ---

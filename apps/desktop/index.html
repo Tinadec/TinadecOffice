@@ -49,9 +49,9 @@
       :root[data-theme="light"] .splash-placeholder {
         background: #ffffff;
       }
-      /* 子窗口（?splash=0）禁用 fade-in，仅静态显示 logo 占位 */
+      /* 子窗口由 BrowserWindow 背景承接首帧，不重播主窗口 splash。 */
       :root[data-skip-splash] .splash-placeholder {
-        animation: none;
+        display: none;
       }
       .splash-placeholder svg {
         height: 88px;

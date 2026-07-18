@@ -30,7 +30,7 @@ const isPetWindow = window.location.hash.startsWith('#/pet')
 const { connectionState, start: startConnection } = useConnection()
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
 onMounted(() => {
-  if (!isPetWindow) startConnection()
+  if (!isPetWindow && !isChildWindow) startConnection()
 })
 
 // Track navigation direction for directional page transitions.
@@ -124,7 +124,7 @@ router.beforeEach((to, from, next) => {
        会在子元素挂载前就移除 enter-active 类，导致动画失效。 -->
   <div v-if="!isConnecting" class="main-content">
     <RouterView v-slot="{ Component }">
-      <Transition :name="transitionName" mode="out-in">
+      <Transition :name="transitionName" :css="!isChildWindow" mode="out-in">
         <component :is="Component" />
       </Transition>
     </RouterView>
