@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/desktop/public/tinadec-logo.svg" alt="Tinadec" width="120" />
+  <img src="apps/desktop/public/Logo - 白.png" alt="Tinadec" width="120" />
 </p>
 
 # TinadecOffice
