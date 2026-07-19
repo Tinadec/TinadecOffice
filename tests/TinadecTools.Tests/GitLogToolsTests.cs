@@ -460,6 +460,30 @@ public sealed class GitLogToolsTests
         }
     }
 
+    [Fact]
+    public async Task LogList_ClassifiesLocalBranchWithSlashAsBranchNotRemote()
+    {
+        using var repo = new TempGitRepo("git-log");
+        repo.SeedInitialCommit();
+        repo.RunGit("branch", "feature/x");
+        var result = await GitLogListTool.HandleAsync(
+            new GitLogListArgs { RepositoryPath = repo, Limit = 1 },
+            CancellationToken.None);
+        Assert.True(result.Success);
+        var head = result.Commits[0];
+        Assert.Contains(head.Refs, r => r.Type == "branch" && r.Name == "feature/x");
+        Assert.DoesNotContain(head.Refs, r => r.Type == "remote" && r.Name == "feature/x");
+    }
+
+    [Fact]
+    public void ParseDecorations_FallsBackToBranchWhenRefTypeUnknown()
+    {
+        var refs = GitLogParser.ParseDecorations("feature/y", null);
+        var entry = Assert.Single(refs);
+        Assert.Equal("branch", entry.Type);
+        Assert.Equal("feature/y", entry.Name);
+    }
+
     // ponytail: 仅在该文件内的非 git 工作区目录 fixture；用 TempGitRepo 的 git 场景走 fixture.
     private static string CreateWorkspaceDir(string prefix)
     {
