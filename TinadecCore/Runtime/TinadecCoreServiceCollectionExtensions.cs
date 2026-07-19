@@ -9,6 +9,7 @@ using TinadecCore.Models;
 using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
+using TinadecCore.VectorStore;
 
 namespace TinadecCore.Runtime;
 
@@ -28,6 +29,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // Register modules in dependency order.
         // Each module calls builder.RegisterModule() to declare its descriptor.
         new TenancyModuleRegistrar().Register(builder);
+        new VectorStoreModuleRegistrar().Register(builder);
         new LifecycleModuleRegistrar().Register(builder);
         new ModelsModuleRegistrar().Register(builder);
         new ContextModuleRegistrar().Register(builder);

@@ -7,6 +7,7 @@
     <Project Path="TinadecCore/Contracts/TinadecCore.Contracts.csproj" />
     <Project Path="TinadecCore/Abstractions/TinadecCore.Abstractions.csproj" />
     <Project Path="TinadecCore/Persistence/TinadecCore.Persistence.csproj" />
+    <Project Path="TinadecCore/VectorStore/TinadecCore.VectorStore.csproj" />
     <Project Path="TinadecCore/Strategies/TinadecCore.Strategies.fsproj" />
   </Folder>
   <Folder Name="/TinadecCore/modules/">

@@ -11,6 +11,7 @@
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Contracts\TinadecCore.Contracts.csproj" />
     <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
+    <ProjectReference Include="..\VectorStore\TinadecCore.VectorStore.csproj" />
     <ProjectReference Include="..\Tenancy\TinadecCore.Tenancy.csproj" />
     <ProjectReference Include="..\DmaEA\TinadecCore.DmaEA.csproj" />
     <ProjectReference Include="..\Models\TinadecCore.Models.csproj" />
