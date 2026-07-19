@@ -63,27 +63,31 @@ describe('useNotifications', () => {
     expect(notifications.items.value).toHaveLength(0)
   })
 
-  it('keeps detail primary, then restores priority on close', () => {
+  it('opens and closes detail without changing notification order or lifetime', () => {
     const info = notifications.notify.info('details')
     notifications.openDetail(info)
     const error = notifications.notify.error('failed')
 
-    expect(notifications.primaryId.value).toBe(info)
+    expect(notifications.primaryId.value).toBe(error)
     expect(notifications.detailId.value).toBe(info)
     notifications.closeDetail()
     expect(notifications.detailId.value).toBeNull()
     expect(notifications.primaryId.value).toBe(error)
+    expect(notifications.items.value.some((item) => item.id === info)).toBe(true)
   })
 
-  it('promotes and dismisses items', () => {
+  it('pins any item without promoting it', () => {
     const first = notifications.notify.info('first')
-    notifications.notify.success('second')
-    notifications.promote(first)
-    expect(notifications.primaryId.value).toBe(first)
+    const second = notifications.notify.success('second')
+    expect(notifications.primaryId.value).toBe(second)
 
-    notifications.dismiss(first)
-    expect(notifications.items.value.some((item) => item.id === first)).toBe(false)
-    expect(notifications.primaryId.value).not.toBe(first)
+    notifications.togglePinned(first)
+    expect(notifications.pinnedId.value).toBe(first)
+    expect(notifications.primaryId.value).toBe(second)
+
+    notifications.closeExpanded()
+    expect(notifications.pinnedId.value).toBeNull()
+    expect(notifications.items.value.some((item) => item.id === first)).toBe(true)
   })
 
   it('normalizes unknown errors with a fallback', () => {
@@ -103,6 +107,18 @@ describe('useNotifications', () => {
     vi.advanceTimersByTime(10000)
     expect(notifications.items.value.some((item) => item.id === operation)).toBe(false)
     expect(notifications.items.value.some((item) => item.id === persistent)).toBe(true)
+    expect(notifications.items.value.find((item) => item.id === persistent)?.dismissible).toBe(false)
+  })
+
+  it('keeps action errors on the notification for reusable views', async () => {
+    const id = notifications.banner.error({
+      message: 'Unavailable',
+      action: { label: 'Retry', run: () => { throw new Error('Still offline') } },
+    })
+
+    await expect(notifications.runAction(id)).resolves.toBe(false)
+    expect(notifications.actionStates.value[id]).toEqual({ running: false, error: 'Still offline' })
+    expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
   })
 
   it('replaces keyed banners and dismissByKey clears them', () => {

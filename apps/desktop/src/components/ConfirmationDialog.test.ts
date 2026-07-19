@@ -47,7 +47,7 @@ describe('NotificationDetailDialog', () => {
     wrapper.unmount()
   })
 
-  it('opens notification detail from openDetail', async () => {
+  it('closes persistent detail without dismissing the notification', async () => {
     const wrapper = mount(NotificationDetailDialog, { attachTo: document.body })
     const id = notifications.notify.error({ message: 'Backend down', title: 'Offline', persistent: true })
     notifications.openDetail(id)
@@ -55,9 +55,32 @@ describe('NotificationDetailDialog', () => {
     await nextTick()
 
     expect(document.body.querySelector('.detail-dialog')?.textContent).toContain('Backend down')
+    expect(document.body.querySelector('.detail-dialog__dismiss')).toBeNull()
     document.body.querySelector<HTMLButtonElement>('.detail-dialog__secondary')?.click()
     await nextTick()
-    expect(notifications.items.value.some((item) => item.id === id)).toBe(false)
+    expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
+    expect(notifications.detailId.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows details and retry failures in the reusable dialog', async () => {
+    const wrapper = mount(NotificationDetailDialog, { attachTo: document.body })
+    const id = notifications.banner.error({
+      title: 'Offline',
+      message: 'The backend is unavailable.',
+      details: 'Connection refused on port 48730.',
+      action: { label: 'Retry', run: () => { throw new Error('Connection refused') } },
+    })
+    notifications.openDetail(id)
+    await nextTick()
+    await nextTick()
+
+    expect(document.body.querySelector('.detail-dialog__details')?.textContent).toContain('port 48730')
+    document.body.querySelector<HTMLButtonElement>('.detail-dialog__primary')?.click()
+    await nextTick()
+    await nextTick()
+    expect(document.body.querySelector('.detail-dialog__error')?.textContent).toContain('Connection refused')
+    expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
     wrapper.unmount()
   })
 })

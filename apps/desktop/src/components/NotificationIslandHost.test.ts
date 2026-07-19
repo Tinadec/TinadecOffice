@@ -19,7 +19,7 @@ afterEach(() => {
 })
 
 describe('NotificationIslandHost', () => {
-  it('renders nothing until notified, hover peeks, click opens detail', async () => {
+  it('renders nothing until notified, hover opens a card, and click pins it', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
     expect(document.body.querySelector('.island-host')).toBeNull()
 
@@ -31,11 +31,16 @@ describe('NotificationIslandHost', () => {
     capsule?.dispatchEvent(new Event('mouseenter'))
     await nextTick()
     expect(notifications.hoveredId.value).toBe(id)
-    expect(capsule?.classList.contains('island-capsule--peek')).toBe(true)
+    expect(document.body.querySelector('.island-card')?.textContent).toContain('Saved')
 
     capsule?.click()
     await nextTick()
-    expect(notifications.detailId.value).toBe(id)
+    expect(notifications.pinnedId.value).toBe(id)
+
+    document.body.querySelector<HTMLButtonElement>('.island-card__icon-button')?.click()
+    await nextTick()
+    expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
+    expect(document.body.querySelector('.island-card')).toBeNull()
 
     notifications.dismiss(id)
     await nextTick()
@@ -52,6 +57,28 @@ describe('NotificationIslandHost', () => {
 
     expect(document.body.querySelectorAll('.island-capsule')).toHaveLength(3)
     expect(document.body.querySelector('.island-capsule__badge')?.textContent).toBe('+2')
+    wrapper.unmount()
+  })
+
+  it('opens a side notification directly without reordering capsules', async () => {
+    const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
+    const first = notifications.banner.error({ title: 'First', message: 'First detail' })
+    const second = notifications.banner.warning({ title: 'Second', message: 'Second detail' })
+    await nextTick()
+    const before = [...document.body.querySelectorAll<HTMLElement>('.island-capsule')]
+      .map((element) => element.dataset.notificationId)
+    const secondCapsule = document.body.querySelector<HTMLButtonElement>(`[data-notification-id="${second}"]`)!
+
+    secondCapsule.dispatchEvent(new Event('mouseenter'))
+    await nextTick()
+    expect(document.body.querySelector('.island-card')?.textContent).toContain('Second detail')
+    expect([...document.body.querySelectorAll<HTMLElement>('.island-capsule')]
+      .map((element) => element.dataset.notificationId)).toEqual(before)
+
+    secondCapsule.click()
+    await nextTick()
+    expect(notifications.pinnedId.value).toBe(second)
+    expect(notifications.primaryId.value).toBe(first)
     wrapper.unmount()
   })
 })

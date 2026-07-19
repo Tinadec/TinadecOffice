@@ -28,7 +28,7 @@ interface OpenTab {
 }
 
 const router = useRouter()
-const { notify, banner } = useNotifications()
+const { notify, banner, dismissByKey } = useNotifications()
 
 const projects = ref<ProjectDto[]>([])
 const selectedProjectId = ref<string | null>(null)
@@ -59,11 +59,13 @@ async function loadProjects(): Promise<void> {
       selectedProjectId.value = projects.value[0].id
     }
     await loadSession()
+    dismissByKey('code-load')
   } catch (err) {
     banner.error({
       key: 'code-load',
       title: 'Failed to load projects',
-      message: err instanceof Error ? err.message : 'Failed to load projects',
+      message: 'The project list is currently unavailable.',
+      details: err instanceof Error ? err.message : 'Failed to load projects',
       action: { label: 'Retry', run: () => loadProjects() },
     })
   } finally {

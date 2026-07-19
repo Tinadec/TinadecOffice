@@ -28,7 +28,7 @@ import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
 const router = useRouter()
-const { notify, banner, confirm } = useNotifications()
+const { notify, banner, confirm, dismissByKey } = useNotifications()
 
 const BUILT_IN_SOURCES = [
   {
@@ -194,11 +194,13 @@ async function loadAll() {
       sourceFilter.value = builtin?.id ?? sourceList[0]?.id ?? ''
     }
     await loadCatalog()
+    dismissByKey('market-load')
   } catch (err) {
     banner.error({
       key: 'market-load',
       title: t('market.loadFailed'),
-      message: err instanceof Error ? err.message : t('market.loadFailed'),
+      message: t('app.loadFailedMessage'),
+      details: err instanceof Error ? err.message : t('market.loadFailed'),
       action: { label: t('app.retry'), run: () => loadAll() },
     })
   } finally {
@@ -216,11 +218,13 @@ async function loadCatalog() {
     if (!catalog.value.some((item) => item.catalog_id === selectedCatalogId.value)) {
       selectedCatalogId.value = catalog.value[0]?.catalog_id ?? ''
     }
+    dismissByKey('market-catalog')
   } catch (err) {
     banner.error({
       key: 'market-catalog',
       title: t('market.loadFailed'),
-      message: err instanceof Error ? err.message : t('market.loadFailed'),
+      message: t('app.loadFailedMessage'),
+      details: err instanceof Error ? err.message : t('market.loadFailed'),
     })
   }
 }

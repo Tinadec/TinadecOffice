@@ -12,9 +12,11 @@ export interface NotificationOptions {
   key?: string
   title?: string
   message: string
+  details?: string
   action?: NotificationAction
   duration?: number
   persistent?: boolean
+  dismissible?: boolean
 }
 
 export interface ErrorNotificationOptions extends Omit<NotificationOptions, 'message'> {
@@ -31,6 +33,7 @@ export interface NotificationItem extends NotificationOptions {
 export interface ConfirmationOptions {
   title?: string
   message: string
+  details?: string
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean
@@ -54,7 +57,9 @@ const items = ref<NotificationItem[]>([])
 const primaryId = ref<string | null>(null)
 const detailId = ref<string | null>(null)
 const hoveredId = ref<string | null>(null)
+const pinnedId = ref<string | null>(null)
 const currentConfirmation = ref<ConfirmationRequest | null>(null)
+const actionStates = ref<Record<string, { running: boolean; error: string | null }>>({})
 const timers = new Map<string, Timer>()
 const confirmations: QueuedConfirmation[] = []
 let activeConfirmation: QueuedConfirmation | null = null
@@ -81,23 +86,22 @@ function rankItems(): NotificationItem[] {
 }
 
 function currentVisibleItems(): NotificationItem[] {
-  const primary = items.value.find((item) => item.id === primaryId.value)
-  const rest = rankItems().filter((item) => item.id !== primary?.id)
-  return primary ? [primary, ...rest].slice(0, 3) : rest.slice(0, 3)
+  return rankItems().slice(0, 3)
 }
 
 function selectPrimary(): void {
-  if (detailId.value && items.value.some((item) => item.id === detailId.value)) {
-    primaryId.value = detailId.value
-    return
-  }
   primaryId.value = rankItems()[0]?.id ?? null
 }
 
 function syncTimerVisibility(): void {
   const visibleIds = new Set(currentVisibleItems().map((item) => item.id))
   for (const timerId of timers.keys()) {
-    if (detailId.value === timerId || hoveredId.value === timerId || !visibleIds.has(timerId)) {
+    if (
+      detailId.value === timerId ||
+      hoveredId.value === timerId ||
+      pinnedId.value === timerId ||
+      !visibleIds.has(timerId)
+    ) {
       pause(timerId, 'visibility')
     } else {
       resume(timerId, 'visibility')
@@ -112,6 +116,9 @@ function dismiss(targetId: string): void {
   items.value = items.value.filter((item) => item.id !== targetId)
   if (detailId.value === targetId) detailId.value = null
   if (hoveredId.value === targetId) hoveredId.value = null
+  if (pinnedId.value === targetId) pinnedId.value = null
+  const { [targetId]: _, ...remainingActionStates } = actionStates.value
+  actionStates.value = remainingActionStates
   selectPrimary()
   syncTimerVisibility()
 }
@@ -164,6 +171,7 @@ function add(kind: NotificationKind, level: NotificationLevel, input: MessageOpt
     kind,
     level,
     persistent,
+    dismissible: options.dismissible ?? !persistent,
     createdAt: nextId,
   }
   items.value.push(item)
@@ -198,11 +206,10 @@ function setHovered(targetId: string | null): void {
   syncTimerVisibility()
 }
 
-/** Click capsule — open center detail dialog. */
+/** Open the reusable center detail dialog without changing notification lifetime. */
 function openDetail(targetId: string): void {
   if (!items.value.some((item) => item.id === targetId)) return
   detailId.value = targetId
-  primaryId.value = targetId
   pause(targetId, 'detail')
   syncTimerVisibility()
 }
@@ -215,20 +222,50 @@ function closeDetail(): void {
   syncTimerVisibility()
 }
 
-function promote(targetId: string): void {
-  if (items.value.some((item) => item.id === targetId)) {
-    primaryId.value = targetId
-    syncTimerVisibility()
+function togglePinned(targetId: string): void {
+  if (!items.value.some((item) => item.id === targetId)) return
+  const previous = pinnedId.value
+  if (previous) resume(previous, 'pinned')
+  pinnedId.value = previous === targetId ? null : targetId
+  if (pinnedId.value) pause(pinnedId.value, 'pinned')
+  syncTimerVisibility()
+}
+
+function closeExpanded(): void {
+  const previous = pinnedId.value
+  pinnedId.value = null
+  if (previous) resume(previous, 'pinned')
+  syncTimerVisibility()
+}
+
+async function runAction(targetId: string): Promise<boolean> {
+  const item = items.value.find((candidate) => candidate.id === targetId)
+  if (!item?.action || actionStates.value[targetId]?.running) return false
+  actionStates.value = { ...actionStates.value, [targetId]: { running: true, error: null } }
+  try {
+    await item.action.run()
+    if (items.value.some((candidate) => candidate.id === targetId)) {
+      actionStates.value = { ...actionStates.value, [targetId]: { running: false, error: null } }
+    }
+    return true
+  } catch (error) {
+    if (items.value.some((candidate) => candidate.id === targetId)) {
+      actionStates.value = {
+        ...actionStates.value,
+        [targetId]: { running: false, error: normalizeError(error) },
+      }
+    }
+    return false
   }
 }
 
 // Legacy aliases used by older call sites / tests
 function expand(targetId: string): void {
-  openDetail(targetId)
+  if (pinnedId.value !== targetId) togglePinned(targetId)
 }
 
 function collapse(): void {
-  closeDetail()
+  closeExpanded()
 }
 
 function showNextConfirmation(): void {
@@ -261,6 +298,10 @@ const orderedItems = computed(() =>
 const visibleItems = computed(() => currentVisibleItems())
 const primaryItem = computed(() => items.value.find((item) => item.id === primaryId.value) ?? null)
 const detailItem = computed(() => items.value.find((item) => item.id === detailId.value) ?? null)
+const expandedItem = computed(() => {
+  const targetId = hoveredId.value ?? pinnedId.value
+  return items.value.find((item) => item.id === targetId) ?? null
+})
 const overflowCount = computed(() => Math.max(0, items.value.length - visibleItems.value.length))
 
 const notify = {
@@ -285,11 +326,14 @@ export function useNotifications() {
     primaryId,
     detailId,
     hoveredId,
+    pinnedId,
     currentConfirmation,
+    actionStates,
     orderedItems,
     visibleItems,
     primaryItem,
     detailItem,
+    expandedItem,
     overflowCount,
     notify,
     banner,
@@ -298,9 +342,11 @@ export function useNotifications() {
     openDetail,
     closeDetail,
     setHovered,
+    togglePinned,
+    closeExpanded,
+    runAction,
     expand,
     collapse,
-    promote,
     pause,
     resume,
     confirm,

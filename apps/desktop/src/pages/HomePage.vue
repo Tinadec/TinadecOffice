@@ -16,7 +16,7 @@ import type { AgentMode, PermissionLevel } from '../types/mode'
 
 const router = useRouter()
 const { t } = useI18n()
-const { notify, banner } = useNotifications()
+const { notify, banner, dismissByKey } = useNotifications()
 
 // 子窗口（?splash=0）跳过 main-rise 入场动画：复用主窗口已建立的连接，不重播启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -139,11 +139,13 @@ async function loadInitial() {
     modelName.value = settings.model
     selectedProjectId.value = projectList[0]?.id ?? null
     await loadSessions()
+    dismissByKey('home-load')
   } catch (err) {
     banner.error({
       key: 'home-load',
       title: t('app.loadFailed'),
-      message: err instanceof Error ? err.message : t('app.loadFailed'),
+      message: t('app.loadFailedMessage'),
+      details: err instanceof Error ? err.message : t('app.loadFailed'),
       action: { label: t('app.retry'), run: () => loadInitial() },
     })
   } finally {
