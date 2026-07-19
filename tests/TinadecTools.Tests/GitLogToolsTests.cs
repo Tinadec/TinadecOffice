@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TinadecTools.Tools.Git;
 using TinadecTools.Tools.FileRW;
 
@@ -6,61 +5,16 @@ namespace TinadecTools.Tests;
 
 public sealed class GitLogToolsTests
 {
-    // ── temp repo fixture ──────────────────────────────────────────────────────
-
-    private static string CreateTempRepo()
-    {
-        var dir = CreateWorkspaceTempDirectory("git");
-        Directory.CreateDirectory(dir);
-
-        RunGit(dir, "init", "--initial-branch=main");
-        RunGit(dir, "config", "user.name", "Test");
-        RunGit(dir, "config", "user.email", "test@example.com");
-        RunGit(dir, "config", "commit.gpgSign", "false");
-        // 确保有初始提交
-        File.WriteAllText(Path.Combine(dir, "README.md"), "# hello\n");
-        RunGit(dir, "add", "README.md");
-        RunGit(dir, "commit", "-m", "initial");
-        return dir;
-    }
-
-    private static void RunGit(string cwd, params string[] args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "git",
-            WorkingDirectory = cwd,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var a in args)
-            psi.ArgumentList.Add(a);
-
-        using var p = Process.Start(psi)!;
-        p.WaitForExit();
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {p.StandardError.ReadToEnd()}");
-    }
-
-    private static void CommitFile(string repo, string path, string content, string msg)
-    {
-        File.WriteAllText(Path.Combine(repo, path), content);
-        RunGit(repo, "add", path);
-        RunGit(repo, "commit", "-m", msg);
-    }
-
     // ── git_log_list ───────────────────────────────────────────────────────────
 
     [Fact]
     public async Task LogList_ReturnsCommitsWithLanes()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "a.txt", "a\n", "add a");
-            CommitFile(repo, "b.txt", "b\n", "add b");
+            repo.CommitFile("a.txt", "a\n", "add a");
+            repo.CommitFile("b.txt", "b\n", "add b");
 
             var result = await GitLogListTool.HandleAsync(
                 new GitLogListArgs { RepositoryPath = repo, Limit = 10 },
@@ -78,18 +32,18 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogList_PagingWithSkip()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
             for (var i = 0; i < 5; i++)
-                CommitFile(repo, $"f{i}.txt", $"{i}\n", $"commit {i}");
+                repo.CommitFile($"f{i}.txt", $"{i}\n", $"commit {i}");
 
             var page1 = await GitLogListTool.HandleAsync(
                 new GitLogListArgs { RepositoryPath = repo, Limit = 2, Skip = 0 },
@@ -107,18 +61,18 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogList_AfterCommitCursor()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
             for (var i = 0; i < 4; i++)
-                CommitFile(repo, $"f{i}.txt", $"{i}\n", $"commit {i}");
+                repo.CommitFile($"f{i}.txt", $"{i}\n", $"commit {i}");
 
             var page1 = await GitLogListTool.HandleAsync(
                 new GitLogListArgs { RepositoryPath = repo, Limit = 2 },
@@ -134,14 +88,14 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogList_RejectsOptionInjection()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -151,14 +105,14 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogList_NotARepo_ReturnsFailure()
     {
-        var dir = CreateWorkspaceTempDirectory("git-norepo");
+        var dir = CreateWorkspaceDir("git-norepo");
         Directory.CreateDirectory(dir);
         try
         {
@@ -170,18 +124,18 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(dir);
+            DeleteWorkspaceDir(dir);
         }
     }
 
     [Fact]
     public async Task LogList_StructuredRefs_ContainsHead()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "c.txt", "c\n", "add c");
-            RunGit(repo, "tag", "v1.0");
+            repo.CommitFile("c.txt", "c\n", "add c");
+            repo.RunGit("tag", "v1.0");
 
             var result = await GitLogListTool.HandleAsync(
                 new GitLogListArgs { RepositoryPath = repo, Limit = 1 },
@@ -195,7 +149,7 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
@@ -204,12 +158,12 @@ public sealed class GitLogToolsTests
     [Fact]
     public async Task LogDetail_SingleCommit_ReturnsFiles()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "a.txt", "line1\nline2\n", "add a file");
+            repo.CommitFile("a.txt", "line1\nline2\n", "add a file");
 
-            var headHash = RunGitCapture(repo, "rev-parse", "HEAD");
+            var headHash = repo.CaptureGit("rev-parse", "HEAD");
             var result = await GitLogDetailTool.HandleAsync(
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = headHash },
                 CancellationToken.None);
@@ -223,18 +177,18 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogDetail_IncludePatch_ParsesHunks()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "a.txt", "line1\n", "add a");
-            CommitFile(repo, "a.txt", "line1\nline2\nline3\n", "expand a");
+            repo.CommitFile("a.txt", "line1\n", "add a");
+            repo.CommitFile("a.txt", "line1\nline2\nline3\n", "expand a");
 
             var result = await GitLogDetailTool.HandleAsync(
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = "HEAD", IncludePatch = true },
@@ -249,20 +203,20 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogDetail_Range_ReturnsMultipleCommits()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            var c1 = RunGitCapture(repo, "rev-parse", "HEAD");
-            CommitFile(repo, "x.txt", "x\n", "add x");
-            CommitFile(repo, "y.txt", "y\n", "add y");
-            var c3 = RunGitCapture(repo, "rev-parse", "HEAD");
+            var c1 = repo.CaptureGit("rev-parse", "HEAD");
+            repo.CommitFile("x.txt", "x\n", "add x");
+            repo.CommitFile("y.txt", "y\n", "add y");
+            var c3 = repo.CaptureGit("rev-parse", "HEAD");
 
             var result = await GitLogDetailTool.HandleAsync(
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = $"{c1}..{c3}" },
@@ -274,20 +228,20 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogDetail_BinaryFile_ReturnsSummaryNoHunks()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
             var bytes = new byte[] { 0, 1, 2, 255, 254, 0, 1, 2, 3, 4 };
             File.WriteAllBytes(Path.Combine(repo, "bin.dat"), bytes);
-            RunGit(repo, "add", "bin.dat");
-            RunGit(repo, "commit", "-m", "add binary");
+            repo.RunGit("add", "bin.dat");
+            repo.RunGit("commit", "-m", "add binary");
 
             var result = await GitLogDetailTool.HandleAsync(
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = "HEAD", IncludePatch = true },
@@ -311,17 +265,17 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task LogDetail_PatchBudget_PreservesMetadataWithoutPatch()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "large.txt", new string('x', 2_048) + "\n", "add large");
+            repo.CommitFile("large.txt", new string('x', 2_048) + "\n", "add large");
 
             var result = await GitLogDetailTool.HandleAsync(
                 new GitLogDetailArgs
@@ -342,7 +296,7 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
@@ -351,12 +305,12 @@ public sealed class GitLogToolsTests
     [Fact]
     public async Task FileHistory_ReturnsEntriesForPath()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "a.txt", "v1\n", "add a");
-            CommitFile(repo, "a.txt", "v1\nv2\n", "edit a");
-            CommitFile(repo, "b.txt", "b\n", "add b"); // 不影响 a.txt
+            repo.CommitFile("a.txt", "v1\n", "add a");
+            repo.CommitFile("a.txt", "v1\nv2\n", "edit a");
+            repo.CommitFile("b.txt", "b\n", "add b"); // 不影响 a.txt
 
             var result = await GitFileHistoryTool.HandleAsync(
                 new GitFileHistoryArgs { RepositoryPath = repo, Path = "a.txt" },
@@ -369,19 +323,19 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task FileHistory_FollowRename()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "old.txt", "content\n", "add old");
-            RunGit(repo, "mv", "old.txt", "new.txt");
-            RunGit(repo, "commit", "-m", "rename to new");
+            repo.CommitFile("old.txt", "content\n", "add old");
+            repo.RunGit("mv", "old.txt", "new.txt");
+            repo.RunGit("commit", "-m", "rename to new");
 
             var result = await GitFileHistoryTool.HandleAsync(
                 new GitFileHistoryArgs { RepositoryPath = repo, Path = "new.txt", Follow = true },
@@ -394,18 +348,18 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task FileHistory_IncludePatch()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "a.txt", "line1\n", "add a");
-            CommitFile(repo, "a.txt", "line1\nline2\n", "edit a");
+            repo.CommitFile("a.txt", "line1\n", "add a");
+            repo.CommitFile("a.txt", "line1\nline2\n", "edit a");
 
             var result = await GitFileHistoryTool.HandleAsync(
                 new GitFileHistoryArgs { RepositoryPath = repo, Path = "a.txt", IncludePatch = true },
@@ -417,15 +371,15 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
     [Fact]
     public async Task FileHistory_RejectsPathOutsideRepository()
     {
-        var repo = CreateTempRepo();
-        var external = CreateWorkspaceTempDirectory("git-external");
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
+        var external = CreateWorkspaceDir("git-external");
         try
         {
             var externalFile = Path.Combine(external, "outside.txt");
@@ -438,16 +392,16 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
-            CleanupRepo(external);
+            repo.Dispose();
+            DeleteWorkspaceDir(external);
         }
     }
 
     [Fact]
     public async Task FileHistory_RejectsLinkTraversal()
     {
-        var repo = CreateTempRepo();
-        var external = CreateWorkspaceTempDirectory("git-link-target");
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
+        var external = CreateWorkspaceDir("git-link-target");
         var link = Path.Combine(repo, "external-link");
         try
         {
@@ -470,18 +424,18 @@ public sealed class GitLogToolsTests
         {
             if (Directory.Exists(link))
                 Directory.Delete(link);
-            CleanupRepo(repo);
-            CleanupRepo(external);
+            repo.Dispose();
+            DeleteWorkspaceDir(external);
         }
     }
 
     [Fact]
     public async Task FileHistory_PatchBudget_PreservesEntriesWithoutPatch()
     {
-        var repo = CreateTempRepo();
+        var repo = new TempGitRepo("git-log"); repo.SeedInitialCommit();
         try
         {
-            CommitFile(repo, "large.txt", new string('x', 2_048) + "\n", "add large");
+            repo.CommitFile("large.txt", new string('x', 2_048) + "\n", "add large");
 
             var result = await GitFileHistoryTool.HandleAsync(
                 new GitFileHistoryArgs
@@ -502,52 +456,21 @@ public sealed class GitLogToolsTests
         }
         finally
         {
-            CleanupRepo(repo);
+            repo.Dispose();
         }
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────────
-
-    private static string CreateWorkspaceTempDirectory(string prefix)
+    // ponytail: 仅在该文件内的非 git 工作区目录 fixture；用 TempGitRepo 的 git 场景走 fixture.
+    private static string CreateWorkspaceDir(string prefix)
     {
-        var dir = Path.Combine(
-            FileToolRuntime.WorkspaceRoot,
-            ".tinadec-tools-tests",
-            $"{prefix}-{Guid.NewGuid():N}");
+        var dir = System.IO.Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"{prefix}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         return dir;
     }
 
-    private static string RunGitCapture(string cwd, params string[] args)
+    private static void DeleteWorkspaceDir(string dir)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "git",
-            WorkingDirectory = cwd,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            CreateNoWindow = true
-        };
-        foreach (var a in args)
-            psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return stdout.Trim();
-    }
-
-    private static void CleanupRepo(string dir)
-    {
-        try
-        {
-            if (Directory.Exists(dir))
-            {
-                // .git 可能只读，先清属性
-                foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(f, FileAttributes.Normal);
-                Directory.Delete(dir, recursive: true);
-            }
-        }
-        catch { /* best-effort */ }
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
+        catch { }
     }
 }
