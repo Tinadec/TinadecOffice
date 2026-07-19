@@ -34,13 +34,13 @@ public sealed class AgentFrameworkSmokeTests
     }
 
     [Fact]
-    public void FullCompositionRegistersAllNineModules()
+    public void FullCompositionRegistersAllTenModules()
     {
         var services = new ServiceCollection();
         var builder = services.AddTinadecCore();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(9, modules.Count);
+        Assert.Equal(10, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
@@ -52,6 +52,7 @@ public sealed class AgentFrameworkSmokeTests
         Assert.Contains("loop_guard", moduleIds);
         Assert.Contains("lifecycle", moduleIds);
         Assert.Contains("tenancy", moduleIds);
+        Assert.Contains("vector_store", moduleIds);
     }
 
     [Fact]
