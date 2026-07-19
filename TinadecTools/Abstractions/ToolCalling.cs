@@ -72,7 +72,7 @@ internal sealed class ToolCallErrorResponse
 [JsonSerializable(typeof(ToolCallResponse<JsonElement>))]
 [JsonSerializable(typeof(ToolCallErrorResponse))]
 [JsonSerializable(typeof(string))]
-internal partial class ToolCallJsonContext : JsonSerializerContext;
+internal partial class ToolCallJsonContext : JsonSerializerContext { }
 
 //对于一个ToolCallResponse有一个基本模板：未审核的访问
 

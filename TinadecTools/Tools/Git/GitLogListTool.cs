@@ -44,7 +44,7 @@ public sealed class GitLogListResult
 [JsonSerializable(typeof(GitCommitSummary))]
 [JsonSerializable(typeof(GitGraphEdge))]
 [JsonSerializable(typeof(GitRef))]
-internal partial class GitLogListToolJsonContext : JsonSerializerContext;
+internal partial class GitLogListToolJsonContext : JsonSerializerContext { }
 
 internal static class GitLogListTool
 {

@@ -59,7 +59,7 @@ public sealed class FileMutationResponse
 [JsonSerializable(typeof(InsertLineParams))]
 [JsonSerializable(typeof(DeleteLineParams))]
 [JsonSerializable(typeof(FileMutationResponse))]
-internal partial class FileWriterJsonContext : JsonSerializerContext;
+internal partial class FileWriterJsonContext : JsonSerializerContext { }
 
 public static class FileWriter
 {

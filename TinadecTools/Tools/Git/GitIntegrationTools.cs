@@ -30,7 +30,7 @@ public sealed class GitIntegrationResult
 [JsonSerializable(typeof(GitIntegrationResult))]
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
-internal partial class GitIntegrationToolsJsonContext : JsonSerializerContext;
+internal partial class GitIntegrationToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitIntegrationTools
 {

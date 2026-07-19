@@ -46,7 +46,7 @@ internal sealed class RgStats
 [JsonSerializable(typeof(RgTextValue))]
 [JsonSerializable(typeof(RgSubmatch))]
 [JsonSerializable(typeof(RgStats))]
-internal partial class RgJsonContext : JsonSerializerContext;
+internal partial class RgJsonContext : JsonSerializerContext { }
 
 // ── RipgrepRunner ─────────────────────────────────────────────────────────────
 

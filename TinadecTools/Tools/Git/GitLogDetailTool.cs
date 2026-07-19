@@ -64,7 +64,7 @@ public sealed class GitLogDetailResult
 [JsonSerializable(typeof(GitPatchFile))]
 [JsonSerializable(typeof(GitDiffHunk))]
 [JsonSerializable(typeof(GitDiffLine))]
-internal partial class GitLogDetailToolJsonContext : JsonSerializerContext;
+internal partial class GitLogDetailToolJsonContext : JsonSerializerContext { }
 
 internal static class GitLogDetailTool
 {

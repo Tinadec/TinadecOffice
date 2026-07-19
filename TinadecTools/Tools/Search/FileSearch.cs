@@ -109,7 +109,7 @@ public sealed class FileSearchResponse
 [JsonSerializable(typeof(FileSearchLine))]
 [JsonSerializable(typeof(MatchSpan))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
-internal partial class FileSearchJsonContext : JsonSerializerContext;
+internal partial class FileSearchJsonContext : JsonSerializerContext { }
 
 // ── 工具入口 ──────────────────────────────────────────────────────────────────
 

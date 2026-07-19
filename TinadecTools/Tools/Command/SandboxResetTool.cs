@@ -25,7 +25,7 @@ public sealed class SandboxResetResponse
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(SandboxResetParams))]
 [JsonSerializable(typeof(SandboxResetResponse))]
-internal partial class SandboxResetToolJsonContext : JsonSerializerContext;
+internal partial class SandboxResetToolJsonContext : JsonSerializerContext { }
 
 public static class SandboxResetTool
 {

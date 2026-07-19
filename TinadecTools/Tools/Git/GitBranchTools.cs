@@ -28,7 +28,7 @@ public sealed class GitBranchMutationResult
 [JsonSerializable(typeof(GitBranchMutationResult))]
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
-internal partial class GitBranchToolsJsonContext : JsonSerializerContext;
+internal partial class GitBranchToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitBranchTools
 {

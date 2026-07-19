@@ -67,4 +67,4 @@ internal interface ISandboxBackend
 [JsonSerializable(typeof(SandboxRunnerRequest))]
 [JsonSerializable(typeof(SandboxRunnerResponse))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
-internal sealed partial class SandboxJsonContext : JsonSerializerContext;
+internal sealed partial class SandboxJsonContext : JsonSerializerContext { }

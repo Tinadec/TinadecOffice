@@ -66,7 +66,7 @@ public sealed class GitFileHistoryResult
 [JsonSerializable(typeof(GitPatchFile))]
 [JsonSerializable(typeof(GitDiffHunk))]
 [JsonSerializable(typeof(GitDiffLine))]
-internal partial class GitFileHistoryToolJsonContext : JsonSerializerContext;
+internal partial class GitFileHistoryToolJsonContext : JsonSerializerContext { }
 
 internal static class GitFileHistoryTool
 {

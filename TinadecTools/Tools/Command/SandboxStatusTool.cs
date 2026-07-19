@@ -21,7 +21,7 @@ public sealed class SandboxStatusResponse
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(SandboxStatusParams))]
 [JsonSerializable(typeof(SandboxStatusResponse))]
-internal partial class SandboxStatusToolJsonContext : JsonSerializerContext;
+internal partial class SandboxStatusToolJsonContext : JsonSerializerContext { }
 
 public static class SandboxStatusTool
 {

@@ -59,7 +59,7 @@ public sealed class WriteFileParams
 [JsonSerializable(typeof(StatPathResponse))]
 [JsonSerializable(typeof(WriteFileParams))]
 [JsonSerializable(typeof(FileMutationResponse))]
-internal partial class FileSystemToolsJsonContext : JsonSerializerContext;
+internal partial class FileSystemToolsJsonContext : JsonSerializerContext { }
 
 public static class FileSystemTools
 {

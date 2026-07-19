@@ -266,7 +266,7 @@ public class GitSimpleResult
 [JsonSerializable(typeof(GitConflictBlock))]
 [JsonSerializable(typeof(GitConflictFile))]
 [JsonSerializable(typeof(GitFileChange))]
-internal partial class GitReadToolsJsonContext : JsonSerializerContext;
+internal partial class GitReadToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitReadTools
 {

@@ -28,7 +28,7 @@ public sealed class GitConflictResolveResult
 [JsonSerializable(typeof(GitConflictResolveResult))]
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
-internal partial class GitConflictResolveToolJsonContext : JsonSerializerContext;
+internal partial class GitConflictResolveToolJsonContext : JsonSerializerContext { }
 
 internal static class GitConflictResolveTool
 {

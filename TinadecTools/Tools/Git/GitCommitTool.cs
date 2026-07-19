@@ -29,7 +29,7 @@ public sealed class GitCommitResult
 [JsonSerializable(typeof(GitCommitResult))]
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
-internal partial class GitCommitToolJsonContext : JsonSerializerContext;
+internal partial class GitCommitToolJsonContext : JsonSerializerContext { }
 
 internal static class GitCommitTool
 {

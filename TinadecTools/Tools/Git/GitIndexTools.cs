@@ -27,7 +27,7 @@ public sealed class GitIndexUpdateResult
 [JsonSerializable(typeof(GitIndexUpdateResult))]
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
-internal partial class GitIndexToolsJsonContext : JsonSerializerContext;
+internal partial class GitIndexToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitIndexTools
 {

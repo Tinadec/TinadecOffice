@@ -72,7 +72,7 @@ public sealed class CommandRunResponse
 [JsonSerializable(typeof(CommandRunParams))]
 [JsonSerializable(typeof(CommandRunResponse))]
 [JsonSerializable(typeof(List<string>))]
-internal partial class CommandRunnerJsonContext : JsonSerializerContext;
+internal partial class CommandRunnerJsonContext : JsonSerializerContext { }
 
 // ── 工具入口 ──────────────────────────────────────────────────────────────────
 

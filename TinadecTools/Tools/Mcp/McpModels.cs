@@ -96,19 +96,19 @@ public sealed class McpSearchResponse
 [JsonSerializable(typeof(McpSearchResult))]
 [JsonSerializable(typeof(McpSearchResponse))]
 [JsonSerializable(typeof(CallToolResult))]
-internal partial class McpJsonContext : JsonSerializerContext;
+internal partial class McpJsonContext : JsonSerializerContext { }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(McpListParams))]
 [JsonSerializable(typeof(McpListResponse))]
-internal partial class McpListToolJsonContext : JsonSerializerContext;
+internal partial class McpListToolJsonContext : JsonSerializerContext { }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(McpInvokeParams))]
 [JsonSerializable(typeof(McpInvokeResponse))]
-internal partial class McpInvokeToolJsonContext : JsonSerializerContext;
+internal partial class McpInvokeToolJsonContext : JsonSerializerContext { }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(McpSearchParams))]
 [JsonSerializable(typeof(McpSearchResponse))]
-internal partial class McpSearchToolJsonContext : JsonSerializerContext;
+internal partial class McpSearchToolJsonContext : JsonSerializerContext { }

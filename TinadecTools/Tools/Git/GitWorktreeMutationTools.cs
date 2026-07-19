@@ -30,7 +30,7 @@ public sealed class GitWorktreeMutationResult
 [JsonSerializable(typeof(GitWorktreeMutationArgs))]
 [JsonSerializable(typeof(GitWorktreeMutationResult))]
 [JsonSerializable(typeof(GitWorktree))]
-internal partial class GitWorktreeMutationToolsJsonContext : JsonSerializerContext;
+internal partial class GitWorktreeMutationToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitWorktreeMutationTools
 {

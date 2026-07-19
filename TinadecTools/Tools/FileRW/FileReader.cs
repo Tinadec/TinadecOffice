@@ -49,7 +49,7 @@ public sealed class NormalFileReadResponse
 [JsonSerializable(typeof(LineContent))]
 [JsonSerializable(typeof(ExtendedLineContent))]
 [JsonSerializable(typeof(NormalFileReadResponse))]
-internal partial class FileReaderJsonContext : JsonSerializerContext;
+internal partial class FileReaderJsonContext : JsonSerializerContext { }
 
 public static class FileReader
 {

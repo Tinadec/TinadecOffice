@@ -32,7 +32,7 @@ public sealed class GitRemoteMutationResult
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitStatusEntry))]
 [JsonSerializable(typeof(GitBranch))]
-internal partial class GitRemoteMutationToolsJsonContext : JsonSerializerContext;
+internal partial class GitRemoteMutationToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitRemoteMutationTools
 {
