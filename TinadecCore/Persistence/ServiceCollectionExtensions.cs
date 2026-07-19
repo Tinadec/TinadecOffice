@@ -40,6 +40,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<StoragePaths>(sp =>
             new StoragePaths(root, sp.GetRequiredService<IOptions<TinadecPersistenceOptions>>()));
         services.TryAddSingleton<IContentStore, LocalFileContentStore>();
+        services.TryAddSingleton<IProjectVectorDatabase, ProjectVectorDatabase>();
         services.TryAddSingleton<ISecretStore>(sp => OperatingSystem.IsWindows()
             ? new ProtectedFileSecretStore(sp.GetRequiredService<StoragePaths>())
             : new EnvironmentSecretStore());

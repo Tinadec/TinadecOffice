@@ -22,6 +22,8 @@ public sealed class StoragePaths
     public string TaskSnapshot(Guid runId) => Under("tasks", runId + ".tasks.json");
     public string EventLog(Guid runId) => Under("events", runId + ".events.jsonl");
     public string Artifacts(Guid runId) => Under("artifacts", runId.ToString());
+    public string ProjectVectorDatabase(Guid tenantId, Guid? workspaceId, Guid projectId) =>
+        Under("vectors", Path.Combine("tenants", tenantId.ToString("N"), workspaceId?.ToString("N") ?? "tenant", projectId + ".db"));
 
     public string ContentTemporary(Guid tenantId, Guid? workspaceId, string kind) =>
         Under("content", Path.Combine("tenants", tenantId.ToString("N"), workspaceId?.ToString("N") ?? "tenant", SanitizeSegment(kind), ".tmp", Guid.NewGuid().ToString("N")));
