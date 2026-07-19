@@ -10,6 +10,7 @@ public sealed class GitCommitArgs
     [JsonPropertyName("include_all")] public bool IncludeAll { get; set; }
     [JsonPropertyName("commit_staged_only")] public bool CommitStagedOnly { get; set; }
     [JsonPropertyName("paths")] public List<string>? Paths { get; set; }
+    [JsonPropertyName("confirm_commit")] public string? ConfirmCommit { get; set; }
 }
 
 public sealed class GitCommitResult
@@ -38,6 +39,7 @@ internal static class GitCommitTool
         GitCommitArgs args,
         CancellationToken cancellationToken)
     {
+        ToolConfirmations.Require(args.ConfirmCommit, nameof(args.ConfirmCommit));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var repoError);
         if (repo is null) return Failure(repoError, GitCli.NotARepoCode);
 

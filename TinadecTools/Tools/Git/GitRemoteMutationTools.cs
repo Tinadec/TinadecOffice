@@ -10,6 +10,9 @@ public sealed class GitRemoteMutationArgs
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("set_upstream")] public bool SetUpstream { get; set; }
     [JsonPropertyName("prune")] public bool Prune { get; set; } = true;
+    [JsonPropertyName("confirm_fetch")] public string? ConfirmFetch { get; set; }
+    [JsonPropertyName("confirm_push")] public string? ConfirmPush { get; set; }
+    [JsonPropertyName("confirm_pull")] public string? ConfirmPull { get; set; }
 }
 
 public sealed class GitRemoteMutationResult
@@ -39,6 +42,7 @@ internal static class GitRemoteMutationTools
     [ToolFunction("git_fetch", RequiresApproval = true)]
     public static async ValueTask<GitRemoteMutationResult> FetchAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
+        ToolConfirmations.Require(args.ConfirmFetch, nameof(args.ConfirmFetch));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure("fetch", error);
         var remote = string.IsNullOrWhiteSpace(args.Remote) ? null : args.Remote.Trim();
@@ -56,6 +60,7 @@ internal static class GitRemoteMutationTools
     [ToolFunction("git_push", RequiresApproval = true)]
     public static async ValueTask<GitRemoteMutationResult> PushAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
+        ToolConfirmations.Require(args.ConfirmPush, nameof(args.ConfirmPush));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure("push", error);
         var status = await StatusAsync(args.RepositoryPath, ct).ConfigureAwait(false);
@@ -82,6 +87,7 @@ internal static class GitRemoteMutationTools
     [ToolFunction("git_pull", RequiresApproval = true)]
     public static async ValueTask<GitRemoteMutationResult> PullAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
+        ToolConfirmations.Require(args.ConfirmPull, nameof(args.ConfirmPull));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure("pull", error);
         var status = await StatusAsync(args.RepositoryPath, ct).ConfigureAwait(false);

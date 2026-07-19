@@ -22,7 +22,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = "commit staged change",
-                CommitStagedOnly = true
+                CommitStagedOnly = true,
+                ConfirmCommit = "ok"
             }, CancellationToken.None);
 
             Assert.True(result.Success, result.Error);
@@ -51,7 +52,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = "commit all changes",
-                IncludeAll = true
+                IncludeAll = true,
+                ConfirmCommit = "ok"
             }, CancellationToken.None);
 
             Assert.True(result.Success, result.Error);
@@ -78,7 +80,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = "commit selected path",
-                Paths = ["note.txt"]
+                Paths = ["note.txt"],
+                ConfirmCommit = "ok"
             }, CancellationToken.None);
 
             Assert.True(result.Success, result.Error);
@@ -102,7 +105,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = " ",
-                CommitStagedOnly = true
+                CommitStagedOnly = true,
+                ConfirmCommit = "ok"
             }, CancellationToken.None).AsTask());
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => GitCommitTool.CommitAsync(new GitCommitArgs
@@ -110,13 +114,15 @@ public sealed class GitCommitToolTests
                 RepositoryPath = repo,
                 Message = "ambiguous",
                 IncludeAll = true,
-                CommitStagedOnly = true
+                CommitStagedOnly = true,
+                ConfirmCommit = "ok"
             }, CancellationToken.None).AsTask());
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => GitCommitTool.CommitAsync(new GitCommitArgs
             {
                 RepositoryPath = repo,
-                Message = "missing mode"
+                Message = "missing mode",
+                ConfirmCommit = "ok"
             }, CancellationToken.None).AsTask());
         }
         finally { Cleanup(repo); }
@@ -136,7 +142,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = "unsafe path",
-                Paths = [outside]
+                Paths = [outside],
+                ConfirmCommit = "ok"
             }, CancellationToken.None).AsTask());
 
             Assert.Empty(RunGitCapture(repo, "diff", "--cached", "--name-only"));
@@ -158,7 +165,8 @@ public sealed class GitCommitToolTests
             {
                 RepositoryPath = repo,
                 Message = "nothing to commit",
-                CommitStagedOnly = true
+                CommitStagedOnly = true,
+                ConfirmCommit = "ok"
             }, CancellationToken.None);
 
             Assert.False(result.Success);
@@ -166,6 +174,16 @@ public sealed class GitCommitToolTests
             Assert.Null(result.CommitHash);
         }
         finally { Cleanup(repo); }
+    }
+
+    [Fact]
+    public async Task Commit_RequiresConfirmCommitBeforeAnyOtherValidation()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitCommitTool.CommitAsync(new GitCommitArgs
+        {
+            Message = "x",
+            CommitStagedOnly = true
+        }, CancellationToken.None).AsTask());
     }
 
     [Fact]
