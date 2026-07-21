@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TinadecTools.Abstractions;
 using TinadecTools.Tools.FileRW;
 using TinadecTools.Tools.Git;
@@ -10,42 +9,43 @@ public sealed class GitReadToolsTests
     [Fact]
     public async Task ReadTools_ReturnStructuredStatusDiffRefsAndRevisionFile()
     {
-        var repo = CreateRepo();
-        try
-        {
-            File.WriteAllText(Path.Combine(repo, "note.txt"), "changed\n");
-            var status = await GitReadTools.StatusAsync(new GitStatusArgs { RepositoryPath = repo }, CancellationToken.None);
-            var diff = await GitReadTools.DiffAsync(new GitDiffArgs { RepositoryPath = repo, Target = "working_tree" }, CancellationToken.None);
-            var refs = await GitReadTools.RefListAsync(new GitRefListArgs { RepositoryPath = repo }, CancellationToken.None);
-            var file = await GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo, Path = "note.txt", Rev = "HEAD" }, CancellationToken.None);
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit("note.txt", "initial\n");
+        File.WriteAllText(System.IO.Path.Combine(repo.Path, "note.txt"), "changed\n");
+        var status = await GitReadTools.StatusAsync(new GitStatusArgs { RepositoryPath = repo.Path }, CancellationToken.None);
+        var diff = await GitReadTools.DiffAsync(new GitDiffArgs { RepositoryPath = repo.Path, Target = "working_tree" }, CancellationToken.None);
+        var refs = await GitReadTools.RefListAsync(new GitRefListArgs { RepositoryPath = repo.Path }, CancellationToken.None);
+        var file = await GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo.Path, Path = "note.txt", Rev = "HEAD" }, CancellationToken.None);
 
-            Assert.True(status.Success);
-            Assert.True(status.HasUncommittedChanges);
-            Assert.Contains(status.Files, item => item.Path == "note.txt");
-            Assert.True(diff.Success);
-            Assert.Contains("-initial", Assert.Single(diff.Sections).Diff);
-            Assert.True(refs.Success);
-            Assert.Contains(refs.Refs, item => item.Name == "main" && item.Type == "branch");
-            Assert.True(file.Success);
-            Assert.Equal("initial\n", file.Content);
-        }
-        finally { Cleanup(repo); }
+        Assert.True(status.Success);
+        Assert.True(status.HasUncommittedChanges);
+        Assert.Contains(status.Files, item => item.Path == "note.txt");
+        Assert.True(diff.Success);
+        Assert.Contains("-initial", Assert.Single(diff.Sections).Diff);
+        Assert.True(refs.Success);
+        Assert.Contains(refs.Refs, item => item.Name == "main" && item.Type == "branch");
+        Assert.True(file.Success);
+        Assert.Equal("initial\n", file.Content);
     }
 
     [Fact]
     public async Task ReadTools_RejectLinkTraversalAndOptionLikeRevisions()
     {
-        var repo = CreateRepo();
-        var external = Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", Guid.NewGuid().ToString("N"));
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit("note.txt", "initial\n");
+        var external = System.IO.Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(external);
         try
         {
-            File.WriteAllText(Path.Combine(external, "outside.txt"), "outside");
-            Directory.CreateSymbolicLink(Path.Combine(repo, "outside"), external);
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo, Path = "outside/outside.txt" }, CancellationToken.None).AsTask());
-            await Assert.ThrowsAsync<InvalidOperationException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo, Path = "note.txt", Rev = "--output" }, CancellationToken.None).AsTask());
+            File.WriteAllText(System.IO.Path.Combine(external, "outside.txt"), "outside");
+            Directory.CreateSymbolicLink(System.IO.Path.Combine(repo.Path, "outside"), external);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo.Path, Path = "outside/outside.txt" }, CancellationToken.None).AsTask());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo.Path, Path = "note.txt", Rev = "--output" }, CancellationToken.None).AsTask());
         }
-        finally { Cleanup(repo); Cleanup(external); }
+        finally
+        {
+            try { if (Directory.Exists(external)) Directory.Delete(external, recursive: true); } catch { }
+        }
     }
 
     [Fact]
@@ -60,43 +60,79 @@ public sealed class GitReadToolsTests
         }
     }
 
-    private static string CreateRepo()
+    [Fact]
+    public async Task Blame_ReturnsLineAuthorAndContent()
     {
-        var path = Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"git-read-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(path);
-        RunGit(path, "init", "--initial-branch=main");
-        RunGit(path, "config", "user.name", "Test");
-        RunGit(path, "config", "user.email", "test@example.com");
-        RunGit(path, "config", "commit.gpgSign", "false");
-        File.WriteAllText(Path.Combine(path, "note.txt"), "initial\n");
-        RunGit(path, "add", "note.txt");
-        RunGit(path, "commit", "-m", "initial");
-        return path;
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit("a.txt", "line1\nline2\n");
+        repo.CommitFile("a.txt", "line1\nline2\nline3\n", "add line3");
+        var blame = await GitReadTools.BlameAsync(new GitBlameArgs { RepositoryPath = repo, Path = "a.txt" }, CancellationToken.None);
+        Assert.True(blame.Success, blame.Error);
+        Assert.Equal(3, blame.Lines.Count);
+        Assert.All(blame.Lines, line => Assert.False(string.IsNullOrEmpty(line.Commit)));
+        Assert.Equal("line3", blame.Lines[2].Content);
     }
 
-    private static void RunGit(string cwd, params string[] args)
+    [Fact]
+    public async Task RemoteList_ReturnsConfiguredRemoteFetchUrl()
     {
-        var start = new ProcessStartInfo
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit();
+        var bareDir = NewBareRepo("git-read-bare");
+        repo.RunGit("remote", "add", "origin", bareDir);
+        var list = await GitReadTools.RemoteListAsync(new GitRemoteListArgs { RepositoryPath = repo }, CancellationToken.None);
+        Assert.True(list.Success, list.Error);
+        Assert.Contains(list.Remotes, r => r.Name == "origin" && !string.IsNullOrEmpty(r.FetchUrl));
+    }
+
+    [Fact]
+    public async Task WorktreeList_MarksMainWorktreeAsCurrent()
+    {
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit();
+        var list = await GitReadTools.WorktreeListAsync(new GitWorktreeListArgs { RepositoryPath = repo }, CancellationToken.None);
+        Assert.True(list.Success, list.Error);
+        Assert.True(list.Worktrees.Count >= 1);
+        Assert.Contains(list.Worktrees, w => w.IsCurrent && Normalize(w.Path) == Normalize(repo.Path));
+    }
+
+    [Fact]
+    public async Task PushReadiness_ReportsBlockersForDirtyOrNoUpstream()
+    {
+        using var repo = new TempGitRepo("git-read");
+        repo.SeedInitialCommit("a.txt", "v1\n");
+        File.WriteAllText(System.IO.Path.Combine(repo.Path, "a.txt"), "dirty\n");
+        var readiness = await GitReadTools.PushReadinessAsync(new GitPushReadinessArgs { RepositoryPath = repo }, CancellationToken.None);
+        Assert.True(readiness.Success, readiness.Error);
+        Assert.False(readiness.Ready);
+        Assert.NotEmpty(readiness.Blockers);
+    }
+
+    private static string NewBareRepo(string prefix)
+    {
+        var dir = System.IO.Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"{prefix}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        RunProcess(dir, "git", "init", "--bare", dir);
+        return dir;
+    }
+
+    private static void RunProcess(string working, string fileName, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
         {
-            FileName = "git",
-            WorkingDirectory = cwd,
+            FileName = fileName,
+            WorkingDirectory = working,
             UseShellExecute = false,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        foreach (var argument in args) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start)!;
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0) throw new InvalidOperationException(error);
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var stderr = p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        if (p.ExitCode != 0) throw new InvalidOperationException($"{fileName} {string.Join(' ', args)} failed: {stderr}");
     }
 
-    private static void Cleanup(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-        }
-        catch { }
-    }
+    private static string Normalize(string? path) =>
+        path is null ? string.Empty : System.IO.Path.TrimEndingDirectorySeparator(path.Replace('/', '\\'));
 }

@@ -9,6 +9,8 @@ public sealed class GitIntegrationArgs
     [JsonPropertyName("operation")] public string? Operation { get; set; }
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("strategy")] public string? Strategy { get; set; }
+    [JsonPropertyName("confirm_merge")] public string? ConfirmMerge { get; set; }
+    [JsonPropertyName("confirm_rebase")] public string? ConfirmRebase { get; set; }
 }
 
 public sealed class GitIntegrationResult
@@ -42,6 +44,7 @@ internal static class GitIntegrationTools
 
     private static async ValueTask<GitIntegrationResult> ExecuteAsync(GitIntegrationArgs args, string action, CancellationToken ct)
     {
+        ToolConfirmations.Require(action == "merge" ? args.ConfirmMerge : args.ConfirmRebase, action == "merge" ? nameof(args.ConfirmMerge) : nameof(args.ConfirmRebase));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure(action, args.Operation ?? "start", error);
         var operation = string.IsNullOrWhiteSpace(args.Operation) ? "start" : args.Operation.Trim().ToLowerInvariant();

@@ -114,6 +114,7 @@ internal static class GitFileHistoryTool
 
         var truncated = false;
         string? truncationReason = null;
+        var refTypes = await LogRefTypeMap.LoadAsync(repo, cancellationToken).ConfigureAwait(false);
         var segments = exec.Stdout.Split(CommitMarker, StringSplitOptions.RemoveEmptyEntries);
 
         var entries = new List<GitFileHistoryEntry>();
@@ -137,7 +138,7 @@ internal static class GitFileHistoryTool
                 AuthorDate = fields[5],
                 CommitterDate = fields[6],
                 Subject = fields[7],
-                Refs = GitLogParser.ParseDecorations(fields[8])
+                Refs = GitLogParser.ParseDecorations(fields[8], refTypes)
             };
 
             var change = ParseChange(records.Skip(1).ToArray(), repositoryPath);

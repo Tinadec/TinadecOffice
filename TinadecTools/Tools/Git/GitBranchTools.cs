@@ -9,6 +9,10 @@ public sealed class GitBranchMutationArgs
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("new_name")] public string? NewName { get; set; }
     [JsonPropertyName("force")] public bool Force { get; set; }
+    [JsonPropertyName("confirm_checkout")] public string? ConfirmCheckout { get; set; }
+    [JsonPropertyName("confirm_branch_create")] public string? ConfirmBranchCreate { get; set; }
+    [JsonPropertyName("confirm_branch_delete")] public string? ConfirmBranchDelete { get; set; }
+    [JsonPropertyName("confirm_branch_rename")] public string? ConfirmBranchRename { get; set; }
 }
 
 public sealed class GitBranchMutationResult
@@ -50,6 +54,23 @@ internal static class GitBranchTools
 
     private static async ValueTask<GitBranchMutationResult> ExecuteAsync(GitBranchMutationArgs args, string action, CancellationToken ct)
     {
+        ToolConfirmations.Require(
+        action switch
+        {
+            "checkout" => args.ConfirmCheckout,
+            "create" => args.ConfirmBranchCreate,
+            "delete" => args.ConfirmBranchDelete,
+            "rename" => args.ConfirmBranchRename,
+            _ => throw new InvalidOperationException($"Unsupported branch action '{action}'.")
+        },
+        action switch
+        {
+            "checkout" => nameof(args.ConfirmCheckout),
+            "create" => nameof(args.ConfirmBranchCreate),
+            "delete" => nameof(args.ConfirmBranchDelete),
+            "rename" => nameof(args.ConfirmBranchRename),
+            _ => string.Empty
+        });
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure(action, error);
         var name = action == "rename" ? args.NewName?.Trim() : args.Branch?.Trim();

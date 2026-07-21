@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using TinadecTools.Abstractions;
 using TinadecTools.Tools.FileRW;
@@ -11,77 +10,68 @@ public sealed class GitIndexToolsTests
     [Fact]
     public async Task StageAndUnstage_TextPatch_OnlyUpdateTheGitIndex()
     {
-        var repo = CreateRepo();
-        try
+        using var repo = new TempGitRepo("git-index");
+        repo.SeedInitialCommit("note.txt", "one\ntwo\nthree\n");
+        File.WriteAllText(System.IO.Path.Combine(repo.Path, "note.txt"), "one\nTWO\nthree\n");
+        var patch = repo.CaptureGit("diff", "--", "note.txt");
+
+        var staged = await GitIndexTools.StageAsync(new GitIndexUpdateArgs
         {
-            File.WriteAllText(Path.Combine(repo, "note.txt"), "one\nTWO\nthree\n");
-            var patch = RunGitCapture(repo, "diff", "--", "note.txt");
+            RepositoryPath = repo.Path,
+            Patch = patch
+        }, CancellationToken.None);
+        Assert.True(staged.Success, staged.Error);
+        Assert.Equal("patch", staged.SelectionKind);
+        Assert.Equal(["note.txt"], staged.UpdatedPaths);
+        Assert.Contains("+TWO", repo.CaptureGit("diff", "--cached", "--", "note.txt"));
+        Assert.Equal("one\nTWO\nthree\n", File.ReadAllText(System.IO.Path.Combine(repo.Path, "note.txt")));
+        Assert.Empty(repo.CaptureGit("diff", "--", "note.txt"));
 
-            var staged = await GitIndexTools.StageAsync(new GitIndexUpdateArgs
-            {
-                RepositoryPath = repo,
-                Patch = patch
-            }, CancellationToken.None);
-            Assert.True(staged.Success);
-            Assert.Equal("patch", staged.SelectionKind);
-            Assert.Equal(["note.txt"], staged.UpdatedPaths);
-            Assert.Contains("+TWO", RunGitCapture(repo, "diff", "--cached", "--", "note.txt"));
-            Assert.Equal("one\nTWO\nthree\n", File.ReadAllText(Path.Combine(repo, "note.txt")));
-            Assert.Empty(RunGitCapture(repo, "diff", "--", "note.txt"));
-
-            var unstaged = await GitIndexTools.UnstageAsync(new GitIndexUpdateArgs
-            {
-                RepositoryPath = repo,
-                Patch = patch
-            }, CancellationToken.None);
-            Assert.True(unstaged.Success);
-            Assert.Equal("patch", unstaged.SelectionKind);
-            Assert.Empty(RunGitCapture(repo, "diff", "--cached", "--", "note.txt"));
-            Assert.Contains("+TWO", RunGitCapture(repo, "diff", "--", "note.txt"));
-        }
-        finally { Cleanup(repo); }
+        var unstaged = await GitIndexTools.UnstageAsync(new GitIndexUpdateArgs
+        {
+            RepositoryPath = repo.Path,
+            Patch = patch
+        }, CancellationToken.None);
+        Assert.True(unstaged.Success, unstaged.Error);
+        Assert.Equal("patch", unstaged.SelectionKind);
+        Assert.Empty(repo.CaptureGit("diff", "--cached", "--", "note.txt"));
+        Assert.Contains("+TWO", repo.CaptureGit("diff", "--", "note.txt"));
     }
 
     [Fact]
     public async Task PathsStageAndUnstage_HandleWholeFileChanges()
     {
-        var repo = CreateRepo();
-        try
+        using var repo = new TempGitRepo("git-index");
+        repo.SeedInitialCommit("note.txt", "initial\n");
+        File.WriteAllText(System.IO.Path.Combine(repo.Path, "note.txt"), "changed\n");
+        var staged = await GitIndexTools.StageAsync(new GitIndexUpdateArgs
         {
-            File.WriteAllText(Path.Combine(repo, "note.txt"), "changed\n");
-            var staged = await GitIndexTools.StageAsync(new GitIndexUpdateArgs
-            {
-                RepositoryPath = repo,
-                Paths = ["note.txt"]
-            }, CancellationToken.None);
-            Assert.True(staged.Success);
-            Assert.Equal("paths", staged.SelectionKind);
-            Assert.Contains("+changed", RunGitCapture(repo, "diff", "--cached", "--", "note.txt"));
+            RepositoryPath = repo.Path,
+            Paths = ["note.txt"]
+        }, CancellationToken.None);
+        Assert.True(staged.Success, staged.Error);
+        Assert.Equal("paths", staged.SelectionKind);
+        Assert.Contains("+changed", repo.CaptureGit("diff", "--cached", "--", "note.txt"));
 
-            var unstaged = await GitIndexTools.UnstageAsync(new GitIndexUpdateArgs
-            {
-                RepositoryPath = repo,
-                Paths = ["note.txt"]
-            }, CancellationToken.None);
-            Assert.True(unstaged.Success);
-            Assert.Empty(RunGitCapture(repo, "diff", "--cached", "--", "note.txt"));
-        }
-        finally { Cleanup(repo); }
+        var unstaged = await GitIndexTools.UnstageAsync(new GitIndexUpdateArgs
+        {
+            RepositoryPath = repo.Path,
+            Paths = ["note.txt"]
+        }, CancellationToken.None);
+        Assert.True(unstaged.Success, unstaged.Error);
+        Assert.Empty(repo.CaptureGit("diff", "--cached", "--", "note.txt"));
     }
 
     [Fact]
     public async Task TextPatch_RejectsBinaryAndNewFileHeaders()
     {
-        var repo = CreateRepo();
-        try
+        using var repo = new TempGitRepo("git-index");
+        repo.SeedInitialCommit();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitIndexTools.StageAsync(new GitIndexUpdateArgs
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(() => GitIndexTools.StageAsync(new GitIndexUpdateArgs
-            {
-                RepositoryPath = repo,
-                Patch = "diff --git a/note.txt b/note.txt\nnew file mode 100644\n@@ -0,0 +1 @@\n+x\n"
-            }, CancellationToken.None).AsTask());
-        }
-        finally { Cleanup(repo); }
+            RepositoryPath = repo.Path,
+            Patch = "diff --git a/note.txt b/note.txt\nnew file mode 100644\n@@ -0,0 +1 @@\n+x\n"
+        }, CancellationToken.None).AsTask());
     }
 
     [Fact]
@@ -100,52 +90,5 @@ public sealed class GitIndexToolsTests
             }, CancellationToken.None);
             Assert.False(response.IsSuccess);
         }
-    }
-
-    private static string CreateRepo()
-    {
-        var path = Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"git-index-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(path);
-        RunGit(path, "init", "--initial-branch=main");
-        RunGit(path, "config", "user.name", "Test");
-        RunGit(path, "config", "user.email", "test@example.com");
-        RunGit(path, "config", "commit.gpgSign", "false");
-        File.WriteAllText(Path.Combine(path, "note.txt"), "one\ntwo\nthree\n");
-        RunGit(path, "add", "note.txt");
-        RunGit(path, "commit", "-m", "initial");
-        return path;
-    }
-
-    private static string RunGitCapture(string cwd, params string[] args)
-    {
-        var start = StartInfo(cwd, args);
-        start.RedirectStandardOutput = true;
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0) throw new InvalidOperationException(error);
-        return output;
-    }
-
-    private static void RunGit(string cwd, params string[] args)
-    {
-        using var process = Process.Start(StartInfo(cwd, args))!;
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0) throw new InvalidOperationException(error);
-    }
-
-    private static ProcessStartInfo StartInfo(string cwd, string[] args)
-    {
-        var start = new ProcessStartInfo { FileName = "git", WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardError = true, CreateNoWindow = true };
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        return start;
-    }
-
-    private static void Cleanup(string path)
-    {
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
-        catch { }
     }
 }

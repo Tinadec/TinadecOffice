@@ -11,6 +11,8 @@ public sealed class GitWorktreeMutationArgs
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("start_ref")] public string? StartRef { get; set; }
     [JsonPropertyName("force")] public bool Force { get; set; }
+    [JsonPropertyName("confirm_worktree_create")] public string? ConfirmWorktreeCreate { get; set; }
+    [JsonPropertyName("confirm_worktree_remove")] public string? ConfirmWorktreeRemove { get; set; }
 }
 
 public sealed class GitWorktreeMutationResult
@@ -37,6 +39,7 @@ internal static class GitWorktreeMutationTools
     [ToolFunction("git_worktree_create", RequiresApproval = true)]
     public static async ValueTask<GitWorktreeMutationResult> CreateAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
+        ToolConfirmations.Require(args.ConfirmWorktreeCreate, nameof(args.ConfirmWorktreeCreate));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure("create", error);
         var branch = args.Branch?.Trim();
@@ -64,6 +67,7 @@ internal static class GitWorktreeMutationTools
     [ToolFunction("git_worktree_remove", RequiresApproval = true)]
     public static async ValueTask<GitWorktreeMutationResult> RemoveAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
+        ToolConfirmations.Require(args.ConfirmWorktreeRemove, nameof(args.ConfirmWorktreeRemove));
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
         if (repo is null) return Failure("remove", error);
         if (string.IsNullOrWhiteSpace(args.Path)) throw new InvalidOperationException("path is required.");

@@ -32,6 +32,9 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- Pins SQLite native runtime above GHSA-2m69-gcr7-jv3q (CVE-2025-6965; SQLite < 3.50.2) -->
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageVersion Include="sqlite-vec" Version="0.1.7-alpha.2.1" />
+    <PackageVersion Include="Pgvector" Version="0.3.2" />
+    <PackageVersion Include="Pgvector.EntityFrameworkCore" Version="0.3.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />
 
     <!-- F# core -->

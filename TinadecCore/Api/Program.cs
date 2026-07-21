@@ -53,7 +53,7 @@ app.MapGet("/api/v1/health", () =>
 });
 
 // ============================================================
-// GET /api/v1/harness/manifest — returns dual-layer Agent, MAF version, eight module manifest
+// GET /api/v1/harness/manifest — returns dual-layer Agent, MAF version, and Core module manifest
 // ============================================================
 app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
 {

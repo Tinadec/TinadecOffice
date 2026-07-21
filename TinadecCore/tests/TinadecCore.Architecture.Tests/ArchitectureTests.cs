@@ -8,6 +8,7 @@ public sealed class ArchitectureTests
     private static readonly Assembly ContractsAssembly = typeof(Contracts.Dtos.HealthResponseDto).Assembly;
     private static readonly Assembly AbstractionsAssembly = typeof(Abstractions.ITinadecCoreBuilder).Assembly;
     private static readonly Assembly PersistenceAssembly = typeof(Persistence.ServiceCollectionExtensions).Assembly;
+    private static readonly Assembly VectorStoreAssembly = typeof(VectorStore.VectorStoreModuleRegistrar).Assembly;
     private static readonly Assembly StrategiesAssembly = typeof(Strategies.ContextBudget).Assembly;
     private static readonly Assembly DmaEAAssembly = typeof(DmaEA.DmaEAModuleRegistrar).Assembly;
     private static readonly Assembly ModelsAssembly = typeof(Models.ModelsModuleRegistrar).Assembly;
@@ -22,7 +23,7 @@ public sealed class ArchitectureTests
 
     private static readonly Assembly[] AllModuleAssemblies =
     [
-        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, StrategiesAssembly,
+        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
         RuntimeAssembly, ApiAssembly
@@ -30,7 +31,7 @@ public sealed class ArchitectureTests
 
     private static readonly Assembly[] NonApiModuleAssemblies =
     [
-        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, StrategiesAssembly,
+        ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
         RuntimeAssembly
@@ -153,6 +154,21 @@ public sealed class ArchitectureTests
                 .GetResult();
             Assert.True(result.IsSuccessful,
                 $"Persistence should not depend on {dep}.\n{FormatFailures(result)}");
+        }
+    }
+
+    [Fact]
+    public void VectorStoreDependsOnlyOnFoundationCapabilities()
+    {
+        var forbidden = new[]
+        {
+            "TinadecCore.Models", "TinadecCore.Context", "TinadecCore.Memory", "TinadecCore.Runtime", "TinadecCore.Api"
+        };
+
+        foreach (var dep in forbidden)
+        {
+            var result = Types.InAssembly(VectorStoreAssembly).Should().NotHaveDependencyOn(dep).GetResult();
+            Assert.True(result.IsSuccessful, $"VectorStore should not depend on {dep}.\n{FormatFailures(result)}");
         }
     }
 
