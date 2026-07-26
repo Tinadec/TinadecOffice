@@ -1605,13 +1605,6 @@ box-shadow: var(--shadow-subtle);
   color: #ffffff;
 }
 
-.error-strip {
-  padding: 10px 18px;
-  color: var(--text-error);
-  background: var(--bg-error);
-  border-bottom: 1px solid var(--border-error);
-}
-
 .workspace {
   flex: 1;
   display: block;

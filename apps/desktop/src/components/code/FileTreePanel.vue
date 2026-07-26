@@ -45,7 +45,7 @@ const props = defineProps<{
   approvals?: ApprovalDto[]
   selectedSessionId?: string | null
 }>()
-const { notify } = useNotifications()
+const { notify, status, dismissByKey } = useNotifications()
 
 const emit = defineEmits<{
   select: [path: string]
@@ -55,7 +55,6 @@ const emit = defineEmits<{
 const rootPath = ref('.')
 const tree = ref<TreeNode[]>([])
 const loading = ref(false)
-const error = ref<string | null>(null)
 const expandedPaths = ref<Set<string>>(new Set())
 const selectedPath = ref<string | null>(null)
 const searchQuery = ref('')
@@ -92,7 +91,7 @@ async function expandNode(node: TreeNode): Promise<void> {
     node.children = entries.map((e) => entryToNode(e, node.path))
     node.loaded = true
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load directory'
+    notify.error(err, { title: 'Failed to load directory', source: 'code', key: 'code-tree-expand' })
   } finally {
     node.loading = false
   }
@@ -124,12 +123,17 @@ function handleNodeClick(node: TreeNode): void {
 
 async function refresh(): Promise<void> {
   loading.value = true
-  error.value = null
   try {
     const entries = await loadDirectory(rootPath.value)
     tree.value = entries.map((e) => entryToNode(e, rootPath.value))
+    dismissByKey('code-tree-load')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load directory'
+    status.error(err, {
+      title: 'Failed to load directory',
+      source: 'code',
+      key: 'code-tree-load',
+      action: { label: 'Retry', run: () => refresh() },
+    })
   } finally {
     loading.value = false
   }
@@ -142,7 +146,6 @@ async function runSearch(): Promise<void> {
     return
   }
   searching.value = true
-  error.value = null
   try {
     const result = await api.globSearch(props.cwd, q)
     const data = result.data as { matches?: Array<{ path: string; is_dir?: boolean; is_file?: boolean }> }
@@ -157,7 +160,7 @@ async function runSearch(): Promise<void> {
       loading: false,
     }))
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Search failed'
+    notify.error(err, { title: 'Search failed', source: 'code', key: 'code-tree-search' })
   } finally {
     searching.value = false
   }
@@ -196,7 +199,7 @@ function closeContextMenu(): void {
 async function requestDeleteApproval(node: TreeNode): Promise<void> {
   closeContextMenu()
   if (!props.selectedSessionId) {
-    error.value = 'A session is required to request file deletion approval.'
+    notify.error('A session is required to request file deletion approval.', { title: 'Session required', source: 'code', key: 'code-tree-session' })
     return
   }
   try {
@@ -209,14 +212,14 @@ async function requestDeleteApproval(node: TreeNode): Promise<void> {
     })
     emit('approval-created', approval)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval' })
+    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-tree-delete-approval' })
   }
 }
 
 async function requestRenameApproval(node: TreeNode): Promise<void> {
   closeContextMenu()
   if (!props.selectedSessionId) {
-    error.value = 'A session is required to request file rename approval.'
+    notify.error('A session is required to request file rename approval.', { title: 'Session required', source: 'code', key: 'code-tree-session' })
     return
   }
   try {
@@ -229,7 +232,7 @@ async function requestRenameApproval(node: TreeNode): Promise<void> {
     })
     emit('approval-created', approval)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval' })
+    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-tree-rename-approval' })
   }
 }
 
@@ -277,8 +280,6 @@ watch(() => props.cwd, () => {
         <RefreshCw :size="12" :class="{ 'animate-spin': loading }" />
       </UiButton>
     </div>
-
-    <div v-if="error" class="px-3 py-2 text-xs text-destructive">{{ error }}</div>
 
     <UiScrollArea class="flex-1">
       <div class="code-tree py-1">

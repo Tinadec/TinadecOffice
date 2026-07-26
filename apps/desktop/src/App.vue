@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import router from './router'
 import { useBackground } from '@/composables/useBackground'
@@ -9,7 +9,7 @@ import {
   CONNECTION_BANNER_KEY,
   retryConnection,
 } from '@/composables/useConnection'
-import { useNotifications } from '@/composables/useNotifications'
+import { useNotifications, startStatusSync } from '@/composables/useNotifications'
 import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
@@ -37,7 +37,8 @@ const isChildWindow = new URLSearchParams(window.location.search).get('splash') 
 const isPetWindow = window.location.hash.startsWith('#/pet')
 const { t } = useI18n()
 const { connectionState, start: startConnection } = useConnection()
-const { banner, dismissByKey } = useNotifications()
+const { status, dismissByKey } = useNotifications()
+let unsubscribeStatusSync: (() => void) | undefined
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
 
 watch(connectionState, (state) => {
@@ -47,19 +48,21 @@ watch(connectionState, (state) => {
     return
   }
   if (state === 'timeout') {
-    banner.error({
+    status.error({
       key: CONNECTION_BANNER_KEY,
       title: t('app.backendNotConnected'),
       message: t('app.backendNotConnectedMessage'),
+      source: 'gateway',
       action: { label: t('app.retryConnection'), run: () => retryConnection() },
     })
     return
   }
   if (state === 'disconnected') {
-    banner.error({
+    status.error({
       key: CONNECTION_BANNER_KEY,
       title: t('app.backendDisconnected'),
       message: t('app.backendDisconnectedMessage'),
+      source: 'gateway',
       action: { label: t('app.retryConnection'), run: () => retryConnection() },
     })
   }
@@ -67,6 +70,13 @@ watch(connectionState, (state) => {
 
 onMounted(() => {
   if (!isPetWindow && !isChildWindow) startConnection()
+  if (!isPetWindow) {
+    unsubscribeStatusSync = startStatusSync()
+  }
+})
+
+onBeforeUnmount(() => {
+  unsubscribeStatusSync?.()
 })
 
 // Track navigation direction for directional page transitions.

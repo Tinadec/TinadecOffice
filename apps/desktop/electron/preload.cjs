@@ -78,6 +78,15 @@ contextBridge.exposeInMainWorld('tinadec', {
   broadcastTheme: (theme, accentColor) =>
     ipcRenderer.send('tinadec:broadcast-theme', theme, accentColor),
 
+  // --- Status Notification Broadcast API ---
+  broadcastStatusNotification: (payload) =>
+    ipcRenderer.send('tinadec:broadcast-status-notification', payload),
+  onStatusNotification: (callback) => {
+    const handler = (_e, payload) => callback(payload);
+    ipcRenderer.on('tinadec:status-notification', handler);
+    return () => ipcRenderer.removeListener('tinadec:status-notification', handler);
+  },
+
   // --- Panel event listeners (main window side) ---
   onPanelDetached: (callback) => {
     const handler = (_e, data) => callback(data);

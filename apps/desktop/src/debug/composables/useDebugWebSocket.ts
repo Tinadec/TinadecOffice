@@ -1,14 +1,22 @@
 import { ref, onUnmounted } from 'vue'
 import type { WsMessage } from '../types/debug-api'
+import { useNotifications } from '@/composables/useNotifications'
+
+const WS_KEY = 'debug-ws'
 
 /**
  * Composable for managing the Debug Studio WebSocket connection.
  * Provides real-time span events, metric samples, and breakpoint hits.
+ *
+ * Anti-spam: uses a single stable notification key (WS_KEY) so repeated
+ * reconnect failures merge in-place rather than stacking. The key is
+ * cleared on successful reconnect via dismissByKey.
  */
 export function useDebugWebSocket() {
   const connected = ref(false)
   const messages = ref<WsMessage[]>([])
   const error = ref<string | null>(null)
+  const { status, dismissByKey } = useNotifications()
 
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -27,6 +35,7 @@ export function useDebugWebSocket() {
       ws.onopen = () => {
         connected.value = true
         error.value = null
+        dismissByKey(WS_KEY)
       }
 
       ws.onmessage = (event) => {
@@ -51,9 +60,12 @@ export function useDebugWebSocket() {
       ws.onerror = () => {
         error.value = 'WebSocket connection error'
         connected.value = false
+        // Single stable key: repeated failures replace in-place, no spam
+        status.error({ key: WS_KEY, message: 'WebSocket connection error', source: 'debug' })
       }
     } catch (e) {
       error.value = `Failed to connect: ${e}`
+      status.error({ key: WS_KEY, message: `Failed to connect: ${e}`, source: 'debug' })
     }
   }
 

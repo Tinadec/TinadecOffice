@@ -3,15 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import {
-  AlertCircle,
-  Bell,
-  CheckCircle2,
-  FileText,
-  Info,
-  LoaderCircle,
-  RotateCw,
-  TriangleAlert,
-  X,
+  AlertCircle, Bell, CheckCircle2, Clock, FileText, Info,
+  LoaderCircle, MoreHorizontal, RotateCw, TriangleAlert, X,
 } from '@lucide/vue'
 import {
   useNotifications,
@@ -20,20 +13,13 @@ import {
 } from '@/composables/useNotifications'
 
 const route = useRoute()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const {
-  items,
-  primaryId,
-  pinnedId,
-  visibleItems,
-  expandedItem,
-  overflowCount,
-  openDetail,
-  setHovered,
-  togglePinned,
-  closeExpanded,
-  runAction,
-  actionStates,
+  items, statusZone, transientZone, orderedItems,
+  overflowCount, overflowOpen, openItem, hoveredId,
+  primaryId, actionStates,
+  toggleOpen, closeOpen, toggleOverflow, closeOverflow,
+  setHovered, openDetail, dismiss, dismissAll, runAction,
 } = useNotifications()
 
 const routeKind = computed(() => {
@@ -43,99 +29,83 @@ const routeKind = computed(() => {
   return 'standard'
 })
 
-const icons = {
-  info: Info,
-  success: CheckCircle2,
-  warning: TriangleAlert,
-  error: AlertCircle,
+const icons: Record<NotificationLevel, typeof Bell> = {
+  info: Info, success: CheckCircle2, warning: TriangleAlert, error: AlertCircle,
 }
+function icon(level: NotificationLevel) { return icons[level] ?? Bell }
+function summary(item: NotificationItem): string { return item.title || item.message }
 
-function icon(level: NotificationLevel) {
-  return icons[level] ?? Bell
-}
-
-function summary(item: NotificationItem): string {
-  return item.title || item.message
-}
-
-function capsuleLabel(item: NotificationItem, index: number): string {
-  const base = summary(item)
-  if (index === 0 && overflowCount.value) {
-    return `${base}, +${overflowCount.value} ${t('app.more')}`
-  }
-  return base
-}
-
-/** Compact label for side islands — icon + short text */
 function shortLabel(item: NotificationItem): string {
   if (item.title) return item.title
-  const msg = item.message
-  return msg.length > 18 ? `${msg.slice(0, 16)}…` : msg
+  return item.message.length > 18 ? `${item.message.slice(0, 16)}…` : item.message
+}
+
+/* locale-aware relative time via Intl */
+function relativeTime(ts: number): string {
+  const diff = Math.round((ts - Date.now()) / 1000), abs = Math.abs(diff)
+  let unit: Intl.RelativeTimeFormatUnit, val: number
+  if (abs < 60) { unit = 'second'; val = diff }
+  else if (abs < 3600) { unit = 'minute'; val = Math.round(diff / 60) }
+  else if (abs < 86400) { unit = 'hour'; val = Math.round(diff / 3600) }
+  else { unit = 'day'; val = Math.round(diff / 86400) }
+  return new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' }).format(val, unit)
 }
 
 const host = ref<HTMLElement | null>(null)
+function onEnter(item: NotificationItem) { setHovered(item.id) }
+function onLeave() { setHovered(null) }
+function onClickCapsule(item: NotificationItem) { toggleOpen(item.id) }
 
-function onEnter(item: NotificationItem): void {
-  setHovered(item.id)
+function onOutsideClick(e: MouseEvent) {
+  if (openItem.value && !host.value?.contains(e.target as Node)) { closeOpen(); closeOverflow() }
+}
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') { overflowOpen.value ? closeOverflow() : openItem.value ? closeOpen() : undefined }
 }
 
-function onLeave(): void {
-  setHovered(null)
-}
+onMounted(() => { document.addEventListener('mousedown', onOutsideClick); document.addEventListener('keydown', onKeydown) })
+onBeforeUnmount(() => { document.removeEventListener('mousedown', onOutsideClick); document.removeEventListener('keydown', onKeydown); setHovered(null) })
 
-function onClick(item: NotificationItem): void {
-  togglePinned(item.id)
-}
-
-function closeCard(): void {
-  setHovered(null)
-  closeExpanded()
-}
-
-function onOutsideClick(event: MouseEvent): void {
-  if (pinnedId.value && !host.value?.contains(event.target as Node)) closeCard()
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && pinnedId.value) closeCard()
-}
-
-function onFocusOut(event: FocusEvent): void {
-  if (!host.value?.contains(event.relatedTarget as Node | null)) setHovered(null)
-}
-
+/* announce region — capped at 50 via FIFO */
 const announcedItem = ref<NotificationItem | null>(null)
+const MAX_ANNOUNCED = 50
 const announcedIds = new Set<string>()
-
+const announcedOrder: string[] = []
 watch(
-  () => items.value.map((item) => item.id),
+  () => items.value.map(i => i.id),
   () => {
-    const item = [...items.value].reverse().find((candidate) => !announcedIds.has(candidate.id))
-    if (!item) return
-    announcedIds.add(item.id)
-    announcedItem.value = item
+    const newest = [...items.value].reverse().find(i => !announcedIds.has(i.id))
+    if (!newest) return
+    announcedIds.add(newest.id); announcedOrder.push(newest.id)
+    if (announcedOrder.length > MAX_ANNOUNCED) { announcedIds.delete(announcedOrder.shift()!) }
+    announcedItem.value = newest
   },
 )
 
-onMounted(() => {
-  document.addEventListener('mousedown', onOutsideClick)
-  document.addEventListener('keydown', onKeydown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onOutsideClick)
-  document.removeEventListener('keydown', onKeydown)
-  setHovered(null)
-})
+/* task helpers */
+function isDetTask(item: NotificationItem) {
+  return item.kind === 'task' && item.taskState === 'pending' && item.progress != null
+}
+function isIndetTask(item: NotificationItem) {
+  return item.kind === 'task' && item.taskState === 'pending' && item.progress == null
+}
+function taskPct(item: NotificationItem) { return Math.round((item.progress ?? 0) * 100) }
+function taskLabel(item: NotificationItem) {
+  if (item.taskState === 'settled') {
+    if (item.level === 'success') return t('app.taskSucceeded')
+    if (item.level === 'error') return t('app.taskFailed')
+  }
+  return t('app.taskPending')
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="sr-only" aria-live="polite" aria-atomic="true">
-      {{ announcedItem?.level !== 'error' ? announcedItem?.message : '' }}
-    </div>
     <div class="sr-only" aria-live="assertive" aria-atomic="true">
       {{ announcedItem?.level === 'error' ? announcedItem.message : '' }}
+    </div>
+    <div class="sr-only" aria-live="polite" aria-atomic="true">
+      {{ announcedItem?.level !== 'error' ? announcedItem?.message : '' }}
     </div>
 
     <section
@@ -145,96 +115,149 @@ onBeforeUnmount(() => {
       :class="`island-host--${routeKind}`"
       :aria-label="t('app.notificationRegion')"
       @mouseleave="onLeave"
-      @focusout="onFocusOut"
     >
-      <div class="island-row">
-        <button
-          v-for="(item, index) in visibleItems"
-          :key="item.id"
-          type="button"
-          class="island-capsule no-drag"
+      <!-- STATUS ZONE — ongoing conditions, ALL rendered -->
+      <div v-if="statusZone.length" class="island-zone island-zone--status" role="status" :aria-label="t('app.systemStatus')">
+        <div
+          v-for="item in statusZone" :key="item.id"
+          class="island-capsule island-capsule--status"
           :class="[
             `island-capsule--${item.level}`,
-            index === 0 ? 'island-capsule--primary' : 'island-capsule--side',
-            expandedItem?.id === item.id ? 'island-capsule--active' : '',
+            openItem?.id === item.id ? 'island-capsule--active' : '',
+            isDetTask(item) ? 'island-capsule--task-det' : '',
+            isIndetTask(item) ? 'island-capsule--task-indet' : '',
           ]"
-          :aria-label="capsuleLabel(item, index)"
-          :data-notification-id="item.id"
-          :aria-expanded="expandedItem?.id === item.id"
-          :aria-controls="expandedItem?.id === item.id ? 'notification-island-card' : undefined"
-          :title="summary(item)"
           @mouseenter="onEnter(item)"
-          @focusin="onEnter(item)"
-          @click="onClick(item)"
         >
-          <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
-          <span class="island-capsule__text">
-            <template v-if="index === 0">
-              <strong class="island-capsule__title">{{ item.title || shortLabel(item) }}</strong>
-            </template>
-            <template v-else>
-              <strong class="island-capsule__title">{{ shortLabel(item) }}</strong>
-            </template>
-          </span>
-          <span
-            v-if="index === 0 && overflowCount"
-            class="island-capsule__badge"
-          >+{{ overflowCount }}</span>
+          <button
+            type="button"
+            class="island-capsule__main"
+            :data-notification-id="item.id"
+            :aria-label="summary(item) + (item.count > 1 ? `, ×${item.count}` : '')"
+            :aria-expanded="openItem?.id === item.id"
+            :aria-controls="openItem?.id === item.id ? 'notification-island-card' : undefined"
+            :title="summary(item)"
+            @mouseenter="onEnter(item)" @focusin="onEnter(item)"
+            @click.stop="onClickCapsule(item)"
+          >
+            <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
+            <span class="island-capsule__text"><strong class="island-capsule__title">{{ item.title || shortLabel(item) }}</strong></span>
+            <span v-if="item.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
+            <span v-if="isDetTask(item)" class="island-capsule__progress" role="progressbar" :aria-valuenow="taskPct(item)" aria-valuemin="0" aria-valuemax="100">
+              <span class="island-capsule__progress-fill" :style="{ width: taskPct(item) + '%' }" />
+            </span>
+            <LoaderCircle v-if="isIndetTask(item)" :size="12" class="island-capsule__spinner" aria-hidden="true" />
+          </button>
+          <button type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
+        </div>
+      </div>
+
+      <!-- TRANSIENT ZONE — max 3, "just happened" -->
+      <div v-if="transientZone.length" class="island-zone island-zone--transient">
+        <div
+          v-for="item in transientZone" :key="item.id"
+          class="island-capsule island-capsule--transient"
+          :class="[
+            `island-capsule--${item.level}`,
+            openItem?.id === item.id ? 'island-capsule--active' : '',
+            isDetTask(item) ? 'island-capsule--task-det' : '',
+            isIndetTask(item) ? 'island-capsule--task-indet' : '',
+          ]"
+          @mouseenter="onEnter(item)"
+        >
+          <button
+            type="button"
+            class="island-capsule__main"
+            :data-notification-id="item.id"
+            :aria-label="summary(item) + (item.count > 1 ? `, ×${item.count}` : '')"
+            :aria-expanded="openItem?.id === item.id"
+            :aria-controls="openItem?.id === item.id ? 'notification-island-card' : undefined"
+            :title="summary(item)"
+            @mouseenter="onEnter(item)" @focusin="onEnter(item)"
+            @click.stop="onClickCapsule(item)"
+          >
+            <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
+            <span class="island-capsule__text"><strong class="island-capsule__title">{{ shortLabel(item) }}</strong></span>
+            <span v-if="item.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
+          </button>
+          <button type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
+        </div>
+        <!-- overflow badge -->
+        <button
+          v-if="overflowCount > 0" type="button"
+          class="island-capsule island-capsule--overflow"
+          :class="overflowOpen ? 'island-capsule--active' : ''"
+          :aria-label="t('app.more') + ` +${overflowCount}`"
+          :aria-expanded="overflowOpen" aria-controls="notification-overflow-panel"
+          @click.stop="toggleOverflow()"
+        >
+          <MoreHorizontal :size="14" class="island-capsule__icon" aria-hidden="true" />
+          <span class="island-capsule__badge">+{{ overflowCount }}</span>
         </button>
       </div>
 
+      <!-- DETAIL CARD -->
       <Transition name="island-card">
-        <article
-          v-if="expandedItem"
-          id="notification-island-card"
-          class="island-card no-drag"
-          :class="`island-card--${expandedItem.level}`"
-        >
+        <article v-if="openItem" id="notification-island-card" class="island-card no-drag" :class="`island-card--${openItem.level}`" @click.stop>
           <header class="island-card__header">
-            <span class="island-card__icon" aria-hidden="true">
-              <component :is="icon(expandedItem.level)" :size="17" />
-            </span>
+            <span class="island-card__icon" aria-hidden="true"><component :is="icon(openItem.level)" :size="17" /></span>
             <div class="island-card__heading">
-              <strong>{{ expandedItem.title || summary(expandedItem) }}</strong>
-              <span>{{ expandedItem.kind === 'banner' ? t('app.systemStatus') : t('app.notification') }}</span>
+              <strong>{{ openItem.title || summary(openItem) }}</strong>
+              <span>{{ openItem.kind === 'task' ? taskLabel(openItem) : openItem.kind === 'status' ? t('app.systemStatus') : t('app.notification') }}</span>
             </div>
-            <button
-              type="button"
-              class="island-card__icon-button"
-              :aria-label="t('app.close')"
-              @click.stop="closeCard"
-            >
-              <X :size="15" aria-hidden="true" />
-            </button>
+            <button type="button" class="island-card__icon-btn" :aria-label="t('app.close')" @click.stop="closeOpen()"><X :size="15" aria-hidden="true" /></button>
           </header>
-
-          <p class="island-card__summary">{{ expandedItem.message }}</p>
-          <p v-if="actionStates[expandedItem.id]?.error" class="island-card__error" role="alert">
-            <AlertCircle :size="14" aria-hidden="true" />
-            {{ actionStates[expandedItem.id]?.error }}
+          <div v-if="openItem.kind === 'task' && openItem.taskState === 'pending'" class="island-card__progress-wrap">
+            <template v-if="openItem.progress != null">
+              <div class="island-card__progress-track" role="progressbar" :aria-valuenow="taskPct(openItem)" aria-valuemin="0" aria-valuemax="100">
+                <div class="island-card__progress-fill" :style="{ width: taskPct(openItem) + '%' }" />
+              </div>
+              <span class="island-card__progress-label">{{ taskPct(openItem) }}%</span>
+            </template>
+            <template v-else>
+              <LoaderCircle :size="14" class="island-card__spinner" aria-hidden="true" />
+              <span class="island-card__progress-label">{{ t('app.taskPending') }}</span>
+            </template>
+          </div>
+          <p class="island-card__summary">{{ openItem.message }}</p>
+          <p v-if="openItem.count > 1" class="island-card__meta">{{ t('app.repeatedCount', { count: openItem.count }) }}</p>
+          <p v-if="openItem.remote" class="island-card__meta">{{ t('app.fromOtherWindow') }}</p>
+          <p v-if="actionStates[openItem.id]?.error" class="island-card__error" role="alert">
+            <AlertCircle :size="14" aria-hidden="true" />{{ actionStates[openItem.id]?.error }}
           </p>
-
           <footer class="island-card__actions">
-            <button type="button" class="island-card__secondary" @click="openDetail(expandedItem.id)">
-              <FileText :size="14" aria-hidden="true" />
-              {{ t('app.viewDetails') }}
+            <button type="button" class="island-card__secondary" @click.stop="openDetail(openItem.id)"><FileText :size="14" aria-hidden="true" />{{ t('app.viewDetails') }}</button>
+            <button v-if="openItem.action && !openItem.remote" type="button" class="island-card__primary" :disabled="actionStates[openItem.id]?.running" @click.stop="runAction(openItem.id)">
+              <LoaderCircle v-if="actionStates[openItem.id]?.running" :size="14" class="island-card__spinner" aria-hidden="true" />
+              <RotateCw v-else :size="14" aria-hidden="true" />{{ openItem.action.label }}
             </button>
-            <button
-              v-if="expandedItem.action"
-              type="button"
-              class="island-card__primary"
-              :disabled="actionStates[expandedItem.id]?.running"
-              @click="runAction(expandedItem.id)"
-            >
-              <LoaderCircle
-                v-if="actionStates[expandedItem.id]?.running"
-                :size="14"
-                class="island-card__spinner"
-                aria-hidden="true"
-              />
-              <RotateCw v-else :size="14" aria-hidden="true" />
-              {{ expandedItem.action.label }}
-            </button>
+          </footer>
+        </article>
+      </Transition>
+
+      <!-- OVERFLOW PANEL -->
+      <Transition name="island-card">
+        <article v-if="overflowOpen" id="notification-overflow-panel" class="island-overflow no-drag">
+          <header class="island-overflow__header">
+            <strong>{{ t('app.notificationHistory') }}</strong>
+            <button type="button" class="island-card__icon-btn" :aria-label="t('app.close')" @click.stop="closeOverflow()"><X :size="15" aria-hidden="true" /></button>
+          </header>
+          <ul class="island-overflow__list">
+            <li v-for="item in orderedItems" :key="item.id" class="island-overflow__row">
+              <span class="island-overflow__icon" :class="`island-overflow__icon--${item.level}`">
+                <component :is="icon(item.level)" :size="13" aria-hidden="true" />
+              </span>
+              <div class="island-overflow__content">
+                <span class="island-overflow__title">{{ item.title || item.message }}</span>
+                <span v-if="item.source" class="island-overflow__source">{{ item.source }}</span>
+              </div>
+              <time class="island-overflow__time" :datetime="new Date(item.createdAt).toISOString()">{{ relativeTime(item.createdAt) }}</time>
+              <button type="button" class="island-overflow__action" :aria-label="t('app.viewDetails')" @click.stop="openDetail(item.id)"><FileText :size="12" aria-hidden="true" /></button>
+              <button type="button" class="island-overflow__action" :aria-label="t('app.dismiss')" @click.stop="dismiss(item.id)"><X :size="12" aria-hidden="true" /></button>
+            </li>
+          </ul>
+          <footer class="island-overflow__footer">
+            <button type="button" class="island-card__secondary" @click.stop="dismissAll()">{{ t('app.dismissAll') }}</button>
           </footer>
         </article>
       </Transition>
@@ -243,137 +266,101 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ── HOST: per-route insets via custom properties ── */
 .island-host {
-  position: fixed;
-  z-index: 10050;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  container-type: inline-size;
+  position: fixed; z-index: 10050; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; container-type: inline-size;
+  --island-inset-start: 0; --island-inset-end: 0;
 }
+.island-host--standard { top: 6px; --island-inset-start: 200px; --island-inset-end: 140px; }
+.island-host--detached { top: 42px; --island-inset-start: 8px; --island-inset-end: 8px; }
+.island-host--debug { top: 78px; --island-inset-start: 12px; --island-inset-end: 12px; }
 
-.island-host--standard {
-  top: 6px;
-  left: 200px;
-  right: 140px;
+/* ── ZONES ── */
+.island-zone {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  max-width: 100%; pointer-events: none; flex-wrap: wrap;
 }
+.island-zone--status { --zone-bg: color-mix(in srgb, var(--bg-secondary, #11151c) 6%, transparent); }
+.island-zone--transient { --zone-bg: transparent; }
 
-.island-host--detached {
-  top: 42px;
-  left: 8px;
-  right: 8px;
-}
-
-.island-host--debug {
-  top: 78px;
-  left: 12px;
-  right: 12px;
-}
-
-.island-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  max-width: 100%;
-  pointer-events: none;
-}
-
+/* ── CAPSULES ── */
 .island-capsule {
   --level: var(--accent-primary, #2ec4b6);
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 28px;
-  min-width: 0;
-  max-width: 160px;
-  padding: 0 12px;
+  pointer-events: auto; -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 7px; height: 28px;
+  min-width: 0; max-width: 160px; padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--level) 35%, var(--border-default, #1a1f29));
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-secondary, #11151c) 88%, var(--level));
   color: var(--text-primary, #c9d1d9);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 18%),
-    0 6px 18px rgb(0 0 0 / 22%);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  overflow: hidden;
-  transition:
-    max-width 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    padding 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    background-color 160ms ease,
-    border-color 160ms ease,
-    transform 160ms ease,
-    box-shadow 160ms ease;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 18%), 0 6px 18px rgb(0 0 0 / 22%);
+  font: inherit; font-size: 11px; line-height: 1; overflow: hidden; position: relative;
+  transition: max-width 200ms cubic-bezier(.2,.8,.2,1), padding 200ms cubic-bezier(.2,.8,.2,1),
+    background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
-
-.island-capsule--primary {
-  max-width: 200px;
-  flex: 0 1 auto;
-}
-
-.island-capsule--side {
-  max-width: 96px;
-  padding: 0 10px;
-  opacity: 0.92;
-}
-
+.island-capsule--status { background: color-mix(in srgb, var(--bg-secondary, #11151c) 82%, var(--level)); }
+.island-capsule--transient { background: color-mix(in srgb, var(--bg-secondary, #11151c) 92%, var(--level)); }
 .island-capsule--active {
   border-color: color-mix(in srgb, var(--level) 55%, var(--border-default, #1a1f29));
   background: color-mix(in srgb, var(--bg-secondary, #11151c) 72%, var(--level));
   box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
 }
-
 .island-capsule--success { --level: var(--accent-success, #2ec4b6); }
 .island-capsule--warning { --level: var(--accent-warning, #d29922); }
 .island-capsule--error { --level: var(--accent-danger, #f85149); }
 .island-capsule--info { --level: var(--accent-primary, #2ec4b6); }
+.island-capsule__icon { flex: none; color: var(--level); }
+.island-capsule__text { min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+.island-capsule__title { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.island-capsule__badge { flex: none; margin-left: 2px; font-weight: 700; color: var(--level); font-size: 10px; }
 
-.island-capsule__icon {
-  flex: none;
-  color: var(--level);
+/* main pill button — transparent reset inside the container div */
+.island-capsule__main {
+  all: unset; box-sizing: border-box;
+  display: flex; align-items: center; gap: 7px;
+  min-width: 0; flex: 1 1 0;
+  cursor: pointer;
+  font: inherit; font-size: 11px; line-height: 1;
+  color: var(--text-primary, #c9d1d9);
 }
 
-.island-capsule__text {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  overflow: hidden;
-  white-space: nowrap;
+/* capsule close button — revealed on hover */
+.island-capsule__close {
+  flex: none; display: grid; place-items: center; width: 16px; height: 16px;
+  padding: 0; margin-left: 2px; border: 0; border-radius: 50%;
+  background: color-mix(in srgb, var(--level) 20%, transparent);
+  color: var(--text-secondary, #7d8590); cursor: pointer;
+  opacity: 0; transition: opacity 120ms ease;
 }
+.island-capsule:hover .island-capsule__close,
+.island-capsule:focus-within .island-capsule__close { opacity: 1; }
 
-.island-capsule__title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
+.island-capsule__main:focus-visible { outline: 2px solid var(--level); outline-offset: 2px; }
+.island-capsule__close:focus-visible { outline: 2px solid var(--level); outline-offset: 2px; }
+
+/* task progress bar / spinner in capsule */
+.island-capsule__progress {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: color-mix(in srgb, var(--level) 12%, transparent); overflow: hidden;
 }
+.island-capsule__progress-fill { height: 100%; background: var(--level); transition: width 200ms ease; }
+.island-capsule--task-det, .island-capsule--task-indet { position: relative; }
+.island-capsule__spinner { flex: none; animation: island-spin 800ms linear infinite; color: var(--level); }
 
-.island-capsule__badge {
-  flex: none;
-  margin-left: 2px;
-  font-weight: 700;
-  color: var(--level);
-  font-size: 10px;
+/* overflow badge */
+.island-capsule--overflow {
+  max-width: 48px; padding: 0 10px;
+  background: color-mix(in srgb, var(--bg-secondary, #11151c) 85%, var(--text-secondary, #7d8590));
+  border-color: var(--border-default, #1a1f29);
 }
+.island-capsule--overflow .island-capsule__icon { color: var(--text-secondary, #7d8590); }
 
-.island-capsule:focus-visible {
-  outline: 2px solid var(--level);
-  outline-offset: 2px;
-}
-
+/* ── DETAIL CARD ── */
 .island-card {
-  --level: var(--accent-primary, #2ec4b6);
-  pointer-events: auto;
-  width: min(340px, 100cqw);
-  margin-top: 8px;
-  padding: 13px;
+  --level: var(--accent-primary, #2ec4b6); pointer-events: auto;
+  width: min(340px, 100cqw); margin-top: 8px; padding: 13px;
   border: 1px solid color-mix(in srgb, var(--level) 32%, var(--border-default, #1a1f29));
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-primary, #0a0e14) 86%, transparent);
@@ -383,188 +370,124 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(18px) saturate(125%);
   -webkit-app-region: no-drag;
 }
-
 .island-card--success { --level: var(--accent-success, #2ec4b6); }
 .island-card--warning { --level: var(--accent-warning, #d29922); }
 .island-card--error { --level: var(--accent-danger, #f85149); }
 .island-card--info { --level: var(--accent-primary, #2ec4b6); }
 
-.island-card__header {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
+.island-card__header { display: flex; align-items: center; gap: 9px; }
 .island-card__icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--level) 14%, transparent);
-  color: var(--level);
+  display: grid; place-items: center; width: 30px; height: 30px; flex: none;
+  border-radius: 7px; background: color-mix(in srgb, var(--level) 14%, transparent); color: var(--level);
 }
-
-.island-card__heading {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 3px;
+.island-card__heading { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.island-card__heading strong, .island-card__heading span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.island-card__heading strong,
-.island-card__heading span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.island-card__heading strong { font-size: 12px; line-height: 1.25; }
+.island-card__heading span { color: var(--text-tertiary, #656d76); font-size: 10px; }
+.island-card__icon-btn {
+  display: grid; place-items: center; width: 27px; height: 27px; flex: none;
+  padding: 0; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text-secondary, #7d8590); cursor: pointer;
 }
-
-.island-card__heading strong {
-  font-size: 12px;
-  line-height: 1.25;
+.island-card__icon-btn:hover, .island-card__secondary:hover {
+  background: var(--bg-hover, #161b22); color: var(--text-primary, #c9d1d9);
 }
-
-.island-card__heading span {
-  color: var(--text-tertiary, #656d76);
-  font-size: 10px;
-}
-
-.island-card__icon-button {
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary, #7d8590);
-  cursor: pointer;
-}
-
-.island-card__icon-button:hover,
-.island-card__secondary:hover {
-  background: var(--bg-hover, #161b22);
-  color: var(--text-primary, #c9d1d9);
-}
-
-.island-card__summary {
-  margin: 11px 0 0;
-  color: var(--text-secondary, #7d8590);
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
+.island-card__summary { margin: 11px 0 0; color: var(--text-secondary, #7d8590); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.island-card__meta { margin: 5px 0 0; color: var(--text-tertiary, #656d76); font-size: 10px; line-height: 1.3; }
+.island-card__progress-wrap { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.island-card__progress-track { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--level) 14%, transparent); overflow: hidden; }
+.island-card__progress-fill { height: 100%; border-radius: 2px; background: var(--level); transition: width 200ms ease; }
+.island-card__progress-label { flex: none; font-size: 10px; color: var(--text-tertiary, #656d76); }
 .island-card__error {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 9px 0 0;
-  padding: 8px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent-danger, #f85149) 10%, transparent);
-  color: var(--accent-danger, #f85149);
-  font-size: 11px;
-  line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; padding: 8px;
+  border-radius: 6px; background: color-mix(in srgb, var(--accent-danger, #f85149) 10%, transparent);
+  color: var(--accent-danger, #f85149); font-size: 11px; line-height: 1.4;
 }
-
-.island-card__error svg {
-  flex: none;
-  margin-top: 1px;
-}
-
-.island-card__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-  margin-top: 12px;
-}
-
+.island-card__error svg { flex: none; margin-top: 1px; }
+.island-card__actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px; }
 .island-card__actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 29px;
-  padding: 5px 10px;
-  border: 1px solid var(--border-default, #1a1f29);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 29px; padding: 5px 10px; border: 1px solid var(--border-default, #1a1f29);
+  border-radius: 6px; font: inherit; font-size: 11px; cursor: pointer;
 }
-
-.island-card__secondary {
-  background: transparent;
-  color: var(--text-secondary, #7d8590);
-}
-
+.island-card__secondary { background: transparent; color: var(--text-secondary, #7d8590); }
 .island-card__primary {
   border-color: color-mix(in srgb, var(--level) 55%, transparent) !important;
   background: color-mix(in srgb, var(--level) 18%, var(--bg-secondary, #11151c));
-  color: var(--level);
-  font-weight: 600;
+  color: var(--level); font-weight: 600;
 }
+.island-card__actions button:disabled { opacity: 0.55; cursor: wait; }
+.island-card__spinner { animation: island-spin 800ms linear infinite; }
 
-.island-card__actions button:disabled {
-  opacity: 0.55;
-  cursor: wait;
+/* ── OVERFLOW PANEL ── */
+.island-overflow {
+  pointer-events: auto; width: min(380px, 100cqw); max-height: 340px;
+  margin-top: 8px; display: flex; flex-direction: column;
+  border: 1px solid var(--border-default, #1a1f29); border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary, #0a0e14) 88%, transparent);
+  color: var(--text-primary, #c9d1d9);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  -webkit-app-region: no-drag; overflow: hidden;
 }
-
-.island-card__spinner {
-  animation: island-spin 800ms linear infinite;
+.island-overflow__header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 13px 8px; border-bottom: 1px solid var(--border-default, #1a1f29);
+  font-size: 12px; font-weight: 600;
 }
-
-.island-card-enter-active,
-.island-card-leave-active {
-  transition: opacity 140ms ease, transform 160ms ease;
-  transform-origin: top center;
+.island-overflow__list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+.island-overflow__row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 13px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default, #1a1f29) 50%, transparent);
+  font-size: 11px; transition: background 120ms ease;
 }
-
-.island-card-enter-from,
-.island-card-leave-to {
-  opacity: 0;
-  transform: translateY(-5px) scale(0.98);
+.island-overflow__row:last-child { border-bottom: 0; }
+.island-overflow__row:hover { background: var(--bg-hover, #161b22); }
+.island-overflow__icon {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 5px; background: color-mix(in srgb, var(--accent-primary, #2ec4b6) 12%, transparent);
+  color: var(--accent-primary, #2ec4b6);
 }
-
-@keyframes island-spin {
-  to { transform: rotate(360deg); }
+.island-overflow__icon--success { background: color-mix(in srgb, var(--accent-success, #2ec4b6) 12%, transparent); color: var(--accent-success, #2ec4b6); }
+.island-overflow__icon--warning { background: color-mix(in srgb, var(--accent-warning, #d29922) 12%, transparent); color: var(--accent-warning, #d29922); }
+.island-overflow__icon--error { background: color-mix(in srgb, var(--accent-danger, #f85149) 12%, transparent); color: var(--accent-danger, #f85149); }
+.island-overflow__content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.island-overflow__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.island-overflow__source { color: var(--text-tertiary, #656d76); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.island-overflow__time { flex: none; color: var(--text-tertiary, #656d76); font-size: 10px; white-space: nowrap; }
+.island-overflow__action {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: var(--text-secondary, #7d8590); cursor: pointer;
+  opacity: 0; transition: opacity 120ms ease, background 120ms ease;
 }
+.island-overflow__row:hover .island-overflow__action { opacity: 1; }
+.island-overflow__action:hover { background: var(--bg-hover, #161b22); color: var(--text-primary, #c9d1d9); }
+.island-overflow__footer { display: flex; justify-content: flex-end; padding: 8px 13px; border-top: 1px solid var(--border-default, #1a1f29); }
 
+/* ── TRANSITIONS ── */
+.island-card-enter-active, .island-card-leave-active {
+  transition: opacity 140ms ease, transform 160ms ease; transform-origin: top center;
+}
+.island-card-enter-from, .island-card-leave-to { opacity: 0; transform: translateY(-5px) scale(0.98); }
+@keyframes island-spin { to { transform: rotate(360deg); } }
+
+/* ── CONTAINER QUERIES: icon-only when narrow ── */
 @container (max-width: 420px) {
-  .island-capsule--side .island-capsule__text {
-    display: none;
-  }
-  .island-capsule--side {
-    max-width: 32px;
-    padding: 0 9px;
-  }
-  .island-capsule--primary {
-    max-width: min(280px, 100cqw);
-  }
+  .island-capsule__text { display: none; }
+  .island-capsule { max-width: 32px; padding: 0 9px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .island-capsule,
-  .island-card-enter-active,
-  .island-card-leave-active {
-    transition: none;
-  }
-  .island-card__spinner { animation: none; }
+  .island-capsule, .island-card-enter-active, .island-card-leave-active { transition: none; }
+  .island-capsule__spinner, .island-card__spinner { animation: none; }
 }
 
 .sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 </style>

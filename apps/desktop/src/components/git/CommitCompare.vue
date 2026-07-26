@@ -2,7 +2,8 @@
 import { GitCompare, RefreshCw } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type CodeToolExecuteResultDto } from '@/api'
+import { api } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
 import { UiBadge, UiButton, UiScrollArea } from '@/components/ui'
 import DiffViewer from './DiffViewer.vue'
 import { buildDiffEntries, type DiffFileEntry } from './diffUtils'
@@ -54,6 +55,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 const baseRef = ref(props.defaultBaseRef ?? 'HEAD~1')
 const headRef = ref(props.defaultHeadRef ?? 'HEAD')
@@ -62,7 +64,6 @@ const headMenuOpen = ref(false)
 const commits = ref<LogCommit[]>([])
 const loadingLog = ref(false)
 const comparing = ref(false)
-const error = ref<string | null>(null)
 const result = ref<DiffCompareResult | null>(null)
 const selectedFilePath = ref<string | null>(null)
 
@@ -84,7 +85,6 @@ watch(entries, (next) => {
 async function loadLog() {
   if (!props.cwd) return
   loadingLog.value = true
-  error.value = null
   try {
     const res = await api.gitLog(props.cwd, 50)
     const data = (res.data ?? {}) as Partial<LogResult>
@@ -92,7 +92,7 @@ async function loadLog() {
     if (commits.value.length > 0 && !baseRef.value) baseRef.value = commits.value[Math.min(1, commits.value.length - 1)]?.short_hash ?? 'HEAD~1'
     if (commits.value.length > 0 && !headRef.value) headRef.value = commits.value[0]?.short_hash ?? 'HEAD'
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+    notify.error(err, { title: t('context.gitLoadFailed'), source: 'git', key: 'git-compare-log' })
   } finally {
     loadingLog.value = false
   }
@@ -101,14 +101,13 @@ async function loadLog() {
 async function runCompare() {
   if (!canCompare.value) return
   comparing.value = true
-  error.value = null
   result.value = null
   try {
     const res = await api.gitDiffCompare(props.cwd, baseRef.value.trim(), headRef.value.trim())
     result.value = (res.data ?? {}) as unknown as DiffCompareResult
     selectedFilePath.value = entries.value[0]?.path ?? null
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+    notify.error(err, { title: t('context.gitLoadFailed'), source: 'git', key: 'git-compare' })
   } finally {
     comparing.value = false
   }
@@ -230,8 +229,6 @@ watch(
       </UiButton>
     </div>
 
-    <div v-if="error" class="commit-compare-error">{{ error }}</div>
-
     <template v-if="result">
       <div v-if="result.truncated" class="commit-compare-notice">
         {{ t('context.gitCompareTruncated') }}
@@ -281,7 +278,7 @@ watch(
         />
       </section>
 
-      <div v-else-if="!error" class="commit-compare-empty">
+      <div v-else class="commit-compare-empty">
         {{ t('context.gitNoDiff') }}
       </div>
     </template>
@@ -289,7 +286,7 @@ watch(
     <div v-else-if="comparing" class="commit-compare-empty">
       {{ t('context.loadingGitPlan') }}
     </div>
-    <div v-else-if="!error" class="commit-compare-empty">
+    <div v-else class="commit-compare-empty">
       {{ t('context.gitCompareHint') }}
     </div>
   </section>
@@ -416,15 +413,6 @@ watch(
   color: var(--text-brand);
   font-family: 'Geist Mono', ui-monospace, monospace;
   font-size: 11px;
-}
-
-.commit-compare-error {
-  padding: 8px 10px;
-  color: var(--text-reject, #f85149);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(248, 81, 73, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 .commit-compare-notice {

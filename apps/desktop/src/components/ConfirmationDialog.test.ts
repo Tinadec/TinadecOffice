@@ -6,7 +6,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import NotificationDetailDialog from './NotificationDetailDialog.vue'
 import { resolveConfirmation, useNotifications } from '@/composables/useNotifications'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
+}))
 
 const notifications = useNotifications()
 
@@ -47,15 +49,17 @@ describe('NotificationDetailDialog', () => {
     wrapper.unmount()
   })
 
-  it('closes persistent detail without dismissing the notification', async () => {
+  it('closes status detail without dismissing the notification', async () => {
     const wrapper = mount(NotificationDetailDialog, { attachTo: document.body })
-    const id = notifications.notify.error({ message: 'Backend down', title: 'Offline', persistent: true })
+    const id = notifications.status.error({ key: 'backend', message: 'Backend down', title: 'Offline' })
     notifications.openDetail(id)
     await nextTick()
     await nextTick()
 
     expect(document.body.querySelector('.detail-dialog')?.textContent).toContain('Backend down')
-    expect(document.body.querySelector('.detail-dialog__dismiss')).toBeNull()
+    // Every notification is dismissible now — a status item whose owner unmounted
+    // must still be clearable, so the dismiss control is always present.
+    expect(document.body.querySelector('.detail-dialog__dismiss')).not.toBeNull()
     document.body.querySelector<HTMLButtonElement>('.detail-dialog__secondary')?.click()
     await nextTick()
     expect(notifications.items.value.some((item) => item.id === id)).toBe(true)

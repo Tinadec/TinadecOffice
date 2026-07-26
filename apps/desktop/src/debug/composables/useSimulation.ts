@@ -10,12 +10,14 @@ import type {
   CreateBreakpointRequest,
   SimulationMode,
 } from '../types/simulation'
+import { useNotifications } from '@/composables/useNotifications'
 
 /**
  * Composable for managing simulation state and API calls.
  */
 export function useSimulation() {
   const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+  const { status, notify, dismissByKey } = useNotifications()
 
   const mode = ref<SimulationMode>('idle')
   const currentStep = ref(0)
@@ -36,6 +38,7 @@ export function useSimulation() {
       return await response.json()
     } catch (e) {
       error.value = `Failed to inject message: ${e}`
+      notify.error(`Failed to inject message: ${e}`, { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -54,6 +57,7 @@ export function useSimulation() {
       return await response.json()
     } catch (e) {
       error.value = `Failed to inject model response: ${e}`
+      notify.error(`Failed to inject model response: ${e}`, { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -72,6 +76,7 @@ export function useSimulation() {
       return await response.json()
     } catch (e) {
       error.value = `Failed to inject tool result: ${e}`
+      notify.error(`Failed to inject tool result: ${e}`, { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -90,6 +95,7 @@ export function useSimulation() {
       return await response.json()
     } catch (e) {
       error.value = `Failed to force approval: ${e}`
+      notify.error(`Failed to force approval: ${e}`, { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -108,6 +114,7 @@ export function useSimulation() {
       return await response.json()
     } catch (e) {
       error.value = `Failed to patch agent state: ${e}`
+      notify.error(`Failed to patch agent state: ${e}`, { source: 'debug' })
       return null
     } finally {
       loading.value = false
@@ -119,8 +126,10 @@ export function useSimulation() {
       const response = await fetch(`${gatewayUrl}/api/v1/debug/breakpoints`)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       breakpoints.value = await response.json()
+      dismissByKey('debug-sim-breakpoints')
     } catch (e) {
       error.value = `Failed to fetch breakpoints: ${e}`
+      status.error({ key: 'debug-sim-breakpoints', message: `Failed to fetch breakpoints: ${e}`, source: 'debug' })
     }
   }
 
@@ -137,6 +146,7 @@ export function useSimulation() {
       return bp
     } catch (e) {
       error.value = `Failed to create breakpoint: ${e}`
+      notify.error(`Failed to create breakpoint: ${e}`, { source: 'debug' })
       return null
     }
   }
@@ -149,6 +159,7 @@ export function useSimulation() {
       return true
     } catch (e) {
       error.value = `Failed to delete breakpoint: ${e}`
+      notify.error(`Failed to delete breakpoint: ${e}`, { source: 'debug' })
       return false
     }
   }

@@ -29,7 +29,6 @@ const { notify } = useNotifications()
 const containerRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const saving = ref(false)
-const error = ref<string | null>(null)
 const feedback = ref<string | null>(null)
 const content = ref(props.initialContent ?? '')
 const originalContent = ref(props.initialContent ?? '')
@@ -57,7 +56,6 @@ function formatSize(bytes: number | null): string {
 async function loadFile(): Promise<void> {
   if (!props.filePath) return
   loading.value = true
-  error.value = null
   try {
     const result = await api.codeEditorOpen(props.cwd, props.filePath)
     const data = result.data as {
@@ -71,7 +69,7 @@ async function loadFile(): Promise<void> {
     modifiedAt.value = typeof data.modified_at === 'string' ? data.modified_at : null
     await renderEditor()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load file'
+    notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-editor-load' })
   } finally {
     loading.value = false
   }
@@ -125,12 +123,11 @@ async function handleSave(): Promise<void> {
   if (!canSave.value || !props.filePath) return
 
   if (!props.selectedSessionId) {
-    error.value = 'A session is required to save files (approval flow).'
+    notify.error('A session is required to save files (approval flow).', { title: 'Session required', source: 'code', key: 'code-editor-session' })
     return
   }
 
   saving.value = true
-  error.value = null
   feedback.value = null
   try {
     const approval = await api.createApproval({
@@ -144,7 +141,7 @@ async function handleSave(): Promise<void> {
     feedback.value = 'Approval requested. Awaiting decision...'
     emit('approval-requested', approval)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval' })
+    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-editor-approval' })
   } finally {
     saving.value = false
   }
@@ -155,13 +152,11 @@ async function executeSave(): Promise<void> {
   if (!props.filePath) return
 
   saving.value = true
-  error.value = null
   feedback.value = null
   try {
     const result = await api.codeEditorSave(props.cwd, props.filePath, content.value, pendingApproval.value.id)
     if (result.status !== 'completed') {
-      error.value = result.summary
-      notify.error(result.summary, { title: 'Failed to save file' })
+      notify.error(result.summary, { title: 'Failed to save file', source: 'code', key: 'code-editor-save' })
       return
     }
     const data = result.data as { size?: number; modified_at?: string }
@@ -172,7 +167,7 @@ async function executeSave(): Promise<void> {
     pendingApprovalId.value = null
     emit('saved', props.filePath)
   } catch (err) {
-    notify.error(err, { title: 'Failed to save file' })
+    notify.error(err, { title: 'Failed to save file', source: 'code', key: 'code-editor-save' })
   } finally {
     saving.value = false
   }
@@ -276,7 +271,6 @@ defineExpose({
       </div>
     </div>
 
-    <div v-if="error" class="px-3 py-2 text-sm text-destructive">{{ error }}</div>
     <div v-if="feedback" class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
       <Check :size="12" />
       <span>{{ feedback }}</span>

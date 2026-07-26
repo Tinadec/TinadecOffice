@@ -18,7 +18,7 @@ import TerminalPanel from '@/components/TerminalPanel.vue'
 
 const route = useRoute()
 const { t } = useI18n()
-const { notify } = useNotifications()
+const { notify, status, dismissByKey } = useNotifications()
 
 // ---- Parse query params ----
 const tabId = computed(() => (route.query.tabId as string) ?? '')
@@ -40,7 +40,6 @@ const { applyInitialTheme, theme, accentColor } = useTheme()
 
 // ---- Loading and error state ----
 const loading = ref(true)
-const loadError = ref<string | null>(null)
 
 // ---- Data refs (loaded independently, not via HomePage props) ----
 const approvals = ref<ApprovalDto[]>([])
@@ -76,9 +75,15 @@ async function loadData() {
     approvals.value = approvalList
     orchestration.value = orchestrationSnapshot
     toolExecutions.value = toolTimeline
-    loadError.value = null
+    dismissByKey('detached-panel')
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : 'Failed to load data'
+    status.error({
+      key: 'detached-panel',
+      title: t('context.loadError'),
+      message: err instanceof Error ? err.message : String(err),
+      source: 'panel',
+      action: { label: t('context.retry'), run: loadData }
+    })
   } finally {
     loading.value = false
   }
@@ -220,13 +225,6 @@ watch(sessionId, () => {
       <div v-if="loading" class="detached-panel-loading">
         <Loader2 :size="24" class="detached-panel-spinner" />
         <span>{{ t('context.loadingPanel') }}</span>
-      </div>
-
-      <!-- Error state -->
-      <div v-else-if="loadError" class="detached-panel-error">
-        <p class="detached-panel-error-title">{{ t('context.loadError') }}</p>
-        <p class="detached-panel-error-msg">{{ loadError }}</p>
-        <button class="detached-panel-retry" @click="loadData">{{ t('context.retry') }}</button>
       </div>
 
       <!-- Panel content by type -->
@@ -405,47 +403,6 @@ watch(sessionId, () => {
   to {
     transform: rotate(360deg);
   }
-}
-
-.detached-panel-error {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 100%;
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 20px;
-  text-align: center;
-}
-
-.detached-panel-error-title {
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.detached-panel-error-msg {
-  color: var(--text-muted);
-  margin: 0;
-  word-break: break-word;
-}
-
-.detached-panel-retry {
-  margin-top: 8px;
-  padding: 6px 16px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.detached-panel-retry:hover {
-  background: var(--bg-hover);
 }
 
 .detached-panel-unknown {

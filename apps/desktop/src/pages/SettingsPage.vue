@@ -139,7 +139,7 @@ interface ProviderForm {
 const { t, locale } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
-const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification } = useNotifications()
+const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
 
 // Background management — backgroundSettings is a singleton shared with
 // App.vue (which renders the background layer globally).  The setters below
@@ -212,8 +212,6 @@ const activeSection = ref<SettingsSection>('general')
 const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: 'default', managed: false })
 const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
-const gatewayConfigNotice = ref('')
-const gatewayConfigError = ref('')
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
 const PET_CATALOG_PAGE_SIZE = 48
 const petCatalog = ref<PetdexCatalogPet[]>([])
@@ -224,7 +222,7 @@ const petCatalogLimit = ref(PET_CATALOG_PAGE_SIZE)
 const petLoadMoreRef = ref<HTMLElement | null>(null)
 const petCatalogLoading = ref(false)
 const petActionSlug = ref('')
-const petError = ref('')
+
 
 const downloadedPetBySlug = computed(() => new Map(downloadedPets.value.map((pet) => [pet.slug, pet])))
 const petCatalogKinds = computed(() => Array.from(new Set(petCatalog.value.map((pet) => pet.kind))).sort())
@@ -272,7 +270,7 @@ onBeforeUnmount(() => {
 
 async function loadPets(force = false) {
   petCatalogLoading.value = true
-  petError.value = ''
+  dismissByKey('pets')
   try {
     const [catalog, downloaded] = await Promise.all([
       window.tinadec.pets.fetchCatalog(force),
@@ -282,7 +280,7 @@ async function loadPets(force = false) {
     downloadedPets.value = downloaded
     petCatalogLimit.value = PET_CATALOG_PAGE_SIZE
   } catch (error) {
-    petError.value = error instanceof Error ? error.message : t('settings.petsLoadFailed')
+    status.error({ key: 'pets', source: 'pets', message: error instanceof Error ? error.message : t('settings.petsLoadFailed') })
   } finally {
     petCatalogLoading.value = false
   }
@@ -295,7 +293,7 @@ function selectSettingsSection(section: SettingsSection) {
 
 async function downloadPet(slug: string) {
   petActionSlug.value = slug
-  petError.value = ''
+  dismissByKey('pets')
   try {
     await window.tinadec.pets.download(slug)
     downloadedPets.value = await window.tinadec.pets.listDownloaded()
@@ -309,7 +307,7 @@ async function downloadPet(slug: string) {
 
 async function setPetEnabled(pet: DownloadedPet, enabled: boolean) {
   petActionSlug.value = pet.slug
-  petError.value = ''
+  dismissByKey('pets')
   try {
     const updated = await window.tinadec.pets.setEnabled(pet.slug, enabled)
     downloadedPets.value = downloadedPets.value.map((item) => item.slug === updated.slug ? updated : item)
@@ -323,7 +321,7 @@ async function setPetEnabled(pet: DownloadedPet, enabled: boolean) {
 
 async function openPetFolder(pet: DownloadedPet) {
   petActionSlug.value = pet.slug
-  petError.value = ''
+  dismissByKey('pets')
   try {
     await window.tinadec.pets.openFolder(pet.slug)
   } catch (error) {
@@ -342,7 +340,7 @@ async function removePet(pet: DownloadedPet) {
     destructive: true
   })) return
   petActionSlug.value = pet.slug
-  petError.value = ''
+  dismissByKey('pets')
   try {
     await window.tinadec.pets.remove(pet.slug)
     downloadedPets.value = downloadedPets.value.filter((item) => item.slug !== pet.slug)
@@ -416,8 +414,7 @@ const modelCenterLoading = ref(false)
 const agentCenterLoading = ref(false)
 const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
-const modelCenterError = ref('')
-const agentCenterError = ref('')
+
 const showModal = ref(false)
 const agentViewMode = ref<'topology' | 'list'>('list')
 const promptSelectedFragmentId = ref('')
@@ -490,8 +487,7 @@ function normalizedGatewayDraft() {
 }
 
 async function testGatewayConnection() {
-  gatewayConfigError.value = ''
-  gatewayConfigNotice.value = ''
+  dismissByKey('gateway-config')
   gatewayConnectionState.value = 'testing'
   try {
     const gatewayUrl = normalizedGatewayDraft()
@@ -501,24 +497,23 @@ async function testGatewayConnection() {
     })
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
     gatewayConnectionState.value = 'ready'
-    gatewayConfigNotice.value = t('settings.gatewayConnectionReady')
+    notify.success({ message: t('settings.gatewayConnectionReady'), source: 'gateway' })
   } catch (error) {
     gatewayConnectionState.value = 'failed'
-    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewayConnectionFailed')
+    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayConnectionFailed') })
   }
 }
 
 async function saveGatewayConfiguration() {
-  gatewayConfigNotice.value = ''
+  dismissByKey('gateway-config')
   try {
     normalizedGatewayDraft()
   } catch (error) {
-    gatewayConfigError.value = error instanceof Error ? error.message : t('settings.gatewayUrlInvalid')
+    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayUrlInvalid') })
     return
   }
   gatewayConfigBusy.value = true
-  gatewayConfigError.value = ''
-  gatewayConfigNotice.value = ''
+  dismissByKey('gateway-config')
   try {
     appConfig.value = await window.tinadec.saveGatewayUrl(gatewayUrlDraft.value)
     gatewayUrlDraft.value = appConfig.value.gateway_url
@@ -541,8 +536,7 @@ async function saveGatewayConfiguration() {
 
 async function resetGatewayConfiguration() {
   gatewayConfigBusy.value = true
-  gatewayConfigError.value = ''
-  gatewayConfigNotice.value = ''
+  dismissByKey('gateway-config')
   try {
     appConfig.value = await window.tinadec.resetGatewayUrl()
     gatewayUrlDraft.value = appConfig.value.gateway_url
@@ -918,7 +912,7 @@ function closeModal() {
 
 async function loadModelCenter() {
   modelCenterLoading.value = true
-  modelCenterError.value = ''
+  dismissByKey('model-center')
   try {
     const overview = await api.getModelCenterOverview()
     modelCenterOverview.value = overview
@@ -932,7 +926,7 @@ async function loadModelCenter() {
       selectedProviderId.value = selected.id
     }
   } catch (error) {
-    modelCenterError.value = error instanceof Error ? error.message : t('settings.centerLoadFailed')
+    status.error({ key: 'model-center', source: 'models', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadModelCenter } })
   } finally {
     modelCenterLoading.value = false
   }
@@ -967,7 +961,7 @@ async function probeAcpRuntime(runtime: ModelCenterAcpRuntimeDto) {
 
 async function loadAgentCenter() {
   agentCenterLoading.value = true
-  agentCenterError.value = ''
+  dismissByKey('agent-center')
   try {
     const [overview, toolReadiness] = await Promise.all([
       api.getAgentCenterOverview(),
@@ -1017,7 +1011,7 @@ async function loadAgentCenter() {
       ?? overview.agents[0]
     if (activeAgent) openAgentConfig(activeAgent)
   } catch (error) {
-    agentCenterError.value = error instanceof Error ? error.message : t('settings.centerLoadFailed')
+    status.error({ key: 'agent-center', source: 'agents', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadAgentCenter } })
   } finally {
     agentCenterLoading.value = false
   }
@@ -1632,8 +1626,6 @@ import '../settings/settings.css'
               <ShieldCheck :size="14" />
               {{ t('settings.gatewayManaged') }}
             </p>
-            <p v-if="gatewayConfigNotice" class="gateway-config-feedback success" role="status">{{ gatewayConfigNotice }}</p>
-            <p v-if="gatewayConfigError" class="gateway-config-feedback error" role="alert">{{ gatewayConfigError }}</p>
 
             <div class="gateway-config-actions">
               <UiButton variant="outline" :disabled="gatewayConnectionState === 'testing'" @click="testGatewayConnection">
@@ -1706,11 +1698,6 @@ import '../settings/settings.css'
             <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
           </div>
 
-          <div v-if="modelCenterError" class="center-message error">
-            <Info :size="16" />
-            <span>{{ modelCenterError }}</span>
-            <UiButton variant="outline" size="sm" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
           <div v-if="modelCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
             <Info :size="16" />
             <div class="center-message-content">
@@ -2263,11 +2250,6 @@ import '../settings/settings.css'
             <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
           </div>
 
-          <div v-if="agentCenterError" class="center-message error">
-            <Info :size="16" />
-            <span>{{ agentCenterError }}</span>
-            <UiButton variant="outline" size="sm" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
           <div v-if="agentCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
             <Info :size="16" />
             <div class="center-message-content">
@@ -3425,8 +3407,6 @@ import '../settings/settings.css'
               <RefreshCw :size="16" :class="{ spinning: petCatalogLoading }" />
             </UiButton>
           </div>
-
-          <p v-if="petError" class="pets-error" role="alert">{{ petError }}</p>
 
           <section class="pets-section downloaded-pets-section" aria-labelledby="downloaded-pets-title">
             <div class="pets-section-heading">

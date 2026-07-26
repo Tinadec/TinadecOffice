@@ -3,6 +3,7 @@ import { GitCommit, RefreshCw, Loader2, User, Clock, Hash } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type CodeToolExecuteResultDto } from '../../api'
+import { useNotifications } from '@/composables/useNotifications'
 import { UiBadge, UiButton, UiScrollArea } from '../ui'
 import type { GitLogCommit } from '../../composables/useGitOperation'
 
@@ -14,11 +15,11 @@ interface Props {
 
 const props = defineProps<Props>()
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 const selectedHash = ref<string | null>(null)
 const loadingDetail = ref(false)
 const commitDetail = ref<CodeToolExecuteResultDto | null>(null)
-const detailError = ref<string | null>(null)
 
 const selectedCommit = computed(() =>
   props.commits.find((c) => c.hash === selectedHash.value) ?? null,
@@ -50,7 +51,6 @@ async function selectCommit(commit: GitLogCommit) {
   selectedHash.value = commit.hash
   if (!props.cwd) return
   loadingDetail.value = true
-  detailError.value = null
   try {
     const res = await api.executeCodeTool('git_worktree_manager', {
       cwd: props.cwd,
@@ -58,7 +58,7 @@ async function selectCommit(commit: GitLogCommit) {
     })
     commitDetail.value = res
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+    notify.error(err, { title: t('context.gitLoadFailed'), source: 'git', key: 'git-commit-detail' })
   } finally {
     loadingDetail.value = false
   }
@@ -212,9 +212,6 @@ defineExpose({
             </div>
           </div>
         </template>
-        <div v-else-if="detailError" class="git-history-detail-error">
-          {{ detailError }}
-        </div>
       </div>
 
       <!-- Empty detail placeholder -->
@@ -408,7 +405,6 @@ defineExpose({
 }
 
 .git-history-detail-loading,
-.git-history-detail-error,
 .git-history-detail-empty {
   display: flex;
   flex-direction: column;
@@ -420,10 +416,6 @@ defineExpose({
   font-size: 12px;
   border: 1px dashed var(--border-muted);
   border-radius: 8px;
-}
-
-.git-history-detail-error {
-  color: var(--text-reject, #f85149);
 }
 
 .git-detail-header h3 {

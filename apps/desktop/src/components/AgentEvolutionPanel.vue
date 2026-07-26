@@ -13,14 +13,13 @@ import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
-const { notify, confirm } = useNotifications()
+const { notify, status, confirm, dismissByKey } = useNotifications()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
 const agents = ref<AgentProfileDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
 const loading = ref(false)
 const busy = ref(false)
-const error = ref<string | null>(null)
 const selectedProposalId = ref('')
 const showPromotePanel = ref('')
 const rejectReason = ref('')
@@ -83,7 +82,6 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 
 async function loadProposals() {
   loading.value = true
-  error.value = null
   try {
     const [proposalList, agentList, modes] = await Promise.all([
       api.listEvolutionProposals(),
@@ -96,8 +94,15 @@ async function loadProposals() {
     if (!selectedProposalId.value && proposalList.length > 0) {
       selectedProposalId.value = proposalList[0].id
     }
+    dismissByKey('evolution')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    status.error({
+      key: 'evolution',
+      title: t('app.loadFailed'),
+      message: err instanceof Error ? err.message : String(err),
+      source: 'evolution',
+      action: { label: t('app.retry'), run: loadProposals }
+    })
   } finally {
     loading.value = false
   }
@@ -115,10 +120,9 @@ async function generateProposals() {
     if (generated.length > 0) {
       selectedProposalId.value = generated[0].id
     }
-    error.value = null
-    notify.success(`Generated ${generated.length} proposal${generated.length === 1 ? '' : 's'}.`)
+    notify.success({ message: `Generated ${generated.length} proposal${generated.length === 1 ? '' : 's'}.`, source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: 'Could not generate proposals' })
+    notify.error(err, { title: 'Could not generate proposals', source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -177,9 +181,9 @@ async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
     await api.promoteAgentCandidate(proposal.id, promoteForm.value)
     await loadProposals()
     showPromotePanel.value = ''
-    notify.success(`${proposal.name} promoted.`)
+    notify.success({ message: `${proposal.name} promoted.`, source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: `Could not promote ${proposal.name}` })
+    notify.error(err, { title: `Could not promote ${proposal.name}`, source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -199,9 +203,9 @@ async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
     await api.rejectAgentCandidate(proposal.id, reason)
     rejectReason.value = ''
     await loadProposals()
-    notify.success(`${proposal.name} rejected.`)
+    notify.success({ message: `${proposal.name} rejected.`, source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: `Could not reject ${proposal.name}` })
+    notify.error(err, { title: `Could not reject ${proposal.name}`, source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -243,11 +247,6 @@ onMounted(() => {
         </div>
       </template>
     </UiCard>
-
-    <div v-if="error" class="evolution-error">
-      <X :size="14" />
-      <span>{{ error }}</span>
-    </div>
 
     <div class="evolution-list-header">
       <h3>Proposals</h3>
@@ -471,17 +470,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.evolution-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(255, 99, 99, 0.1);
-  border: 1px solid rgba(255, 99, 99, 0.3);
-  border-radius: 6px;
-  color: var(--accent-danger, #ff6363);
-  font-size: 13px;
 }
 .evolution-list-header {
   display: flex;

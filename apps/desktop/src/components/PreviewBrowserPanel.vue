@@ -2,8 +2,10 @@
 import { ArrowLeft, ArrowRight, Globe, RefreshCw, ExternalLink, Home as HomeIcon } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 const props = defineProps<{
   initialUrl?: string
@@ -21,7 +23,6 @@ const currentUrl = ref(props.initialUrl ?? '')
 const history = ref<string[]>([])
 const historyIndex = ref(-1)
 const loading = ref(false)
-const loadError = ref<string | null>(null)
 const iframeKey = ref(0)
 
 const canGoBack = computed(() => historyIndex.value > 0)
@@ -45,8 +46,6 @@ function normalizeUrl(input: string): string {
 function navigate(url?: string) {
   const target = normalizeUrl(url ?? urlInput.value)
   if (!target) return
-
-  loadError.value = null
 
   // Push to history
   if (historyIndex.value < history.value.length - 1) {
@@ -87,7 +86,6 @@ function goForward() {
 function refresh() {
   if (!currentUrl.value) return
   loading.value = true
-  loadError.value = null
   iframeKey.value++
 }
 
@@ -97,7 +95,7 @@ function onLoad() {
 
 function onError() {
   loading.value = false
-  loadError.value = t('context.previewLoadError')
+  notify.error(t('context.previewLoadError'), { source: 'preview' })
 }
 
 function openExternal() {
@@ -108,7 +106,6 @@ function openExternal() {
 function goHome() {
   urlInput.value = ''
   currentUrl.value = ''
-  loadError.value = null
   loading.value = false
 }
 
@@ -210,12 +207,6 @@ watch(
       <div v-if="loading && currentUrl" class="preview-loading">
         <RefreshCw :size="20" class="spinning" />
         <span>{{ t('context.previewLoading') }}</span>
-      </div>
-
-      <!-- Error state -->
-      <div v-if="loadError" class="preview-error">
-        <span>{{ loadError }}</span>
-        <p>{{ t('context.previewErrorHint') }}</p>
       </div>
 
       <!-- Iframe -->
@@ -399,32 +390,6 @@ watch(
   font-size: 12px;
   color: var(--text-secondary);
   z-index: 5;
-}
-
-.preview-error {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 20px;
-  text-align: center;
-}
-
-.preview-error span {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-error, #f85149);
-}
-
-.preview-error p {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin: 0;
-  max-width: 240px;
 }
 
 .preview-iframe {

@@ -171,8 +171,7 @@ export function useGitOperation(
   // ---- Reactive state ----
   const loading = ref(false)
   const operationLoading = ref(false)
-  const error = ref<string | null>(null)
-  const feedback = ref<string | null>(null)
+
 
   const preview = ref<CodeToolExecuteResultDto | null>(null)
   const pushPlan = ref<CodeToolExecuteResultDto | null>(null)
@@ -352,15 +351,15 @@ export function useGitOperation(
 
   function mutationCompleted(result: CodeToolExecuteResultDto): boolean {
     if (result.status !== 'completed') {
-      feedback.value = result.summary
+      notify.warning({ message: result.summary, source: 'git' })
       return false
     }
-    notify.success(result.summary)
+    notify.success({ message: result.summary, source: 'git' })
     return true
   }
 
   function notifyOperationError(err: unknown, fallback: string) {
-    notify.error(err instanceof Error ? err : fallback)
+    notify.error(err instanceof Error ? err : fallback, { source: 'git' })
   }
 
   // ---- Actions ----
@@ -371,12 +370,9 @@ export function useGitOperation(
       preview.value = null
       pushPlan.value = null
       selectedPaths.value = new Set()
-      error.value = null
       return
     }
     loading.value = true
-    error.value = null
-    feedback.value = null
     try {
       const [nextPreview, nextPushPlan] = await Promise.all([
         api.executeCodeTool('git_worktree_manager', {
@@ -392,7 +388,7 @@ export function useGitOperation(
       pushPlan.value = nextPushPlan
       syncSelection()
     } catch (err) {
-      error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+      notifyOperationError(err, t('context.gitLoadFailed'))
     } finally {
       loading.value = false
     }
@@ -404,7 +400,7 @@ export function useGitOperation(
     try {
       logResult.value = await api.gitLog(path, limit, ref)
     } catch (err) {
-      error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+      notifyOperationError(err, t('context.gitLoadFailed'))
     }
   }
 
@@ -418,7 +414,7 @@ export function useGitOperation(
       })
       branchResult.value = res
     } catch (err) {
-      error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+      notifyOperationError(err, t('context.gitLoadFailed'))
     }
   }
 
@@ -466,7 +462,6 @@ export function useGitOperation(
     const paths = selected.paths ?? []
     if (!cwd.value || !sid.value || (!selected.patch && paths.length === 0)) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const isStage = action === 'stage'
       const approval = await api.createApproval({
@@ -483,7 +478,7 @@ export function useGitOperation(
       indexApprovalId.value = approval.id
       indexAction.value = action
       indexSelection.value = selected
-      feedback.value = t('context.gitIndexApprovalRequested')
+      notify.info({ message: t('context.gitIndexApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -495,7 +490,6 @@ export function useGitOperation(
   async function executeApprovedIndexUpdate() {
     if (!cwd.value || !sid.value || !indexApproval.value || indexApproval.value.status !== 'approved' || !indexAction.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool(indexAction.value === 'stage' ? 'git_stage' : 'git_unstage', {
         session_id: sid.value,
@@ -520,7 +514,6 @@ export function useGitOperation(
   async function requestCommitApproval(emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !canRequestCommitApproval.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const stagedCount = repoSummary.value.stagedCount
       const approval = await api.createApproval({
@@ -531,7 +524,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       commitApprovalId.value = approval.id
-      feedback.value = t('context.gitCommitApprovalRequested')
+      notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -543,7 +536,6 @@ export function useGitOperation(
   async function executeApprovedCommit() {
     if (!cwd.value || !sid.value || !commitApproval.value || commitApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool('git_commit', {
         session_id: sid.value,
@@ -570,7 +562,6 @@ export function useGitOperation(
   async function requestPushApproval(emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !canRequestPushApproval.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branch = pushData.value.branch ?? 'HEAD'
       const upstream = pushData.value.upstream ?? 'origin'
@@ -583,7 +574,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       pushApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -595,7 +586,6 @@ export function useGitOperation(
   async function executeApprovedPush() {
     if (!cwd.value || !sid.value || !pushApproval.value || pushApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool('git_push', {
         session_id: sid.value,
@@ -620,7 +610,6 @@ export function useGitOperation(
   async function requestPullApproval(emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !canRequestPullApproval.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branch = previewData.value.branch ?? 'HEAD'
       const upstream = previewData.value.upstream ?? 'origin'
@@ -633,7 +622,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       pullApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -645,7 +634,6 @@ export function useGitOperation(
   async function executeApprovedPull(options?: { rebase?: boolean; ff_only?: boolean }) {
     if (!cwd.value || !sid.value || !pullApproval.value || pullApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool('git_pull', {
         session_id: sid.value,
@@ -670,7 +658,6 @@ export function useGitOperation(
   async function requestCheckoutApproval(branch: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -680,7 +667,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       checkoutApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -692,7 +679,6 @@ export function useGitOperation(
   async function executeApprovedCheckout() {
     if (!cwd.value || !sid.value || !checkoutApproval.value || checkoutApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branch = checkoutApproval.value.command?.replace('git checkout ', '').trim() ?? ''
       const result = await api.executeCodeTool('git_merge', {
@@ -717,7 +703,6 @@ export function useGitOperation(
   async function requestCreateBranchApproval(branchName: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !branchName.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -727,7 +712,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       branchApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -739,7 +724,6 @@ export function useGitOperation(
   async function executeApprovedCreateBranch() {
     if (!cwd.value || !sid.value || !branchApproval.value || branchApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branchName = branchApproval.value.command?.replace('git checkout -b ', '').trim() ?? ''
       const result = await api.executeCodeTool('git_branch_create', {
@@ -764,7 +748,6 @@ export function useGitOperation(
   async function requestFetchApproval(emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !canRequestFetchApproval.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -774,7 +757,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       fetchApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -786,7 +769,6 @@ export function useGitOperation(
   async function executeApprovedFetch() {
     if (!cwd.value || !sid.value || !fetchApproval.value || fetchApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool('git_fetch', {
         session_id: sid.value,
@@ -810,7 +792,6 @@ export function useGitOperation(
   async function requestMergeApproval(branch: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -820,7 +801,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       mergeApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -832,7 +813,6 @@ export function useGitOperation(
   async function executeApprovedMerge() {
     if (!cwd.value || !sid.value || !mergeApproval.value || mergeApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branch = mergeApproval.value.command?.replace('git merge ', '').trim() ?? ''
       const result = await api.executeCodeTool('git_conflict_resolve', {
@@ -857,7 +837,6 @@ export function useGitOperation(
   async function requestRebaseApproval(branch: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -867,7 +846,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       rebaseApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -879,7 +858,6 @@ export function useGitOperation(
   async function executeApprovedRebase(operation: 'start' | 'continue' | 'abort' | 'skip' = 'start') {
     if (!cwd.value || !sid.value || !rebaseApproval.value || rebaseApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const branch = operation === 'start'
         ? rebaseApproval.value.command?.replace('git rebase ', '').trim() ?? ''
@@ -913,7 +891,6 @@ export function useGitOperation(
   ) {
     if (!cwd.value || !sid.value || !filePath.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -925,7 +902,7 @@ export function useGitOperation(
       resolveConflictApprovalId.value = approval.id
       resolveConflictPath.value = filePath
       resolveConflictStrategy.value = strategy
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -938,7 +915,6 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !resolveConflictApproval.value || resolveConflictApproval.value.status !== 'approved') return
     if (!resolveConflictPath.value || !resolveConflictStrategy.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const result = await api.executeCodeTool('git_worktree_manager', {
         session_id: sid.value,
@@ -965,7 +941,6 @@ export function useGitOperation(
   async function requestDeleteBranchApproval(branch: string, force: boolean, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -975,7 +950,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       deleteBranchApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -987,7 +962,6 @@ export function useGitOperation(
   async function executeApprovedDeleteBranch() {
     if (!cwd.value || !sid.value || !deleteBranchApproval.value || deleteBranchApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const command = deleteBranchApproval.value.command ?? ''
       const force = command.includes(' -D ')
@@ -1016,7 +990,6 @@ export function useGitOperation(
   async function requestRenameBranchApproval(newName: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !newName.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const approval = await api.createApproval({
         session_id: sid.value,
@@ -1026,7 +999,7 @@ export function useGitOperation(
         cwd: cwd.value,
       })
       renameBranchApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) {
       notifyOperationError(err, t('context.gitApprovalRequestFailed'))
@@ -1038,7 +1011,6 @@ export function useGitOperation(
   async function executeApprovedRenameBranch() {
     if (!cwd.value || !sid.value || !renameBranchApproval.value || renameBranchApproval.value.status !== 'approved') return
     operationLoading.value = true
-    feedback.value = null
     try {
       const newName = renameBranchApproval.value.command?.replace('git branch -m ', '').trim() ?? ''
       const result = await api.executeCodeTool('git_branch_rename', {
@@ -1063,13 +1035,12 @@ export function useGitOperation(
   async function requestCreateWorktreeApproval(payload: { branch: string; path: string }, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !payload.branch.trim() || !payload.path.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const operation = { action: 'create' as const, branch: payload.branch.trim(), path: payload.path.trim() }
       const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Create worktree ${operation.path} for ${operation.branch}`, command: `git worktree add ${operation.path} -b ${operation.branch}`, cwd: cwd.value })
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) { notifyOperationError(err, t('context.gitApprovalRequestFailed')) }
     finally { operationLoading.value = false }
@@ -1078,13 +1049,12 @@ export function useGitOperation(
   async function requestRemoveWorktreeApproval(path: string, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !path.trim()) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const operation = { action: 'remove' as const, path: path.trim() }
       const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Remove worktree ${operation.path}`, command: `git worktree remove ${operation.path}`, cwd: cwd.value })
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
-      feedback.value = t('context.gitApprovalRequested')
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
     } catch (err) { notifyOperationError(err, t('context.gitApprovalRequestFailed')) }
     finally { operationLoading.value = false }
@@ -1093,7 +1063,6 @@ export function useGitOperation(
   async function executeApprovedWorktreeOperation() {
     if (!cwd.value || !sid.value || !worktreeApproval.value || worktreeApproval.value.status !== 'approved' || !worktreeOperation.value) return
     operationLoading.value = true
-    feedback.value = null
     try {
       const operation = worktreeOperation.value
       const result = operation.action === 'create'
@@ -1231,8 +1200,6 @@ export function useGitOperation(
     // State
     loading,
     operationLoading,
-    error,
-    feedback,
     commitMessage,
     selectedPaths,
     selectAll,

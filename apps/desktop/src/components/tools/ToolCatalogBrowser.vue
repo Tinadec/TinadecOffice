@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
   ChevronRight,
@@ -15,6 +16,10 @@ import {
   Wrench
 } from '@lucide/vue'
 import { api, type ToolDescriptorDto, type ToolSearchResultDto } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
+
+const { t } = useI18n()
+const { status, dismissByKey } = useNotifications()
 
 const props = defineProps<{
   tools?: ToolDescriptorDto[]
@@ -26,7 +31,6 @@ const emit = defineEmits<{
 
 const localTools = ref<ToolDescriptorDto[]>([])
 const loading = ref(false)
-const error = ref<string | null>(null)
 const searchQuery = ref('')
 const sourceFilter = ref<string>('all')
 const riskFilter = ref<string>('all')
@@ -154,11 +158,17 @@ function isExpanded(toolId: string): boolean {
 async function loadTools() {
   if (props.tools && props.tools.length > 0) return
   loading.value = true
-  error.value = null
   try {
     localTools.value = await api.listTools()
+    dismissByKey('tools')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load tools'
+    status.error({
+      key: 'tools',
+      title: t('app.loadFailed'),
+      message: err instanceof Error ? err.message : String(err),
+      source: 'tools',
+      action: { label: t('app.retry'), run: loadTools }
+    })
   } finally {
     loading.value = false
   }
@@ -223,11 +233,6 @@ function onExecute(tool: ToolDescriptorDto) {
 
     <div v-if="loading" class="tool-catalog-loading">
       <span>Loading tools…</span>
-    </div>
-
-    <div v-else-if="error" class="tool-catalog-error">
-      <span>{{ error }}</span>
-      <button class="tool-catalog-retry" @click="loadTools">Retry</button>
     </div>
 
     <div v-else-if="totalCount === 0" class="tool-catalog-empty">
@@ -393,8 +398,7 @@ function onExecute(tool: ToolDescriptorDto) {
 }
 
 .tool-catalog-loading,
-.tool-catalog-empty,
-.tool-catalog-error {
+.tool-catalog-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -405,20 +409,6 @@ function onExecute(tool: ToolDescriptorDto) {
   border: 1px dashed var(--border-dashed);
   border-radius: 8px;
   font-size: 12px;
-}
-
-.tool-catalog-retry {
-  padding: 4px 12px;
-  font-size: 11px;
-  color: var(--accent-primary);
-  background: transparent;
-  border: 1px solid var(--accent-primary);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.tool-catalog-retry:hover {
-  background: rgba(88, 166, 255, 0.08);
 }
 
 .tool-catalog-groups {

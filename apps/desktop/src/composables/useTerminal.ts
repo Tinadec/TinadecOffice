@@ -16,6 +16,7 @@ import type { Terminal } from '@xterm/xterm'
 import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { useNotifications } from '@/composables/useNotifications'
 
 // ---- Types ----
 
@@ -218,6 +219,7 @@ async function createTerminalInstance(
     return instance
   } catch (err) {
     console.error('[useTerminal] Failed to create terminal:', err)
+    useNotifications().notify.error(err, { title: 'Failed to create terminal', source: 'terminal' })
     return null
   }
 }

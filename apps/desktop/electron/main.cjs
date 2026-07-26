@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
-const { createDebugStudioWindow } = require('./debug-studio.cjs');
+const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const {
   createPanelWindow,
   closePanelWindow,
@@ -287,6 +287,38 @@ ipcMain.handle('tinadec:get-main-bounds', async () => {
 // Broadcast theme change to all panel windows
 ipcMain.on('tinadec:broadcast-theme', (event, theme, accentColor) => {
   broadcastToPanels('panel:theme-changed', { theme, accentColor });
+});
+
+// Broadcast status notification to all non-pet, non-sender windows
+ipcMain.on('tinadec:broadcast-status-notification', (event, payload) => {
+  // Validate payload shape minimally — drop malformed messages silently
+  if (!payload || typeof payload !== 'object') return;
+  if (payload.op !== 'raise' && payload.op !== 'clear') return;
+  if (typeof payload.key !== 'string' || !payload.key) return;
+
+  const senderId = event.sender.id;
+  const channel = 'tinadec:status-notification';
+
+  // Forward to main window (exclude sender)
+  const mainWin = getMainWindow();
+  if (mainWin && !mainWin.isDestroyed() && mainWin.webContents.id !== senderId) {
+    mainWin.webContents.send(channel, payload);
+  }
+
+  // Forward to Debug Studio window (exclude sender)
+  const debugWin = getDebugStudioWindow();
+  if (debugWin && !debugWin.isDestroyed() && debugWin.webContents.id !== senderId) {
+    debugWin.webContents.send(channel, payload);
+  }
+
+  // Forward to all detached panel windows (exclude sender via BrowserWindow.fromId)
+  const panelInfos = getAllPanelWindows();
+  for (const info of panelInfos) {
+    const win = BrowserWindow.fromId(info.windowId);
+    if (win && !win.isDestroyed() && win.webContents.id !== senderId) {
+      win.webContents.send(channel, payload);
+    }
+  }
 });
 
 // Register terminal IPC handlers

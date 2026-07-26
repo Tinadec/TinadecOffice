@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  AlertTriangle,
   GitBranch,
   GitCommit,
   RefreshCw,
@@ -39,8 +38,6 @@ const {
   // State
   loading,
   operationLoading,
-  error,
-  feedback,
   commitMessage,
   selectedPaths,
   selectAll,
@@ -238,12 +235,6 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
       <span>{{ t('context.loadingGitPlan') }}</span>
     </div>
 
-    <!-- Error state -->
-    <div v-else-if="error" class="git-error-banner">
-      <AlertTriangle :size="14" />
-      <span>{{ error }}</span>
-    </div>
-
     <!-- Main content -->
     <template v-else>
       <!-- Tab navigation -->
@@ -272,8 +263,6 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
           :session-id="selectedSessionId ?? null"
           :loading="loading"
           :operation-loading="operationLoading"
-          :error="null"
-          :feedback="feedback"
           :status-files="statusFiles"
           :commit-message="commitMessage"
           :selected-paths="selectedPaths"
@@ -493,17 +482,6 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   color: var(--text-muted);
   font-size: 13px;
   flex: 1;
-}
-
-.git-error-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  color: var(--text-reject, #f85149);
-  background: var(--bg-status-warn);
-  border-bottom: 1px solid rgba(248, 81, 73, 0.25);
-  font-size: 12px;
 }
 
 /* ---- Tab navigation ---- */

@@ -27,7 +27,6 @@ const { notify } = useNotifications()
 const containerRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const applying = ref(false)
-const error = ref<string | null>(null)
 const feedback = ref<string | null>(null)
 const pendingApprovalId = ref<string | null>(null)
 
@@ -135,12 +134,11 @@ async function handleApplyPatch(): Promise<void> {
   if (!hasChanges.value || !props.filePath) return
 
   if (!props.selectedSessionId) {
-    error.value = 'A session is required to apply patches (approval flow).'
+    notify.error('A session is required to apply patches (approval flow).', { title: 'Session required', source: 'code', key: 'code-patch-session' })
     return
   }
 
   applying.value = true
-  error.value = null
   feedback.value = null
   try {
     const patch = generatePatch()
@@ -158,7 +156,7 @@ async function handleApplyPatch(): Promise<void> {
     // Store patch for when approval is granted
     pendingPatch.value = patch
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval' })
+    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-patch-approval' })
   } finally {
     applying.value = false
   }
@@ -171,13 +169,11 @@ async function executePatch(): Promise<void> {
   if (!pendingPatch.value || !props.filePath) return
 
   applying.value = true
-  error.value = null
   feedback.value = null
   try {
     const result = await api.codeEditorPatch(props.cwd, props.filePath, pendingPatch.value, pendingApproval.value.id)
     if (result.status !== 'completed') {
-      error.value = result.summary
-      notify.error(result.summary, { title: 'Failed to apply patch' })
+      notify.error(result.summary, { title: 'Failed to apply patch', source: 'code', key: 'code-patch-apply' })
       return
     }
     notify.success(`Patch applied to ${props.filePath}.`)
@@ -185,7 +181,7 @@ async function executePatch(): Promise<void> {
     pendingPatch.value = null
     emit('applied', props.filePath)
   } catch (err) {
-    notify.error(err, { title: 'Failed to apply patch' })
+    notify.error(err, { title: 'Failed to apply patch', source: 'code', key: 'code-patch-apply' })
   } finally {
     applying.value = false
   }
@@ -247,7 +243,6 @@ watch(
       </div>
     </div>
 
-    <div v-if="error" class="px-3 py-2 text-sm text-destructive">{{ error }}</div>
     <div v-if="feedback" class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
       <Check :size="12" />
       <span>{{ feedback }}</span>

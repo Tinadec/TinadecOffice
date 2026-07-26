@@ -1,12 +1,14 @@
 import { ref, computed } from 'vue'
 import type { TraceSummary, TraceDetail, SpanNode } from '../types/trace'
 import type { GetTracesRequest } from '../types/debug-api'
+import { useNotifications } from '@/composables/useNotifications'
 
 /**
  * Composable for fetching and caching trace data from the Debug API.
  */
 export function useTraceData() {
   const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+  const { status, dismissByKey } = useNotifications()
 
   const traces = ref<TraceSummary[]>([])
   const currentTrace = ref<TraceDetail | null>(null)
@@ -33,8 +35,10 @@ export function useTraceData() {
 
       const data = await response.json()
       traces.value = data.traces ?? []
+      dismissByKey('debug-trace')
     } catch (e) {
       error.value = `Failed to fetch traces: ${e}`
+      status.error({ key: 'debug-trace', message: `Failed to fetch traces: ${e}`, source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -50,8 +54,10 @@ export function useTraceData() {
 
       const data = await response.json()
       currentTrace.value = data
+      dismissByKey('debug-trace')
     } catch (e) {
       error.value = `Failed to fetch trace detail: ${e}`
+      status.error({ key: 'debug-trace', message: `Failed to fetch trace detail: ${e}`, source: 'debug' })
     } finally {
       loading.value = false
     }

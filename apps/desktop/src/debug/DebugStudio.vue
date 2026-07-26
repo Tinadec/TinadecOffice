@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
 import { useDebugWebSocket } from './composables/useDebugWebSocket'
@@ -19,28 +19,13 @@ import { Bug, Minus, Square, X, LayoutDashboard } from '@lucide/vue'
 import type { ForceApprovalDecisionRequest, SimulateMessageRequest } from './types/simulation'
 
 const { t } = useI18n()
-const { notify, banner, dismiss, confirm } = useNotifications()
+const { notify, confirm } = useNotifications()
 const ws = useDebugWebSocket()
 const traceData = useTraceData()
 const simulation = useSimulation()
 const metrics = useMetrics()
 
 const activeTab = ref<'timeline' | 'graph' | 'metrics' | 'diagnostics' | 'preview'>('timeline')
-
-function mirrorErrorToBanner(source: Ref<string | null>) {
-  let id: string | null = null
-  const stop = watch(source, (message) => {
-    if (id) dismiss(id)
-    id = message ? banner.error(message) : null
-  })
-  onBeforeUnmount(() => {
-    stop()
-    if (id) dismiss(id)
-  })
-}
-
-mirrorErrorToBanner(traceData.error)
-mirrorErrorToBanner(metrics.error)
 
 function minimizeWindow() {
   window.tinadec?.minimizeWindow?.()
@@ -54,8 +39,8 @@ function closeWindow() {
 
 async function injectMessage(request: SimulateMessageRequest) {
   const response = await simulation.injectMessage(request)
-  if (response?.simulated) notify.success('Simulation message injected')
-  else notify.error(response ? 'Simulation message was rejected' : simulation.error.value ?? 'Simulation message failed')
+  if (response?.simulated) notify.success({ message: 'Simulation message injected', source: 'debug' })
+  else notify.error(response ? 'Simulation message was rejected' : simulation.error.value ?? 'Simulation message failed', { source: 'debug' })
 }
 
 async function forceApproval(request: ForceApprovalDecisionRequest) {
@@ -68,8 +53,8 @@ async function forceApproval(request: ForceApprovalDecisionRequest) {
   if (!confirmed) return
 
   const response = await simulation.forceApprovalDecision(request)
-  if (response?.simulated) notify.success(`Simulated approval ${request.decision}`)
-  else notify.error(response ? 'Approval decision was rejected' : simulation.error.value ?? 'Approval decision failed')
+  if (response?.simulated) notify.success({ message: `Simulated approval ${request.decision}`, source: 'debug' })
+  else notify.error(response ? 'Approval decision was rejected' : simulation.error.value ?? 'Approval decision failed', { source: 'debug' })
 }
 
 onMounted(() => {

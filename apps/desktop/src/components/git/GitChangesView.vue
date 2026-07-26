@@ -40,8 +40,6 @@ interface Props {
   // Git operation state (injected from parent composable)
   loading: boolean
   operationLoading: boolean
-  error: string | null
-  feedback: string | null
   statusFiles: GitStatusFile[]
   commitMessage: string
   selectedPaths: Set<string>
@@ -207,7 +205,6 @@ function requestFileHunks(path: string) {
 const sessionIdRef = computed(() => props.sessionId)
 const {
   generating: aiGenerating,
-  aiError: aiErr,
   aiSuggestion,
   canGenerate: canAiGenerate,
   generate: aiGenerate,
@@ -342,12 +339,6 @@ const sortedStatusFiles = computed(() => {
 
 <template>
   <div class="git-changes-view">
-    <!-- Error banner -->
-    <div v-if="error" class="git-changes-error">
-      <AlertTriangle :size="14" />
-      <span>{{ error }}</span>
-    </div>
-
     <!-- File changes section -->
     <div class="git-section">
       <button class="git-section-header" @click="filesExpanded = !filesExpanded">
@@ -639,10 +630,6 @@ const sortedStatusFiles = computed(() => {
             <component :is="aiGenerating ? Loader2 : Sparkles" :size="13" :class="{ spinning: aiGenerating }" />
             <span>{{ aiGenerating ? t('context.gitAiGenerating') : t('context.gitAiGenerate') }}</span>
           </button>
-          <div v-if="aiErr" class="git-ai-error">
-            <AlertTriangle :size="12" />
-            <span>{{ aiErr }}</span>
-          </div>
         </div>
 
         <CommitMessageEditor
@@ -772,11 +759,6 @@ const sortedStatusFiles = computed(() => {
       </div>
     </div>
 
-    <!-- Feedback -->
-    <div v-if="feedback" class="git-feedback">
-      <ShieldCheck :size="13" />
-      <span>{{ feedback }}</span>
-    </div>
   </div>
 </template>
 
@@ -785,18 +767,6 @@ const sortedStatusFiles = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.git-changes-error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  color: var(--text-reject, #f85149);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(248, 81, 73, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 .git-section {
@@ -1103,14 +1073,6 @@ const sortedStatusFiles = computed(() => {
   background: linear-gradient(135deg, rgba(88, 166, 255, 0.2), rgba(163, 113, 247, 0.2));
 }
 
-.git-ai-error {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-reject, #f85149);
-  font-size: 11px;
-}
-
 .git-convention-check {
   display: flex;
   align-items: center;
@@ -1185,18 +1147,6 @@ const sortedStatusFiles = computed(() => {
   font-size: 10px;
   font-weight: 700;
   color: #d29922;
-}
-
-.git-feedback {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  background: var(--bg-selected);
-  border: 1px solid var(--bg-selected-outline);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-primary);
 }
 
 .spinning {

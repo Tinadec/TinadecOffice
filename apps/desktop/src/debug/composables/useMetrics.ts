@@ -1,11 +1,13 @@
 import { ref } from 'vue'
 import type { MetricsResponse, DiagnosticsReport } from '../types/metrics'
+import { useNotifications } from '@/composables/useNotifications'
 
 /**
  * Composable for fetching metrics and diagnostics data.
  */
 export function useMetrics() {
   const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+  const { status, notify, dismissByKey } = useNotifications()
 
   const metrics = ref<MetricsResponse | null>(null)
   const diagnostics = ref<DiagnosticsReport | null>(null)
@@ -25,8 +27,10 @@ export function useMetrics() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       metrics.value = await response.json()
       error.value = null
+      dismissByKey('debug-metrics')
     } catch (e) {
       error.value = `Failed to fetch metrics: ${e}`
+      status.error({ key: 'debug-metrics', message: `Failed to fetch metrics: ${e}`, source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -40,8 +44,10 @@ export function useMetrics() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       diagnostics.value = await response.json()
       error.value = null
+      dismissByKey('debug-metrics')
     } catch (e) {
       error.value = `Failed to fetch diagnostics: ${e}`
+      status.error({ key: 'debug-metrics', message: `Failed to fetch diagnostics: ${e}`, source: 'debug' })
     } finally {
       loading.value = false
     }
@@ -57,6 +63,7 @@ export function useMetrics() {
       return result
     } catch (e) {
       error.value = `Failed to fetch process info: ${e}`
+      notify.error(`Failed to fetch process info: ${e}`, { source: 'debug' })
       return null
     }
   }

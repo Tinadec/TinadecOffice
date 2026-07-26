@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  AlertTriangle,
   CheckCircle2,
   GitBranch as GitBranchIcon,
   GitCommit,
@@ -81,7 +80,6 @@ const { t } = useI18n()
 
 // ---- State ----
 const loading = ref(false)
-const error = ref<string | null>(null)
 const filterText = ref('')
 const showCreateForm = ref(false)
 const newBranchName = ref('')
@@ -277,12 +275,6 @@ defineExpose({ refresh: refreshBranches })
             {{ t('context.gitCompareCancel') }}
           </UiButton>
         </div>
-      </div>
-
-      <!-- Error -->
-      <div v-if="error" class="git-branch-error">
-        <AlertTriangle :size="13" />
-        <span>{{ error }}</span>
       </div>
 
       <!-- Loading -->
@@ -665,18 +657,6 @@ defineExpose({ refresh: refreshBranches })
 .git-branch-execute-row {
   display: flex;
   gap: 6px;
-}
-
-.git-branch-error {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  color: var(--text-reject, #f85149);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(248, 81, 73, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 .git-branch-loading {

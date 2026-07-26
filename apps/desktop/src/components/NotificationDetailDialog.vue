@@ -18,7 +18,7 @@ import {
   type NotificationLevel,
 } from '@/composables/useNotifications'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const {
   currentConfirmation,
   detailItem,
@@ -28,6 +28,7 @@ const {
   actionStates,
 } = useNotifications()
 
+/* ── dialog / focus / confirm-mode plumbing (byte-equivalent to original) ── */
 const dialog = ref<HTMLDialogElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)
 const resolving = ref(false)
@@ -109,13 +110,16 @@ function finishConfirm(value: boolean): void {
   }, 250)
 }
 
+/* ── detail mode helpers ── */
+
 function closeDetailDialog(): void {
   closeDetail()
 }
 
+/* CHANGE 1 — dismiss gate removed: always callable when item exists */
 function dismissNotification(): void {
   const item = detailItem.value
-  if (!item?.dismissible) return
+  if (!item) return
   dismiss(item.id)
 }
 
@@ -146,6 +150,48 @@ function onBackdrop(event: MouseEvent): void {
   }
 }
 
+/* CHANGE 3 — relative time via Intl.RelativeTimeFormat (no date library, no new keys) */
+function formatRelativeTime(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000)
+  const rtf = new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' })
+  if (seconds < 60) return rtf.format(-seconds, 'second')
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return rtf.format(-minutes, 'minute')
+  const hours = Math.floor(minutes / 60)
+  return rtf.format(-hours, 'hour')
+}
+
+/* CHANGE 3 — kind-based subtitle label */
+const kindLabel = computed(() => {
+  const item = detailItem.value
+  if (!item) return ''
+  if (item.kind === 'status') return t('app.systemStatus')
+  if (item.kind === 'task') {
+    if (item.taskState === 'settled') {
+      return item.level === 'success' ? t('app.taskSucceeded') : t('app.taskFailed')
+    }
+    return t('app.taskPending')
+  }
+  return t('app.notification')
+})
+
+/* CHANGE 3 — title fallback (level-based) */
+const fallbackTitle = computed(() => {
+  const item = detailItem.value
+  if (!item) return ''
+  return item.level === 'error' ? t('app.operationFailed')
+    : item.level === 'success' ? t('app.operationCompleted')
+    : item.level === 'warning' ? t('app.warning')
+    : t('app.information')
+})
+
+/* CHANGE 2 — task pending determinate progress percentage */
+const progressPercent = computed(() => {
+  const item = detailItem.value
+  if (!item || item.kind !== 'task' || item.taskState !== 'pending' || item.progress == null) return 0
+  return Math.round(item.progress * 100)
+})
+
 onBeforeUnmount(() => {
   if (unlockTimer) clearTimeout(unlockTimer)
 })
@@ -173,7 +219,7 @@ onBeforeUnmount(() => {
       @cancel="onCancel"
       @click="onBackdrop"
     >
-      <!-- Confirmation mode -->
+      <!-- ═══ Confirmation mode (preserved exactly) ═══ -->
       <template v-if="mode === 'confirm' && currentConfirmation">
         <div class="detail-dialog__heading">
           <span class="detail-dialog__icon" aria-hidden="true">
@@ -213,21 +259,19 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <!-- Notification detail mode -->
+      <!-- ═══ Notification detail mode ═══ -->
       <template v-else-if="mode === 'detail' && detailItem">
+        <!-- heading: icon + title group + close -->
         <div class="detail-dialog__heading">
           <span class="detail-dialog__icon detail-dialog__level-icon" aria-hidden="true">
             <component :is="levelIcons[detailItem.level]" :size="20" />
           </span>
-          <h2 :id="`${detailItem.id}-title`">
-            {{ detailItem.title || (detailItem.level === 'error'
-              ? t('app.operationFailed')
-              : detailItem.level === 'success'
-                ? t('app.operationCompleted')
-                : detailItem.level === 'warning'
-                  ? t('app.warning')
-                  : t('app.information')) }}
-          </h2>
+          <div class="detail-dialog__title-group">
+            <h2 :id="`${detailItem.id}-title`">
+              {{ detailItem.title || fallbackTitle }}
+            </h2>
+            <span class="detail-dialog__kind">{{ kindLabel }}</span>
+          </div>
           <button
             type="button"
             class="detail-dialog__close"
@@ -237,13 +281,57 @@ onBeforeUnmount(() => {
             <X :size="16" aria-hidden="true" />
           </button>
         </div>
+
+        <!-- CHANGE 3 — metadata row: source, count, time, remote -->
+        <div
+          v-if="detailItem.source || (detailItem.count > 1) || detailItem.remote"
+          class="detail-dialog__meta"
+        >
+          <span v-if="detailItem.source" class="detail-dialog__chip">{{ detailItem.source }}</span>
+          <span v-if="detailItem.count > 1" class="detail-dialog__chip">{{ t('app.repeatedCount', { count: detailItem.count }) }}</span>
+          <span v-if="detailItem.remote" class="detail-dialog__chip detail-dialog__chip--remote">{{ t('app.fromOtherWindow') }}</span>
+          <span class="detail-dialog__time">{{ formatRelativeTime(detailItem.createdAt) }}</span>
+        </div>
+        <!-- show time even when no other metadata -->
+        <div v-else class="detail-dialog__meta">
+          <span class="detail-dialog__time">{{ formatRelativeTime(detailItem.createdAt) }}</span>
+        </div>
+
+        <!-- CHANGE 2 — task progress state -->
+        <div
+          v-if="detailItem.kind === 'task' && detailItem.taskState === 'pending'"
+          class="detail-dialog__progress"
+        >
+          <template v-if="detailItem.progress != null">
+            <div
+              class="detail-dialog__progress-bar"
+              role="progressbar"
+              :aria-valuenow="progressPercent"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div
+                class="detail-dialog__progress-fill"
+                :style="{ width: `${progressPercent}%` }"
+              />
+            </div>
+            <span class="detail-dialog__progress-text">{{ progressPercent }}%</span>
+          </template>
+          <template v-else>
+            <LoaderCircle :size="14" class="detail-dialog__spinner" aria-hidden="true" />
+            <span class="detail-dialog__progress-text">{{ t('app.taskPending') }}</span>
+          </template>
+        </div>
+
         <p class="detail-dialog__summary" :id="`${detailItem.id}-description`">
           {{ detailItem.message }}
         </p>
+
         <section v-if="detailItem.details" class="detail-dialog__details">
           <strong>{{ t('app.details') }}</strong>
           <p>{{ detailItem.details }}</p>
         </section>
+
         <div
           v-if="actionStates[detailItem.id]?.error"
           class="detail-dialog__error"
@@ -255,6 +343,7 @@ onBeforeUnmount(() => {
             <p>{{ actionStates[detailItem.id]?.error }}</p>
           </div>
         </div>
+
         <div class="detail-dialog__actions">
           <button
             ref="cancelButton"
@@ -264,8 +353,9 @@ onBeforeUnmount(() => {
           >
             {{ t('app.close') }}
           </button>
+          <!-- CHANGE 1 — dismiss always available; CHANGE 4 — hidden for remote -->
           <button
-            v-if="detailItem.dismissible"
+            v-if="!detailItem.remote"
             type="button"
             class="detail-dialog__dismiss"
             @click="dismissNotification"
@@ -273,8 +363,9 @@ onBeforeUnmount(() => {
             <Trash2 :size="14" aria-hidden="true" />
             {{ t('app.dismiss') }}
           </button>
+          <!-- CHANGE 4 — action hidden for remote -->
           <button
-            v-if="detailItem.action"
+            v-if="detailItem.action && !detailItem.remote"
             type="button"
             class="detail-dialog__primary"
             :disabled="actionStates[detailItem.id]?.running"
@@ -296,6 +387,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ── glass dialog ── */
 .detail-dialog {
   width: min(calc(100vw - 32px), 460px);
   margin: auto;
@@ -316,10 +408,26 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(10px) saturate(80%);
 }
 
+/* ── level theming ── */
+.detail-dialog--destructive,
+.detail-dialog--error { --dialog-level: var(--accent-danger, #f85149); }
+.detail-dialog--success { --dialog-level: var(--accent-success, #2ec4b6); }
+.detail-dialog--warning { --dialog-level: var(--accent-warning, #d29922); }
+.detail-dialog--info { --dialog-level: var(--accent-primary, #2ec4b6); }
+
+/* ── heading ── */
 .detail-dialog__heading {
   display: flex;
   align-items: center;
   gap: 9px;
+}
+
+.detail-dialog__title-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .detail-dialog__icon {
@@ -333,21 +441,102 @@ onBeforeUnmount(() => {
   color: var(--dialog-level, var(--accent-primary, #2ec4b6));
 }
 
-.detail-dialog--destructive,
-.detail-dialog--error { --dialog-level: var(--accent-danger, #f85149); }
-.detail-dialog--success { --dialog-level: var(--accent-success, #2ec4b6); }
-.detail-dialog--warning { --dialog-level: var(--accent-warning, #d29922); }
-.detail-dialog--info { --dialog-level: var(--accent-primary, #2ec4b6); }
-
 .detail-dialog h2 {
   margin: 0;
-  flex: 1;
-  min-width: 0;
   font-size: 15px;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
+.detail-dialog__kind {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-secondary, #7d8590);
+}
+
+.detail-dialog__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, #7d8590);
+  cursor: pointer;
+}
+
+.detail-dialog__close:hover {
+  background: var(--bg-hover, #161b22);
+  color: var(--text-primary, #c9d1d9);
+}
+
+/* ── metadata row ── */
+.detail-dialog__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.detail-dialog__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dialog-level, var(--accent-primary, #2ec4b6)) 10%, transparent);
+  color: var(--text-secondary, #7d8590);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.detail-dialog__chip--remote {
+  background: color-mix(in srgb, var(--accent-warning, #d29922) 12%, transparent);
+  color: var(--accent-warning, #d29922);
+}
+
+.detail-dialog__time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary, #7d8590);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* ── task progress ── */
+.detail-dialog__progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.detail-dialog__progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-secondary, #11151c);
+  overflow: hidden;
+}
+
+.detail-dialog__progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dialog-level, var(--accent-primary, #2ec4b6));
+  transition: width 300ms ease;
+}
+
+.detail-dialog__progress-text {
+  flex: none;
+  min-width: 32px;
+  font-size: 11px;
+  color: var(--text-secondary, #7d8590);
+  text-align: right;
+}
+
+/* ── body sections ── */
 .detail-dialog__summary {
   margin: 14px 0 16px;
   color: var(--text-secondary, #7d8590);
@@ -396,23 +585,7 @@ onBeforeUnmount(() => {
 .detail-dialog__error svg { flex: none; margin-top: 1px; }
 .detail-dialog__error strong { display: block; margin-bottom: 3px; font-size: 11px; }
 
-.detail-dialog__close {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary, #7d8590);
-  cursor: pointer;
-}
-
-.detail-dialog__close:hover {
-  background: var(--bg-hover, #161b22);
-  color: var(--text-primary, #c9d1d9);
-}
-
+/* ── actions ── */
 .detail-dialog__actions {
   display: flex;
   justify-content: flex-end;
@@ -457,6 +630,7 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+/* ── spinner ── */
 .detail-dialog__spinner {
   animation: detail-dialog-spin 800ms linear infinite;
 }
@@ -465,6 +639,7 @@ onBeforeUnmount(() => {
   to { transform: rotate(360deg); }
 }
 
+/* ── focus / disabled ── */
 .detail-dialog button:focus-visible {
   outline: 2px solid var(--accent-primary, #2ec4b6);
   outline-offset: 2px;
@@ -475,7 +650,9 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+/* ── motion ── */
 @media (prefers-reduced-motion: reduce) {
   .detail-dialog__spinner { animation: none; }
+  .detail-dialog__progress-fill { transition: none; }
 }
 </style>

@@ -9,6 +9,7 @@ import {
 import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 type SearchMode = 'files' | 'content'
 
@@ -35,12 +36,13 @@ const emit = defineEmits<{
   select: [path: string]
 }>()
 
+const { notify } = useNotifications()
+
 const mode = ref<SearchMode>('files')
 const query = ref('')
 const caseSensitive = ref(false)
 const useRegex = ref(false)
 const searching = ref(false)
-const error = ref<string | null>(null)
 
 const fileResults = ref<GlobMatch[]>([])
 const grepResults = ref<GrepMatch[]>([])
@@ -54,7 +56,6 @@ async function runSearch(): Promise<void> {
   if (!q) return
 
   searching.value = true
-  error.value = null
   try {
     if (mode.value === 'files') {
       const result = await api.globSearch(props.cwd, q)
@@ -70,7 +71,7 @@ async function runSearch(): Promise<void> {
       grepResults.value = Array.isArray(data?.matches) ? data.matches : []
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Search failed'
+    notify.error(err, { title: 'Search failed', source: 'code', key: 'code-search' })
   } finally {
     searching.value = false
   }
@@ -82,7 +83,6 @@ function handleSelect(path: string): void {
 
 function switchMode(newMode: SearchMode): void {
   mode.value = newMode
-  error.value = null
 }
 
 function highlightText(text: string, pattern: string): { text: string; match: boolean }[] {
@@ -167,8 +167,6 @@ function escapeRegex(s: string): string {
         <Regex :size="13" />
       </UiButton>
     </div>
-
-    <div v-if="error" class="px-3 py-2 text-xs text-destructive">{{ error }}</div>
 
     <UiScrollArea class="flex-1">
       <div class="search-results">

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { AlertTriangle, FolderTree, GitBranch, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { FolderTree, GitBranch, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
+import { useNotifications } from '@/composables/useNotifications'
 import { UiBadge, UiButton } from '@/components/ui'
 
 interface Worktree {
@@ -30,14 +31,13 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 const worktrees = ref<Worktree[]>([])
 const loading = ref(false)
-const error = ref<string | null>(null)
 const showCreateForm = ref(false)
 const newBranch = ref('')
 const newPath = ref('')
-const blockedNotice = ref<string | null>(null)
 
 const normalized = computed<Worktree[]>(() => {
   return worktrees.value.map((entry) => {
@@ -57,22 +57,20 @@ const normalized = computed<Worktree[]>(() => {
 async function loadWorktrees() {
   if (!props.cwd) return
   loading.value = true
-  error.value = null
-  blockedNotice.value = null
   try {
     const res = await api.executeCodeTool('git_worktree_manager', {
       cwd: props.cwd,
       arguments: { action: 'worktrees' }
     })
     if (res.status === 'blocked') {
-      blockedNotice.value = res.summary || t('context.gitWorktreeNeedsApproval')
+      notify.warning({ message: res.summary || t('context.gitWorktreeNeedsApproval'), source: 'git' })
     }
     const data = (res.data ?? {}) as { worktrees?: unknown }
     worktrees.value = Array.isArray(data.worktrees)
       ? (data.worktrees as Worktree[]).map((item) => normalizeWorktree(item))
       : []
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+    notify.error(err, { title: t('context.gitLoadFailed'), source: 'git', key: 'git-worktree-load' })
   } finally {
     loading.value = false
   }
@@ -157,14 +155,8 @@ watch(newBranch, (value) => {
       </div>
     </div>
 
-    <div v-if="error" class="worktree-manager-error">{{ error }}</div>
-    <div v-else-if="loading && worktrees.length === 0" class="worktree-manager-empty">
+    <div v-if="loading && worktrees.length === 0" class="worktree-manager-empty">
       {{ t('context.loadingGitPlan') }}
-    </div>
-
-    <div v-if="blockedNotice" class="worktree-manager-notice">
-      <AlertTriangle :size="13" />
-      <span>{{ blockedNotice }}</span>
     </div>
 
     <div v-if="showCreateForm" class="worktree-manager-form">
@@ -239,7 +231,7 @@ watch(newBranch, (value) => {
       </div>
     </div>
 
-    <div v-else-if="!loading && !error" class="worktree-manager-empty">
+    <div v-else-if="!loading" class="worktree-manager-empty">
       {{ t('context.gitWorktreeEmpty') }}
     </div>
   </section>
@@ -271,27 +263,6 @@ watch(newBranch, (value) => {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.worktree-manager-error {
-  padding: 8px 10px;
-  color: var(--text-reject, #f85149);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(248, 81, 73, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.worktree-manager-notice {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  color: var(--text-secondary);
-  background: var(--bg-status-warn);
-  border: 1px solid rgba(210, 153, 34, 0.25);
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 .worktree-manager-empty {

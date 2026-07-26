@@ -28,7 +28,7 @@ import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
 const router = useRouter()
-const { notify, banner, confirm, dismissByKey } = useNotifications()
+const { notify, status, confirm, dismissByKey } = useNotifications()
 
 const BUILT_IN_SOURCES = [
   {
@@ -149,7 +149,7 @@ async function run(label: string, action: () => Promise<void>) {
   try {
     await action()
   } catch (err) {
-    notify.error(err, { title: `${label} failed` })
+    notify.error(err, { title: `${label} failed`, source: 'market' })
   } finally {
     busy.value = false
   }
@@ -196,12 +196,13 @@ async function loadAll() {
     await loadCatalog()
     dismissByKey('market-load')
   } catch (err) {
-    banner.error({
+    status.error({
       key: 'market-load',
       title: t('market.loadFailed'),
       message: t('app.loadFailedMessage'),
       details: err instanceof Error ? err.message : t('market.loadFailed'),
-      action: { label: t('app.retry'), run: () => loadAll() },
+      source: 'market',
+      action: { label: t('app.retry'), run: loadAll }
     })
   } finally {
     loading.value = false
@@ -220,11 +221,13 @@ async function loadCatalog() {
     }
     dismissByKey('market-catalog')
   } catch (err) {
-    banner.error({
+    status.error({
       key: 'market-catalog',
       title: t('market.loadFailed'),
       message: t('app.loadFailedMessage'),
       details: err instanceof Error ? err.message : t('market.loadFailed'),
+      source: 'market',
+      action: { label: t('app.retry'), run: loadCatalog }
     })
   }
 }
@@ -237,7 +240,7 @@ async function loadPreview() {
   try {
     preview.value = await api.previewExtensionInstall({ catalog_id: selectedItem.value.catalog_id })
   } catch (err) {
-    notify.error(err, { title: t('market.loadFailed') })
+    notify.error(err, { title: t('market.loadFailed'), source: 'market' })
   }
 }
 
@@ -251,7 +254,7 @@ async function addSource() {
     })
     sourceForm.location = ''
     await loadAll()
-    notify.success('Source added.')
+    notify.success({ message: 'Source added.', source: 'market' })
   })
 }
 
@@ -259,7 +262,7 @@ async function refreshSource(sourceId: string) {
   await run('refresh source', async () => {
     await api.refreshExtensionSource(sourceId)
     await loadAll()
-    notify.success('Source refreshed.')
+    notify.success({ message: 'Source refreshed.', source: 'market' })
   })
 }
 
@@ -289,7 +292,7 @@ async function approveAndInstallCatalog() {
         }
       }
     }
-    notify.success(installedExtension.status_message || `${item.display_name} installed.`)
+    notify.success({ message: installedExtension.status_message || `${item.display_name} installed.`, source: 'market' })
   })
 }
 
@@ -322,7 +325,7 @@ async function approveAndInstallDirect() {
     }
     directPreview.value = null
     await loadAll()
-    notify.success(installedExtension.status_message || `${first.preview.display_name} installed.`)
+    notify.success({ message: installedExtension.status_message || `${first.preview.display_name} installed.`, source: 'market' })
   })
 }
 
@@ -336,7 +339,7 @@ async function toggleExtension(extension: InstalledExtensionDto) {
     }
     await loadAll()
     await loadPreview()
-    notify.success(updated.status_message)
+    notify.success({ message: updated.status_message, source: 'market' })
   })
 }
 
@@ -352,7 +355,7 @@ async function removeExtension(extension: InstalledExtensionDto) {
     await api.deleteExtension(extension.id)
     await loadAll()
     await loadPreview()
-    notify.success(`${extension.display_name} removed.`)
+    notify.success({ message: `${extension.display_name} removed.`, source: 'market' })
   })
 }
 

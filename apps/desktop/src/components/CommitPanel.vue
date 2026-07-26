@@ -12,9 +12,11 @@ import {
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api'
+import { useNotifications } from '../composables/useNotifications'
 import CommitMessageEditor from './git/CommitMessageEditor.vue'
 
 const { t } = useI18n()
+const { notify } = useNotifications()
 
 interface GitStatusFile {
   path: string
@@ -57,8 +59,6 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const operationLoading = ref(false)
-const error = ref<string | null>(null)
-const feedback = ref<string | null>(null)
 const commitMessage = ref('')
 const selectedPaths = ref<Set<string>>(new Set())
 const preview = ref<CodeToolExecuteResultDto | null>(null)
@@ -100,13 +100,10 @@ async function loadGit() {
     preview.value = null
     pushPlan.value = null
     selectedPaths.value = new Set()
-    error.value = null
     return
   }
 
   loading.value = true
-  error.value = null
-  feedback.value = null
   try {
     const [nextPreview, nextPushPlan] = await Promise.all([
       api.executeCodeTool('git_worktree_manager', {
@@ -122,7 +119,7 @@ async function loadGit() {
     pushPlan.value = nextPushPlan
     syncSelection()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t('context.gitLoadFailed')
+    notify.error(err instanceof Error ? err : t('context.gitLoadFailed'), { source: 'git' })
   } finally {
     loading.value = false
   }
@@ -157,7 +154,6 @@ function toggleSelectAll() {
 async function requestCommitApproval() {
   if (!props.currentProjectPath || !props.selectedSessionId || !canRequestCommitApproval.value) return
   operationLoading.value = true
-  feedback.value = null
   try {
     const paths = selectedCommitPaths.value
     const approval = await api.createApproval({
@@ -168,10 +164,10 @@ async function requestCommitApproval() {
       cwd: props.currentProjectPath,
     })
     commitApprovalId.value = approval.id
-    feedback.value = t('context.gitCommitApprovalRequested')
+    notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
     emit('approval-created', approval)
   } catch (err) {
-    feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+    notify.error(err instanceof Error ? err : t('context.gitApprovalRequestFailed'), { source: 'git' })
   } finally {
     operationLoading.value = false
   }
@@ -180,7 +176,6 @@ async function requestCommitApproval() {
 async function executeApprovedCommit() {
   if (!props.currentProjectPath || !props.selectedSessionId || !commitApproval.value || commitApproval.value.status !== 'approved') return
   operationLoading.value = true
-  feedback.value = null
   try {
     const result = await api.executeCodeTool('git_commit', {
       session_id: props.selectedSessionId,
@@ -192,12 +187,16 @@ async function executeApprovedCommit() {
         message: commitMessage.value.trim(),
       },
     })
-    feedback.value = result.summary
+    if (result.status !== 'completed') {
+      notify.warning({ message: result.summary, source: 'git' })
+    } else {
+      notify.success({ message: result.summary, source: 'git' })
+    }
     commitMessage.value = ''
     commitApprovalId.value = null
     await loadGit()
   } catch (err) {
-    feedback.value = err instanceof Error ? err.message : t('context.gitCommitFailed')
+    notify.error(err instanceof Error ? err : t('context.gitCommitFailed'), { source: 'git' })
   } finally {
     operationLoading.value = false
   }
@@ -206,7 +205,6 @@ async function executeApprovedCommit() {
 async function requestPushApproval() {
   if (!props.currentProjectPath || !props.selectedSessionId || !canRequestPushApproval.value) return
   operationLoading.value = true
-  feedback.value = null
   try {
     const branch = pushData.value.branch ?? 'HEAD'
     const upstream = pushData.value.upstream ?? 'origin'
@@ -219,10 +217,10 @@ async function requestPushApproval() {
       cwd: props.currentProjectPath,
     })
     pushApprovalId.value = approval.id
-    feedback.value = t('context.gitApprovalRequested')
+    notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
     emit('approval-created', approval)
   } catch (err) {
-    feedback.value = err instanceof Error ? err.message : t('context.gitApprovalRequestFailed')
+    notify.error(err instanceof Error ? err : t('context.gitApprovalRequestFailed'), { source: 'git' })
   } finally {
     operationLoading.value = false
   }
@@ -231,7 +229,6 @@ async function requestPushApproval() {
 async function executeApprovedPush() {
   if (!props.currentProjectPath || !props.selectedSessionId || !pushApproval.value || pushApproval.value.status !== 'approved') return
   operationLoading.value = true
-  feedback.value = null
   try {
     const result = await api.executeCodeTool('git_worktree_manager', {
       session_id: props.selectedSessionId,
@@ -244,11 +241,15 @@ async function executeApprovedPush() {
         remote: 'origin',
       },
     })
-    feedback.value = result.summary
+    if (result.status !== 'completed') {
+      notify.warning({ message: result.summary, source: 'git' })
+    } else {
+      notify.success({ message: result.summary, source: 'git' })
+    }
     pushApprovalId.value = null
     await loadGit()
   } catch (err) {
-    feedback.value = err instanceof Error ? err.message : t('context.gitPushFailed')
+    notify.error(err instanceof Error ? err : t('context.gitPushFailed'), { source: 'git' })
   } finally {
     operationLoading.value = false
   }
@@ -293,10 +294,6 @@ watch(() => props.currentProjectPath, () => {
     </div>
     <div v-else-if="loading" class="commit-empty">
       <span>{{ t('context.loadingGitPlan') }}</span>
-    </div>
-    <div v-else-if="error" class="commit-state risky">
-      <AlertTriangle :size="15" />
-      <span>{{ error }}</span>
     </div>
 
     <template v-else>
@@ -417,11 +414,6 @@ watch(() => props.currentProjectPath, () => {
         </div>
       </div>
 
-      <div v-if="feedback" class="commit-feedback">
-        <ShieldCheck :size="14" />
-        <span>{{ feedback }}</span>
-      </div>
-
       <div class="commit-disclaimer">
         <ShieldCheck :size="14" />
         <span>{{ t('context.gitPlanApproval') }}</span>
@@ -451,20 +443,6 @@ watch(() => props.currentProjectPath, () => {
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
-}
-
-.commit-state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 8px;
-  font-size: 12px;
-}
-
-.commit-state.risky {
-  color: var(--text-error, #f85149);
-  background: var(--bg-error, rgba(248, 81, 73, 0.1));
 }
 
 .commit-branch-bar {
@@ -659,18 +637,6 @@ watch(() => props.currentProjectPath, () => {
   border-radius: 4px;
   font-size: 10px;
   color: var(--text-muted);
-}
-
-.commit-feedback {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  background: var(--bg-selected);
-  border: 1px solid var(--bg-selected-outline);
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--text-primary);
 }
 
 .commit-disclaimer {

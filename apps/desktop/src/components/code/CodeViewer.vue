@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton, UiSkeleton } from '@/components/ui'
+import { useNotifications } from '@/composables/useNotifications'
 
 const props = defineProps<{
   cwd: string
@@ -15,10 +16,10 @@ const emit = defineEmits<{
 }>()
 
 const { getMonaco, isDark } = useMonaco()
+const { notify } = useNotifications()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
-const error = ref<string | null>(null)
 const content = ref('')
 const fileSize = ref<number | null>(null)
 const modifiedAt = ref<string | null>(null)
@@ -47,7 +48,6 @@ function formatDate(iso: string | null): string {
 async function loadFile(): Promise<void> {
   if (!props.filePath) return
   loading.value = true
-  error.value = null
   try {
     const result = await api.codeEditorOpen(props.cwd, props.filePath)
     const data = result.data as {
@@ -60,7 +60,7 @@ async function loadFile(): Promise<void> {
     modifiedAt.value = typeof data.modified_at === 'string' ? data.modified_at : null
     await renderEditor()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load file'
+    notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-file-load' })
   } finally {
     loading.value = false
   }
@@ -145,8 +145,6 @@ watch(language, (lang) => {
         </UiButton>
       </div>
     </div>
-
-    <div v-if="error" class="px-3 py-2 text-sm text-destructive">{{ error }}</div>
 
     <div class="relative flex-1">
       <div v-if="loading" class="absolute inset-0 z-10 flex flex-col gap-2 p-4">

@@ -10,6 +10,7 @@ import {
   type BackgroundType,
   DEFAULT_BACKGROUND_SETTINGS,
 } from '../types/background'
+import { useNotifications } from '@/composables/useNotifications'
 
 // Storage key for background settings
 const STORAGE_KEY = 'tinadec-background'
@@ -79,6 +80,7 @@ async function selectBackgroundFile(type: BackgroundType): Promise<string | null
   const tinadec = (window as any).tinadec
   if (!tinadec?.selectBackgroundFile) {
     console.warn('Electron file dialog API not available')
+    useNotifications().notify.error('Electron file dialog API not available', { title: 'Background file selection unavailable', source: 'settings' })
     return null
   }
 
@@ -87,6 +89,7 @@ async function selectBackgroundFile(type: BackgroundType): Promise<string | null
     return result || null
   } catch (error) {
     console.error('Failed to select background file:', error)
+    useNotifications().notify.error(error, { title: 'Failed to select background file', source: 'settings' })
     return null
   }
 }

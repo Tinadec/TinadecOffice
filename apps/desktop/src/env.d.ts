@@ -57,6 +57,10 @@ interface ThemeChangedData {
   accentColor: string;
 }
 
+type StatusBroadcast =
+  | { op: 'raise'; key: string; level: 'info' | 'success' | 'warning' | 'error'; title?: string; message: string; details?: string; source?: string; createdAt: number }
+  | { op: 'clear'; key: string };
+
 interface ShellProfile {
   id: string;
   label: string;
@@ -176,6 +180,10 @@ declare global {
       getMainBounds: () => Promise<WindowBounds | null>;
       /** Broadcast theme change to all panel windows */
       broadcastTheme: (theme: string, accentColor: string) => void;
+      /** Broadcast a status notification to all windows (main, panels, debug studio) */
+      broadcastStatusNotification: (payload: StatusBroadcast) => void;
+      /** Listen for status notification broadcasts from any window */
+      onStatusNotification: (callback: (payload: StatusBroadcast) => void) => () => void;
       /** Listen for panel detached events (main window side) */
       onPanelDetached: (callback: (data: PanelDetachedData) => void) => () => void;
       /** Listen for panel reattach events (main window side) */

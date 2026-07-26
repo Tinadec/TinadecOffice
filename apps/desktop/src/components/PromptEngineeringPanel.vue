@@ -24,7 +24,7 @@ import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
-const { notify, confirm } = useNotifications()
+const { notify, status, confirm, dismissByKey } = useNotifications()
 
 const fragments = ref<PromptFragmentDto[]>([])
 const effectivenessList = ref<PromptFragmentEffectivenessDto[]>([])
@@ -33,7 +33,6 @@ const versions = ref<PromptFragmentVersionDto[]>([])
 const effectiveness = ref<PromptFragmentEffectivenessDto | null>(null)
 const loading = ref(false)
 const busy = ref(false)
-const error = ref<string | null>(null)
 
 // New version form
 const showNewVersion = ref(false)
@@ -83,7 +82,6 @@ function formatDate(iso: string): string {
 
 async function loadAll() {
   loading.value = true
-  error.value = null
   try {
     const [fragmentList, effList] = await Promise.all([
       api.listPromptFragments(),
@@ -94,8 +92,15 @@ async function loadAll() {
     if (!selectedFragmentId.value && fragmentList.length > 0) {
       await selectFragment(fragmentList[0])
     }
+    dismissByKey('prompts')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    status.error({
+      key: 'prompts',
+      title: t('app.loadFailed'),
+      message: err instanceof Error ? err.message : String(err),
+      source: 'prompts',
+      action: { label: t('app.retry'), run: loadAll }
+    })
   } finally {
     loading.value = false
   }
@@ -103,7 +108,6 @@ async function loadAll() {
 
 async function selectFragment(fragment: PromptFragmentDto) {
   const fragmentId = fragment.id
-  error.value = null
   selectedFragmentId.value = fragmentId
   versions.value = []
   effectiveness.value = null
@@ -125,7 +129,7 @@ async function selectFragment(fragment: PromptFragmentDto) {
     }
   } catch (err) {
     if (selectedFragmentId.value === fragmentId) {
-      error.value = err instanceof Error ? err.message : String(err)
+      notify.error(err, { title: 'Could not load fragment details', source: 'prompts' })
     }
   }
 }
@@ -151,9 +155,9 @@ async function createVersion() {
     })
     showNewVersion.value = false
     await selectFragment(selectedFragment.value)
-    notify.success('Prompt version created.')
+    notify.success({ message: 'Prompt version created.', source: 'prompts' })
   } catch (err) {
-    notify.error(err, { title: 'Could not create prompt version' })
+    notify.error(err, { title: 'Could not create prompt version', source: 'prompts' })
   } finally {
     busy.value = false
   }
@@ -176,9 +180,9 @@ async function rollbackVersion(targetVersion: number) {
     const idx = fragments.value.findIndex((f) => f.id === updated.id)
     if (idx >= 0) fragments.value[idx] = updated
     await selectFragment(updated)
-    notify.success(`Rolled back to v${targetVersion}.`)
+    notify.success({ message: `Rolled back to v${targetVersion}.`, source: 'prompts' })
   } catch (err) {
-    notify.error(err, { title: `Could not roll back to v${targetVersion}` })
+    notify.error(err, { title: `Could not roll back to v${targetVersion}`, source: 'prompts' })
   } finally {
     busy.value = false
   }
@@ -198,9 +202,9 @@ async function recordSignal(signal: 'positive' | 'negative') {
     signalNote.value = ''
     // Refresh the global effectiveness list too
     effectivenessList.value = await api.listAllPromptFragmentEffectiveness().catch(() => effectivenessList.value)
-    notify.success(`${signal === 'positive' ? 'Positive' : 'Negative'} signal recorded.`)
+    notify.success({ message: `${signal === 'positive' ? 'Positive' : 'Negative'} signal recorded.`, source: 'prompts' })
   } catch (err) {
-    notify.error(err, { title: 'Could not record signal' })
+    notify.error(err, { title: 'Could not record signal', source: 'prompts' })
   } finally {
     busy.value = false
   }
@@ -218,7 +222,7 @@ async function compareVersions() {
       compareResult.value = result
     }
   } catch (err) {
-    notify.error(err, { title: 'Could not compare prompt versions' })
+    notify.error(err, { title: 'Could not compare prompt versions', source: 'prompts' })
   } finally {
     busy.value = false
   }
@@ -240,10 +244,6 @@ onMounted(() => {
         <RefreshCw :size="14" />
         <span>Refresh</span>
       </UiButton>
-    </div>
-
-    <div v-if="error" class="pe-error">
-      <span>{{ error }}</span>
     </div>
 
     <div class="pe-layout">
@@ -597,14 +597,6 @@ onMounted(() => {
 .pe-header p {
   margin: 0;
   color: var(--text-muted, #888);
-  font-size: 13px;
-}
-.pe-error {
-  padding: 8px 12px;
-  background: rgba(255, 99, 99, 0.1);
-  border: 1px solid rgba(255, 99, 99, 0.3);
-  border-radius: 6px;
-  color: var(--accent-danger, #ff6363);
   font-size: 13px;
 }
 .pe-layout {
