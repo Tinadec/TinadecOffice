@@ -4,7 +4,7 @@
  * 本地模式：跳过认证，不提取租户上下文。
  * 云端模式：
  *   - 从 Authorization 头提取 Bearer token 或 API Key
- *   - 验证 JWT 或 API Key
+ *   - 验证 JWT (HS256 WebCrypto) 或 API Key
  *   - 从 JWT claims 或自定义头提取租户 ID (X-Tenant-Id)
  *   - 将租户上下文注入到代理请求头中
  *
@@ -41,18 +41,16 @@ export function isPublicPath(path: string): boolean {
 /**
  * 验证请求的认证信息，返回认证上下文。
  * 在本地模式下始终返回 authenticated: true。
+ * 云端模式下使用 WebCrypto 验证 JWT HS256 签名。
  */
-export function authenticate(
+export async function authenticate(
   headers: Headers,
   authConfig?: AuthConfig,
-): AuthResult {
+): Promise<AuthResult> {
   // 本地模式：跳过认证
   if (!authConfig) {
     return { ok: true, context: { authenticated: true } };
   }
-
-  // 公共路径：跳过认证
-  // 注意：路径检查在调用方处理，这里只做 token 验证
 
   const authHeader = headers.get('authorization') ?? '';
   const apiKey = headers.get('x-api-key') ?? '';
@@ -77,7 +75,7 @@ export function authenticate(
   // 尝试 Bearer token 认证
   if (authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7).trim();
-    const decoded = verifyJwt(token, authConfig.jwtSecret);
+    const decoded = await verifyJwt(token, authConfig.jwtSecret);
     if (decoded) {
       return {
         ok: true,
@@ -113,29 +111,35 @@ export function authenticate(
   };
 }
 
+interface JwtHeader {
+  alg: string;
+  typ?: string;
+}
+
 interface JwtPayload {
   sub?: string;
   user_id?: string;
   tenant_id?: string;
   roles?: string[];
   exp?: number;
+  nbf?: number;
 }
 
 /**
- * 简单的 JWT 验证（HS256）。
- * Bun 原生支持 WebCrypto API。
+ * 验证 JWT (HS256) 签名和声明。
+ * 使用 Bun 原生 WebCrypto API 进行 HMAC-SHA256 签名验证。
+ * 无密钥时拒绝 Bearer token（云端模式 fail-closed）。
  */
-function verifyJwt(token: string, secret?: string): JwtPayload | null {
-  if (!secret) {
-    // 无密钥配置时，尝试解码但不验证签名（仅用于开发环境）
-    return decodeJwtPayload(token);
-  }
-
+async function verifyJwt(token: string, secret?: string): Promise<JwtPayload | null> {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
+  // 解析并验证 header：必须是 HS256
+  const header = parseJwtHeader(parts[0]!);
+  if (!header || header.alg !== 'HS256') return null;
+
   try {
-    const payload = decodeJwtPayload(token);
+    const payload = decodeJwtPayload(parts[1]!);
     if (!payload) return null;
 
     // 检查过期时间
@@ -143,22 +147,73 @@ function verifyJwt(token: string, secret?: string): JwtPayload | null {
       return null;
     }
 
-    // TODO: 使用 WebCrypto API 验证 HS256 签名
-    // 当前仅做 payload 解码和过期检查，签名验证在后续迭代中补全
+    // 检查生效时间
+    if (payload.nbf && payload.nbf > Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+
+    // 无密钥时拒绝 token（fail-closed for cloud mode）
+    if (!secret) return null;
+
+    // WebCrypto HMAC-SHA256 签名验证
+    const encoder = new TextEncoder();
+    const secretBytes = encoder.encode(secret);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      secretBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+
+    const data = encoder.encode(`${parts[0]}.${parts[1]}`);
+    const signatureBytes = base64urlDecode(parts[2]!);
+    const valid = await crypto.subtle.verify('HMAC', key, signatureBytes, data);
+    if (!valid) return null;
+
     return payload;
   } catch {
     return null;
   }
 }
 
-function decodeJwtPayload(token: string): JwtPayload | null {
+function parseJwtHeader(headerSegment: string): JwtHeader | null {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = parts[1]!;
-    // Base64url → Base64 → JSON
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const json = atob(base64);
+    const json = decodeSegment(headerSegment);
+    const parsed = JSON.parse(json) as JwtHeader;
+    if (!parsed.alg) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Base64url 解码：补齐 padding，安全解码为 Uint8Array。
+ */
+function base64urlDecode(segment: string): Uint8Array {
+  let base64 = segment.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base64.length % 4;
+  if (pad === 2) base64 += '==';
+  else if (pad === 3) base64 += '=';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * 解码 JWT segment 为 UTF-8 字符串。
+ * 使用 Uint8Array + TextDecoder 避免 atob 的 Latin-1 问题。
+ */
+function decodeSegment(segment: string): string {
+  const bytes = base64urlDecode(segment);
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeJwtPayload(payloadSegment: string): JwtPayload | null {
+  try {
+    const json = decodeSegment(payloadSegment);
     return JSON.parse(json) as JwtPayload;
   } catch {
     return null;
@@ -212,3 +267,6 @@ export function getClientIp(headers: Headers, trustProxy: boolean): string {
   }
   return '127.0.0.1';
 }
+
+// --- Exported for testing ---
+export { verifyJwt, base64urlDecode };

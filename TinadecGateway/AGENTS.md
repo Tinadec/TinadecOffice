@@ -41,7 +41,7 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 | 服务器路由 | `src/index.ts` | Elysia app，CORS，认证中间件，`/api/v1/*`，WebSocket，流式 |
 | Core 代理 | `src/coreClient.ts` | `coreUrl()`，JSON 代理，SSE 代理，流式代理 |
 | Tool Runtime 代理 | `src/toolRuntimeClient.ts` | `toolRuntimeUrl()`，JSON 代理，SSE 代理，流式代理 |
-| 认证中间件 | `src/auth.ts` | API Key / JWT 验证，租户上下文，反向代理头 |
+| 认证中间件 | `src/auth.ts` | API Key / JWT HS256 验签（WebCrypto），租户上下文，反向代理头 |
 | 审批拦截器 | `src/approval.ts` | 人类操作 approval=true 透传，高风险命令二次确认 |
 | WebSocket 代理 | `src/websocket.ts` | 路由表，目标 URL 构建，消息透传 |
 | 流式 HTTP 代理 | `src/streaming.ts` | 大文件/日志流式透传 |
@@ -96,6 +96,21 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 - `GET /api/v1/model-center/overview` 和 `GET /api/v1/agent-center/overview` 是无状态 BFF 聚合视图
 - 必须递归剥离 API Key 和其他密钥字段
 - 不持久化或发明第二真相源
+
+### JWT 认证（云端模式）
+- `authenticate()` 是 **async**，`index.ts` 的 `onRequest` 中间件必须 `await` 它
+- 使用 Bun 原生 WebCrypto 做 HMAC-SHA256 验签，**不引入 JWT 库依赖**
+- 强制 `alg === 'HS256'`；`alg: none` 与其他算法一律拒绝（算法混淆防护）
+- **Fail-closed**：云端模式下未配置 `jwtSecret` 时，Bearer token 一律拒绝，
+  绝不退化为「仅解码不验签」。这条是安全边界，不要为了开发便利放宽
+- base64url 解码必须补齐 padding，并用 `Uint8Array` + `TextDecoder` 而非裸 `atob`
+- 本地模式（`authConfig === undefined`）完全跳过认证，不得因云端逻辑变更而回归
+- 不加 JWKS、密钥轮换、token 缓存：Gateway 是无状态薄代理
+
+### WS 代理现状（已知缺陷）
+`index.ts` 的三个 WS 路由（`/ws/terminal`、`/ws/debug`、`/ws/collaboration`）目前都是无效桩：
+它们订阅 Bun pub/sub topic 却从不连接目标服务。`websocket.ts` 的 `createWsProxyHandlers`
+实现了真正的双向代理但无人调用。启用任何 WS 功能前必须先修这里。
 
 ## DELETED FILES
 以下文件已删除，功能已迁移：

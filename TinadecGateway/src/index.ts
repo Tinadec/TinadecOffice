@@ -138,12 +138,12 @@ const app = new Elysia()
     Object.assign(set.headers, corsHeaders);
   })
   // --- 认证中间件（云端模式） ---
-  .onRequest(({ request, set }) => {
+  .onRequest(async ({ request, set }) => {
     if (config.mode === 'local') return;
     const path = new URL(request.url).pathname;
     if (isPublicPath(path)) return;
 
-    const authResult = authenticate(request.headers, config.auth);
+    const authResult = await authenticate(request.headers, config.auth);
     if (!authResult.ok) {
       setStatus(set, 401);
       return {

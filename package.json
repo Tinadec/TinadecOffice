@@ -11,6 +11,7 @@
     "dev:core": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731\"",
     "dev:gateway": "cd TinadecGateway && bun run dev",
     "dev:desktop": "npm run dev -w @tinadec/desktop",
+    "dev:web": "npm run dev -w @tinadec/web",
     "build": "npm run build --workspaces --if-present && cd TinadecGateway && bun run build && powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet build TinadecOffice.slnx --no-restore\"",
     "test": "npm run test --workspaces --if-present && cd TinadecGateway && bun test && powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet test TinadecOffice.slnx --no-build\"",
     "restore:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet restore TinadecCore/TinadecCore.slnx && dotnet restore TinadecOffice.slnx\"",
