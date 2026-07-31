@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  __resetNotificationsForTests,
+  isUserDismissible,
   resolveConfirmation,
   setNotificationFallbackText,
   applyStatusBroadcast,
   useNotifications,
+  type NotificationItem,
 } from './useNotifications'
 
 const n = useNotifications()
@@ -11,18 +14,19 @@ const n = useNotifications()
 beforeEach(() => vi.useFakeTimers())
 
 afterEach(() => {
-  n.dismissAll()
+  __resetNotificationsForTests()
   while (n.currentConfirmation.value) {
     resolveConfirmation(n.currentConfirmation.value.id, false)
   }
-  n.closeDetail()
-  n.closeOpen()
-  n.closeOverflow()
-  n.setHovered(null)
-  n.history.value = []
   setNotificationFallbackText('An unknown error occurred')
   vi.useRealTimers()
 })
+
+function byId(id: string): NotificationItem {
+  const item = n.items.value.find((candidate) => candidate.id === id)
+  if (!item) throw new Error(`notification ${id} not found`)
+  return item
+}
 
 // ---------------------------------------------------------------------------
 // Ported from old file (adapted to new API)
@@ -168,6 +172,80 @@ describe('useNotifications', () => {
 
   it('banner is an alias for status', () => {
     expect(n.banner).toBe(n.status)
+  })
+
+  // -----------------------------------------------------------------------
+  // Dismissal & persistence contract (Apple Live Activity / 超级岛 model)
+  // -----------------------------------------------------------------------
+
+  it('contract: status and pending tasks are source-owned; transients and settled tasks are user-closable', () => {
+    const transient = n.notify.info('toast')
+    const sticky = n.notify.warning({ message: 'sticky', persistence: 'sticky' })
+    const task = n.notify.task({ message: 'working' })
+    const statusItem = n.status.error({ key: 'cond', message: 'down' })
+
+    expect(isUserDismissible(byId(transient))).toBe(true)
+    expect(isUserDismissible(byId(sticky))).toBe(true)
+    expect(isUserDismissible(byId(task.id))).toBe(false)
+    expect(isUserDismissible(byId(statusItem))).toBe(false)
+    expect(byId(statusItem).persistence).toBe('source')
+    expect(byId(task.id).persistence).toBe('source')
+    expect(byId(sticky).persistence).toBe('sticky')
+
+    // Settling a task hands its lifecycle back to the user + timer.
+    task.succeed('done')
+    expect(isUserDismissible(byId(task.id))).toBe(true)
+    expect(byId(task.id).persistence).toBe('auto')
+  })
+
+  it('sticky transients never expire on their own but stay user-closable', () => {
+    const id = n.notify.info({ message: 'stay', persistence: 'sticky' })
+    vi.advanceTimersByTime(60000)
+    expect(n.items.value.some((item) => item.id === id)).toBe(true)
+
+    n.dismiss(id)
+    expect(n.items.value.some((item) => item.id === id)).toBe(false)
+  })
+
+  it('dismissAll clears only user-closable items; status and pending tasks survive', () => {
+    n.notify.info('a')
+    const task = n.notify.task({ message: 'working' })
+    n.status.error({ key: 'cond', message: 'down' })
+
+    n.dismissAll()
+    expect(n.items.value.some((item) => item.message === 'a')).toBe(false)
+    expect(n.items.value.some((item) => item.id === task.id)).toBe(true)
+    expect(n.items.value.some((item) => item.key === 'cond')).toBe(true)
+  })
+
+  it('programmatic dismiss of a status item never broadcasts clear; dismissByKey does', () => {
+    const originalWindow = (globalThis as any).window
+    const mockBroadcast = vi.fn()
+    ;(globalThis as any).window = {
+      tinadec: { broadcastStatusNotification: mockBroadcast },
+    }
+
+    try {
+      const id = n.status.error({ key: 'k1', message: 'down' })
+      mockBroadcast.mockClear()
+      // Incidental removal must not tell other windows the condition recovered.
+      n.dismiss(id)
+      expect(mockBroadcast).not.toHaveBeenCalled()
+
+      n.status.error({ key: 'k2', message: 'down' })
+      mockBroadcast.mockClear()
+      n.dismissByKey('k2')
+      expect(mockBroadcast).toHaveBeenCalledTimes(1)
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        expect.objectContaining({ op: 'clear', key: 'k2' }),
+      )
+    } finally {
+      if (originalWindow === undefined) {
+        delete (globalThis as any).window
+      } else {
+        ;(globalThis as any).window = originalWindow
+      }
+    }
   })
 
   // -----------------------------------------------------------------------

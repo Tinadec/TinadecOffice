@@ -12,6 +12,7 @@ const {
   restorePersistedPanels,
   reattachPanelWindow,
   broadcastToPanels,
+  getMainWindow,
   tagMainWindow,
 } = require('./panelWindow.cjs');
 const {

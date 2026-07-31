@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   Info,
   LoaderCircle,
+  Pin,
   RotateCw,
   Trash2,
   TriangleAlert,
   X,
 } from '@lucide/vue'
 import {
+  isUserDismissible,
   resolveConfirmation,
   useNotifications,
   type NotificationLevel,
@@ -116,7 +118,6 @@ function closeDetailDialog(): void {
   closeDetail()
 }
 
-/* CHANGE 1 — dismiss gate removed: always callable when item exists */
 function dismissNotification(): void {
   const item = detailItem.value
   if (!item) return
@@ -150,7 +151,7 @@ function onBackdrop(event: MouseEvent): void {
   }
 }
 
-/* CHANGE 3 — relative time via Intl.RelativeTimeFormat (no date library, no new keys) */
+/* relative time via Intl.RelativeTimeFormat (no date library, no new keys) */
 function formatRelativeTime(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
   const rtf = new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' })
@@ -161,7 +162,7 @@ function formatRelativeTime(timestamp: number): string {
   return rtf.format(-hours, 'hour')
 }
 
-/* CHANGE 3 — kind-based subtitle label */
+/* kind-based subtitle label */
 const kindLabel = computed(() => {
   const item = detailItem.value
   if (!item) return ''
@@ -175,7 +176,7 @@ const kindLabel = computed(() => {
   return t('app.notification')
 })
 
-/* CHANGE 3 — title fallback (level-based) */
+/* title fallback (level-based) */
 const fallbackTitle = computed(() => {
   const item = detailItem.value
   if (!item) return ''
@@ -185,7 +186,7 @@ const fallbackTitle = computed(() => {
     : t('app.information')
 })
 
-/* CHANGE 2 — task pending determinate progress percentage */
+/* task pending determinate progress percentage */
 const progressPercent = computed(() => {
   const item = detailItem.value
   if (!item || item.kind !== 'task' || item.taskState !== 'pending' || item.progress == null) return 0
@@ -282,7 +283,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <!-- CHANGE 3 — metadata row: source, count, time, remote -->
+        <!-- metadata row: source, count, time, remote -->
         <div
           v-if="detailItem.source || (detailItem.count > 1) || detailItem.remote"
           class="detail-dialog__meta"
@@ -297,7 +298,7 @@ onBeforeUnmount(() => {
           <span class="detail-dialog__time">{{ formatRelativeTime(detailItem.createdAt) }}</span>
         </div>
 
-        <!-- CHANGE 2 — task progress state -->
+        <!-- task progress state -->
         <div
           v-if="detailItem.kind === 'task' && detailItem.taskState === 'pending'"
           class="detail-dialog__progress"
@@ -353,9 +354,17 @@ onBeforeUnmount(() => {
           >
             {{ t('app.close') }}
           </button>
-          <!-- CHANGE 1 — dismiss always available; CHANGE 4 — hidden for remote -->
+          <!-- source-owned items (status, pending task) are never user-closable:
+               show the lifecycle hint instead of the dismiss control -->
+          <span
+            v-if="!detailItem.remote && !isUserDismissible(detailItem)"
+            class="detail-dialog__lifecycle-hint"
+          >
+            <Pin :size="12" aria-hidden="true" />
+            {{ detailItem.kind === 'status' ? t('app.statusAutoClear') : t('app.taskRunningHint') }}
+          </span>
           <button
-            v-if="!detailItem.remote"
+            v-else-if="!detailItem.remote"
             type="button"
             class="detail-dialog__dismiss"
             @click="dismissNotification"
@@ -363,7 +372,7 @@ onBeforeUnmount(() => {
             <Trash2 :size="14" aria-hidden="true" />
             {{ t('app.dismiss') }}
           </button>
-          <!-- CHANGE 4 — action hidden for remote -->
+          <!-- action hidden for remote -->
           <button
             v-if="detailItem.action && !detailItem.remote"
             type="button"
@@ -615,6 +624,18 @@ onBeforeUnmount(() => {
 .detail-dialog__dismiss {
   background: transparent;
   color: var(--text-secondary, #7d8590);
+}
+
+/* lifecycle hint — replaces the dismiss control on source-owned items */
+.detail-dialog__lifecycle-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 4px;
+  color: var(--text-tertiary, #656d76);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .detail-dialog__primary {

@@ -14,6 +14,33 @@ export type NotificationLevel = 'info' | 'success' | 'warning' | 'error'
  */
 export type NotificationKind = 'transient' | 'status' | 'task'
 
+/**
+ * Lifecycle owner — who ends the display. Modeled on Apple Live Activities
+ * (ongoing activities are system-owned; settled ones linger briefly) and
+ * 小米超级岛 (设备状态常驻, cleared only by the owning state source).
+ *
+ * - `auto`    expires on its own after `duration` (or the level default); the
+ *             user may dismiss it early. Default for transient feedback and
+ *             settled tasks.
+ * - `sticky`  never expires on its own; stays on the island until the user
+ *             dismisses it. For persistent notices the user owns.
+ * - `source`  never expires and is NOT user-dismissible; only the owning state
+ *             source (keyed `status.*` conditions, via `dismissByKey` or a
+ *             remote broadcast) or the task handle (pending tasks) may clear
+ *             it. Assigned internally — callers cannot request it.
+ *
+ * Dismissal & persistence contract:
+ *
+ * | class                    | auto-expires | user-closable | cleared by                       |
+ * | ------------------------ | ------------ | ------------- | -------------------------------- |
+ * | transient (default)      | yes          | yes           | timer / user                     |
+ * | transient `sticky`       | no           | yes           | user only                        |
+ * | task pending             | no           | no            | TaskHandle settle/dismiss        |
+ * | task settled             | yes          | yes           | timer / user                     |
+ * | status (source-owned)    | no           | no            | source `dismissByKey` / broadcast |
+ */
+export type NotificationPersistence = 'auto' | 'sticky' | 'source'
+
 /** Lifecycle of a `task` notification. `settled` items expire like transients. */
 export type TaskState = 'pending' | 'settled'
 
@@ -35,6 +62,18 @@ export interface NotificationOptions {
   source?: string
   action?: NotificationAction
   duration?: number
+  /**
+   * Lifecycle override for transient feedback: `'auto'` (default) expires on
+   * its own; `'sticky'` stays on the island until the user dismisses it.
+   * Ignored for `status.*` and tasks — their persistence is always `'source'`
+   * while the condition/operation is live.
+   */
+  persistence?: 'auto' | 'sticky'
+  /**
+   * Whether the user may close a transient item before it expires on its own.
+   * Ignored for `status` and pending tasks, which are never user-closable.
+   * @default true
+   */
   dismissible?: boolean
 }
 
@@ -47,10 +86,12 @@ export interface TaskOptions extends NotificationOptions {
   progress?: number
 }
 
-export interface NotificationItem extends NotificationOptions {
+export interface NotificationItem extends Omit<NotificationOptions, 'persistence'> {
   id: string
   kind: NotificationKind
   level: NotificationLevel
+  /** Resolved lifecycle owner. See {@link NotificationPersistence}. */
+  persistence: NotificationPersistence
   createdAt: number
   /** Number of times this item was re-raised while already live. */
   count: number
@@ -238,13 +279,7 @@ function dismiss(targetId: string): void {
   const timer = timers.get(targetId)
   if (timer?.handle) globalThis.clearTimeout(timer.handle)
   timers.delete(targetId)
-  if (item) {
-    recordHistory(item)
-    // A status condition cleared here must clear in every other window too.
-    if (item.kind === 'status' && item.key && !item.remote) {
-      publishStatus({ op: 'clear', key: item.key })
-    }
-  }
+  if (item) recordHistory(item)
   items.value = items.value.filter((candidate) => candidate.id !== targetId)
   if (detailId.value === targetId) detailId.value = null
   if (hoveredId.value === targetId) hoveredId.value = null
@@ -257,13 +292,29 @@ function dismiss(targetId: string): void {
 }
 
 function dismissByKey(key: string): void {
-  for (const item of items.value.filter((candidate) => candidate.key === key)) {
-    dismiss(item.id)
+  const owned = items.value.filter((candidate) => candidate.key === key)
+  for (const item of owned) dismiss(item.id)
+  // Only an explicit owner clear replicates to other windows. Incidental
+  // removal (cap eviction, programmatic dismiss) must never broadcast a
+  // "condition recovered" signal for a condition that may still be true.
+  if (owned.some((item) => item.kind === 'status' && !item.remote)) {
+    publishStatus({ op: 'clear', key })
   }
 }
 
+/**
+ * User action (notification center) — clears everything the user is allowed
+ * to close. Source-owned status conditions and pending tasks survive; their
+ * owners remain responsible for their lifecycle.
+ */
 function dismissAll(): void {
-  for (const item of [...items.value]) dismiss(item.id)
+  for (const item of [...items.value]) {
+    if (isUserDismissible(item)) dismiss(item.id)
+  }
+}
+
+function clearHistory(): void {
+  history.value = []
 }
 
 function startTimer(targetId: string, duration: number): void {
@@ -327,9 +378,22 @@ function findByFingerprint(print: string): NotificationItem | undefined {
 }
 
 function isAutoExpiring(item: NotificationItem): boolean {
-  if (item.kind === 'status') return false
+  if (item.persistence !== 'auto') return false
   if (item.kind === 'task' && item.taskState === 'pending') return false
   return true
+}
+
+/**
+ * Single source of truth for close affordances across capsule, expanded card,
+ * notification center, and detail dialog. Status conditions and pending tasks
+ * are owned by their source/handle and can never be closed by the user;
+ * everything else is closable unless the caller passed `dismissible: false`.
+ */
+export function isUserDismissible(item: NotificationItem): boolean {
+  if (item.kind === 'status') return false
+  if (item.kind === 'task' && item.taskState === 'pending') return false
+  if (item.persistence === 'sticky') return true
+  return item.dismissible !== false
 }
 
 function scheduleExpiry(item: NotificationItem): void {
@@ -383,6 +447,7 @@ function add(
       id: existing.id,
       kind,
       level,
+      persistence: kind === 'transient' ? (options.persistence ?? existing.persistence) : 'source',
       count: existing.count + 1,
       createdAt: Date.now(),
     }
@@ -398,6 +463,9 @@ function add(
     id: id('notification'),
     kind,
     level,
+    // Status conditions and tasks are source-owned while live; only transient
+    // feedback honors a caller-requested lifecycle.
+    persistence: kind === 'transient' ? (options.persistence ?? 'auto') : 'source',
     dismissible: options.dismissible ?? true,
     createdAt: Date.now(),
     count: 1,
@@ -451,6 +519,9 @@ function update(
   const existing = items.value.find((item) => item.id === targetId)
   if (!existing) return
   const merged: NotificationItem = { ...existing, ...patch }
+  // A settled task returns to user-owned, auto-expiring feedback (Apple Live
+  // Activity model: the activity ends, its result lingers briefly, then leaves).
+  if (patch.taskState === 'settled') merged.persistence = 'auto'
   items.value = items.value.map((item) => (item.id === targetId ? merged : item))
   scheduleExpiry(merged)
   selectPrimary()
@@ -519,7 +590,7 @@ export function startStatusSync(): () => void {
 
 function addStatus(level: NotificationLevel, input: MessageOptions): string {
   const options: NotificationOptions = typeof input === 'string' ? { message: input } : input
-  const itemId = add('status', level, { dismissible: true, ...options })
+  const itemId = add('status', level, options)
   const item = items.value.find((candidate) => candidate.id === itemId)
   if (item?.key && !item.remote) {
     publishStatus({
@@ -606,6 +677,94 @@ function closeOverflow(): void {
   overflowOpen.value = false
 }
 
+// ---------------------------------------------------------------------------
+// 通知打开 interaction model (Apple Dynamic Island desktop equivalent):
+// hover auto-expands the enlarged island window; click opens the detail dialog.
+//
+// - Hovering a capsule arms a short intent delay before the expanded card
+//   opens, so passing the pointer over the title bar never flashes UI.
+// - Leaving the capsule starts a longer grace period before the card closes,
+//   letting the pointer cross the gap into the card (which cancels the close).
+// - Once a card is open, gliding onto a sibling capsule re-targets it faster —
+//   the user is already browsing the island strip.
+// - Clicking a capsule is the 通知打开 gesture: the detail dialog opens
+//   directly and the hover-expanded card closes behind it.
+// ---------------------------------------------------------------------------
+
+const HOVER_OPEN_DELAY_MS = 240
+const HOVER_SWITCH_DELAY_MS = 90
+const HOVER_CLOSE_DELAY_MS = 400
+
+let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearHoverOpenTimer(): void {
+  if (hoverOpenTimer) {
+    globalThis.clearTimeout(hoverOpenTimer)
+    hoverOpenTimer = null
+  }
+}
+
+function clearHoverCloseTimer(): void {
+  if (hoverCloseTimer) {
+    globalThis.clearTimeout(hoverCloseTimer)
+    hoverCloseTimer = null
+  }
+}
+
+function hoverCapsuleEnter(targetId: string): void {
+  setHovered(targetId)
+  clearHoverCloseTimer()
+  if (openId.value === targetId) return
+  clearHoverOpenTimer()
+  const delay = openId.value ? HOVER_SWITCH_DELAY_MS : HOVER_OPEN_DELAY_MS
+  hoverOpenTimer = globalThis.setTimeout(() => {
+    hoverOpenTimer = null
+    // Suppressed while a modal surface owns the interaction, and stale if the
+    // pointer already moved on to another capsule.
+    if (hoveredId.value !== targetId) return
+    if (detailId.value || currentConfirmation.value) return
+    openId.value = targetId
+    syncTimerVisibility()
+  }, delay)
+}
+
+function hoverCapsuleLeave(): void {
+  setHovered(null)
+  clearHoverOpenTimer()
+  if (!openId.value || hoverCloseTimer) return
+  hoverCloseTimer = globalThis.setTimeout(() => {
+    hoverCloseTimer = null
+    // Only close when the pointer did not land on the card or a sibling capsule.
+    if (!hoveredId.value) closeOpen()
+  }, HOVER_CLOSE_DELAY_MS)
+}
+
+function hoverCardEnter(): void {
+  clearHoverCloseTimer()
+}
+
+function hoverCardLeave(): void {
+  if (!openId.value || hoverCloseTimer) return
+  hoverCloseTimer = globalThis.setTimeout(() => {
+    hoverCloseTimer = null
+    if (!hoveredId.value) closeOpen()
+  }, HOVER_CLOSE_DELAY_MS)
+}
+
+/**
+ * 通知打开 — clicking a capsule opens its detail dialog directly (one step to
+ * full information + actions). The hover-expanded card and the notification
+ * center close behind the modal surface.
+ */
+function openNotification(targetId: string): void {
+  clearHoverOpenTimer()
+  clearHoverCloseTimer()
+  if (openId.value) closeOpen()
+  closeOverflow()
+  openDetail(targetId)
+}
+
 async function runAction(targetId: string): Promise<boolean> {
   const item = items.value.find((candidate) => candidate.id === targetId)
   if (!item?.action || actionStates.value[targetId]?.running) return false
@@ -657,10 +816,8 @@ const statusZone = computed(() => statusItems())
 const transientZone = computed(() => queueItems().slice(0, VISIBLE_TRANSIENT))
 const visibleItems = computed(() => statusZone.value.concat(transientZone.value))
 const orderedItems = computed(() => statusItems().concat(queueItems()))
-const primaryItem = computed(() => items.value.find((item) => item.id === primaryId.value) ?? null)
 const detailItem = computed(() => items.value.find((item) => item.id === detailId.value) ?? null)
 const openItem = computed(() => items.value.find((item) => item.id === openId.value) ?? null)
-const hoveredItem = computed(() => items.value.find((item) => item.id === hoveredId.value) ?? null)
 const overflowCount = computed(() => Math.max(0, items.value.length - visibleItems.value.length))
 const hasPendingTask = computed(() => items.value.some((item) => item.taskState === 'pending'))
 
@@ -696,6 +853,28 @@ const status = {
 /** Back-compat alias — `banner.*` was the previous name for the status class. */
 const banner = status
 
+/**
+ * Test-only: force-remove every live item (ignoring lifecycle ownership),
+ * clear all timers and history. `dismissAll` intentionally preserves
+ * source-owned items, so tests need this hard reset between cases.
+ */
+export function __resetNotificationsForTests(): void {
+  for (const timer of timers.values()) {
+    if (timer.handle) globalThis.clearTimeout(timer.handle)
+  }
+  timers.clear()
+  clearHoverOpenTimer()
+  clearHoverCloseTimer()
+  items.value = []
+  history.value = []
+  primaryId.value = null
+  detailId.value = null
+  hoveredId.value = null
+  openId.value = null
+  overflowOpen.value = false
+  actionStates.value = {}
+}
+
 export function useNotifications() {
   return {
     items,
@@ -711,10 +890,8 @@ export function useNotifications() {
     visibleItems,
     statusZone,
     transientZone,
-    primaryItem,
     detailItem,
     openItem,
-    hoveredItem,
     overflowCount,
     hasPendingTask,
     notify,
@@ -723,6 +900,7 @@ export function useNotifications() {
     dismiss,
     dismissByKey,
     dismissAll,
+    clearHistory,
     openDetail,
     closeDetail,
     setHovered,
@@ -730,6 +908,11 @@ export function useNotifications() {
     closeOpen,
     toggleOverflow,
     closeOverflow,
+    hoverCapsuleEnter,
+    hoverCapsuleLeave,
+    hoverCardEnter,
+    hoverCardLeave,
+    openNotification,
     runAction,
     update,
     pause,

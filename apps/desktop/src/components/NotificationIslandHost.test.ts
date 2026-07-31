@@ -3,7 +3,10 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import NotificationIslandHost from './NotificationIslandHost.vue'
-import { useNotifications } from '@/composables/useNotifications'
+import {
+  __resetNotificationsForTests,
+  useNotifications,
+} from '@/composables/useNotifications'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ name: 'home' }) }))
 vi.mock('vue-i18n', () => ({
@@ -13,14 +16,16 @@ vi.mock('vue-i18n', () => ({
 const notifications = useNotifications()
 
 afterEach(() => {
-  notifications.dismissAll()
-  notifications.closeDetail()
-  notifications.closeOpen()
-  notifications.closeOverflow()
-  notifications.setHovered(null)
-  notifications.history.value = []
+  __resetNotificationsForTests()
   document.body.innerHTML = ''
 })
+
+function closeButtonOf(id: string): Element | null | undefined {
+  return document.body
+    .querySelector(`[data-notification-id="${id}"]`)
+    ?.closest('.island-capsule')
+    ?.querySelector('.island-capsule__close')
+}
 
 describe('NotificationIslandHost', () => {
   it('renders nothing when empty and appears on first notification', async () => {
@@ -53,7 +58,7 @@ describe('NotificationIslandHost', () => {
     wrapper.unmount()
   })
 
-  it('click toggles card open then closed even while hovered', async () => {
+  it('click opens the detail dialog directly (通知打开)', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
     const id = notifications.notify.info('click test')
     await nextTick()
@@ -65,52 +70,139 @@ describe('NotificationIslandHost', () => {
 
     capsule.click()
     await nextTick()
-    expect(notifications.openId.value).toBe(id)
-    expect(document.body.querySelector('.island-card')).not.toBeNull()
-
-    capsule.dispatchEvent(new Event('mouseenter'))
-    await nextTick()
-    expect(notifications.hoveredId.value).toBe(id)
-
-    capsule.click()
-    await nextTick()
+    expect(notifications.detailId.value).toBe(id)
+    // The hover-expanded card closes behind the modal surface.
     expect(notifications.openId.value).toBeNull()
     expect(document.body.querySelector('.island-card')).toBeNull()
     wrapper.unmount()
   })
 
-  it('hover alone does not open the card', async () => {
-    const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
-    const id = notifications.notify.info('hover test')
-    await nextTick()
+  it('hover auto-expands the card after an intent delay and closes after leaving', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
+      const id = notifications.notify.info('hover test')
+      await nextTick()
 
-    const capsule = document.body.querySelector<HTMLButtonElement>(
-      `[data-notification-id="${id}"]`,
-    )!
-    capsule.dispatchEvent(new Event('mouseenter'))
-    await nextTick()
+      const capsule = document.body.querySelector<HTMLButtonElement>(
+        `[data-notification-id="${id}"]`,
+      )!
+      capsule.dispatchEvent(new Event('mouseenter'))
+      await nextTick()
 
-    expect(notifications.hoveredId.value).toBe(id)
-    expect(document.body.querySelector('.island-card')).toBeNull()
-    wrapper.unmount()
+      // Highlight is instant; expansion waits for hover intent so passing the
+      // pointer over the title bar never flashes UI.
+      expect(notifications.hoveredId.value).toBe(id)
+      expect(notifications.openId.value).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(300)
+      await nextTick()
+      expect(notifications.openId.value).toBe(id)
+      expect(document.body.querySelector('.island-card')).not.toBeNull()
+
+      // Leaving the whole strip starts the close grace period.
+      document.body.querySelector('.island-host')!.dispatchEvent(new Event('mouseleave'))
+      await nextTick()
+      expect(notifications.hoveredId.value).toBeNull()
+      expect(notifications.openId.value).toBe(id)
+
+      await vi.advanceTimersByTimeAsync(500)
+      await nextTick()
+      expect(notifications.openId.value).toBeNull()
+      expect(document.body.querySelector('.island-card')).toBeNull()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('every item is closable including status', async () => {
+  it('clicking the hover-expanded card opens the detail dialog (通知打开)', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
+      const id = notifications.notify.info('card click')
+      await nextTick()
+
+      const capsule = document.body.querySelector<HTMLButtonElement>(
+        `[data-notification-id="${id}"]`,
+      )!
+      capsule.dispatchEvent(new Event('mouseenter'))
+      await vi.advanceTimersByTimeAsync(300)
+      await nextTick()
+      expect(notifications.openId.value).toBe(id)
+
+      // Clicking the card itself opens the dialog and tucks the card away.
+      const card = document.body.querySelector<HTMLElement>('.island-card')!
+      expect(card).not.toBeNull()
+      card.click()
+      await nextTick()
+      expect(notifications.detailId.value).toBe(id)
+      expect(notifications.openId.value).toBeNull()
+      expect(document.body.querySelector('.island-card')).toBeNull()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moving from the capsule into the card keeps it open', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
+      const id = notifications.notify.info('glide')
+      await nextTick()
+
+      const capsule = document.body.querySelector<HTMLButtonElement>(
+        `[data-notification-id="${id}"]`,
+      )!
+      capsule.dispatchEvent(new Event('mouseenter'))
+      await vi.advanceTimersByTimeAsync(300)
+      await nextTick()
+      expect(notifications.openId.value).toBe(id)
+
+      // Pointer crosses the 8px gap (leaves the strip) then lands on the card
+      // before the grace period ends — the card must stay open.
+      document.body.querySelector('.island-host')!.dispatchEvent(new Event('mouseleave'))
+      await vi.advanceTimersByTimeAsync(100)
+      const card = document.body.querySelector('.island-card')!
+      card.dispatchEvent(new Event('mouseenter'))
+      await vi.advanceTimersByTimeAsync(500)
+      await nextTick()
+      expect(notifications.openId.value).toBe(id)
+
+      // Leaving the card for good closes it.
+      card.dispatchEvent(new Event('mouseleave'))
+      await vi.advanceTimersByTimeAsync(500)
+      await nextTick()
+      expect(notifications.openId.value).toBeNull()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('close affordance follows the dismissal contract', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
-    const id = notifications.status.error({ key: 'closeable-status', message: 'close me' })
+    const transientId = notifications.notify.info('closable')
+    const statusId = notifications.status.error({ key: 'src', message: 'condition' })
+    const task = notifications.notify.task({ message: 'working' })
     await nextTick()
 
-    const capsule = document.body.querySelector<HTMLButtonElement>(
-      `[data-notification-id="${id}"]`,
-    )!
-    expect(capsule).not.toBeNull()
+    // Transient feedback is user-closable; status conditions and pending tasks
+    // are source-owned and render a residency marker instead of a close button.
+    expect(closeButtonOf(transientId)).not.toBeNull()
+    expect(closeButtonOf(statusId)).toBeNull()
+    expect(closeButtonOf(task.id)).toBeNull()
 
-    const closeBtn = capsule.closest('.island-capsule')!.querySelector('.island-capsule__close')!
-    expect(closeBtn).not.toBeNull()
-    ;(closeBtn as HTMLButtonElement).click()
+    // Settling the task hands its lifecycle back to the user.
+    task.succeed('done')
     await nextTick()
+    expect(closeButtonOf(task.id)).not.toBeNull()
 
-    expect(notifications.items.value.some((item) => item.id === id)).toBe(false)
+    // Clicking close on the transient dismisses it.
+    ;(closeButtonOf(transientId) as HTMLButtonElement).click()
+    await nextTick()
+    expect(notifications.items.value.some((item) => item.id === transientId)).toBe(false)
     wrapper.unmount()
   })
 
@@ -131,6 +223,33 @@ describe('NotificationIslandHost', () => {
     notifications.toggleOverflow()
     await nextTick()
     expect(document.body.querySelector('#notification-overflow-panel')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('notification center shows live and cleared sections with contract-aware actions', async () => {
+    const wrapper = mount(NotificationIslandHost, { attachTo: document.body })
+    notifications.notify.info('keep')
+    const goneId = notifications.notify.info('gone')
+    notifications.status.error({ key: 'src', message: 'standing condition' })
+    notifications.dismiss(goneId)
+    await nextTick()
+
+    notifications.toggleOverflow()
+    await nextTick()
+
+    const panel = document.body.querySelector('#notification-overflow-panel')!
+    expect(panel).not.toBeNull()
+    // Live section: closable transient gets a dismiss action, source-owned
+    // status gets a static residency marker.
+    const liveRows = panel.querySelectorAll('.island-overflow__section:first-child .island-overflow__row')
+    expect(liveRows.length).toBe(2)
+    const dismissButtons = panel.querySelectorAll('button.island-overflow__action[aria-label="app.dismiss"]')
+    expect(dismissButtons.length).toBe(1)
+    expect(panel.querySelector('.island-overflow__action--static')).not.toBeNull()
+    // Cleared section: the dismissed transient is retained read-only.
+    const clearedRows = panel.querySelectorAll('.island-overflow__row--cleared')
+    expect(clearedRows.length).toBe(1)
+    expect(clearedRows[0].textContent).toContain('gone')
     wrapper.unmount()
   })
 

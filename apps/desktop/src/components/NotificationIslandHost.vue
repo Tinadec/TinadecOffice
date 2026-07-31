@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import {
-  AlertCircle, Bell, CheckCircle2, Clock, FileText, Info,
-  LoaderCircle, MoreHorizontal, RotateCw, TriangleAlert, X,
+  AlertCircle, Bell, CheckCircle2, FileText, Info,
+  LoaderCircle, MoreHorizontal, Pin, RotateCw, TriangleAlert, X,
 } from '@lucide/vue'
 import {
+  isUserDismissible,
   useNotifications,
   type NotificationItem,
   type NotificationLevel,
@@ -15,12 +16,19 @@ import {
 const route = useRoute()
 const { t, locale } = useI18n()
 const {
-  items, statusZone, transientZone, orderedItems,
-  overflowCount, overflowOpen, openItem, hoveredId,
-  primaryId, actionStates,
-  toggleOpen, closeOpen, toggleOverflow, closeOverflow,
-  setHovered, openDetail, dismiss, dismissAll, runAction,
+  items, history, statusZone, transientZone, orderedItems,
+  overflowCount, overflowOpen, openItem,
+  actionStates,
+  closeOpen, toggleOverflow, closeOverflow,
+  openDetail, dismiss, dismissAll, clearHistory, runAction,
+  hoverCapsuleEnter, hoverCapsuleLeave, hoverCardEnter, hoverCardLeave,
+  openNotification,
 } = useNotifications()
+
+/** Live items the user is allowed to close — drives the "dismiss all" button. */
+const dismissibleLiveCount = computed(
+  () => orderedItems.value.filter((item) => isUserDismissible(item)).length,
+)
 
 const routeKind = computed(() => {
   if (route.name === 'detached-panel') return 'detached'
@@ -52,9 +60,11 @@ function relativeTime(ts: number): string {
 }
 
 const host = ref<HTMLElement | null>(null)
-function onEnter(item: NotificationItem) { setHovered(item.id) }
-function onLeave() { setHovered(null) }
-function onClickCapsule(item: NotificationItem) { toggleOpen(item.id) }
+// Hover auto-expands the enlarged island window (hover-intent delayed in the
+// composable); clicking a capsule is the 通知打开 gesture → detail dialog.
+function onEnter(item: NotificationItem) { hoverCapsuleEnter(item.id) }
+function onLeave() { hoverCapsuleLeave() }
+function onClickCapsule(item: NotificationItem) { openNotification(item.id) }
 
 function onOutsideClick(e: MouseEvent) {
   if (openItem.value && !host.value?.contains(e.target as Node)) { closeOpen(); closeOverflow() }
@@ -64,7 +74,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => { document.addEventListener('mousedown', onOutsideClick); document.addEventListener('keydown', onKeydown) })
-onBeforeUnmount(() => { document.removeEventListener('mousedown', onOutsideClick); document.removeEventListener('keydown', onKeydown); setHovered(null) })
+onBeforeUnmount(() => { document.removeEventListener('mousedown', onOutsideClick); document.removeEventListener('keydown', onKeydown); hoverCapsuleLeave() })
 
 /* announce region — capped at 50 via FIFO */
 const announcedItem = ref<NotificationItem | null>(null)
@@ -151,7 +161,9 @@ function taskLabel(item: NotificationItem) {
             </span>
             <LoaderCircle v-if="isIndetTask(item)" :size="12" class="island-capsule__spinner" aria-hidden="true" />
           </button>
-          <button type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
+          <!-- 超级岛-style residency marker: status conditions stay until their source clears them — no close affordance -->
+          <Pin v-if="!isUserDismissible(item)" :size="10" class="island-capsule__pin" aria-hidden="true" />
+          <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
         </div>
       </TransitionGroup>
 
@@ -186,7 +198,9 @@ function taskLabel(item: NotificationItem) {
             <span class="island-capsule__text"><strong class="island-capsule__title">{{ shortLabel(item) }}</strong></span>
             <span v-if="item.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
           </button>
-          <button type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
+          <!-- sticky notices are persistent but user-owned — pin + close; pending tasks are handle-owned — pin only -->
+          <Pin v-if="!isUserDismissible(item)" :size="10" class="island-capsule__pin" aria-hidden="true" />
+          <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
         </div>
         <!-- overflow badge -->
         <button
@@ -202,9 +216,14 @@ function taskLabel(item: NotificationItem) {
         </button>
       </TransitionGroup>
 
-      <!-- DETAIL CARD -->
+      <!-- DETAIL CARD — hover expands it; clicking the card itself opens the detail dialog (通知打开) -->
       <Transition name="island-card">
-        <article v-if="openItem" id="notification-island-card" class="island-card no-drag" :class="`island-card--${openItem.level}`" @click.stop>
+        <article
+          v-if="openItem" id="notification-island-card" class="island-card no-drag"
+          :class="`island-card--${openItem.level}`"
+          @click="openNotification(openItem.id)"
+          @mouseenter="hoverCardEnter()" @mouseleave="hoverCardLeave()"
+        >
           <header class="island-card__header">
             <span class="island-card__icon" aria-hidden="true"><component :is="icon(openItem.level)" :size="17" /></span>
             <div class="island-card__heading">
@@ -225,13 +244,26 @@ function taskLabel(item: NotificationItem) {
               <span class="island-card__progress-label">{{ t('app.taskPending') }}</span>
             </template>
           </div>
+          <!-- meta row: source, residency, age — the expanded presentation's leading context -->
+          <div class="island-card__meta-row">
+            <span v-if="openItem.source" class="island-card__chip">{{ openItem.source }}</span>
+            <span v-if="openItem.persistence !== 'auto'" class="island-card__chip island-card__chip--persistent">
+              <Pin :size="9" aria-hidden="true" />{{ t('app.persistent') }}
+            </span>
+            <time class="island-card__time" :datetime="new Date(openItem.createdAt).toISOString()">{{ relativeTime(openItem.createdAt) }}</time>
+          </div>
           <p class="island-card__summary">{{ openItem.message }}</p>
           <p v-if="openItem.count > 1" class="island-card__meta">{{ t('app.repeatedCount', { count: openItem.count }) }}</p>
           <p v-if="openItem.remote" class="island-card__meta">{{ t('app.fromOtherWindow') }}</p>
+          <!-- lifecycle hint replaces a close affordance the user does not own -->
+          <p v-if="!isUserDismissible(openItem)" class="island-card__hint">
+            {{ openItem.kind === 'status' ? t('app.statusAutoClear') : t('app.taskRunningHint') }}
+          </p>
           <p v-if="actionStates[openItem.id]?.error" class="island-card__error" role="alert">
             <AlertCircle :size="14" aria-hidden="true" />{{ actionStates[openItem.id]?.error }}
           </p>
           <footer class="island-card__actions">
+            <button v-if="isUserDismissible(openItem)" type="button" class="island-card__secondary" @click.stop="dismiss(openItem.id)"><X :size="14" aria-hidden="true" />{{ t('app.dismiss') }}</button>
             <button type="button" class="island-card__secondary" @click.stop="openDetail(openItem.id)"><FileText :size="14" aria-hidden="true" />{{ t('app.viewDetails') }}</button>
             <button v-if="openItem.action && !openItem.remote" type="button" class="island-card__primary" :disabled="actionStates[openItem.id]?.running" @click.stop="runAction(openItem.id)">
               <LoaderCircle v-if="actionStates[openItem.id]?.running" :size="14" class="island-card__spinner" aria-hidden="true" />
@@ -241,29 +273,56 @@ function taskLabel(item: NotificationItem) {
         </article>
       </Transition>
 
-      <!-- OVERFLOW PANEL -->
+      <!-- NOTIFICATION CENTER — 下拉小窗-style panel: live items above, cleared history below -->
       <Transition name="island-card">
         <article v-if="overflowOpen" id="notification-overflow-panel" class="island-overflow no-drag">
           <header class="island-overflow__header">
-            <strong>{{ t('app.notificationHistory') }}</strong>
+            <strong>{{ t('app.notificationCenter') }}</strong>
             <button type="button" class="island-card__icon-btn" :aria-label="t('app.close')" @click.stop="closeOverflow()"><X :size="15" aria-hidden="true" /></button>
           </header>
-          <ul class="island-overflow__list">
-            <li v-for="item in orderedItems" :key="item.id" class="island-overflow__row">
-              <span class="island-overflow__icon" :class="`island-overflow__icon--${item.level}`">
-                <component :is="icon(item.level)" :size="13" aria-hidden="true" />
-              </span>
-              <div class="island-overflow__content">
-                <span class="island-overflow__title">{{ item.title || item.message }}</span>
-                <span v-if="item.source" class="island-overflow__source">{{ item.source }}</span>
-              </div>
-              <time class="island-overflow__time" :datetime="new Date(item.createdAt).toISOString()">{{ relativeTime(item.createdAt) }}</time>
-              <button type="button" class="island-overflow__action" :aria-label="t('app.viewDetails')" @click.stop="openDetail(item.id)"><FileText :size="12" aria-hidden="true" /></button>
-              <button type="button" class="island-overflow__action" :aria-label="t('app.dismiss')" @click.stop="dismiss(item.id)"><X :size="12" aria-hidden="true" /></button>
-            </li>
-          </ul>
+          <div class="island-overflow__scroll">
+            <section v-if="orderedItems.length" class="island-overflow__section">
+              <h3 class="island-overflow__heading">{{ t('app.activeSection') }}</h3>
+              <ul class="island-overflow__list">
+                <li v-for="item in orderedItems" :key="item.id" class="island-overflow__row">
+                  <span class="island-overflow__icon" :class="`island-overflow__icon--${item.level}`">
+                    <component :is="icon(item.level)" :size="13" aria-hidden="true" />
+                  </span>
+                  <div class="island-overflow__content">
+                    <span class="island-overflow__title">
+                      <Pin v-if="item.persistence !== 'auto'" :size="10" class="island-overflow__pin-inline" aria-hidden="true" />{{ item.title || item.message }}
+                    </span>
+                    <span v-if="item.source" class="island-overflow__source">{{ item.source }}</span>
+                  </div>
+                  <time class="island-overflow__time" :datetime="new Date(item.createdAt).toISOString()">{{ relativeTime(item.createdAt) }}</time>
+                  <button type="button" class="island-overflow__action" :aria-label="t('app.viewDetails')" @click.stop="openDetail(item.id)"><FileText :size="12" aria-hidden="true" /></button>
+                  <!-- source-owned rows show a residency marker instead of a close button -->
+                  <span v-if="!isUserDismissible(item)" class="island-overflow__action island-overflow__action--static" :title="item.kind === 'status' ? t('app.statusAutoClear') : t('app.taskRunningHint')">
+                    <Pin :size="12" aria-hidden="true" />
+                  </span>
+                  <button v-else type="button" class="island-overflow__action" :aria-label="t('app.dismiss')" @click.stop="dismiss(item.id)"><X :size="12" aria-hidden="true" /></button>
+                </li>
+              </ul>
+            </section>
+            <section v-if="history.length" class="island-overflow__section">
+              <h3 class="island-overflow__heading">{{ t('app.clearedSection') }}</h3>
+              <ul class="island-overflow__list">
+                <li v-for="entry in history" :key="entry.id" class="island-overflow__row island-overflow__row--cleared">
+                  <span class="island-overflow__icon" :class="`island-overflow__icon--${entry.level}`">
+                    <component :is="icon(entry.level)" :size="13" aria-hidden="true" />
+                  </span>
+                  <div class="island-overflow__content">
+                    <span class="island-overflow__title">{{ entry.title || entry.message }}</span>
+                    <span v-if="entry.source" class="island-overflow__source">{{ entry.source }}</span>
+                  </div>
+                  <time class="island-overflow__time" :datetime="new Date(entry.dismissedAt).toISOString()">{{ relativeTime(entry.dismissedAt) }}</time>
+                </li>
+              </ul>
+            </section>
+          </div>
           <footer class="island-overflow__footer">
-            <button type="button" class="island-card__secondary" @click.stop="dismissAll()">{{ t('app.dismissAll') }}</button>
+            <button type="button" class="island-card__secondary" :disabled="!history.length" @click.stop="clearHistory()">{{ t('app.clearHistory') }}</button>
+            <button type="button" class="island-card__secondary" :disabled="!dismissibleLiveCount" @click.stop="dismissAll()">{{ t('app.dismissAll') }}</button>
           </footer>
         </article>
       </Transition>
@@ -295,8 +354,6 @@ function taskLabel(item: NotificationItem) {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   max-width: 100%; pointer-events: none; flex-wrap: wrap;
 }
-.island-zone--status { --zone-bg: color-mix(in srgb, var(--bg-secondary, #11151c) 6%, transparent); }
-.island-zone--transient { --zone-bg: transparent; }
 
 /* ── CAPSULES ── */
 .island-capsule {
@@ -350,6 +407,11 @@ function taskLabel(item: NotificationItem) {
 .island-capsule:hover .island-capsule__close,
 .island-capsule:focus-within .island-capsule__close { opacity: 1; }
 
+/* residency marker — replaces the close button on source-owned capsules */
+.island-capsule__pin {
+  flex: none; margin-left: 2px; color: var(--level); opacity: 0.7;
+}
+
 .island-capsule__main:focus-visible { outline: 2px solid var(--level); outline-offset: 2px; }
 .island-capsule__close:focus-visible { outline: 2px solid var(--level); outline-offset: 2px; }
 
@@ -382,6 +444,10 @@ function taskLabel(item: NotificationItem) {
   backdrop-filter: blur(18px) saturate(125%);
   -webkit-backdrop-filter: blur(18px) saturate(125%);
   -webkit-app-region: no-drag;
+  cursor: pointer; /* the whole card opens the detail dialog */
+}
+.island-card:hover {
+  border-color: color-mix(in srgb, var(--level) 55%, var(--border-default, #1a1f29));
 }
 .island-card--success { --level: var(--accent-success, #2ec4b6); }
 .island-card--warning { --level: var(--accent-warning, #d29922); }
@@ -409,6 +475,21 @@ function taskLabel(item: NotificationItem) {
 }
 .island-card__summary { margin: 11px 0 0; color: var(--text-secondary, #7d8590); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .island-card__meta { margin: 5px 0 0; color: var(--text-tertiary, #656d76); font-size: 10px; line-height: 1.3; }
+
+/* expanded-presentation meta row: source chip, residency chip, age */
+.island-card__meta-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.island-card__chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px; border-radius: 9px;
+  background: color-mix(in srgb, var(--level) 10%, transparent);
+  color: var(--text-secondary, #7d8590); font-size: 10px; line-height: 1.4; white-space: nowrap;
+}
+.island-card__chip--persistent { color: var(--level); }
+.island-card__time { margin-left: auto; color: var(--text-tertiary, #656d76); font-size: 10px; white-space: nowrap; }
+.island-card__hint {
+  display: flex; align-items: center; gap: 5px; margin: 9px 0 0;
+  color: var(--text-tertiary, #656d76); font-size: 10px; line-height: 1.4;
+}
 .island-card__progress-wrap { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
 .island-card__progress-track { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--level) 14%, transparent); overflow: hidden; }
 .island-card__progress-fill { height: 100%; border-radius: 2px; background: var(--level); transition: width 200ms ease; }
@@ -451,7 +532,14 @@ function taskLabel(item: NotificationItem) {
   padding: 10px 13px 8px; border-bottom: 1px solid var(--border-default, #1a1f29);
   font-size: 12px; font-weight: 600;
 }
-.island-overflow__list { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+.island-overflow__scroll { flex: 1; overflow-y: auto; }
+.island-overflow__section + .island-overflow__section { border-top: 1px solid color-mix(in srgb, var(--border-default, #1a1f29) 50%, transparent); }
+.island-overflow__heading {
+  margin: 0; padding: 8px 13px 3px;
+  color: var(--text-tertiary, #656d76); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.island-overflow__list { list-style: none; margin: 0; padding: 0 0 4px; }
 .island-overflow__row {
   display: flex; align-items: center; gap: 8px; padding: 8px 13px;
   border-bottom: 1px solid color-mix(in srgb, var(--border-default, #1a1f29) 50%, transparent);
@@ -479,7 +567,16 @@ function taskLabel(item: NotificationItem) {
 }
 .island-overflow__row:hover .island-overflow__action { opacity: 1; }
 .island-overflow__action:hover { background: var(--bg-hover, #161b22); color: var(--text-primary, #c9d1d9); }
-.island-overflow__footer { display: flex; justify-content: flex-end; padding: 8px 13px; border-top: 1px solid var(--border-default, #1a1f29); }
+/* static residency marker — same slot as the action buttons, never interactive */
+.island-overflow__action--static, .island-overflow__action--static:hover {
+  background: transparent; color: var(--text-tertiary, #656d76); cursor: default; opacity: 0.75;
+}
+.island-overflow__row:hover .island-overflow__action--static { opacity: 0.75; }
+.island-overflow__pin-inline { margin-right: 3px; color: var(--text-tertiary, #656d76); vertical-align: -1px; }
+.island-overflow__row--cleared { opacity: 0.66; }
+.island-overflow__footer { display: flex; justify-content: flex-end; gap: 7px; padding: 8px 13px; border-top: 1px solid var(--border-default, #1a1f29); }
+.island-overflow__footer button:disabled { opacity: 0.45; cursor: default; }
+.island-overflow__footer button:disabled:hover { background: transparent; color: var(--text-secondary, #7d8590); }
 
 /* ── TRANSITIONS ── */
 /* Capsule pop — Dynamic Island style: expand from a compact pill with a

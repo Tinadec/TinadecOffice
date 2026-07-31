@@ -57,13 +57,31 @@ describe('NotificationDetailDialog', () => {
     await nextTick()
 
     expect(document.body.querySelector('.detail-dialog')?.textContent).toContain('Backend down')
-    // Every notification is dismissible now — a status item whose owner unmounted
-    // must still be clearable, so the dismiss control is always present.
-    expect(document.body.querySelector('.detail-dialog__dismiss')).not.toBeNull()
+    // Status conditions are source-owned: no dismiss control, only the
+    // lifecycle hint. The owner clears them via dismissByKey on recovery.
+    expect(document.body.querySelector('.detail-dialog__dismiss')).toBeNull()
+    expect(document.body.querySelector('.detail-dialog__lifecycle-hint')).not.toBeNull()
     document.body.querySelector<HTMLButtonElement>('.detail-dialog__secondary')?.click()
     await nextTick()
     expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
     expect(notifications.detailId.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows the dismiss control for user-owned transient details', async () => {
+    const wrapper = mount(NotificationDetailDialog, { attachTo: document.body })
+    const id = notifications.notify.warning({ title: 'Careful', message: 'Transient warning' })
+    notifications.openDetail(id)
+    await nextTick()
+    await nextTick()
+
+    const dismissButton = document.body.querySelector<HTMLButtonElement>('.detail-dialog__dismiss')
+    expect(dismissButton).not.toBeNull()
+    expect(document.body.querySelector('.detail-dialog__lifecycle-hint')).toBeNull()
+
+    dismissButton!.click()
+    await nextTick()
+    expect(notifications.items.value.some((item) => item.id === id)).toBe(false)
     wrapper.unmount()
   })
 
