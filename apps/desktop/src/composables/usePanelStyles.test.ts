@@ -118,6 +118,8 @@ describe('usePanelStyles persistence', () => {
       backdropFilter: 'blur(15px)',
       WebkitBackdropFilter: 'blur(15px)',
       backgroundColor: 'rgba(var(--bg-primary-rgb, 10, 14, 20), 0.64)',
+      '--material-filter-section': 'blur(3px) saturate(105%)',
+      '--material-filter-raised': 'blur(5.25px) saturate(108%)',
     })
   })
 
@@ -128,12 +130,25 @@ describe('usePanelStyles persistence', () => {
       backdropFilter: 'blur(20px)',
       WebkitBackdropFilter: 'blur(20px)',
       backgroundColor: 'rgba(var(--bg-primary-rgb, 10, 14, 20), 1)',
+      '--material-filter-section': 'blur(4px) saturate(105%)',
+      '--material-filter-raised': 'blur(7px) saturate(108%)',
     })
     expect(computePanelStyle({ effect: 'blur', opacity: -20, blur: -4 })).toEqual({
       backdropFilter: 'blur(0px)',
       WebkitBackdropFilter: 'blur(0px)',
       backgroundColor: 'rgba(var(--bg-primary-rgb, 10, 14, 20), 0)',
+      '--material-filter-section': 'none',
+      '--material-filter-raised': 'none',
     })
+  })
+
+  it('keeps derived interior filters out of opaque and translucent materials', async () => {
+    const { computePanelStyle } = await loadPanelStyles()
+
+    expect(computePanelStyle({ effect: 'opaque', opacity: 80, blur: 20 }))
+      .not.toHaveProperty('--material-filter-section')
+    expect(computePanelStyle({ effect: 'translucent', opacity: 80, blur: 20 }))
+      .not.toHaveProperty('--material-filter-raised')
   })
 
   it('exposes the current material through data-panel-effect', async () => {

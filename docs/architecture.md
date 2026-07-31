@@ -83,8 +83,8 @@ The desktop renderer has a single global panel material with three effects: `opa
 
 ### How a material is applied
 
-1. `computePanelStyle()` produces the panel root's inline style: `translucent` sets `background-color: rgba(var(--bg-primary-rgb), alpha)`; `blur` additionally sets `backdrop-filter: blur(Npx)` (plus the `-webkit-` prefix). `alpha` is the user's opacity setting (0-100) divided by 100; blur strength is clamped to 0-20px.
-2. `getPanelDataAttributes()` puts `data-panel-effect` on the material root. Panels binding both today include the sidebar, chat panel, context panel (HomePage), and settings nav/content (SettingsPage). The SettingsPage root also carries the attribute so sibling UI such as window controls and page-level dialogs participates in token inheritance; root blur/background styles remain on the nav/content panels.
+1. `computePanelStyle()` produces the panel root's inline style: `translucent` sets `background-color: rgba(var(--bg-primary-rgb), alpha)`; `blur` additionally sets `backdrop-filter: blur(Npx)` (plus the `-webkit-` prefix). `alpha` is the user's opacity setting (0-100) divided by 100; blur strength is clamped to 0-20px. Blur roots also expose `--material-filter-section` at 20% and `--material-filter-raised` at 35% of that clamped value; both are `none` at zero blur and are not emitted for `opaque` or `translucent`.
+2. `getPanelDataAttributes()` puts `data-panel-effect` on the material root. Panels binding both today include the sidebar, chat panel, context panel (HomePage), and settings nav/content (SettingsPage). The SettingsPage root also carries the attribute and forwards only the two derived filter variables so sibling UI such as window controls and page-level dialogs participates in the same material scope; root blur/background styles remain on the nav/content panels.
 3. `styles.css` re-maps the material-aware surface tokens for the panel and all descendants via CSS custom property inheritance — there is no per-component whitelist.
 
 ### Surface token contract (alpha tier mapping)
@@ -109,6 +109,8 @@ Token names describe the component role, not the effect: use `--surface-<role>` 
 
 The alpha in this table is the foreground surface's own alpha. It is composited over the panel root, whose opacity is independently controlled by the user's setting, so the final pixel opacity is not the table value alone. Nested material surfaces composite again and become visually denser; use the shallowest semantic tier and avoid wrapping a card or field in redundant material backgrounds merely to increase contrast.
 
+The two `--material-filter-*` values are optional depth cues, not new colour tiers. Apply them only to a small number of top-level grouped surfaces such as a workbench or overview band. Repeated rows and cards must rely on their `--surface-*` role so a long list does not create a backdrop-filter compositing layer for every item.
+
 ### Tailwind shadcn utilities
 
 Material-aware UI primitives consume the tokens directly, normally through Tailwind arbitrary values such as `bg-[var(--surface-input)]` or component CSS using `background: var(--surface-button)`. This direct consumption is required for base and state styles because generated variants such as `hover:bg-*` and `data-[state=*]:bg-*` are not reliably covered by a plain class selector.
@@ -130,7 +132,8 @@ This fallback is not the primitive contract and must not be expanded into a per-
 - Never hard-code hex/rgb backgrounds or raw `--bg-*` tokens for surfaces rendered inside a material panel; pick the matching `--surface-*` tier (inputs → `--surface-input`, neutral buttons → `--surface-button`, frames/cards → `--surface-section`/`--surface-raised`).
 - Bind `data-panel-effect` at the common ancestor that owns the material scope. Do not add per-child effect bindings when CSS custom property inheritance can cover the subtree.
 - Never duplicate `computePanelStyle()` logic; import it (the settings preview in `panel-style-control.vue` does this).
-- Text, borders, and icons keep their normal tokens — only surface backgrounds participate in the material.
+- Inside the Settings page, separate neutral groups with surface tier, spacing, and typography before adding a decorative border. Do not use neutral header rules, footer rules, table row separators, or nested card outlines when `--surface-section`, `--surface-chrome`, `--surface-raised`, hover, and selected states already establish the hierarchy.
+- Borders remain valid when they communicate function or state: input boundaries, focus rings, selection, warning/error/risk accents, and accessible modal elevation. Text, semantic borders, and icons keep their normal tokens; neutral surface backgrounds participate in the material.
 - Component-owned glass effects (notification island, notification detail dialog) are intentionally independent of the global material and keep their own fixed blur values.
 - Detached panel windows and Electron windows stay opaque by design: there is no OS-level vibrancy/`backgroundMaterial`, so `backdrop-filter` only blurs the in-app background layer rendered by `App.vue`.
 

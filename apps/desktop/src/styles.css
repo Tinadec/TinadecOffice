@@ -274,6 +274,8 @@
   --surface-input: var(--bg-input);
   --surface-button: var(--bg-button);
   --surface-button-hover: var(--bg-button-hover);
+  --material-filter-section: none;
+  --material-filter-raised: none;
 }
 
 * {

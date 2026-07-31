@@ -53,6 +53,40 @@ function expectSurfaceTokens(source: string, tokens: string[]): void {
   }
 }
 
+interface CssRule {
+  selectors: string[]
+  declarations: string
+}
+
+function normalizeSelector(selector: string): string {
+  return selector.replace(/\s+/g, ' ').trim()
+}
+
+function extractCssRules(css: string): CssRule[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  return Array.from(withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g), (match) => ({
+    selectors: match[1]
+      .split(',')
+      .map(normalizeSelector)
+      .filter((selector) => selector.length > 0 && !selector.startsWith('@')),
+    declarations: match[2],
+  })).filter((rule) => rule.selectors.length > 0)
+}
+
+function declarationsForSelector(css: string, selector: string): string[] {
+  const normalizedSelector = normalizeSelector(selector)
+  return extractCssRules(css)
+    .filter((rule) => rule.selectors.includes(normalizedSelector))
+    .map((rule) => rule.declarations)
+}
+
+function expectSelectorDeclarations(css: string, selector: string, expected: RegExp): void {
+  const declarations = declarationsForSelector(css, selector)
+  expect(declarations, `Expected CSS rule for ${selector}`).not.toHaveLength(0)
+  expect(declarations.join('\n'), `Expected ${selector} to match ${expected}`).toMatch(expected)
+}
+
 describe('settings.css contract', () => {
   const css = normalizeLineEndings(settingsCss)
 
@@ -251,6 +285,119 @@ describe('settings.css contract', () => {
   })
 })
 
+describe('settings integrated material contract', () => {
+  const css = normalizeLineEndings(settingsCss)
+
+  it('does not use directional borders as structural separators', () => {
+    const structuralSelectors = [
+      '.center-pane-heading',
+      '.center-resource-heading',
+      '.center-overview-receipt',
+      '.center-receipt-item',
+      '.model-provider-table-head',
+      '.model-provider-row',
+      '.model-health-metrics > div',
+      '.modal-header-row',
+      '.modal-actions',
+      '.general-settings-group',
+      '.about-row',
+      '.about-brand',
+      '.about-license',
+    ]
+    const directionalBorder = /\bborder-(?:top|right|bottom|left|block(?:-(?:start|end))?)\s*:/
+    const rules = extractCssRules(css)
+
+    for (const target of structuralSelectors) {
+      const matchingRules = rules.filter((rule) => rule.selectors.some((selector) => (
+        selector === target
+        || selector.startsWith(`${target}:`)
+        || selector.startsWith(`${target}.`)
+      )))
+
+      expect(matchingRules, `Expected structural selector ${target}`).not.toHaveLength(0)
+      for (const rule of matchingRules) {
+        expect(
+          rule.declarations,
+          `${rule.selectors.join(', ')} must use spacing or surface contrast instead of a directional border`,
+        ).not.toMatch(directionalBorder)
+      }
+    }
+  })
+
+  it('uses the integrated workbench surface hierarchy and local blur tiers', () => {
+    expectSelectorDeclarations(css, '.center-workbench', /background\s*:\s*var\(--surface-section\)\s*;/)
+    expectSelectorDeclarations(css, '.center-workbench', /backdrop-filter\s*:\s*var\(--material-filter-section, none\)\s*;/)
+    expectSelectorDeclarations(css, '.center-resource-rail', /background\s*:\s*var\(--surface-chrome\)\s*;/)
+    expectSelectorDeclarations(css, '.center-resource-stage', /background\s*:\s*transparent\s*;/)
+    expectSelectorDeclarations(css, '.center-inspector', /background\s*:\s*var\(--surface-raised\)\s*;/)
+    expectSelectorDeclarations(css, '.center-inspector', /backdrop-filter\s*:\s*var\(--material-filter-raised, none\)\s*;/)
+
+    for (const pane of ['.center-resource-rail', '.center-resource-stage', '.center-inspector']) {
+      expectSelectorDeclarations(css, pane, /\bborder\s*:\s*0\s*;/)
+    }
+  })
+
+  it('renders overview and provider tables as continuous material bands', () => {
+    expectSelectorDeclarations(css, '.center-overview-receipt', /background\s*:\s*var\(--surface-section\)\s*;/)
+    expectSelectorDeclarations(css, '.center-overview-receipt', /backdrop-filter\s*:\s*var\(--material-filter-section, none\)\s*;/)
+    expectSelectorDeclarations(css, '.center-receipt-item', /background\s*:\s*transparent\s*;/)
+
+    expectSelectorDeclarations(css, '.model-provider-table', /background\s*:\s*var\(--surface-raised\)\s*;/)
+    expectSelectorDeclarations(css, '.model-provider-table-head', /background\s*:\s*var\(--surface-chrome\)\s*;/)
+    expectSelectorDeclarations(css, '.model-provider-row', /background\s*:\s*transparent\s*;/)
+    expectSelectorDeclarations(css, '.model-provider-row:hover', /background\s*:\s*var\(--surface-hover\)\s*;/)
+  })
+
+  it.each([
+    '.model-provider-card',
+    '.center-resource-card',
+    '.center-resource-list-row',
+    '.tool-discovery-card',
+    '.tool-layer-readiness-row',
+    '.harness-manifest-panel',
+    '.pet-gallery-card',
+  ])('%s uses a raised fill without a decorative outline', (selector) => {
+    expectSelectorDeclarations(css, selector, /background\s*:\s*var\(--surface-raised\)\s*;/)
+    expectSelectorDeclarations(css, selector, /\bborder\s*:\s*0\s*;/)
+  })
+
+  it('keeps shared Agent and UiCard changes scoped to settings', () => {
+    const sharedAgentSelector = /(?:\.agent-(?:card|config-section|mode-card)(?=[^\w-]|$)|\.agent-topology-[\w-]+)/
+    const agentSelectors = extractCssRules(css)
+      .flatMap((rule) => rule.selectors)
+      .filter((selector) => sharedAgentSelector.test(selector))
+
+    expect(agentSelectors).not.toHaveLength(0)
+    for (const selector of agentSelectors) {
+      expect(
+        selector,
+        `Shared Agent selector must be settings-scoped: ${selector}`,
+      ).toMatch(/^\.settings-(?:page|content)\b/)
+    }
+
+    expectSelectorDeclarations(css, '.settings-page .settings-content .agent-detail-panel', /\bborder\s*:\s*0\s*;/)
+    expectSelectorDeclarations(css, '.settings-page .settings-content .agent-detail-panel', /background\s*:\s*var\(--surface-raised\)\s*;/)
+    expectSelectorDeclarations(css, '.settings-page .model-provider-modal-content .card-header', /\bborder\s*:\s*0\s*;/)
+    expectSelectorDeclarations(css, '.settings-page .model-provider-modal-content .card-footer', /\bborder\s*:\s*0\s*;/)
+  })
+
+  it('retains functional focus, semantic risk accents, and modal elevation', () => {
+    expectSelectorDeclarations(css, '.settings-select:focus', /border-color\s*:\s*var\(--border-input-focus\)\s*;/)
+    expectSelectorDeclarations(css, '.settings-textarea:focus', /border-color\s*:\s*var\(--border-input-focus\)\s*;/)
+    expect(inputSource).toContain('focus-visible:ring-1')
+
+    expectSelectorDeclarations(css, '.tool-discovery-card.risky', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-danger\)/)
+    expectSelectorDeclarations(css, '.model-provider-row.issue', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-danger\)/)
+    expectSelectorDeclarations(css, '.runtime-binding-warning', /box-shadow\s*:\s*inset\s+3px\s+0[^;]*var\(--accent-warning\)/)
+    expectSelectorDeclarations(css, '.model-health-alert', /border\s*:\s*1px\s+solid[^;]*var\(--accent-danger\)/)
+
+    expectSelectorDeclarations(css, '.model-provider-modal-content', /\bborder\s*:\s*0\s*;/)
+    expectSelectorDeclarations(css, '.model-provider-modal-content', /background\s*:\s*var\(--surface-raised\)\s*;/)
+    expectSelectorDeclarations(css, '.model-provider-modal-content', /box-shadow\s*:\s*0\s+20px\s+60px/)
+    expectSelectorDeclarations(css, '.model-provider-modal-content', /backdrop-filter\s*:\s*var\(--material-filter-raised, none\)\s*;/)
+  })
+})
+
 describe('settings material scope contract', () => {
   it('binds the panel effect to the page root and both panel roots', () => {
     const pageTag = settingsPageSource.match(/<div\b[^>]*class="settings-page"[^>]*>/)?.[0]
@@ -258,7 +405,11 @@ describe('settings material scope contract', () => {
     const contentTag = settingsPageSource.match(/<div\b[^>]*class="settings-content"[^>]*>/)?.[0]
 
     expect(settingsPageSource).toContain('const settingsPageDataAttrs = computed(() => getPanelDataAttributes())')
+    expect(settingsPageSource).toContain('const settingsPageMaterialStyle = computed(() => {')
+    expect(settingsPageSource).toContain("'--material-filter-section': materialStyle['--material-filter-section'] ?? 'none'")
+    expect(settingsPageSource).toContain("'--material-filter-raised': materialStyle['--material-filter-raised'] ?? 'none'")
     expect(pageTag).toContain('v-bind="settingsPageDataAttrs"')
+    expect(pageTag).toContain(':style="settingsPageMaterialStyle"')
     expect(navTag).toContain('v-bind="settingsNavDataAttrs"')
     expect(navTag).toContain(':style="settingsNavStyle"')
     expect(contentTag).toContain('v-bind="settingsContentDataAttrs"')

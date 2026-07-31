@@ -23,6 +23,9 @@
  *   they do not replace explicit material tokens in component variants.
  * - Primary, destructive, status, overlay, and switch-thumb surfaces stay
  *   semantic solids so action hierarchy and state remain unambiguous.
+ * - Blur roots also expose --material-filter-section and
+ *   --material-filter-raised. Only a few top-level interior groups consume
+ *   these derived filters; repeated items use surface colour alone.
  */
 
 import { useStorage } from '@vueuse/core'
@@ -118,9 +121,19 @@ export function computePanelStyle(settings: PanelStyleSettings): Record<string, 
       break
     case 'blur':
       // Use both standard and -webkit prefixed for Chromium/Electron compatibility
-      style.backdropFilter = `blur(${clamp(settings.blur, 0, 20)}px)`
-      style.WebkitBackdropFilter = `blur(${clamp(settings.blur, 0, 20)}px)`
+      const blur = clamp(settings.blur, 0, 20)
+      style.backdropFilter = `blur(${blur}px)`
+      style.WebkitBackdropFilter = `blur(${blur}px)`
       style.backgroundColor = `rgba(var(--bg-primary-rgb, 10, 14, 20), ${alpha})`
+      if (blur > 0) {
+        const sectionBlur = Math.round(blur * 20) / 100
+        const raisedBlur = Math.round(blur * 35) / 100
+        style['--material-filter-section'] = `blur(${sectionBlur}px) saturate(105%)`
+        style['--material-filter-raised'] = `blur(${raisedBlur}px) saturate(108%)`
+      } else {
+        style['--material-filter-section'] = 'none'
+        style['--material-filter-raised'] = 'none'
+      }
       break
   }
 
