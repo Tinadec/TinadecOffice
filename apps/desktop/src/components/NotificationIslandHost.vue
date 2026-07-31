@@ -117,7 +117,10 @@ function taskLabel(item: NotificationItem) {
       @mouseleave="onLeave"
     >
       <!-- STATUS ZONE — ongoing conditions, ALL rendered -->
-      <div v-if="statusZone.length" class="island-zone island-zone--status" role="status" :aria-label="t('app.systemStatus')">
+      <TransitionGroup
+        v-if="statusZone.length" tag="div" name="island-pop"
+        class="island-zone island-zone--status" role="status" :aria-label="t('app.systemStatus')"
+      >
         <div
           v-for="item in statusZone" :key="item.id"
           class="island-capsule island-capsule--status"
@@ -150,10 +153,13 @@ function taskLabel(item: NotificationItem) {
           </button>
           <button type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
         </div>
-      </div>
+      </TransitionGroup>
 
       <!-- TRANSIENT ZONE — max 3, "just happened" -->
-      <div v-if="transientZone.length" class="island-zone island-zone--transient">
+      <TransitionGroup
+        v-if="transientZone.length" tag="div" name="island-pop"
+        class="island-zone island-zone--transient"
+      >
         <div
           v-for="item in transientZone" :key="item.id"
           class="island-capsule island-capsule--transient"
@@ -184,7 +190,7 @@ function taskLabel(item: NotificationItem) {
         </div>
         <!-- overflow badge -->
         <button
-          v-if="overflowCount > 0" type="button"
+          v-if="overflowCount > 0" key="__overflow__" type="button"
           class="island-capsule island-capsule--overflow"
           :class="overflowOpen ? 'island-capsule--active' : ''"
           :aria-label="t('app.more') + ` +${overflowCount}`"
@@ -194,7 +200,7 @@ function taskLabel(item: NotificationItem) {
           <MoreHorizontal :size="14" class="island-capsule__icon" aria-hidden="true" />
           <span class="island-capsule__badge">+{{ overflowCount }}</span>
         </button>
-      </div>
+      </TransitionGroup>
 
       <!-- DETAIL CARD -->
       <Transition name="island-card">
@@ -266,12 +272,18 @@ function taskLabel(item: NotificationItem) {
 </template>
 
 <style scoped>
-/* ── HOST: per-route insets via custom properties ── */
+/* ── HOST: per-route insets via custom properties ──
+   Spans the full window width (left/right: 0) so the island column is truly
+   centered under the title bar, Dynamic Island style. Symmetric inline padding
+   of max(start, end) keeps content window-centered while still clearing the
+   title-bar drag region and window controls on both sides. */
 .island-host {
-  position: fixed; z-index: 10050; pointer-events: none;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  position: fixed; left: 0; right: 0; z-index: 10050; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center;
   gap: 6px; container-type: inline-size;
-  --island-inset-start: 0; --island-inset-end: 0;
+  padding-inline: max(var(--island-inset-start), var(--island-inset-end));
+  --island-inset-start: 0px; --island-inset-end: 0px;
+  --island-spring: cubic-bezier(0.34, 1.45, 0.42, 1);
 }
 .island-host--standard { top: 6px; --island-inset-start: 200px; --island-inset-end: 140px; }
 .island-host--detached { top: 42px; --island-inset-start: 8px; --island-inset-end: 8px; }
@@ -279,6 +291,7 @@ function taskLabel(item: NotificationItem) {
 
 /* ── ZONES ── */
 .island-zone {
+  position: relative; /* containing block for absolutely-positioned leaving capsules */
   display: flex; align-items: center; justify-content: center; gap: 6px;
   max-width: 100%; pointer-events: none; flex-wrap: wrap;
 }
@@ -469,10 +482,22 @@ function taskLabel(item: NotificationItem) {
 .island-overflow__footer { display: flex; justify-content: flex-end; padding: 8px 13px; border-top: 1px solid var(--border-default, #1a1f29); }
 
 /* ── TRANSITIONS ── */
-.island-card-enter-active, .island-card-leave-active {
-  transition: opacity 140ms ease, transform 160ms ease; transform-origin: top center;
+/* Capsule pop — Dynamic Island style: expand from a compact pill with a
+   slight overshoot, collapse away with a quick shrink. `move` keeps siblings
+   gliding when a capsule enters/leaves the row. */
+.island-pop-enter-active {
+  transition: opacity 180ms ease, transform 260ms var(--island-spring);
 }
-.island-card-enter-from, .island-card-leave-to { opacity: 0; transform: translateY(-5px) scale(0.98); }
+.island-pop-leave-active { transition: opacity 130ms ease, transform 160ms ease; }
+.island-pop-enter-from { opacity: 0; transform: translateY(-9px) scale(0.55); }
+.island-pop-leave-to { opacity: 0; transform: scale(0.7); }
+.island-pop-move { transition: transform 240ms var(--island-spring); }
+.island-pop-leave-active.island-capsule { position: absolute; }
+
+.island-card-enter-active { transition: opacity 160ms ease, transform 240ms var(--island-spring); transform-origin: top center; }
+.island-card-leave-active { transition: opacity 140ms ease, transform 160ms ease; transform-origin: top center; }
+.island-card-enter-from { opacity: 0; transform: translateY(-8px) scale(0.94); }
+.island-card-leave-to { opacity: 0; transform: translateY(-5px) scale(0.98); }
 @keyframes island-spin { to { transform: rotate(360deg); } }
 
 /* ── CONTAINER QUERIES: icon-only when narrow ── */
@@ -482,7 +507,8 @@ function taskLabel(item: NotificationItem) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .island-capsule, .island-card-enter-active, .island-card-leave-active { transition: none; }
+  .island-capsule, .island-card-enter-active, .island-card-leave-active,
+  .island-pop-enter-active, .island-pop-leave-active, .island-pop-move { transition: none; }
   .island-capsule__spinner, .island-card__spinner { animation: none; }
 }
 
