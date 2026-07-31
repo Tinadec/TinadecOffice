@@ -9,7 +9,7 @@
  */
 
 import { useStorage } from '@vueuse/core'
-import { ref, type Ref } from 'vue'
+import { effectScope, ref, type EffectScope, type Ref } from 'vue'
 import {
   type PanelEffect,
   type PanelStyleSettings,
@@ -18,15 +18,40 @@ import {
 
 // Storage key for the global panel style
 const STORAGE_KEY = 'tinadec-panel-style'
+const PANEL_EFFECTS = new Set<PanelEffect>(['opaque', 'translucent', 'blur'])
 
 /**
  * Get stored global panel style reference (lazy singleton initialization)
  */
 let stored: Ref<PanelStyleSettings> | null = null
+let storageScope: EffectScope | null = null
+
+export function __resetPanelStylesForTests(): void {
+  storageScope?.stop()
+  storageScope = null
+  stored = null
+}
 
 function getStoredPanelStyle(): Ref<PanelStyleSettings> {
   if (!stored) {
-    stored = useStorage<PanelStyleSettings>(STORAGE_KEY, { ...DEFAULT_PANEL_STYLE_SETTINGS })
+    const scope = effectScope(true)
+    const storageRef = scope.run(() =>
+      useStorage<PanelStyleSettings>(
+        STORAGE_KEY,
+        { ...DEFAULT_PANEL_STYLE_SETTINGS },
+        undefined,
+        { flush: 'sync', mergeDefaults: true },
+      ),
+    )
+
+    if (!storageRef) {
+      scope.stop()
+      throw new Error('Failed to initialize panel style storage')
+    }
+
+    storageScope = scope
+    stored = storageRef
+    stored.value = normalizePanelStyle(stored.value)
   }
   return stored
 }
@@ -36,6 +61,24 @@ function getStoredPanelStyle(): Ref<PanelStyleSettings> {
  */
 function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val))
+}
+
+function normalizePanelStyle(value: unknown): PanelStyleSettings {
+  const candidate = typeof value === 'object' && value !== null
+    ? value as Partial<PanelStyleSettings>
+    : {}
+
+  return {
+    effect: PANEL_EFFECTS.has(candidate.effect as PanelEffect)
+      ? candidate.effect as PanelEffect
+      : DEFAULT_PANEL_STYLE_SETTINGS.effect,
+    opacity: typeof candidate.opacity === 'number' && Number.isFinite(candidate.opacity)
+      ? clamp(candidate.opacity, 0, 100)
+      : DEFAULT_PANEL_STYLE_SETTINGS.opacity,
+    blur: typeof candidate.blur === 'number' && Number.isFinite(candidate.blur)
+      ? clamp(candidate.blur, 0, 20)
+      : DEFAULT_PANEL_STYLE_SETTINGS.blur,
+  }
 }
 
 /**
@@ -75,13 +118,10 @@ export function usePanelStyles() {
    * Update the global material style settings (partial merge)
    */
   function updatePanelStyle(patch: Partial<PanelStyleSettings>): void {
-    panelStyle.value = {
+    panelStyle.value = normalizePanelStyle({
       ...panelStyle.value,
       ...patch,
-      // Clamp numeric values
-      opacity: patch.opacity !== undefined ? clamp(patch.opacity, 0, 100) : panelStyle.value.opacity,
-      blur: patch.blur !== undefined ? clamp(patch.blur, 0, 20) : panelStyle.value.blur,
-    }
+    })
   }
 
   /**
