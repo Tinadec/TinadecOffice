@@ -187,14 +187,14 @@ function onExecuteTool(tool: ToolDescriptorDto) {
 }
 
 .orchestration-tags span {
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   border: 1px solid var(--border-muted);
   border-radius: 999px;
   padding: 3px 7px;
 }
 
 .orchestration-finding {
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   display: grid;
@@ -223,7 +223,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
   display: flex;
   gap: 2px;
   padding: 2px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   border-radius: 6px;
 }
 
@@ -258,7 +258,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
 
 .context-pack-row,
 .step-result-row {
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   display: grid;

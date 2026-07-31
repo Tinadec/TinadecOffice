@@ -9,7 +9,7 @@ const props = defineProps<Props>()
 </script>
 
 <template>
-  <div :class="cn('flex h-9 items-center space-x-1 rounded-md border bg-background p-1 shadow-sm', props.class)">
+  <div :class="cn('flex h-9 items-center space-x-1 rounded-md border bg-[var(--surface-section)] p-1 shadow-sm', props.class)">
     <slot />
   </div>
 </template>

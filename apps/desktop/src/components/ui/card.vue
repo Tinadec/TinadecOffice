@@ -9,7 +9,7 @@ const props = defineProps<Props>()
 </script>
 
 <template>
-  <div :class="cn('rounded-xl border bg-card text-card-foreground shadow', props.class)">
+  <div :class="cn('rounded-xl border bg-[var(--surface-raised)] text-card-foreground shadow', props.class)">
     <div v-if="$slots.header" class="card-header">
       <slot name="header" />
     </div>

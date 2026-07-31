@@ -200,7 +200,7 @@ function handleClick(feature: FeatureCard) {
   align-items: flex-start;
   gap: 8px;
   padding: 12px 10px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   border: 1px solid transparent;
   border-radius: 10px;
   box-shadow: var(--shadow-subtle);
@@ -223,7 +223,7 @@ function handleClick(feature: FeatureCard) {
 }
 
 .panel-home-card:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   border-color: var(--card-color, var(--accent-primary));
   box-shadow: var(--shadow-panel);
   transform: translateY(-1px);

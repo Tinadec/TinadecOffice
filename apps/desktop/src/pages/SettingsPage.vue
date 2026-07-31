@@ -180,6 +180,10 @@ const settingsNavDataAttrs = computed(() => getPanelDataAttributes())
 const settingsContentStyle = computed(() => getPanelStyle())
 const settingsContentDataAttrs = computed(() => getPanelDataAttributes())
 
+// Extend the material token scope to sibling UI such as window controls
+// and provider dialogs. Root blur/background styles stay on the two panels.
+const settingsPageDataAttrs = computed(() => getPanelDataAttributes())
+
 /** Wrapper that also broadcasts theme changes to detached panel windows */
 function changeTheme(newTheme: 'dark' | 'light' | 'system') {
   setTheme(newTheme)
@@ -1538,7 +1542,7 @@ import '../settings/settings.css'
 </script>
 
 <template>
-<div class="settings-page">
+<div class="settings-page" v-bind="settingsPageDataAttrs">
 <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
 <!-- Full-width draggable bar for window dragging -->

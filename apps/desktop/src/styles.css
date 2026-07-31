@@ -238,11 +238,42 @@
 :root {
   --bg-primary-rgb: 10, 14, 20;
   --bg-secondary-rgb: 17, 21, 28;
+  --bg-tertiary-rgb: 26, 31, 41;
+  --bg-hover-rgb: 26, 31, 41;
+  --bg-selected-rgb: 13, 46, 42;
+  --bg-input-rgb: 10, 14, 20;
+  --bg-button-rgb: 26, 31, 41;
+  --bg-button-hover-rgb: 36, 42, 54;
 }
 
 :root[data-theme="light"] {
   --bg-primary-rgb: 255, 255, 255;
   --bg-secondary-rgb: 246, 248, 250;
+  --bg-tertiary-rgb: 238, 240, 243;
+  --bg-hover-rgb: 238, 244, 242;
+  --bg-selected-rgb: 223, 241, 236;
+  --bg-input-rgb: 251, 252, 250;
+  --bg-button-rgb: 238, 242, 239;
+  --bg-button-hover-rgb: 223, 232, 228;
+}
+
+/* ===== Material-aware surface tokens =====
+   Interior surfaces inside material panels (tab bars, cards, buttons,
+   inputs, hover/selected states) must use these tokens instead of raw
+   --bg-* tokens so they automatically follow the global panel material.
+   Defaults equal the opaque theme tokens. Panel roots carrying a
+   data-panel-effect attribute re-map them to the effect-specific alpha
+   tiers defined in the Panel Style Effects section. */
+:root {
+  --surface-chrome: var(--bg-tertiary);
+  --surface-section: var(--bg-secondary);
+  --surface-raised: var(--bg-tertiary);
+  --surface-hover: var(--bg-hover);
+  --surface-active: var(--bg-primary);
+  --surface-selected: var(--bg-selected);
+  --surface-input: var(--bg-input);
+  --surface-button: var(--bg-button);
+  --surface-button-hover: var(--bg-button-hover);
 }
 
 * {
@@ -463,7 +494,7 @@ button {
   width: 100%;
   border: 1px solid var(--border-input);
   border-radius: 8px;
-  background: var(--bg-input);
+  background: var(--surface-input);
   color: var(--text-primary);
 }
 
@@ -710,14 +741,14 @@ button {
   width: 32px;
   height: 28px;
   border: 0;
-  background: var(--bg-secondary);
+  background: var(--surface-button);
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .agent-view-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover);
   color: var(--text-primary);
 }
 
@@ -742,7 +773,7 @@ button {
   padding: 10px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .agent-topology-layer > header,
@@ -785,7 +816,7 @@ button {
   padding: 9px;
   border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: var(--bg-primary);
+  background: var(--surface-raised);
   color: var(--text-primary);
   text-align: left;
 }
@@ -797,7 +828,7 @@ button.agent-topology-node {
 button.agent-topology-node:hover,
 .agent-topology-node.selected {
   border-color: var(--border-input-focus);
-  background: var(--bg-selected);
+  background: var(--surface-selected);
 }
 
 .agent-topology-node:focus-visible {
@@ -820,17 +851,17 @@ button.agent-topology-node:hover,
   height: 28px;
   flex: 0 0 auto;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-raised));
   color: var(--accent-primary);
 }
 
 .agent-topology-layer.planning .agent-topology-node-icon {
-  background: color-mix(in srgb, var(--accent-success) 10%, var(--bg-tertiary));
+  background: color-mix(in srgb, var(--accent-success) 10%, var(--surface-raised));
   color: var(--accent-success);
 }
 
 .agent-topology-layer.candidates .agent-topology-node-icon {
-  background: color-mix(in srgb, var(--accent-warning) 10%, var(--bg-tertiary));
+  background: color-mix(in srgb, var(--accent-warning) 10%, var(--surface-raised));
   color: var(--accent-warning);
 }
 
@@ -879,7 +910,7 @@ button.agent-topology-node:hover,
   margin-bottom: 8px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   color: var(--text-primary);
   text-align: left;
 }
@@ -905,7 +936,7 @@ button.agent-topology-node:hover,
   height: 30px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-button);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -913,12 +944,13 @@ button.agent-topology-node:hover,
 .agent-card-more:hover {
   color: var(--text-primary);
   border-color: var(--border-default);
+  background: var(--surface-button-hover);
 }
 
 .agent-card.active,
 .agent-mode-card.active {
   border-color: var(--border-input-focus);
-  background: var(--bg-selected);
+  background: var(--surface-selected);
 }
 
 .agent-card.disabled {
@@ -974,7 +1006,7 @@ button.agent-topology-node:hover,
   padding: 12px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-section);
 }
 
 .agent-config-switch {
@@ -1046,7 +1078,7 @@ button.agent-topology-node:hover,
   padding: 11px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-button);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -1070,7 +1102,7 @@ display: grid;
 gap: 12px;
 margin: 16px 0;
 padding: 14px;
-background: var(--bg-secondary);
+background: var(--surface-section);
 border-radius: 10px;
 box-shadow: var(--shadow-subtle);
 }
@@ -1117,7 +1149,7 @@ box-shadow: var(--shadow-subtle);
   padding: 9px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .model-readiness-metrics strong {
@@ -1147,7 +1179,7 @@ box-shadow: var(--shadow-subtle);
   overflow: hidden;
   padding: 3px 7px;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 999px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1161,7 +1193,7 @@ box-shadow: var(--shadow-subtle);
   padding: 10px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .provider-readiness-detail-head span {
@@ -1183,7 +1215,7 @@ box-shadow: var(--shadow-subtle);
 }
 
 .catalog-readiness-panel {
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .catalog-readiness-rows {
@@ -1201,7 +1233,7 @@ box-shadow: var(--shadow-subtle);
   padding: 8px 9px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-raised);
 }
 
 .catalog-readiness-row > div {
@@ -1232,7 +1264,7 @@ box-shadow: var(--shadow-subtle);
   padding: 14px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .git-manager-summary {
@@ -1286,7 +1318,7 @@ box-shadow: var(--shadow-subtle);
   padding: 10px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-raised);
 }
 
 .git-manager-metric svg {
@@ -1323,7 +1355,7 @@ box-shadow: var(--shadow-subtle);
   padding: 12px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--surface-section);
 }
 
 .agent-config-section-title {
@@ -1353,7 +1385,7 @@ box-shadow: var(--shadow-subtle);
   padding: 4px 10px;
   border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--bg-primary);
+  background: var(--surface-button);
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -1362,12 +1394,13 @@ box-shadow: var(--shadow-subtle);
 
 .agent-tool-chip:hover {
   border-color: var(--border-input-focus);
+  background: var(--surface-button-hover);
   color: var(--text-primary);
 }
 
 .agent-tool-chip.active {
   border-color: var(--color-accent);
-  background: var(--color-accent-muted, rgba(59, 130, 246, 0.08));
+  background: var(--surface-selected);
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -1388,7 +1421,7 @@ box-shadow: var(--shadow-subtle);
   font-size: 10px;
   padding: 1px 4px;
   border-radius: 3px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   color: var(--text-secondary);
 }
 
@@ -1417,7 +1450,7 @@ box-shadow: var(--shadow-subtle);
   padding: 3px 8px;
   border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
@@ -1688,7 +1721,7 @@ box-shadow: var(--shadow-subtle);
   align-items: center;
   gap: 4px;
   padding: 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-chrome);
   flex-shrink: 0;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1710,7 +1743,7 @@ box-shadow: var(--shadow-subtle);
   font-size: 11.5px;
   font-weight: 500;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-primary) 42%, transparent);
+  background: rgba(var(--bg-primary-rgb), 0.42);
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
@@ -1721,14 +1754,14 @@ box-shadow: var(--shadow-subtle);
 }
 
 .browser-tab:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   border-color: var(--border-muted);
   color: var(--text-primary);
 }
 
 .browser-tab.active {
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: var(--surface-active);
   border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-muted));
   box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-primary) 14%, transparent);
 }
@@ -1758,7 +1791,7 @@ box-shadow: var(--shadow-subtle);
 }
 
 .browser-tab-close:hover {
-  background: var(--bg-tertiary);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -1802,7 +1835,7 @@ box-shadow: var(--shadow-subtle);
 
 .browser-tab-detached:hover {
   opacity: 1;
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .browser-tab-detached-icon {
@@ -1840,7 +1873,7 @@ box-shadow: var(--shadow-subtle);
 
 .browser-tab-add:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .browser-tab-collapse {
@@ -1860,7 +1893,7 @@ box-shadow: var(--shadow-subtle);
 
 .browser-tab-collapse:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 /* ===== Responsive: Compact mode (panel width < 420px) ===== */
@@ -1895,7 +1928,7 @@ box-shadow: var(--shadow-subtle);
   position: absolute;
   top: 2px;
   right: 2px;
-  background: var(--bg-tertiary);
+  background: var(--surface-hover);
 }
 
 /* tab-labels-active-only: Enough space for the active tab's label only */
@@ -1919,7 +1952,7 @@ box-shadow: var(--shadow-subtle);
   position: absolute;
   top: 2px;
   right: 2px;
-  background: var(--bg-tertiary);
+  background: var(--surface-hover);
 }
 
 /* ===== Responsive: Ultra-compact mode (panel width < 340px) ===== */
@@ -2034,7 +2067,7 @@ box-shadow: var(--shadow-subtle);
 
 .float-panel-toggle-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .float-panel-collapsed-icon {
@@ -2053,7 +2086,7 @@ box-shadow: var(--shadow-subtle);
 .float-panel-collapsed-icon:hover,
 .float-panel-collapsed-icon.active {
   color: var(--accent-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .sidebar-nav {
@@ -2080,7 +2113,7 @@ box-shadow: var(--shadow-subtle);
 }
 
 .sidebar-nav-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .sidebar-nav-item:disabled {
@@ -2123,7 +2156,7 @@ box-shadow: var(--shadow-subtle);
 
 .sidebar-search-clear:hover {
   color: var(--text-primary);
-  background: var(--bg-button-hover);
+  background: var(--surface-button-hover);
 }
 
 .sidebar-section {
@@ -2318,7 +2351,7 @@ box-shadow: var(--shadow-subtle);
 
 .project-row-action:hover {
   color: var(--text-primary);
-  background: var(--bg-button-hover);
+  background: var(--surface-button-hover);
 }
 
 .project-chevron {
@@ -2354,12 +2387,12 @@ box-shadow: var(--shadow-subtle);
 }
 
 .session-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .session-item.active {
-  background: var(--bg-selected);
+  background: var(--surface-selected);
   color: var(--text-primary);
 }
 
@@ -2446,7 +2479,7 @@ box-shadow: var(--shadow-subtle);
 
 .sidebar-footer-action:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .sidebar-footer-actions {
@@ -3498,7 +3531,7 @@ textarea,
 input {
   width: 100%;
   color: var(--text-primary);
-  background: var(--bg-input);
+  background: var(--surface-input);
   border: 1px solid var(--border-input);
   border-radius: 6px;
   outline: none;
@@ -3539,11 +3572,11 @@ input:focus {
 .icon-button {
   width: 34px;
   color: var(--text-secondary);
-  background: var(--bg-button);
+  background: var(--surface-button);
 }
 
 .icon-button:hover {
-  background: var(--bg-button-hover);
+  background: var(--surface-button-hover);
   color: var(--text-primary);
 }
 
@@ -3562,12 +3595,12 @@ input:focus {
 .secondary-button {
   width: 100%;
   color: var(--text-brand);
-  background: var(--bg-secondary-button);
+  background: var(--surface-button);
   font-weight: 600;
 }
 
 .secondary-button:hover {
-  background: var(--bg-secondary-button-hover);
+  background: var(--surface-button-hover);
 }
 
 button:disabled {
@@ -4999,68 +5032,100 @@ transform: translateX(30px);
    Visual effects (translucent, blur) are applied via inline styles
    from computePanelStyle() in usePanelStyles.ts.
 
-   When a panel has data-panel-effect="translucent" or "blur",
-   its inner elements must become transparent so the backdrop-filter
-   and semi-transparent background show through consistently. */
+   Alpha tier mapping — the single source of truth for how interior
+   surfaces render inside each panel material:
+
+   | Tier              | Token                   | Opaque | Translucent | Blur |
+   |-------------------|-------------------------|--------|-------------|------|
+   | Chrome strips     | --surface-chrome        | 1.00   | 0.72        | 0.18 |
+   | Section frames    | --surface-section       | 1.00   | 0.70        | 0.38 |
+   | Raised surfaces   | --surface-raised        | 1.00   | 0.78        | 0.50 |
+   | Hover emphasis    | --surface-hover         | 1.00   | 0.82        | 0.62 |
+   | Active surface    | --surface-active        | 1.00   | 0.86        | 0.68 |
+   | Accent selection  | --surface-selected      | 1.00   | 0.84        | 0.72 |
+   | Inputs/fields     | --surface-input         | 1.00   | 0.88        | 0.70 |
+   | Buttons (neutral) | --surface-button        | 1.00   | 0.80        | 0.58 |
+   | Button hover      | --surface-button-hover  | 1.00   | 0.90        | 0.72 |
+
+   Custom properties inherit, so every descendant of a panel that
+   carries data-panel-effect automatically picks up the re-mapped
+   values — no per-component whitelist rules are needed. New interior
+   components must consume --surface-* tokens (never raw --bg-* tokens)
+   for any background that should follow the material.
+
+   Shared primitives consume --surface-* directly, including hover and
+   data-state variants. The scoped Tailwind utility rules below are a
+   compatibility fallback for ordinary neutral bg-* classes; generated
+   variants are not part of that contract. Accent utilities
+   (bg-primary/bg-destructive) are intentionally left solid to preserve
+   the action hierarchy. */
 
 .panel-styled {
   position: relative;
   z-index: 1;
 }
 
-/* ---- Material effect inheritance ----
-   When the panel is translucent or blur, inner solid backgrounds
-   are removed so the material effect is visible throughout the panel. */
+/* ---- Material surface re-mapping ----
+   Re-map the surface tokens on each material root. Custom properties
+   inherit through every descendant, including scoped Vue components. */
+[data-panel-effect="translucent"] {
+  --surface-chrome: rgba(var(--bg-tertiary-rgb), 0.72);
+  --surface-section: rgba(var(--bg-secondary-rgb), 0.70);
+  --surface-raised: rgba(var(--bg-tertiary-rgb), 0.78);
+  --surface-hover: rgba(var(--bg-hover-rgb), 0.82);
+  --surface-active: rgba(var(--bg-primary-rgb), 0.86);
+  --surface-selected: rgba(var(--bg-selected-rgb), 0.84);
+  --surface-input: rgba(var(--bg-input-rgb), 0.88);
+  --surface-button: rgba(var(--bg-button-rgb), 0.80);
+  --surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.90);
 
-/* Sidebar inner elements */
-.sidebar[data-panel-effect="translucent"] .sidebar-topbar,
-.sidebar[data-panel-effect="blur"] .sidebar-topbar,
-.sidebar[data-panel-effect="translucent"] .sidebar-search-box,
-.sidebar[data-panel-effect="blur"] .sidebar-search-box {
-  background: transparent;
-}
-
-/* Chat active panel inner elements */
-.chat-active-panel[data-panel-effect="translucent"],
-.chat-active-panel[data-panel-effect="blur"] {
   border-color: transparent;
 }
 
-.chat-active-panel[data-panel-effect="translucent"] .conversation-head,
-.chat-active-panel[data-panel-effect="blur"] .conversation-head {
-  background: transparent;
-}
-
-/* Welcome dialog inner elements */
-.welcome-dialog[data-panel-effect="translucent"],
-.welcome-dialog[data-panel-effect="blur"] {
-  border-color: transparent;
-}
-
-/* Settings nav inner elements */
-
-/* Context panel (float-panel) inner elements */
-.float-panel[data-panel-effect="translucent"],
-.float-panel[data-panel-effect="blur"] {
-border-color: transparent;
-}
-
-.float-panel[data-panel-effect="translucent"] .browser-tab-bar,
-.float-panel[data-panel-effect="blur"] .browser-tab-bar {
-background: transparent;
-}
-
-.float-panel[data-panel-effect="translucent"] .browser-tab.active,
-.float-panel[data-panel-effect="blur"] .browser-tab.active {
-background: rgba(var(--bg-primary-rgb, 10, 14, 20), 0.6);
-}
-
-/* ---- Consistent material application ----
-   Ensure all panels with material effects share the same visual
-   treatment: rounded corners, no hard borders, unified shadow. */
-[data-panel-effect="translucent"],
 [data-panel-effect="blur"] {
+  --surface-chrome: rgba(var(--bg-tertiary-rgb), 0.18);
+  --surface-section: rgba(var(--bg-secondary-rgb), 0.38);
+  --surface-raised: rgba(var(--bg-tertiary-rgb), 0.50);
+  --surface-hover: rgba(var(--bg-hover-rgb), 0.62);
+  --surface-active: rgba(var(--bg-primary-rgb), 0.68);
+  --surface-selected: rgba(var(--bg-selected-rgb), 0.72);
+  --surface-input: rgba(var(--bg-input-rgb), 0.70);
+  --surface-button: rgba(var(--bg-button-rgb), 0.58);
+  --surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.72);
+
   border-color: transparent;
+}
+
+/* ---- Tailwind shadcn neutral utility re-pointing ----
+   Inside a material panel, neutral surface utilities follow the material.
+   Attribute+class specificity beats the base utility, so these win. */
+[data-panel-effect="translucent"] .bg-card,
+[data-panel-effect="blur"] .bg-card,
+[data-panel-effect="translucent"] .bg-popover,
+[data-panel-effect="blur"] .bg-popover {
+  background-color: var(--surface-raised);
+}
+
+[data-panel-effect="translucent"] .bg-background,
+[data-panel-effect="blur"] .bg-background {
+  background-color: var(--surface-section);
+}
+
+[data-panel-effect="translucent"] .bg-secondary,
+[data-panel-effect="blur"] .bg-secondary,
+[data-panel-effect="translucent"] .bg-muted,
+[data-panel-effect="blur"] .bg-muted {
+  background-color: var(--surface-button);
+}
+
+[data-panel-effect="translucent"] .bg-accent,
+[data-panel-effect="blur"] .bg-accent {
+  background-color: var(--surface-hover);
+}
+
+[data-panel-effect="translucent"] .bg-input,
+[data-panel-effect="blur"] .bg-input {
+  background-color: var(--surface-input);
 }
 
 

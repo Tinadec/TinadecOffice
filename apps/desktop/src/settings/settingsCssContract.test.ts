@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import settingsCss from './settings.css?raw'
 import stylesCss from '../styles.css?raw'
+import settingsPageSource from '../pages/SettingsPage.vue?raw'
+import agentEvolutionPanelSource from '../components/AgentEvolutionPanel.vue?raw'
+import promptEngineeringPanelSource from '../components/PromptEngineeringPanel.vue?raw'
+import alertSource from '../components/ui/alert.vue?raw'
+import backgroundPreviewSource from '../components/ui/background-preview.vue?raw'
+import badgeSource from '../components/ui/badge.vue?raw'
+import buttonSource from '../components/ui/button.vue?raw'
+import cardSource from '../components/ui/card.vue?raw'
+import chartSource from '../components/ui/chart.vue?raw'
+import commandSource from '../components/ui/command.vue?raw'
+import dropdownMenuSource from '../components/ui/dropdown-menu.vue?raw'
+import inputSource from '../components/ui/input.vue?raw'
+import menubarSource from '../components/ui/menubar.vue?raw'
+import panelStyleControlSource from '../components/ui/panel-style-control.vue?raw'
+import popoverSource from '../components/ui/popover.vue?raw'
+import selectSource from '../components/ui/select.vue?raw'
+import sheetSource from '../components/ui/sheet.vue?raw'
+import switchSource from '../components/ui/switch.vue?raw'
+import tabsSource from '../components/ui/tabs.vue?raw'
+import textareaSource from '../components/ui/textarea.vue?raw'
+import toggleGroupSource from '../components/ui/toggle-group.vue?raw'
+import toggleSource from '../components/ui/toggle.vue?raw'
 
 function assertCssBlock(css: string, pattern: RegExp): string {
   const m = css.match(pattern)
@@ -11,6 +33,24 @@ function assertCssBlock(css: string, pattern: RegExp): string {
 
 function normalizeLineEndings(css: string): string {
   return css.replace(/\r\n/g, '\n')
+}
+
+function extractStyleBlocks(source: string): string {
+  return Array.from(source.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g))
+    .map((match) => match[1])
+    .join('\n')
+}
+
+const RAW_NEUTRAL_BACKGROUND = /\bbackground(?:-color)?\s*:\s*[^;{}]*var\(--bg-(?:primary|secondary|tertiary|hover|selected|input|button(?:-hover)?|elevated)\b[^;{}]*;/g
+
+function rawNeutralBackgrounds(css: string): string[] {
+  return Array.from(css.matchAll(RAW_NEUTRAL_BACKGROUND), (match) => match[0])
+}
+
+function expectSurfaceTokens(source: string, tokens: string[]): void {
+  for (const token of tokens) {
+    expect(source, `Expected source to consume ${token}`).toContain(`var(${token})`)
+  }
 }
 
 describe('settings.css contract', () => {
@@ -211,6 +251,79 @@ describe('settings.css contract', () => {
   })
 })
 
+describe('settings material scope contract', () => {
+  it('binds the panel effect to the page root and both panel roots', () => {
+    const pageTag = settingsPageSource.match(/<div\b[^>]*class="settings-page"[^>]*>/)?.[0]
+    const navTag = settingsPageSource.match(/<nav\b[^>]*class="settings-nav"[^>]*>/)?.[0]
+    const contentTag = settingsPageSource.match(/<div\b[^>]*class="settings-content"[^>]*>/)?.[0]
+
+    expect(settingsPageSource).toContain('const settingsPageDataAttrs = computed(() => getPanelDataAttributes())')
+    expect(pageTag).toContain('v-bind="settingsPageDataAttrs"')
+    expect(navTag).toContain('v-bind="settingsNavDataAttrs"')
+    expect(navTag).toContain(':style="settingsNavStyle"')
+    expect(contentTag).toContain('v-bind="settingsContentDataAttrs"')
+    expect(contentTag).toContain(':style="settingsContentStyle"')
+  })
+
+  it.each([
+    ['settings.css', settingsCss],
+    ['AgentEvolutionPanel.vue', extractStyleBlocks(agentEvolutionPanelSource)],
+    ['PromptEngineeringPanel.vue', extractStyleBlocks(promptEngineeringPanelSource)],
+    ['panel-style-control.vue', extractStyleBlocks(panelStyleControlSource)],
+  ])('%s does not bypass material surfaces with raw neutral backgrounds', (_name, source) => {
+    expect(rawNeutralBackgrounds(source)).toEqual([])
+  })
+
+  it('keeps the background preview material-aware while preserving its transparency checkerboard', () => {
+    expectSurfaceTokens(backgroundPreviewSource, ['--surface-section'])
+
+    const rawBackgrounds = rawNeutralBackgrounds(extractStyleBlocks(backgroundPreviewSource))
+    expect(rawBackgrounds).toHaveLength(1)
+    expect(rawBackgrounds[0]).toContain('repeating-linear-gradient')
+    expect(rawBackgrounds[0]).toContain('var(--bg-tertiary)')
+  })
+
+  it('uses a raw opaque color only inside the explicit opaque material preview', () => {
+    expectSurfaceTokens(panelStyleControlSource, [
+      '--surface-section',
+      '--surface-hover',
+      '--surface-button',
+      '--surface-button-hover',
+      '--surface-selected',
+      '--surface-raised',
+    ])
+    expect(panelStyleControlSource).toContain("if (props.settings.effect === 'opaque')")
+    expect(panelStyleControlSource.match(/var\(--bg-primary\)/g)).toHaveLength(1)
+  })
+})
+
+describe('material-aware UI primitive contract', () => {
+  const primitives: Array<[string, string, string[]]> = [
+    ['input.vue', inputSource, ['--surface-input']],
+    ['textarea.vue', textareaSource, ['--surface-input']],
+    ['select.vue', selectSource, ['--surface-input', '--surface-raised']],
+    ['button.vue', buttonSource, ['--surface-button', '--surface-button-hover', '--surface-hover']],
+    ['switch.vue', switchSource, ['--surface-input']],
+    ['toggle.vue', toggleSource, ['--surface-hover', '--surface-selected']],
+    ['card.vue', cardSource, ['--surface-raised']],
+    ['chart.vue', chartSource, ['--surface-raised']],
+    ['alert.vue', alertSource, ['--surface-section']],
+    ['popover.vue', popoverSource, ['--surface-raised']],
+    ['dropdown-menu.vue', dropdownMenuSource, ['--surface-raised']],
+    ['sheet.vue', sheetSource, ['--surface-raised']],
+    ['command.vue', commandSource, ['--surface-raised', '--surface-input']],
+    ['tabs.vue', tabsSource, ['--surface-section']],
+    ['toggle-group.vue', toggleGroupSource, ['--surface-section']],
+    ['menubar.vue', menubarSource, ['--surface-section']],
+    ['badge.vue', badgeSource, ['--surface-button', '--surface-button-hover']],
+  ]
+
+  it.each(primitives)('%s consumes its material surface tokens', (_name, source, tokens) => {
+    expectSurfaceTokens(source, tokens)
+    expect(source).not.toMatch(/\bbg-(?:background|card|popover|input|secondary|muted|accent)(?:\b|\/)/)
+  })
+})
+
 describe('styles.css extraction contract', () => {
   const css = normalizeLineEndings(stylesCss)
 
@@ -232,8 +345,51 @@ describe('styles.css extraction contract', () => {
     expect(css).toContain('.agent-topology-node')
   })
 
-  it('still contains panel material-effect generic rules', () => {
-    expect(css).toContain('.float-panel[data-panel-effect="translucent"]')
-    expect(css).toContain('.float-panel[data-panel-effect="blur"]')
+  it('maps opaque surfaces to the solid theme tokens', () => {
+    const block = assertCssBlock(css, /:root\s*\{([^}]*--surface-chrome[^}]*)\}/)
+
+    expect(block).toContain('--surface-chrome: var(--bg-tertiary);')
+    expect(block).toContain('--surface-section: var(--bg-secondary);')
+    expect(block).toContain('--surface-raised: var(--bg-tertiary);')
+    expect(block).toContain('--surface-hover: var(--bg-hover);')
+    expect(block).toContain('--surface-active: var(--bg-primary);')
+    expect(block).toContain('--surface-selected: var(--bg-selected);')
+    expect(block).toContain('--surface-input: var(--bg-input);')
+    expect(block).toContain('--surface-button: var(--bg-button);')
+    expect(block).toContain('--surface-button-hover: var(--bg-button-hover);')
+  })
+
+  it('defines the translucent alpha tier independently from blur', () => {
+    const block = assertCssBlock(css, /\[data-panel-effect="translucent"\]\s*\{([^}]+)\}/)
+
+    expect(block).toContain('--surface-chrome: rgba(var(--bg-tertiary-rgb), 0.72);')
+    expect(block).toContain('--surface-section: rgba(var(--bg-secondary-rgb), 0.70);')
+    expect(block).toContain('--surface-raised: rgba(var(--bg-tertiary-rgb), 0.78);')
+    expect(block).toContain('--surface-hover: rgba(var(--bg-hover-rgb), 0.82);')
+    expect(block).toContain('--surface-active: rgba(var(--bg-primary-rgb), 0.86);')
+    expect(block).toContain('--surface-selected: rgba(var(--bg-selected-rgb), 0.84);')
+    expect(block).toContain('--surface-input: rgba(var(--bg-input-rgb), 0.88);')
+    expect(block).toContain('--surface-button: rgba(var(--bg-button-rgb), 0.80);')
+    expect(block).toContain('--surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.90);')
+  })
+
+  it('defines the blur alpha tier with a 0.70 input surface', () => {
+    const block = assertCssBlock(css, /\[data-panel-effect="blur"\]\s*\{([^}]+)\}/)
+
+    expect(block).toContain('--surface-chrome: rgba(var(--bg-tertiary-rgb), 0.18);')
+    expect(block).toContain('--surface-section: rgba(var(--bg-secondary-rgb), 0.38);')
+    expect(block).toContain('--surface-raised: rgba(var(--bg-tertiary-rgb), 0.50);')
+    expect(block).toContain('--surface-hover: rgba(var(--bg-hover-rgb), 0.62);')
+    expect(block).toContain('--surface-active: rgba(var(--bg-primary-rgb), 0.68);')
+    expect(block).toContain('--surface-selected: rgba(var(--bg-selected-rgb), 0.72);')
+    expect(block).toContain('--surface-input: rgba(var(--bg-input-rgb), 0.70);')
+    expect(block).toContain('--surface-button: rgba(var(--bg-button-rgb), 0.58);')
+    expect(block).toContain('--surface-button-hover: rgba(var(--bg-button-hover-rgb), 0.72);')
+  })
+
+  it('defines RGB companions for material-aware input and button surfaces in both themes', () => {
+    expect(css.match(/--bg-input-rgb:/g)).toHaveLength(2)
+    expect(css.match(/--bg-button-rgb:/g)).toHaveLength(2)
+    expect(css.match(/--bg-button-hover-rgb:/g)).toHaveLength(2)
   })
 })

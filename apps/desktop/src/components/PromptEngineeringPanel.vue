@@ -628,7 +628,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  background: var(--surface-section);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   border-radius: 6px;
   cursor: pointer;
@@ -691,7 +691,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-raised);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
 }
@@ -725,7 +725,7 @@ onMounted(() => {
 .pe-content-textarea {
   width: 100%;
   padding: 8px 10px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  background: var(--surface-input);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;
@@ -744,7 +744,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-section);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
 }
@@ -807,7 +807,7 @@ onMounted(() => {
 .pe-select {
   height: 32px;
   padding: 0 8px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  background: var(--surface-input);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;
@@ -826,7 +826,7 @@ onMounted(() => {
 }
 .pe-compare-result {
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-section);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
 }
@@ -873,7 +873,7 @@ onMounted(() => {
   gap: 12px;
   align-items: center;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-section);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
   border-radius: 6px;
   cursor: pointer;
@@ -898,7 +898,7 @@ onMounted(() => {
 .pe-score-bar {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-raised);
   border-radius: 3px;
   overflow: hidden;
 }

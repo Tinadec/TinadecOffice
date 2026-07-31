@@ -34,7 +34,7 @@ function select(value: string) {
     <button
       type="button"
       :class="cn(
-        'flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+        'flex h-9 w-full items-center justify-between rounded-md border border-input bg-[var(--surface-input)] px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
         props.class,
       )"
       @click="isOpen = !isOpen"
@@ -45,7 +45,7 @@ function select(value: string) {
     </button>
     <div
       v-if="isOpen"
-      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
+      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-[var(--surface-raised)] text-popover-foreground shadow-md"
     >
       <slot :select="select" :selected-value="selectedValue" />
     </div>

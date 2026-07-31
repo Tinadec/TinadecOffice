@@ -490,7 +490,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  background: var(--surface-section);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
   border-radius: 8px;
   cursor: pointer;
@@ -612,8 +612,8 @@ onMounted(() => {
   font-family: var(--font-mono, monospace);
 }
 .evolution-tag.removable {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--surface-raised);
+  border-color: var(--border-default);
 }
 .evolution-tag-remove {
   background: none;
@@ -700,7 +700,7 @@ onMounted(() => {
 .settings-select {
   height: 32px;
   padding: 0 8px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  background: var(--surface-input);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;
@@ -709,7 +709,7 @@ onMounted(() => {
 .settings-textarea {
   width: 100%;
   padding: 8px 10px;
-  background: var(--bg-input, rgba(255, 255, 255, 0.04));
+  background: var(--surface-input);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   color: inherit;

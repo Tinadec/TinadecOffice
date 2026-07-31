@@ -77,6 +77,63 @@ npm run dev
 
 The local environment currently contains `Version=V7.24.42SP3`, which breaks MSBuild version parsing. Root npm scripts remove that variable only for the child .NET process.
 
+## Desktop Panel Material System
+
+The desktop renderer has a single global panel material with three effects: `opaque`, `translucent`, and `blur`. The setting is persisted under the localStorage key `tinadec-panel-style` and owned by `apps/desktop/src/composables/usePanelStyles.ts`.
+
+### How a material is applied
+
+1. `computePanelStyle()` produces the panel root's inline style: `translucent` sets `background-color: rgba(var(--bg-primary-rgb), alpha)`; `blur` additionally sets `backdrop-filter: blur(Npx)` (plus the `-webkit-` prefix). `alpha` is the user's opacity setting (0-100) divided by 100; blur strength is clamped to 0-20px.
+2. `getPanelDataAttributes()` puts `data-panel-effect` on the material root. Panels binding both today include the sidebar, chat panel, context panel (HomePage), and settings nav/content (SettingsPage). The SettingsPage root also carries the attribute so sibling UI such as window controls and page-level dialogs participates in token inheritance; root blur/background styles remain on the nav/content panels.
+3. `styles.css` re-maps the material-aware surface tokens for the panel and all descendants via CSS custom property inheritance — there is no per-component whitelist.
+
+### Surface token contract (alpha tier mapping)
+
+Interior surfaces inside a material panel must consume `--surface-*` tokens, never raw `--bg-*` tokens, for any background that should follow the material:
+
+| Tier | Token | Opaque | Translucent | Blur |
+|------|-------|--------|-------------|------|
+| Chrome strips (tab bars, topbars) | `--surface-chrome` | `var(--bg-tertiary)` | `rgba(var(--bg-tertiary-rgb), 0.72)` | `rgba(var(--bg-tertiary-rgb), 0.18)` |
+| Section frames (grouped content) | `--surface-section` | `var(--bg-secondary)` | `rgba(var(--bg-secondary-rgb), 0.70)` | `rgba(var(--bg-secondary-rgb), 0.38)` |
+| Raised surfaces (cards, popovers) | `--surface-raised` | `var(--bg-tertiary)` | `rgba(var(--bg-tertiary-rgb), 0.78)` | `rgba(var(--bg-tertiary-rgb), 0.50)` |
+| Hover emphasis | `--surface-hover` | `var(--bg-hover)` | `rgba(var(--bg-hover-rgb), 0.82)` | `rgba(var(--bg-hover-rgb), 0.62)` |
+| Active surface | `--surface-active` | `var(--bg-primary)` | `rgba(var(--bg-primary-rgb), 0.86)` | `rgba(var(--bg-primary-rgb), 0.68)` |
+| Accent selection | `--surface-selected` | `var(--bg-selected)` | `rgba(var(--bg-selected-rgb), 0.84)` | `rgba(var(--bg-selected-rgb), 0.72)` |
+| Inputs / fields (input, textarea, select) | `--surface-input` | `var(--bg-input)` | `rgba(var(--bg-input-rgb), 0.88)` | `rgba(var(--bg-input-rgb), 0.70)` |
+| Neutral buttons | `--surface-button` | `var(--bg-button)` | `rgba(var(--bg-button-rgb), 0.80)` | `rgba(var(--bg-button-rgb), 0.58)` |
+| Neutral button hover | `--surface-button-hover` | `var(--bg-button-hover)` | `rgba(var(--bg-button-hover-rgb), 0.90)` | `rgba(var(--bg-button-hover-rgb), 0.72)` |
+
+The canonical definition lives in the "Material-aware surface tokens" and "Panel Style Effects" sections of `apps/desktop/src/styles.css`; the RGB companions (`--bg-*-rgb`) are theme-scoped and must be kept in sync with the hex tokens for both `data-theme="dark"` and `data-theme="light"`.
+
+Token names describe the component role, not the effect: use `--surface-<role>` (for example, `--surface-input` and `--surface-button`) and let the nearest `data-panel-effect` root select the mode. Reusable interaction variants append the state suffix to the base role (`--surface-button-hover`); shared state roles use `--surface-hover`, `--surface-active`, or `--surface-selected`. Do not add mode-specific names such as `--surface-input-blur` or embed alpha values in component CSS.
+
+The alpha in this table is the foreground surface's own alpha. It is composited over the panel root, whose opacity is independently controlled by the user's setting, so the final pixel opacity is not the table value alone. Nested material surfaces composite again and become visually denser; use the shallowest semantic tier and avoid wrapping a card or field in redundant material backgrounds merely to increase contrast.
+
+### Tailwind shadcn utilities
+
+Material-aware UI primitives consume the tokens directly, normally through Tailwind arbitrary values such as `bg-[var(--surface-input)]` or component CSS using `background: var(--surface-button)`. This direct consumption is required for base and state styles because generated variants such as `hover:bg-*` and `data-[state=*]:bg-*` are not reliably covered by a plain class selector.
+
+Scoped rules under `[data-panel-effect="translucent"]` and `[data-panel-effect="blur"]` re-point the following **neutral** Tailwind utilities as a compatibility fallback for existing content:
+
+| Utility | Maps to |
+|---------|---------|
+| `bg-card`, `bg-popover` | `--surface-raised` |
+| `bg-background` | `--surface-section` |
+| `bg-secondary`, `bg-muted` | `--surface-button` |
+| `bg-accent` | `--surface-hover` |
+| `bg-input` | `--surface-input` |
+
+This fallback is not the primitive contract and must not be expanded into a per-component whitelist. Primary and destructive actions remain solid to preserve action hierarchy. Status colors remain semantic solids, overlays keep their dedicated scrim opacity, background/media previews retain the opacity of the content being previewed, and the switch thumb remains solid for legibility; only the neutral switch track follows the material (`--surface-input` when unchecked, solid primary when checked).
+
+### Rules for new development
+
+- Never hard-code hex/rgb backgrounds or raw `--bg-*` tokens for surfaces rendered inside a material panel; pick the matching `--surface-*` tier (inputs → `--surface-input`, neutral buttons → `--surface-button`, frames/cards → `--surface-section`/`--surface-raised`).
+- Bind `data-panel-effect` at the common ancestor that owns the material scope. Do not add per-child effect bindings when CSS custom property inheritance can cover the subtree.
+- Never duplicate `computePanelStyle()` logic; import it (the settings preview in `panel-style-control.vue` does this).
+- Text, borders, and icons keep their normal tokens — only surface backgrounds participate in the material.
+- Component-owned glass effects (notification island, notification detail dialog) are intentionally independent of the global material and keep their own fixed blur values.
+- Detached panel windows and Electron windows stay opaque by design: there is no OS-level vibrancy/`backgroundMaterial`, so `backdrop-filter` only blurs the in-app background layer rendered by `App.vue`.
+
 ## Agent Debug Studio
 
 TinadecOffice includes an **Agent Debug Studio** — a dedicated debugging tool designed for Agent systems. See [`docs/agent-debug-studio-plan.md`](agent-debug-studio-plan.md) for the full implementation plan.

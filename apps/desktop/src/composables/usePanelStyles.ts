@@ -6,6 +6,23 @@
  *
  * Style application is done via Vue reactive :style bindings
  * (getPanelStyle) — no direct DOM manipulation needed.
+ *
+ * Material system contract (see "Panel Style Effects" in styles.css):
+ * - The panel root gets the inline background/backdrop-filter from
+ *   computePanelStyle() plus a data-panel-effect attribute from
+ *   getPanelDataAttributes().
+ * - Interior surfaces (sections, cards, inputs, buttons, tab bars,
+ *   hover/selected states) must use the material-aware --surface-*
+ *   tokens defined in styles.css (--surface-section/-raised/-chrome/
+ *   -hover/-active/-selected/-input/-button/-button-hover); the
+ *   data-panel-effect attribute re-maps those tokens to alpha tiers for
+ *   all descendants via CSS custom property inheritance.
+ * - Shared UI primitives consume --surface-* tokens directly, including
+ *   their hover and data-state variants. Scoped mappings for ordinary
+ *   Tailwind neutral bg-* utilities are compatibility fallbacks only;
+ *   they do not replace explicit material tokens in component variants.
+ * - Primary, destructive, status, overlay, and switch-thumb surfaces stay
+ *   semantic solids so action hierarchy and state remain unambiguous.
  */
 
 import { useStorage } from '@vueuse/core'

@@ -33,7 +33,7 @@ function toggle(value: string) {
 </script>
 
 <template>
-  <div :class="cn('inline-flex items-center justify-center rounded-md bg-muted p-1 gap-1', props.class)">
+  <div :class="cn('inline-flex items-center justify-center rounded-md bg-[var(--surface-section)] p-1 gap-1', props.class)">
     <slot :toggle="toggle" :active-value="activeValue" />
   </div>
 </template>

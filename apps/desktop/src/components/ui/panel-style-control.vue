@@ -10,6 +10,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PanelEffect, PanelStyleSettings } from '@/types/background'
+import { computePanelStyle } from '@/composables/usePanelStyles'
 
 const { t } = useI18n()
 
@@ -37,27 +38,18 @@ const showOpacity = computed(() =>
 // Whether to show the blur slider
 const showBlur = computed(() => props.settings.effect === 'blur')
 
-// Preview style — mirrors computePanelStyle logic for real-time feedback
+// Preview style — reuses computePanelStyle so the preview always matches
+// the real panel rendering (single source of truth for the mapping rules)
 const previewStyle = computed(() => {
   const style: Record<string, string> = {
     height: '56px',
     borderRadius: '8px',
     transition: 'all 0.2s ease',
+    ...computePanelStyle(props.settings),
   }
-  const alpha = props.settings.opacity / 100
 
-  switch (props.settings.effect) {
-    case 'opaque':
-      style.background = 'var(--bg-primary)'
-      break
-    case 'translucent':
-      style.backgroundColor = `rgba(var(--bg-primary-rgb, 10, 14, 20), ${alpha})`
-      break
-    case 'blur':
-      style.backdropFilter = `blur(${props.settings.blur}px)`
-      style.WebkitBackdropFilter = `blur(${props.settings.blur}px)`
-      style.backgroundColor = `rgba(var(--bg-primary-rgb, 10, 14, 20), ${alpha})`
-      break
+  if (props.settings.effect === 'opaque') {
+    style.background = 'var(--bg-primary)'
   }
 
   return style
@@ -148,7 +140,7 @@ function reset(): void {
   padding: 12px;
   border: 1px solid transparent;
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   box-shadow: var(--shadow-subtle);
 }
 
@@ -181,7 +173,7 @@ function reset(): void {
 
 .control-reset:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .effect-selector {
@@ -196,7 +188,7 @@ function reset(): void {
   font-size: 11px;
   font-weight: 500;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border: 1px solid transparent;
   border-radius: 6px;
   cursor: pointer;
@@ -205,12 +197,12 @@ function reset(): void {
 
 .effect-option:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-button-hover);
 }
 
 .effect-option.active {
   color: var(--accent-primary);
-  background: var(--accent-soft);
+  background: var(--surface-selected);
   border-color: var(--accent-primary);
 }
 
@@ -232,7 +224,7 @@ function reset(): void {
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   border-radius: 2px;
   outline: none;
 }

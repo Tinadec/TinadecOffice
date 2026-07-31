@@ -41,7 +41,7 @@ function open() {
     <div
       v-if="isOpen"
       :class="cn(
-        'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md',
+        'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border bg-[var(--surface-raised)] p-1 text-popover-foreground shadow-md',
         placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',
         props.class,
       )"

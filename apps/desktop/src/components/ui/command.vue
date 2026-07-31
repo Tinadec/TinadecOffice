@@ -12,14 +12,14 @@ const props = defineProps<Props>()
 <template>
   <div
     :class="cn(
-      'flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground',
+      'flex h-full w-full flex-col overflow-hidden rounded-md bg-[var(--surface-raised)] text-popover-foreground',
       props.class,
     )"
   >
     <div class="flex items-center border-b px-3">
       <Search class="mr-2 h-4 w-4 shrink-0 opacity-50" />
       <input
-        class="flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex h-10 w-full rounded-md bg-[var(--surface-input)] py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
         placeholder="Type a command or search..."
       />
     </div>

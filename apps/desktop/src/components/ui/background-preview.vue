@@ -22,7 +22,7 @@ const containerStyle = computed(() => ({
   overflow: 'hidden',
   borderRadius: '8px',
   border: '1px solid var(--border-default)',
-  background: 'var(--bg-secondary)',
+  background: 'var(--surface-section)',
 }))
 
 // Compute background style based on settings

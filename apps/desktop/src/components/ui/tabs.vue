@@ -27,7 +27,7 @@ function setTab(value: string) {
 
 <template>
   <div :class="cn('flex flex-col gap-2', props.class)">
-    <div class="inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground">
+    <div class="inline-flex h-9 items-center justify-center rounded-lg bg-[var(--surface-section)] p-1 text-muted-foreground">
       <slot :active-tab="activeTab" :set-tab="setTab" />
     </div>
     <div class="mt-2">

@@ -388,7 +388,7 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .git-header-left {
@@ -511,7 +511,7 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
 
 .git-nav-item:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-nav-item.active {
@@ -553,7 +553,7 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   border-top: 1px solid var(--border-muted);
   font-size: 10px;
   color: var(--text-muted);
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 /* ---- Compact mode ---- */
