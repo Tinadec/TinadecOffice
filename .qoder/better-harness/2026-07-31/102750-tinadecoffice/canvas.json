@@ -1,6 +1,5 @@
 {
   "schemaVersion": 1,
-  "summaryFactsSchemaVersion": 1,
   "summary": {
     "evidenceMode": "session-limited",
     "evidenceBoundary": {
@@ -96,44 +95,6 @@
         }
       ]
     },
-    "learningCapture": {
-      "schemaVersion": 1,
-      "state": "N/A",
-      "summary": "暂不适用——需要两个可比的观察窗口和一次改进对比。",
-      "interventions": []
-    },
-    "aiAgentPractice": {
-      "inspectedSurfaces": [],
-      "coverageRows": [
-        {
-          "surface": "Rules",
-          "scopes": [
-            "Project"
-          ],
-          "count": 1,
-          "paths": [
-            "AGENTS.md"
-          ]
-        },
-        {
-          "surface": "Workflows",
-          "scopes": [
-            "Project"
-          ],
-          "count": 1,
-          "paths": [
-            ".github/workflows/core-storage-postgres.yml"
-          ]
-        },
-        {
-          "surface": "Custom Agents",
-          "scopes": [
-            "Project"
-          ],
-          "count": 0
-        }
-      ]
-    },
     "usageActivity": {
       "schemaVersion": 2,
       "dateBasis": "UTC",
@@ -197,8 +158,46 @@
         "comparableModelOutcomeEvidence": false,
         "recommendation": "controlled-a-b-required"
       }
+    },
+    "learningCapture": {
+      "schemaVersion": 1,
+      "state": "N/A",
+      "summary": "暂不适用——需要两个可比的观察窗口和一次改进对比。",
+      "interventions": []
     }
   },
-  "dimensions": [],
-  "findings": []
+  "dimensions": [
+    {
+      "id": "task-understanding"
+    },
+    {
+      "id": "controlled-execution"
+    },
+    {
+      "id": "change-validation"
+    },
+    {
+      "id": "reliable-delivery"
+    },
+    {
+      "id": "learning-capture"
+    }
+  ],
+  "findings": [
+    {
+      "id": "ci-gate-covers-only-postgres-filter"
+    },
+    {
+      "id": "root-agents-md-contradicts-repo-state"
+    },
+    {
+      "id": "legacy-paths-mislead-validation-anchors"
+    },
+    {
+      "id": "conventions-have-no-mechanical-gate"
+    },
+    {
+      "id": "env-scripts-encode-single-machine-fix"
+    }
+  ]
 }

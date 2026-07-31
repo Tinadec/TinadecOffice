@@ -5,55 +5,87 @@
     "modelId": "agent-work-loop-v4",
     "reportContractVersion": 25,
     "overview": "分层 AGENTS.md 体系与审批感知工具层是最强资产，但验收边界几乎没有机械门：CI 只覆盖一个 PostgreSQL 测试过滤器，根规则文件与仓库现状存在已证实的矛盾，历史验证锚点指向已删除的遗留路径。本窗口会话证据不足，行为类结论保持未观测。",
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Rules"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 1,
+          "paths": [
+            "AGENTS.md"
+          ]
+        },
+        {
+          "surface": "Workflows",
+          "scopes": [
+            "Project"
+          ],
+          "count": 1,
+          "paths": [
+            ".github/workflows/core-storage-postgres.yml"
+          ]
+        },
+        {
+          "surface": "Custom Agents",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        }
+      ]
+    },
+    "assignmentSummaries": [],
     "dimensions": [
       {
         "id": "task-understanding",
         "label": "任务理解",
         "score": 58,
-        "summary": "4 份分层 AGENTS.md 提供了清晰的层边界、阅读顺序与反模式，但根文件对 Core 是否已重建给出两处相反结论，且 workspaces 描述与 package.json 漂移，会将智能体路由到错误前提。"
+        "summary": "4 份分层 AGENTS.md 提供了清晰的层边界、阅读顺序与反模式，但根文件对 Core 是否已重建给出两处相反结论，且 workspaces 描述与 package.json 漂移，会将智能体路由到错误前提。",
+        "findingRefs": [
+          "root-agents-md-contradicts-repo-state"
+        ]
       },
       {
         "id": "controlled-execution",
-        "label": "受控执行",
+        "label": "可控执行",
         "score": 62,
-        "summary": "dev/build/test/restore 命令面完整且文档化，但脚本内嵌单机 Version/Ice-Version 清理步骤，无 doctor/reset 入口；本窗口无已执行的启动或操作证据，评分止于静态声明。"
+        "summary": "dev/build/test/restore 命令面完整且文档化，但脚本内嵌单机 Version/Ice-Version 清理步骤，无 doctor/reset 入口；本窗口无已执行的启动或操作证据，评分止于静态声明。",
+        "findingRefs": [
+          "env-scripts-encode-single-machine-fix"
+        ]
       },
       {
         "id": "change-validation",
-        "label": "变更验证",
+        "label": "改动验证",
         "score": 55,
-        "summary": "xUnit/bun test/Vitest/Architecture.Tests 分层测试静态存在（89 个跟踪测试文件），但无 affected-check 路由，历史驱动的验证锚点部分指向不再构建的遗留测试；本次评审未执行任何测试，结果均为 UNVERIFIED。"
+        "summary": "xUnit/bun test/Vitest/Architecture.Tests 分层测试静态存在（89 个跟踪测试文件），但无 affected-check 路由，历史驱动的验证锚点部分指向不再构建的遗留测试；本次评审未执行任何测试，结果均为 UNVERIFIED。",
+        "findingRefs": [
+          "legacy-paths-mislead-validation-anchors",
+          "conventions-have-no-mechanical-gate"
+        ]
       },
       {
         "id": "reliable-delivery",
         "label": "可靠交付",
         "score": 45,
-        "summary": "唯一 CI 工作流仅在 TinadecCore/** 变更时运行 PostgreSqlStorageTests 过滤器；Gateway、Desktop、TinadecTools 与 Core 其余测试面可在无机械检查下合入主干。CI 实际运行状态未验证。"
+        "summary": "唯一 CI 工作流仅在 TinadecCore/** 变更时运行 PostgreSqlStorageTests 过滤器；Gateway、Desktop、TinadecTools 与 Core 其余测试面可在无机械检查下合入主干。CI 实际运行状态未验证。",
+        "findingRefs": [
+          "ci-gate-covers-only-postgres-filter"
+        ]
       },
       {
         "id": "learning-capture",
-        "label": "学习捕获",
+        "label": "经验沉淀",
         "score": 35,
-        "summary": "已完成有边界的学习捕获评审：项目无 Skills、无项目 Memory 标题；本窗口 0 个候选任务 Episode（facts 路由仅 1 个自我分析类会话；analyzer 普查 4 个会话、约 8.7 活跃分钟且无编辑/验证事件），既无法确认重复工作机会，也不构成干净无候选窗口。"
+        "summary": "已完成有边界的学习捕获评审：项目无 Skills、无项目 Memory 标题；本窗口 0 个候选任务 Episode（facts 路由仅 1 个自我分析类会话；analyzer 普查 4 个会话、约 8.7 活跃分钟且无编辑/验证事件），既无法确认重复工作机会，也不构成干净无候选窗口。",
+        "findingRefs": []
       }
-    ],
-    "aiAgentPractice": {
-      "inspectedSurfaces": ["Rules"],
-      "coverageRows": [
-        {
-          "surface": "Rules",
-          "scopes": ["Project"],
-          "count": 1,
-          "paths": ["AGENTS.md"]
-        },
-        {
-          "surface": "Workflows",
-          "scopes": ["Project"],
-          "count": 1,
-          "paths": [".github/workflows/core-storage-postgres.yml"]
-        }
-      ]
-    }
+    ]
   },
   "findings": [
     {
@@ -61,11 +93,13 @@
       "title": "CI 门只覆盖一个 PostgreSQL 测试过滤器，其余测试面可无检查合入主干",
       "severity": "Medium",
       "reason": "事实：仓库唯一工作流 .github/workflows/core-storage-postgres.yml 仅在 TinadecCore/** 路径变更时对 TinadecCore.Api.Tests 运行 --filter FullyQualifiedName~PostgreSqlStorageTests；根 npm test 串联 workspaces + bun + dotnet 三条测试链但没有任何 CI 载体执行它。推断：Gateway、Desktop、TinadecTools 以及 Core 其余测试的回归可以在零机械检查下进入主干，合并验收依赖本地自觉。owner：.github/workflows/ 目录。不确定性：CI 实际运行历史与是否配置分支保护未验证（静态证据边界）。",
-      "dimensionRefs": ["reliable-delivery"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n在 .github/workflows/ 下为既有测试面补充路径过滤的 CI 工作流：按层拆分（TinadecGateway 用 bun test、apps/desktop 用 npm workspace test、TinadecOffice.slnx 用 dotnet test），复用根 package.json 中已存在的命令，不新增测试框架。\n\n## Validation\n\n- 新工作流文件的触发路径与各层目录一一对应\n- 工作流步骤只调用仓库中已声明的测试命令，本地可先行执行同一命令确认通过或如实报告失败",
-      "expectedArtifact": "Workflow",
       "expectedOutput": [
         "每一层的测试在对应路径变更时由 CI 自动执行，合并验收不再只依赖本地自觉。"
+      ],
+      "expectedArtifact": "Workflow",
+      "aiFixPrompt": "/better-harness fix this issue\n\n在 .github/workflows/ 下为既有测试面补充路径过滤的 CI 工作流：按层拆分（TinadecGateway 用 bun test、apps/desktop 用 npm workspace test、TinadecOffice.slnx 用 dotnet test），复用根 package.json 中已存在的命令，不新增测试框架。\n\n## Validation\n\n- 新工作流文件的触发路径与各层目录一一对应\n- 工作流步骤只调用仓库中已声明的测试命令，本地可先行执行同一命令确认通过或如实报告失败",
+      "dimensionRefs": [
+        "reliable-delivery"
       ]
     },
     {
@@ -73,11 +107,13 @@
       "title": "根 AGENTS.md 对 Core 状态给出两处相反结论，且 workspaces 描述与 package.json 漂移",
       "severity": "Medium",
       "reason": "事实：同一文件内 CURRENT REBUILD STATE 段声明 TinadecCore 已于 2026-07-15 重建为 18 个源项目的模块化单体，而三层架构的 Core 层小节仍写「旧实现已删除；根级 TinadecCore/ 为空，等待重建」，STRUCTURE 段又写「17 source + 3 test projects」；CONVENTIONS 段称 package.json 声明了 apps/* 和 gateway，但实际 package.json workspaces 仅含 apps/*。推断：依赖该规则文件的智能体会对「Core 是否存在、Gateway 归属」得出错误前提，违反该文件自身的 AI MAINTENANCE PROTOCOL（移除过时指引而非保留冲突注释）。owner：根 AGENTS.md。不确定性：嵌套 AGENTS.md 是否存在同类矛盾未打开核验。",
-      "dimensionRefs": ["task-understanding"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n按根 AGENTS.md 自身的 AI MAINTENANCE PROTOCOL 修复矛盾：以 TinadecOffice.slnx 与 package.json 当前内容为准，更新 Core 层状态小节、统一源项目计数、修正 CONVENTIONS 中 workspaces 描述，并刷新 Last Updated / Last Verified Commit 元数据。\n\n## Validation\n\n- 文件内不再存在「TinadecCore/ 为空」与「已重建」并存的表述\n- workspaces 描述与 package.json 实际内容一致，项目计数与 TinadecOffice.slnx 一致",
-      "expectedArtifact": "Docs",
       "expectedOutput": [
         "根规则文件对 Core 状态与工作区结构只给出一个与仓库现状一致的结论。"
+      ],
+      "expectedArtifact": "Docs",
+      "aiFixPrompt": "/better-harness fix this issue\n\n按根 AGENTS.md 自身的 AI MAINTENANCE PROTOCOL 修复矛盾：以 TinadecOffice.slnx 与 package.json 当前内容为准，更新 Core 层状态小节、统一源项目计数、修正 CONVENTIONS 中 workspaces 描述，并刷新 Last Updated / Last Verified Commit 元数据。\n\n## Validation\n\n- 文件内不再存在「TinadecCore/ 为空」与「已重建」并存的表述\n- workspaces 描述与 package.json 实际内容一致，项目计数与 TinadecOffice.slnx 一致",
+      "dimensionRefs": [
+        "task-understanding"
       ]
     },
     {
@@ -85,11 +121,13 @@
       "title": "历史热点与验证锚点指向已删除或不再构建的遗留路径，本次确定性证据包已被实际误导",
       "severity": "Medium",
       "reason": "事实：本次 core-change-watch 证据包的 validate-impact 动作推荐了 8 个位于 tests/TinadecCore.Tests、tests/Tinadec.Contracts.Tests 与 gateway/、apps/gateway/ 下的测试文件作为验证锚点，而根 AGENTS.md 明示遗留测试「不再构建、仅作需求证据」，TinadecOffice.slnx 活动测试集也不含它们；sync-documentation 动作引用的 src/TinadecCore/AGENTS.md、gateway/AGENTS.md 路径已不存在。推断：任何以 git 历史为线索的智能体或工具都会产出失效的验证与文档同步路线。owner：tests/TinadecCore.Tests 与 tests/Tinadec.Contracts.Tests 两个目录的定位标注。不确定性：无。",
-      "dimensionRefs": ["change-validation"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n在 tests/TinadecCore.Tests 与 tests/Tinadec.Contracts.Tests 各添加一个简短的目录级说明文件，声明「需求证据文件，不在活动解决方案内、不可构建、不得作为验证锚点」，并指向 TinadecOffice.slnx 中的活动测试项目作为替代验证路线。\n\n## Validation\n\n- 两个遗留目录各有一份说明文件，内容与根 AGENTS.md 的遗留测试定位一致\n- 说明文件指向的活动测试项目与 TinadecOffice.slnx tests 文件夹实际内容一致",
-      "expectedArtifact": "Docs",
       "expectedOutput": [
         "以历史为线索的智能体在进入遗留测试目录时立即获得「不可作为验证锚点」的明确路由。"
+      ],
+      "expectedArtifact": "Docs",
+      "aiFixPrompt": "/better-harness fix this issue\n\n在 tests/TinadecCore.Tests 与 tests/Tinadec.Contracts.Tests 各添加一个简短的目录级说明文件，声明「需求证据文件，不在活动解决方案内、不可构建、不得作为验证锚点」，并指向 TinadecOffice.slnx 中的活动测试项目作为替代验证路线。\n\n## Validation\n\n- 两个遗留目录各有一份说明文件，内容与根 AGENTS.md 的遗留测试定位一致\n- 说明文件指向的活动测试项目与 TinadecOffice.slnx tests 文件夹实际内容一致",
+      "dimensionRefs": [
+        "change-validation"
       ]
     },
     {
@@ -97,11 +135,13 @@
       "title": "关键约定完全依赖文档遵守，没有任何机械规则门可拦截漂移",
       "severity": "Low",
       "reason": "事实：根 AGENTS.md 明示仓库无 ESLint、Prettier 与 .editorconfig；证据包 coreCodeRules 状态为 missing；snake_case API 契约、DTO 镜像同步、zh-CN/en locale 键一致性等约定均无机械检查。推断：约定漂移只能事后人工发现——根 AGENTS.md 自身与 package.json 的已证实漂移即为同类失效的实例。owner：仓库根配置层（根 package.json scripts 与缺失的根级规则配置文件）。不确定性：约定在业务代码中是否已实际漂移未核验。",
-      "dimensionRefs": ["change-validation"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n从最小机械门起步：添加根级 .editorconfig，并用 Node 脚本实现 apps/desktop/src/locales 下 zh-CN 与 en 的键一致性检查，将该脚本接入根 package.json 的 test 链；不引入新的 lint 框架。\n\n## Validation\n\n- 运行新的 locale 键一致性脚本，通过或如实报告缺失键\n- npm test 链包含该检查且整体可执行",
-      "expectedArtifact": "Config",
       "expectedOutput": [
         "至少一条关键约定（locale 键一致性）从文档声明升级为可自动拦截漂移的机械检查。"
+      ],
+      "expectedArtifact": "Config",
+      "aiFixPrompt": "/better-harness fix this issue\n\n从最小机械门起步：添加根级 .editorconfig，并用 Node 脚本实现 apps/desktop/src/locales 下 zh-CN 与 en 的键一致性检查，将该脚本接入根 package.json 的 test 链；不引入新的 lint 框架。\n\n## Validation\n\n- 运行新的 locale 键一致性脚本，通过或如实报告缺失键\n- npm test 链包含该检查且整体可执行",
+      "dimensionRefs": [
+        "change-validation"
       ]
     },
     {
@@ -109,24 +149,13 @@
       "title": "环境脚本硬编码单机修复步骤，干净环境无法自诊断启动失败",
       "severity": "Low",
       "reason": "事实：根 package.json 的 dev:core/build/test/restore:dotnet 每条 dotnet 命令前都内嵌 PowerShell 清除 Version 与 Ice-Version 环境变量的步骤；根 AGENTS.md 将其标注为「on this machine」的单机备注；旧 Core 的 DoctorService 已随重建删除，仓库无 doctor/一键重置入口。推断：新机器或非 Windows 环境（现有 CI 跑 ubuntu-latest，不经过这些脚本）上根脚本行为与本机不一致，且失败时无自诊断路径。owner：根 package.json scripts 段。不确定性：其他机器是否需要该清除步骤未运行验证。",
-      "dimensionRefs": ["controlled-execution"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n把 Version/Ice-Version 环境清理收敛到 scripts/ 下的独立 PowerShell setup 脚本（沿用 install-ai-tools.ps1 的既有先例），让 package.json 各 dotnet 命令统一调用它，并在脚本内输出清晰的环境诊断信息。\n\n## Validation\n\n- 在本机运行 npm run dev:core 确认行为不变\n- 脚本失败时输出可定位的诊断信息而非静默继续",
-      "expectedArtifact": "Script",
       "expectedOutput": [
         "环境修复知识从散落的脚本前缀收敛为一个可诊断、可维护的 setup 入口。"
-      ]
-    },
-    {
-      "id": "learning-window-evidence-gap",
-      "title": "本窗口会话证据不足以判定重复工作或干净窗口，学习捕获评审无法闭合",
-      "severity": "Low",
-      "reason": "事实：session facts 路由在 30 天窗口内仅 1 个合格会话且为自我分析类，0 个候选任务 Episode，变更/检查/结果各维度覆盖全为 0，并报告 disabled-source-root 与 missing-optional-root 警告；analyzer 普查（口径不同）为 4 个会话、约 8.7 活跃分钟，无编辑与验证事件。推断：既无法确认存在可复用的重复工作机会，也不满足「至少两个合格 Episode」的干净无候选窗口条件，学习捕获只能停在证据缺口。owner：会话来源根配置与后续评审窗口。不确定性：无法区分「来源根未启用导致漏采」与「窗口内确无真实任务会话」。",
-      "dimensionRefs": ["learning-capture"],
-      "subdimensionRefs": ["lifecycle-repeat-detection"],
-      "aiFixPrompt": "/better-harness fix this issue\n\n先核实 Qoder 会话来源根的启用状态与工作区匹配情况；在包含真实开发任务的后续窗口重新运行 /better-harness，以可比 Task Episode 证据闭合学习捕获评审。不要基于本窗口证据创建任何 Skill 或 Memory。\n\n## Validation\n\n- 后续评审窗口的 facts 路由报告至少两个非自我分析的合格 Episode\n- 来源根警告被确认为配置问题并修复，或被确认为无真实活动并记录",
-      "expectedArtifact": "Runbook",
-      "expectedOutput": [
-        "下一次评审窗口能对重复工作机会给出有证据支撑的「存在/干净窗口」结论。"
+      ],
+      "expectedArtifact": "Script",
+      "aiFixPrompt": "/better-harness fix this issue\n\n把 Version/Ice-Version 环境清理收敛到 scripts/ 下的独立 PowerShell setup 脚本（沿用 install-ai-tools.ps1 的既有先例），让 package.json 各 dotnet 命令统一调用它，并在脚本内输出清晰的环境诊断信息。\n\n## Validation\n\n- 在本机运行 npm run dev:core 确认行为不变\n- 脚本失败时输出可定位的诊断信息而非静默继续",
+      "dimensionRefs": [
+        "controlled-execution"
       ]
     }
   ]
