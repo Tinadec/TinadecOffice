@@ -50,11 +50,14 @@ describe('useNotifications', () => {
     expect(n.visibleItems.value.map((i) => i.id)).toEqual([statusItem, error, latest, first])
   })
 
-  it('shows at most three transient items and reports overflow', () => {
+  it('aggregates transient items behind a hero with a fold count', () => {
     for (let i = 0; i < 5; i++) n.notify.info(`item ${i}`)
 
-    expect(n.visibleItems.value).toHaveLength(3)
-    expect(n.overflowCount.value).toBe(2)
+    expect(n.transientZone.value).toHaveLength(5)
+    expect(n.visibleItems.value).toHaveLength(5)
+    // The hero is the most recent (latest sort by recency).
+    expect(n.transientHero.value?.id).toBe(n.transientZone.value[0].id)
+    expect(n.transientFoldedCount.value).toBe(4)
     expect(n.orderedItems.value).toHaveLength(5)
   })
 
@@ -269,19 +272,18 @@ describe('useNotifications', () => {
   // Test 2 — Reversed old test: off-screen transients MUST expire
   // -----------------------------------------------------------------------
 
-  it('off-screen transients expire (reversed: old code froze them forever)', () => {
-    // Fill the visible transient slots with errors.
+  it('folded transients expire (reversed: old code froze them forever)', () => {
+    // The error is the transient hero; the info is folded behind it.
     n.notify.error('one')
-    n.notify.error('two')
-    n.notify.error('three')
-    // This short-lived info is queued off-screen (behind 3 errors).
-    const queued = n.notify.info({ message: 'queued', duration: 1000 })
+    // This short-lived info folds behind the hero and must still expire.
+    const folded = n.notify.info({ message: 'folded', duration: 1000 })
 
-    expect(n.visibleItems.value.some((item) => item.id === queued)).toBe(false)
+    expect(n.transientHero.value?.id).not.toBe(folded)
+    expect(n.transientFoldedCount.value).toBe(1)
 
     vi.advanceTimersByTime(2000)
-    // Off-screen transient MUST have expired.
-    expect(n.items.value.some((item) => item.id === queued)).toBe(false)
+    // Folded transient MUST have expired.
+    expect(n.items.value.some((item) => item.id === folded)).toBe(false)
   })
 
   // -----------------------------------------------------------------------
@@ -483,9 +485,14 @@ describe('useNotifications', () => {
     for (let i = 0; i < 5; i++) n.notify.info(`transient ${i}`)
 
     expect(n.statusZone.value).toHaveLength(2)
-    expect(n.transientZone.value).toHaveLength(3)
-    expect(n.visibleItems.value).toHaveLength(5)
+    expect(n.transientZone.value).toHaveLength(5)
+    expect(n.visibleItems.value).toHaveLength(7)
     expect(n.orderedItems.value).toHaveLength(7)
+    // Each zone aggregates to its own hero with a fold count.
+    expect(n.statusHero.value?.id).toBe(n.statusZone.value[0].id)
+    expect(n.statusFoldedCount.value).toBe(1)
+    expect(n.transientHero.value?.id).toBe(n.transientZone.value[0].id)
+    expect(n.transientFoldedCount.value).toBe(4)
   })
 
   // -----------------------------------------------------------------------
@@ -562,5 +569,125 @@ describe('useNotifications', () => {
     setNotificationFallbackText('FALLBACK')
     const id = n.notify.error(null)
     expect(n.items.value.find((i) => i.id === id)?.message).toBe('FALLBACK')
+  })
+
+  // -----------------------------------------------------------------------
+  // Test 14 — Dynamic Island hero aggregation & fold stack
+  // -----------------------------------------------------------------------
+
+  it('hero priority: pending task beats error, error beats info; zones independent', () => {
+    n.notify.info('info-1')
+    vi.advanceTimersByTime(1)
+    n.notify.error('err-1')
+    expect(n.transientHero.value?.message).toBe('err-1')
+
+    const task = n.notify.task('task-1')
+    vi.advanceTimersByTime(1)
+    // Error still outranks the pending task (priority: error 3 > pending task 2);
+    // the task folds behind it but stays ranked above the info item.
+    expect(n.transientHero.value?.message).toBe('err-1')
+    expect(n.transientFoldedCount.value).toBe(2)
+    expect(n.transientZone.value[1].id).toBe(task.id)
+
+    // Status aggregation is independent.
+    n.status.error({ key: 's1', message: 'status 1' })
+    n.status.info({ key: 's2', message: 'status 2' })
+    expect(n.statusHero.value?.message).toBe('status 1')
+    expect(n.statusFoldedCount.value).toBe(1)
+  })
+
+  it('hoverHeroEnter opens the stack after the delay, leaving the card closed', () => {
+    n.notify.info('only')
+    n.notify.error('second')
+    expect(n.transientFoldedCount.value).toBe(1)
+    const hero = n.transientHero.value!.id
+
+    n.hoverHeroEnter('transient', hero)
+    expect(n.stackZone.value).toBeNull()
+    vi.advanceTimersByTime(240)
+    expect(n.stackZone.value).toBe('transient')
+    expect(n.openId.value).toBeNull()
+  })
+
+  it('hoverHeroEnter closes an open card first (card and stack are exclusive)', () => {
+    n.notify.info('only')
+    const id = n.transientHero.value!.id
+    n.hoverCapsuleEnter(id)
+    vi.advanceTimersByTime(240)
+    expect(n.openId.value).toBe(id)
+
+    n.notify.error('second')
+    n.hoverHeroEnter('transient', n.transientHero.value!.id)
+    vi.advanceTimersByTime(240)
+    expect(n.openId.value).toBeNull()
+    expect(n.stackZone.value).toBe('transient')
+  })
+
+  it('hoverCardLeave closes the stack after the grace period; hoverCardEnter cancels it', () => {
+    n.notify.info('one')
+    n.notify.error('two')
+    n.hoverHeroEnter('transient', n.transientHero.value!.id)
+    vi.advanceTimersByTime(240)
+    expect(n.stackZone.value).toBe('transient')
+
+    // Entering the panel cancels the close grace.
+    n.hoverCardEnter()
+    n.hoverCapsuleLeave()
+    vi.advanceTimersByTime(100)
+    expect(n.stackZone.value).toBe('transient')
+
+    // Leaving for the full grace closes the stack.
+    n.hoverCardLeave()
+    vi.advanceTimersByTime(400)
+    expect(n.stackZone.value).toBeNull()
+  })
+
+  it('openNotification closes the stack, the card and the overflow panel', () => {
+    n.notify.info('one')
+    n.notify.error('two')
+    n.hoverHeroEnter('transient', n.transientHero.value!.id)
+    vi.advanceTimersByTime(240)
+    n.toggleOverflow()
+    expect(n.stackZone.value).toBe('transient')
+    expect(n.overflowOpen.value).toBe(true)
+
+    const folded = n.transientZone.value[1].id
+    n.openNotification(folded)
+    expect(n.stackZone.value).toBeNull()
+    expect(n.overflowOpen.value).toBe(false)
+    expect(n.detailId.value).toBe(folded)
+  })
+
+  it('dismissing the last row of an open stack auto-collapses it', () => {
+    n.status.error({ key: 's1', message: 'status 1' })
+    n.hoverHeroEnter('status', n.statusHero.value!.id)
+    vi.advanceTimersByTime(240)
+    expect(n.stackZone.value).toBe('status')
+
+    n.dismiss(n.statusHero.value!.id)
+    expect(n.stackZone.value).toBeNull()
+    expect(n.stackItems.value).toHaveLength(0)
+  })
+
+  it('__resetNotificationsForTests clears the stack zone', () => {
+    n.notify.info('one')
+    n.notify.error('two')
+    n.hoverHeroEnter('transient', n.transientHero.value!.id)
+    vi.advanceTimersByTime(240)
+    expect(n.stackZone.value).toBe('transient')
+
+    __resetNotificationsForTests()
+    expect(n.stackZone.value).toBeNull()
+  })
+
+  it('dismissByKey re-derives the fold count', () => {
+    n.status.error({ key: 's1', message: 'status 1' })
+    n.status.error({ key: 's2', message: 'status 2' })
+    n.status.error({ key: 's3', message: 'status 3' })
+    expect(n.statusFoldedCount.value).toBe(2)
+
+    n.dismissByKey('s2')
+    expect(n.statusZone.value).toHaveLength(2)
+    expect(n.statusFoldedCount.value).toBe(1)
   })
 })

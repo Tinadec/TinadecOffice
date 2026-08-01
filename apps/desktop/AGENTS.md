@@ -79,10 +79,24 @@ apps/desktop/
 - Do not add app-wide state store without checking existing composable/local-ref pattern.
 - Do not duplicate route shells: `src/pages/DebugStudioPage.vue` is router-used; `src/debug/pages/DebugStudioPage.vue` appears alternate/unused.
 
+## MCP TOOLS (vue-mcp) — USE PROACTIVELY
+
+The dev server exposes a live Vue introspection server via `vite-plugin-vue-mcp`. When it is available, use it to inspect the *running* app instead of guessing from source, especially for UI work:
+
+- **Use it when** you need the actual runtime picture: component hierarchy, a component's current state, registered routes, or whether a UI change renders as intended. `get-component-tree` and `get-component-state` answer "what is really on screen" faster than reading source.
+- **Tools**: `get-component-tree` (live hierarchy), `get-component-state` (`componentName`), `edit-component-state` (`componentName`, `path`, `value`, `valueType`), `highlight-component` (`componentName`), `get-router-info` (registered routes), `get-pinia-tree` / `get-pinia-state` (`storeName`). Note this app currently has **no Pinia store layer** — Pinia tools only matter if one is introduced.
+- **Prerequisites**: dev server running (`npm run dev:desktop`) AND the app loaded in the Electron window (or a browser against the dev server) AND Claude Code connected to `vue-mcp` (root `.mcp.json`, SSE `http://localhost:5173/__mcp/sse`). Tools return empty/stale results if the app page is not open.
+- **Fallback**: if the `vue-mcp` MCP server is not connected, read the source under `src/` instead — never report "no components" as a fact when you simply lack a live connection.
+
 ## COMMANDS
 ```bash
+npm install          # 在仓库根目录；.npmrc 已设 legacy-peer-deps=true 以兼容 vite-plugin-vue-mcp 的 Vite 7 peer 范围
 npm run dev -w @tinadec/desktop
 npm run build -w @tinadec/desktop
 npm run test -w @tinadec/desktop
 npm run rebuild:native -w @tinadec/desktop  # rebuild node-pty for Electron (requires Python)
 ```
+
+## NOTES
+- `vite-plugin-vue-mcp` 在 Vite dev server 上暴露 MCP server（SSE，`http://localhost:5173/__mcp/sse`），供 AI 客户端读取组件树/状态/路由/Pinia。项目根 `.mcp.json` 已注册 `vue-mcp` 客户端；需先启动 dev server，再启动 Claude Code（或 `/mcp` 重连）。
+- 该插件 peer 范围只到 Vite 6，故根目录 `.npmrc` 设 `legacy-peer-deps=true`。此模式下 npm 不自动安装 peer 依赖，因此 `react`/`react-dom`/`react-is` 已作为显式依赖保留，勿删除。

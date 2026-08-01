@@ -2658,9 +2658,16 @@ overflow: hidden;
   background: var(--bg-hover);
 }
 
-.plus-dropdown-menu {
+.plus-dropdown-portal {
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
   overscroll-behavior: contain;
-  min-width: 130px;
+  border-radius: 10px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-muted);
+  box-shadow: var(--shadow-panel);
+  padding: 4px;
 }
 
 .plus-menu-item {
@@ -2851,13 +2858,6 @@ overflow: hidden;
 
 .project-dropdown-new:hover {
   background: var(--surface-hover);
-}
-
-.project-dropdown-divider {
-  height: 1px;
-  margin: 2px 6px;
-  background: var(--surface-raised);
-  opacity: 0.7;
 }
 
 .toolbar-plan {

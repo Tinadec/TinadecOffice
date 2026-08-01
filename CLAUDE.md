@@ -253,6 +253,15 @@ Before making changes, verify:
 - [ ] No business logic in Gateway/Desktop
 - [ ] All mutations go through approval gates
 
+## Vue MCP Integration (Desktop UI introspection)
+
+Claude SHOULD use the `vue-mcp` MCP server to inspect the **live** running Vue app when working on Desktop UI, instead of guessing from source:
+
+- Requires: Desktop dev server running (`npm run dev:desktop`), app loaded in the Electron window/browser, and Claude Code connected to `vue-mcp` (root `.mcp.json`, SSE `http://localhost:5173/__mcp/sse`).
+- Tools: `get-component-tree`, `get-component-state`, `edit-component-state`, `highlight-component`, `get-router-info`, `get-pinia-tree`, `get-pinia-state`.
+- If `vue-mcp` is not connected, read `apps/desktop/src` instead — never treat an absent live connection as "no components/state".
+- The plugin (dev-only) is installed via root `.npmrc` `legacy-peer-deps=true`; react/react-dom/react-is are explicit deps in `apps/desktop/package.json`.
+
 ## Useful Commands
 
 ```powershell

@@ -16,7 +16,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import type { ProjectDto } from '../api'
-import { UiButton, UiDropdownMenu, UiScrollArea } from '@/components/ui'
+import { UiButton, UiScrollArea } from '@/components/ui'
 import ModeSelector from './ModeSelector.vue'
 import PermissionSelector from './PermissionSelector.vue'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
@@ -52,6 +52,8 @@ const currentPermission = ref<PermissionLevel>('default')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const projectTriggerRef = ref<HTMLElement | null>(null)
 const dropdownStyle = ref<Record<string, string>>({})
+const plusTriggerRef = ref<HTMLElement | null>(null)
+const plusMenuStyle = ref<Record<string, string>>({})
 
 const selectedProject = computed(() =>
   props.projects.find((p) => p.id === props.selectedProjectId) ?? null
@@ -128,6 +130,26 @@ function handleModeChange(mode: AgentMode) {
   emit('update:mode', mode)
 }
 
+function updatePlusMenuPosition() {
+  const trigger = plusTriggerRef.value
+  if (!trigger) return
+  const rect = trigger.getBoundingClientRect()
+  plusMenuStyle.value = {
+    position: 'fixed',
+    top: `${rect.bottom + 6}px`,
+    left: `${rect.left}px`,
+    minWidth: `${Math.max(rect.width, 130)}px`,
+  }
+}
+
+async function togglePlusMenu() {
+  showPlusMenu.value = !showPlusMenu.value
+  if (showPlusMenu.value) {
+    await nextTick()
+    updatePlusMenuPosition()
+  }
+}
+
 function handlePermissionChange(perm: PermissionLevel) {
   currentPermission.value = perm
   emit('update:permission', perm)
@@ -138,7 +160,7 @@ function handleClickOutside(event: MouseEvent) {
   if (!target.closest('.project-dropdown-trigger') && !target.closest('.project-dropdown-portal')) {
     showProjectDropdown.value = false
   }
-  if (!target.closest('.welcome-dialog-plus-wrapper')) {
+  if (!target.closest('.welcome-dialog-plus-wrapper') && !target.closest('.plus-dropdown-portal')) {
     showPlusMenu.value = false
   }
 }
@@ -169,21 +191,30 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       <div class="welcome-dialog" :style="panelStyle" v-bind="panelDataAttrs">
         <div class="welcome-dialog-main">
           <div class="welcome-dialog-plus-wrapper">
-            <UiDropdownMenu v-model:open="showPlusMenu" class="plus-dropdown-menu">
-              <template #trigger>
-                <UiButton variant="ghost" size="icon" class="welcome-dialog-plus">
-                  <Plus :size="15" />
-                </UiButton>
-              </template>
-              <button class="plus-menu-item" @click="emit('add-image'); showPlusMenu = false">
-                <Image :size="12" />
-                <span>{{ t('chat.addImage') }}</span>
-              </button>
-              <button class="plus-menu-item" @click="emit('add-file'); showPlusMenu = false">
-                <FileText :size="12" />
-                <span>{{ t('chat.addFile') }}</span>
-              </button>
-            </UiDropdownMenu>
+            <button
+              ref="plusTriggerRef"
+              class="welcome-dialog-plus"
+              @click="togglePlusMenu"
+            >
+              <Plus :size="15" />
+            </button>
+            <Teleport to="body">
+              <div
+                v-if="showPlusMenu"
+                class="plus-dropdown-portal"
+                :style="[plusMenuStyle, panelStyle]"
+                v-bind="panelDataAttrs"
+              >
+                <button class="plus-menu-item" @click="emit('add-image'); showPlusMenu = false">
+                  <Image :size="12" />
+                  <span>{{ t('chat.addImage') }}</span>
+                </button>
+                <button class="plus-menu-item" @click="emit('add-file'); showPlusMenu = false">
+                  <FileText :size="12" />
+                  <span>{{ t('chat.addFile') }}</span>
+                </button>
+              </div>
+            </Teleport>
           </div>
 
           <textarea
@@ -261,7 +292,6 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             </button>
           </div>
         </UiScrollArea>
-        <div class="project-dropdown-divider" />
         <button class="project-dropdown-item project-dropdown-new" @click="openNewProject">
           <FolderPlus :size="12" />
           <span>{{ t('chat.openNewProject') }}</span>

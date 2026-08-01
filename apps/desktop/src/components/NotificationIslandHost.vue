@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import {
   AlertCircle, Bell, CheckCircle2, FileText, Info,
-  LoaderCircle, MoreHorizontal, Pin, RotateCw, TriangleAlert, X,
+  LoaderCircle, Pin, RotateCw, TriangleAlert, X,
 } from '@lucide/vue'
 import {
   isUserDismissible,
@@ -16,12 +16,14 @@ import {
 const route = useRoute()
 const { t, locale } = useI18n()
 const {
-  items, history, statusZone, transientZone, orderedItems,
-  overflowCount, overflowOpen, openItem,
+  items, history, orderedItems,
+  statusHero, transientHero, statusFoldedCount, transientFoldedCount,
+  stackZone, stackItems,
+  overflowOpen, openItem,
   actionStates,
-  closeOpen, toggleOverflow, closeOverflow,
+  closeOpen, toggleOverflow, closeOverflow, closeStack,
   openDetail, dismiss, dismissAll, clearHistory, runAction,
-  hoverCapsuleEnter, hoverCapsuleLeave, hoverCardEnter, hoverCardLeave,
+  hoverCapsuleEnter, hoverCapsuleLeave, hoverHeroEnter, hoverCardEnter, hoverCardLeave,
   openNotification,
 } = useNotifications()
 
@@ -62,15 +64,27 @@ function relativeTime(ts: number): string {
 const host = ref<HTMLElement | null>(null)
 // Hover auto-expands the enlarged island window (hover-intent delayed in the
 // composable); clicking a capsule is the 通知打开 gesture → detail dialog.
-function onEnter(item: NotificationItem) { hoverCapsuleEnter(item.id) }
 function onLeave() { hoverCapsuleLeave() }
 function onClickCapsule(item: NotificationItem) { openNotification(item.id) }
 
+// Aggregated hero: hovering opens that zone's fold stack; a singleton hero
+// keeps the single-card hover path.
+function onEnterHero(zone: 'status' | 'transient', item: NotificationItem) {
+  const folded = zone === 'status' ? statusFoldedCount.value : transientFoldedCount.value
+  if (folded > 0) hoverHeroEnter(zone, item.id)
+  else hoverCapsuleEnter(item.id)
+}
+
 function onOutsideClick(e: MouseEvent) {
-  if (openItem.value && !host.value?.contains(e.target as Node)) { closeOpen(); closeOverflow() }
+  if ((openItem.value || stackZone.value) && !host.value?.contains(e.target as Node)) {
+    closeOpen(); closeStack(); closeOverflow()
+  }
 }
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') { overflowOpen.value ? closeOverflow() : openItem.value ? closeOpen() : undefined }
+  if (e.key !== 'Escape') return
+  if (overflowOpen.value) closeOverflow()
+  else if (stackZone.value) closeStack()
+  else if (openItem.value) closeOpen()
 }
 
 onMounted(() => { document.addEventListener('mousedown', onOutsideClick); document.addEventListener('keydown', onKeydown) })
@@ -89,6 +103,19 @@ watch(
     announcedIds.add(newest.id); announcedOrder.push(newest.id)
     if (announcedOrder.length > MAX_ANNOUNCED) { announcedIds.delete(announcedOrder.shift()!) }
     announcedItem.value = newest
+  },
+)
+
+/* Activity pulse — a transient hero change briefly draws attention. */
+const attentionId = ref<string | null>(null)
+watch(
+  () => transientHero.value?.id,
+  (next, prev) => {
+    if (next && next !== prev) {
+      attentionId.value = next
+      const timer = setTimeout(() => { attentionId.value = null }, 800)
+      onBeforeUnmount(() => clearTimeout(timer))
+    }
   },
 )
 
@@ -126,95 +153,135 @@ function taskLabel(item: NotificationItem) {
       :aria-label="t('app.notificationRegion')"
       @mouseleave="onLeave"
     >
-      <!-- STATUS ZONE — ongoing conditions, ALL rendered -->
-      <TransitionGroup
-        v-if="statusZone.length" tag="div" name="island-pop"
-        class="island-zone island-zone--status" role="status" :aria-label="t('app.systemStatus')"
+      <!-- STATUS ZONE — aggregated to a single hero; the rest fold behind a +N badge -->
+      <div
+        v-if="statusHero" class="island-zone island-zone--status"
+        role="status" :aria-label="t('app.systemStatus')"
       >
-        <div
-          v-for="item in statusZone" :key="item.id"
-          class="island-capsule island-capsule--status"
-          :class="[
-            `island-capsule--${item.level}`,
-            openItem?.id === item.id ? 'island-capsule--active' : '',
-            isDetTask(item) ? 'island-capsule--task-det' : '',
-            isIndetTask(item) ? 'island-capsule--task-indet' : '',
-          ]"
-          @mouseenter="onEnter(item)"
-        >
-          <button
-            type="button"
-            class="island-capsule__main"
-            :data-notification-id="item.id"
-            :aria-label="summary(item) + (item.count > 1 ? `, ×${item.count}` : '')"
-            :aria-expanded="openItem?.id === item.id"
-            :aria-controls="openItem?.id === item.id ? 'notification-island-card' : undefined"
-            :title="summary(item)"
-            @mouseenter="onEnter(item)" @focusin="onEnter(item)"
-            @click.stop="onClickCapsule(item)"
+        <Transition name="island-pop">
+          <div
+            :key="statusHero.id"
+            class="island-capsule island-capsule--status island-capsule--hero"
+            :class="[
+              `island-capsule--${statusHero.level}`,
+              stackZone === 'status' ? 'island-capsule--stack-open' : '',
+              isDetTask(statusHero) ? 'island-capsule--task-det' : '',
+              isIndetTask(statusHero) ? 'island-capsule--task-indet' : '',
+            ]"
+            @mouseenter="onEnterHero('status', statusHero)"
           >
-            <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
-            <span class="island-capsule__text"><strong class="island-capsule__title">{{ item.title || shortLabel(item) }}</strong></span>
-            <span v-if="item.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
-            <span v-if="isDetTask(item)" class="island-capsule__progress" role="progressbar" :aria-valuenow="taskPct(item)" aria-valuemin="0" aria-valuemax="100">
-              <span class="island-capsule__progress-fill" :style="{ width: taskPct(item) + '%' }" />
+            <button
+              type="button"
+              class="island-capsule__main"
+              :data-notification-id="statusHero.id"
+              :aria-label="summary(statusHero) + (statusHero.count > 1 ? `, ×${statusHero.count}` : '')"
+              :aria-expanded="stackZone === 'status'"
+              :aria-controls="stackZone === 'status' ? 'notification-island-stack' : undefined"
+              :title="summary(statusHero)"
+              @mouseenter="onEnterHero('status', statusHero)" @focusin="onEnterHero('status', statusHero)"
+              @click.stop="onClickCapsule(statusHero)"
+            >
+              <component :is="icon(statusHero.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
+              <span class="island-capsule__text"><strong class="island-capsule__title">{{ statusHero.title || shortLabel(statusHero) }}</strong></span>
+              <span v-if="statusHero.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: statusHero.count })">×{{ statusHero.count }}</span>
+            <span v-if="statusFoldedCount > 0" class="island-capsule__stack">{{ statusFoldedCount }}</span>
+            <span v-if="isDetTask(statusHero)" class="island-capsule__progress" role="progressbar" :aria-valuenow="taskPct(statusHero)" aria-valuemin="0" aria-valuemax="100">
+              <span class="island-capsule__progress-fill" :style="{ width: taskPct(statusHero) + '%' }" />
             </span>
-            <LoaderCircle v-if="isIndetTask(item)" :size="12" class="island-capsule__spinner" aria-hidden="true" />
+            <LoaderCircle v-if="isIndetTask(statusHero)" :size="12" class="island-capsule__spinner" aria-hidden="true" />
           </button>
           <!-- 超级岛-style residency marker: status conditions stay until their source clears them — no close affordance -->
-          <Pin v-if="!isUserDismissible(item)" :size="10" class="island-capsule__pin" aria-hidden="true" />
-          <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
+          <Pin v-if="!isUserDismissible(statusHero)" :size="10" class="island-capsule__pin" aria-hidden="true" />
+          <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(statusHero.id)"><X :size="10" aria-hidden="true" /></button>
         </div>
-      </TransitionGroup>
+        </Transition>
+      </div>
 
-      <!-- TRANSIENT ZONE — max 3, "just happened" -->
-      <TransitionGroup
-        v-if="transientZone.length" tag="div" name="island-pop"
-        class="island-zone island-zone--transient"
+      <!-- TRANSIENT ZONE — aggregated to a single hero; the rest fold behind a +N badge -->
+      <div
+        v-if="transientHero" class="island-zone island-zone--transient"
       >
-        <div
-          v-for="item in transientZone" :key="item.id"
-          class="island-capsule island-capsule--transient"
-          :class="[
-            `island-capsule--${item.level}`,
-            openItem?.id === item.id ? 'island-capsule--active' : '',
-            isDetTask(item) ? 'island-capsule--task-det' : '',
-            isIndetTask(item) ? 'island-capsule--task-indet' : '',
-          ]"
-          @mouseenter="onEnter(item)"
-        >
-          <button
-            type="button"
-            class="island-capsule__main"
-            :data-notification-id="item.id"
-            :aria-label="summary(item) + (item.count > 1 ? `, ×${item.count}` : '')"
-            :aria-expanded="openItem?.id === item.id"
-            :aria-controls="openItem?.id === item.id ? 'notification-island-card' : undefined"
-            :title="summary(item)"
-            @mouseenter="onEnter(item)" @focusin="onEnter(item)"
-            @click.stop="onClickCapsule(item)"
+        <Transition name="island-pop">
+          <div
+            :key="transientHero.id"
+            class="island-capsule island-capsule--transient island-capsule--hero"
+            :class="[
+              `island-capsule--${transientHero.level}`,
+              stackZone === 'transient' ? 'island-capsule--stack-open' : '',
+              attentionId === transientHero.id ? 'island-capsule--attention' : '',
+              isDetTask(transientHero) ? 'island-capsule--task-det' : '',
+              isIndetTask(transientHero) ? 'island-capsule--task-indet' : '',
+            ]"
+            @mouseenter="onEnterHero('transient', transientHero)"
           >
-            <component :is="icon(item.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
-            <span class="island-capsule__text"><strong class="island-capsule__title">{{ shortLabel(item) }}</strong></span>
-            <span v-if="item.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
-          </button>
-          <!-- sticky notices are persistent but user-owned — pin + close; pending tasks are handle-owned — pin only -->
-          <Pin v-if="!isUserDismissible(item)" :size="10" class="island-capsule__pin" aria-hidden="true" />
-          <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(item.id)"><X :size="10" aria-hidden="true" /></button>
-        </div>
-        <!-- overflow badge -->
-        <button
-          v-if="overflowCount > 0" key="__overflow__" type="button"
-          class="island-capsule island-capsule--overflow"
-          :class="overflowOpen ? 'island-capsule--active' : ''"
-          :aria-label="t('app.more') + ` +${overflowCount}`"
-          :aria-expanded="overflowOpen" aria-controls="notification-overflow-panel"
-          @click.stop="toggleOverflow()"
+            <button
+              type="button"
+              class="island-capsule__main"
+              :data-notification-id="transientHero.id"
+              :aria-label="summary(transientHero) + (transientHero.count > 1 ? `, ×${transientHero.count}` : '')"
+              :aria-expanded="stackZone === 'transient'"
+              :aria-controls="stackZone === 'transient' ? 'notification-island-stack' : undefined"
+              :title="summary(transientHero)"
+              @mouseenter="onEnterHero('transient', transientHero)" @focusin="onEnterHero('transient', transientHero)"
+              @click.stop="onClickCapsule(transientHero)"
+            >
+              <component :is="icon(transientHero.level)" :size="14" class="island-capsule__icon" aria-hidden="true" />
+              <span class="island-capsule__text"><strong class="island-capsule__title">{{ transientHero.title || shortLabel(transientHero) }}</strong></span>
+              <span v-if="transientHero.count > 1" class="island-capsule__badge" :aria-label="t('app.repeatedCount', { count: transientHero.count })">×{{ transientHero.count }}</span>
+              <span v-if="transientFoldedCount > 0" class="island-capsule__stack">{{ transientFoldedCount }}</span>
+            </button>
+            <!-- sticky notices are persistent but user-owned — pin + close; pending tasks are handle-owned — pin only -->
+            <Pin v-if="!isUserDismissible(transientHero)" :size="10" class="island-capsule__pin" aria-hidden="true" />
+            <button v-else type="button" class="island-capsule__close" :aria-label="t('app.close')" @click.stop="dismiss(transientHero.id)"><X :size="10" aria-hidden="true" /></button>
+          </div>
+        </Transition>
+      </div>
+
+      <!-- FOLD STACK — hovering an aggregated hero reveals all of that zone's items -->
+      <Transition name="island-card">
+        <article
+          v-if="stackZone && stackItems.length" id="notification-island-stack"
+          class="island-stack no-drag"
+          @mouseenter="hoverCardEnter()" @mouseleave="hoverCardLeave()"
         >
-          <MoreHorizontal :size="14" class="island-capsule__icon" aria-hidden="true" />
-          <span class="island-capsule__badge">+{{ overflowCount }}</span>
-        </button>
-      </TransitionGroup>
+          <header class="island-stack__header">
+            <strong>{{ stackZone === 'status' ? t('app.systemStatus') : t('app.notification') }}</strong>
+            <span class="island-stack__count">{{ stackItems.length }}</span>
+            <button type="button" class="island-card__icon-btn" :aria-label="t('app.close')" @click.stop="closeStack()"><X :size="15" aria-hidden="true" /></button>
+          </header>
+          <ul class="island-stack__list">
+            <li
+              v-for="(item, index) in stackItems" :key="item.id"
+              class="island-stack__row"
+              :class="[
+                `island-stack__row--${item.level}`,
+                index === 0 ? 'island-stack__row--hero' : '',
+              ]"
+              :data-notification-id="item.id"
+              @click.stop="openNotification(item.id)"
+            >
+              <span class="island-stack__icon" :class="`island-stack__icon--${item.level}`" aria-hidden="true">
+                <component :is="icon(item.level)" :size="13" />
+              </span>
+              <div class="island-stack__content">
+                <span class="island-stack__title">
+                  <Pin v-if="item.persistence !== 'auto'" :size="10" class="island-overflow__pin-inline" aria-hidden="true" />{{ item.title || item.message }}
+                </span>
+                <span v-if="item.source" class="island-stack__source">{{ item.source }}</span>
+              </div>
+              <span v-if="item.count > 1" class="island-stack__count-badge" :aria-label="t('app.repeatedCount', { count: item.count })">×{{ item.count }}</span>
+              <span v-if="item.remote" class="island-stack__remote">↗</span>
+              <span v-if="!isUserDismissible(item)" class="island-stack__action island-stack__action--static" :title="item.kind === 'status' ? t('app.statusAutoClear') : t('app.taskRunningHint')">
+                <Pin :size="12" aria-hidden="true" />
+              </span>
+              <button v-else type="button" class="island-stack__action" :aria-label="t('app.dismiss')" @click.stop="dismiss(item.id)"><X :size="12" aria-hidden="true" /></button>
+            </li>
+          </ul>
+          <footer class="island-stack__footer">
+            <button type="button" class="island-card__secondary" @click.stop="toggleOverflow(); closeStack()">{{ t('app.notificationCenter') }}</button>
+          </footer>
+        </article>
+      </Transition>
 
       <!-- DETAIL CARD — hover expands it; clicking the card itself opens the detail dialog (通知打开) -->
       <Transition name="island-card">
@@ -361,20 +428,22 @@ function taskLabel(item: NotificationItem) {
   pointer-events: auto; -webkit-app-region: no-drag;
   display: flex; align-items: center; gap: 7px; height: 28px;
   min-width: 0; max-width: 160px; padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--level) 35%, var(--border-default, #1a1f29));
+  border: none;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-secondary, #11151c) 88%, var(--level));
+  background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 66%, transparent);
+  background-image: linear-gradient(color-mix(in srgb, var(--level) 12%, transparent), color-mix(in srgb, var(--level) 12%, transparent));
   color: var(--text-primary, #c9d1d9);
   box-shadow: 0 1px 2px rgb(0 0 0 / 18%), 0 6px 18px rgb(0 0 0 / 22%);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
   font: inherit; font-size: 11px; line-height: 1; overflow: hidden; position: relative;
   transition: max-width 200ms cubic-bezier(.2,.8,.2,1), padding 200ms cubic-bezier(.2,.8,.2,1),
-    background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+    background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
-.island-capsule--status { background: color-mix(in srgb, var(--bg-secondary, #11151c) 82%, var(--level)); }
-.island-capsule--transient { background: color-mix(in srgb, var(--bg-secondary, #11151c) 92%, var(--level)); }
+.island-capsule--status { background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 62%, transparent); }
+.island-capsule--transient { background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 72%, transparent); }
 .island-capsule--active {
-  border-color: color-mix(in srgb, var(--level) 55%, var(--border-default, #1a1f29));
-  background: color-mix(in srgb, var(--bg-secondary, #11151c) 72%, var(--level));
+  background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 52%, transparent);
   box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
 }
 .island-capsule--success { --level: var(--accent-success, #2ec4b6); }
@@ -427,8 +496,8 @@ function taskLabel(item: NotificationItem) {
 /* overflow badge */
 .island-capsule--overflow {
   max-width: 48px; padding: 0 10px;
-  background: color-mix(in srgb, var(--bg-secondary, #11151c) 85%, var(--text-secondary, #7d8590));
-  border-color: var(--border-default, #1a1f29);
+  background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 64%, transparent);
+  background-image: linear-gradient(color-mix(in srgb, var(--text-secondary, #7d8590) 10%, transparent), color-mix(in srgb, var(--text-secondary, #7d8590) 10%, transparent));
 }
 .island-capsule--overflow .island-capsule__icon { color: var(--text-secondary, #7d8590); }
 
@@ -436,7 +505,7 @@ function taskLabel(item: NotificationItem) {
 .island-card {
   --level: var(--accent-primary, #2ec4b6); pointer-events: auto;
   width: min(340px, 100cqw); margin-top: 8px; padding: 13px;
-  border: 1px solid color-mix(in srgb, var(--level) 32%, var(--border-default, #1a1f29));
+  border: none;
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-primary, #0a0e14) 86%, transparent);
   color: var(--text-primary, #c9d1d9);
@@ -445,9 +514,6 @@ function taskLabel(item: NotificationItem) {
   -webkit-backdrop-filter: blur(18px) saturate(125%);
   -webkit-app-region: no-drag;
   cursor: pointer; /* the whole card opens the detail dialog */
-}
-.island-card:hover {
-  border-color: color-mix(in srgb, var(--level) 55%, var(--border-default, #1a1f29));
 }
 .island-card--success { --level: var(--accent-success, #2ec4b6); }
 .island-card--warning { --level: var(--accent-warning, #d29922); }
@@ -519,7 +585,7 @@ function taskLabel(item: NotificationItem) {
 .island-overflow {
   pointer-events: auto; width: min(380px, 100cqw); max-height: 340px;
   margin-top: 8px; display: flex; flex-direction: column;
-  border: 1px solid var(--border-default, #1a1f29); border-radius: 8px;
+  border: none; border-radius: 8px;
   background: color-mix(in srgb, var(--bg-primary, #0a0e14) 88%, transparent);
   color: var(--text-primary, #c9d1d9);
   box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
@@ -529,11 +595,11 @@ function taskLabel(item: NotificationItem) {
 }
 .island-overflow__header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 13px 8px; border-bottom: 1px solid var(--border-default, #1a1f29);
+  padding: 10px 13px 8px;
   font-size: 12px; font-weight: 600;
 }
 .island-overflow__scroll { flex: 1; overflow-y: auto; }
-.island-overflow__section + .island-overflow__section { border-top: 1px solid color-mix(in srgb, var(--border-default, #1a1f29) 50%, transparent); }
+.island-overflow__section + .island-overflow__section { margin-top: 4px; }
 .island-overflow__heading {
   margin: 0; padding: 8px 13px 3px;
   color: var(--text-tertiary, #656d76); font-size: 10px; font-weight: 600;
@@ -542,10 +608,8 @@ function taskLabel(item: NotificationItem) {
 .island-overflow__list { list-style: none; margin: 0; padding: 0 0 4px; }
 .island-overflow__row {
   display: flex; align-items: center; gap: 8px; padding: 8px 13px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default, #1a1f29) 50%, transparent);
   font-size: 11px; transition: background 120ms ease;
 }
-.island-overflow__row:last-child { border-bottom: 0; }
 .island-overflow__row:hover { background: var(--bg-hover, #161b22); }
 .island-overflow__icon {
   flex: none; display: grid; place-items: center; width: 22px; height: 22px;
@@ -574,7 +638,7 @@ function taskLabel(item: NotificationItem) {
 .island-overflow__row:hover .island-overflow__action--static { opacity: 0.75; }
 .island-overflow__pin-inline { margin-right: 3px; color: var(--text-tertiary, #656d76); vertical-align: -1px; }
 .island-overflow__row--cleared { opacity: 0.66; }
-.island-overflow__footer { display: flex; justify-content: flex-end; gap: 7px; padding: 8px 13px; border-top: 1px solid var(--border-default, #1a1f29); }
+.island-overflow__footer { display: flex; justify-content: flex-end; gap: 7px; padding: 8px 13px; }
 .island-overflow__footer button:disabled { opacity: 0.45; cursor: default; }
 .island-overflow__footer button:disabled:hover { background: transparent; color: var(--text-secondary, #7d8590); }
 
@@ -597,6 +661,88 @@ function taskLabel(item: NotificationItem) {
 .island-card-leave-to { opacity: 0; transform: translateY(-5px) scale(0.98); }
 @keyframes island-spin { to { transform: rotate(360deg); } }
 
+/* ── AGGREGATED HERO ── */
+.island-capsule--hero { max-width: 200px; }
+.island-capsule--stack-open {
+  background-color: color-mix(in srgb, var(--bg-secondary, #11151c) 52%, transparent);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+}
+/* Fold badge — a small rounded count showing how many items are collapsed. */
+.island-capsule__stack {
+  flex: none; margin-left: 2px; padding: 0 6px; height: 14px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: color-mix(in srgb, var(--level) 22%, transparent);
+  color: var(--level); font-size: 9px; font-weight: 700; line-height: 1;
+}
+/* Activity pulse — a new hero briefly draws attention, then settles. */
+.island-capsule--attention { animation: island-attention 800ms ease; }
+@keyframes island-attention {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.08); box-shadow: 0 0 0 4px color-mix(in srgb, var(--level) 22%, transparent), 0 6px 18px rgb(0 0 0 / 22%); }
+  100% { transform: scale(1); }
+}
+
+/* ── FOLD STACK PANEL ── */
+.island-stack {
+  pointer-events: auto; width: min(340px, 100cqw); max-height: 320px;
+  margin-top: 8px; display: flex; flex-direction: column;
+  border: none; border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary, #0a0e14) 88%, transparent);
+  color: var(--text-primary, #c9d1d9);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 42%);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  -webkit-app-region: no-drag; overflow: hidden;
+}
+.island-stack__header {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 13px 8px;
+  font-size: 12px; font-weight: 600;
+}
+.island-stack__count {
+  flex: none; min-width: 16px; height: 16px; padding: 0 4px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary, #7d8590) 18%, transparent);
+  color: var(--text-secondary, #7d8590); font-size: 10px; font-weight: 700;
+}
+.island-stack__header .island-card__icon-btn { margin-left: auto; }
+.island-stack__list { list-style: none; margin: 0; padding: 0 0 4px; overflow-y: auto; flex: 1; }
+.island-stack__row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 13px;
+  font-size: 11px; cursor: pointer; transition: background 120ms ease;
+}
+.island-stack__row:hover { background: var(--bg-hover, #161b22); }
+.island-stack__row--hero { box-shadow: inset 3px 0 0 var(--level); }
+.island-stack__icon {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 5px; background: color-mix(in srgb, var(--accent-primary, #2ec4b6) 12%, transparent);
+  color: var(--accent-primary, #2ec4b6);
+}
+.island-stack__icon--success { background: color-mix(in srgb, var(--accent-success, #2ec4b6) 12%, transparent); color: var(--accent-success, #2ec4b6); }
+.island-stack__icon--warning { background: color-mix(in srgb, var(--accent-warning, #d29922) 12%, transparent); color: var(--accent-warning, #d29922); }
+.island-stack__icon--error { background: color-mix(in srgb, var(--accent-danger, #f85149) 12%, transparent); color: var(--accent-danger, #f85149); }
+.island-stack__content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.island-stack__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.island-stack__source { color: var(--text-tertiary, #656d76); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.island-stack__count-badge { flex: none; color: var(--text-tertiary, #656d76); font-size: 10px; }
+.island-stack__remote { flex: none; color: var(--text-tertiary, #656d76); font-size: 10px; }
+.island-stack__action {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: var(--text-secondary, #7d8590); cursor: pointer;
+  opacity: 0; transition: opacity 120ms ease, background 120ms ease;
+}
+.island-stack__row:hover .island-stack__action { opacity: 1; }
+.island-stack__action:hover { background: var(--bg-hover, #161b22); color: var(--text-primary, #c9d1d9); }
+.island-stack__action--static, .island-stack__action--static:hover {
+  background: transparent; color: var(--text-tertiary, #656d76); cursor: default; opacity: 0.75;
+}
+.island-stack__row:hover .island-stack__action--static { opacity: 0.75; }
+.island-stack__footer {
+  display: flex; justify-content: flex-end; gap: 7px;
+  padding: 8px 13px;
+}
+
 /* ── CONTAINER QUERIES: icon-only when narrow ── */
 @container (max-width: 420px) {
   .island-capsule__text { display: none; }
@@ -606,7 +752,7 @@ function taskLabel(item: NotificationItem) {
 @media (prefers-reduced-motion: reduce) {
   .island-capsule, .island-card-enter-active, .island-card-leave-active,
   .island-pop-enter-active, .island-pop-leave-active, .island-pop-move { transition: none; }
-  .island-capsule__spinner, .island-card__spinner { animation: none; }
+  .island-capsule__spinner, .island-card__spinner, .island-capsule--attention { animation: none; }
 }
 
 .sr-only {

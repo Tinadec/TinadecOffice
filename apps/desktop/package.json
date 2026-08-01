@@ -31,7 +31,10 @@
     "marked": "^18.0.4",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.1.0",
+    "react": "^19.0.0",
     "react-day-picker": "^10.0.1",
+    "react-dom": "^19.0.0",
+    "react-is": "^19.0.0",
     "recharts": "^3.8.0",
     "shadcn": "^4.7.0",
     "simple-icons": "^16.20.0",
@@ -55,6 +58,7 @@
     "tailwindcss": "^4.3.0",
     "tailwindcss-animate": "^1.0.7",
     "vite": "^7.2.4",
+    "vite-plugin-vue-mcp": "^0.3.2",
     "vitest": "^4.0.13",
     "vue-tsc": "^3.1.5",
     "wait-on": "^9.0.3"

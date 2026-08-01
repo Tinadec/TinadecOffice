@@ -1,11 +1,12 @@
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
+import { VueMcp } from 'vite-plugin-vue-mcp';
 import { defineConfig } from 'vite';
 import path from 'path';
 
 export default defineConfig({
   base: './',
-  plugins: [vue(), tailwindcss()],
+  plugins: [vue(), tailwindcss(), VueMcp()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

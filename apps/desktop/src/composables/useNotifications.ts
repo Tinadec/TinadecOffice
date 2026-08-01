@@ -162,8 +162,6 @@ type QueuedConfirmation = ConfirmationRequest & { resolve: (value: boolean) => v
 const MAX_ITEMS = 50
 /** Retained dismissed items, newest first. */
 const MAX_HISTORY = 50
-/** Concurrently rendered transient capsules. */
-const VISIBLE_TRANSIENT = 3
 
 const DEFAULT_DURATION: Record<NotificationLevel, number> = {
   info: 5000,
@@ -180,6 +178,8 @@ const hoveredId = ref<string | null>(null)
 /** The single source of truth for "which card is open". */
 const openId = ref<string | null>(null)
 const overflowOpen = ref(false)
+/** Which zone's fold stack panel is open ('status' | 'transient'), if any. */
+const stackZone = ref<'status' | 'transient' | null>(null)
 const currentConfirmation = ref<ConfirmationRequest | null>(null)
 const actionStates = ref<Record<string, { running: boolean; error: string | null }>>({})
 const timers = new Map<string, Timer>()
@@ -235,7 +235,7 @@ function queueItems(): NotificationItem[] {
 function currentVisibleItems(): NotificationItem[] {
   // Status items live in a dedicated zone and never consume a transient slot.
   // This is what stops a stuck status condition from starving the queue.
-  return statusItems().concat(queueItems().slice(0, VISIBLE_TRANSIENT))
+  return statusItems().concat(queueItems())
 }
 
 function selectPrimary(): void {
@@ -287,6 +287,9 @@ function dismiss(targetId: string): void {
   const { [targetId]: _removed, ...remainingActionStates } = actionStates.value
   actionStates.value = remainingActionStates
   if (!items.value.length) overflowOpen.value = false
+  // Auto-collapse an open fold stack once its zone empties.
+  if (stackZone.value === 'status' && statusItems().length === 0) stackZone.value = null
+  if (stackZone.value === 'transient' && queueItems().length === 0) stackZone.value = null
   selectPrimary()
   syncTimerVisibility()
 }
@@ -677,6 +680,18 @@ function closeOverflow(): void {
   overflowOpen.value = false
 }
 
+function openStack(zone: 'status' | 'transient'): void {
+  stackZone.value = zone
+}
+
+function closeStack(): void {
+  stackZone.value = null
+}
+
+function toggleStack(zone: 'status' | 'transient'): void {
+  stackZone.value = stackZone.value === zone ? null : zone
+}
+
 // ---------------------------------------------------------------------------
 // 通知打开 interaction model (Apple Dynamic Island desktop equivalent):
 // hover auto-expands the enlarged island window; click opens the detail dialog.
@@ -712,9 +727,18 @@ function clearHoverCloseTimer(): void {
   }
 }
 
+/** Close both the expanded card and any open fold stack. */
+function closeExpanded(): void {
+  closeOpen()
+  closeStack()
+}
+
 function hoverCapsuleEnter(targetId: string): void {
   setHovered(targetId)
   clearHoverCloseTimer()
+  // Hovering a plain (single) capsule dismisses any open fold stack so the
+  // card and the stack are never both up.
+  if (stackZone.value) closeStack()
   if (openId.value === targetId) return
   clearHoverOpenTimer()
   const delay = openId.value ? HOVER_SWITCH_DELAY_MS : HOVER_OPEN_DELAY_MS
@@ -729,14 +753,31 @@ function hoverCapsuleEnter(targetId: string): void {
   }, delay)
 }
 
+/** Hovering an aggregated hero (folded count > 0) opens that zone's stack. */
+function hoverHeroEnter(zone: 'status' | 'transient', targetId: string): void {
+  setHovered(targetId)
+  clearHoverCloseTimer()
+  if (stackZone.value === zone) return
+  // The card and the fold stack are mutually exclusive.
+  if (openId.value) closeOpen()
+  clearHoverOpenTimer()
+  const delay = stackZone.value ? HOVER_SWITCH_DELAY_MS : HOVER_OPEN_DELAY_MS
+  hoverOpenTimer = globalThis.setTimeout(() => {
+    hoverOpenTimer = null
+    if (hoveredId.value !== targetId) return
+    if (detailId.value || currentConfirmation.value) return
+    stackZone.value = zone
+  }, delay)
+}
+
 function hoverCapsuleLeave(): void {
   setHovered(null)
   clearHoverOpenTimer()
-  if (!openId.value || hoverCloseTimer) return
+  if ((!openId.value && !stackZone.value) || hoverCloseTimer) return
   hoverCloseTimer = globalThis.setTimeout(() => {
     hoverCloseTimer = null
     // Only close when the pointer did not land on the card or a sibling capsule.
-    if (!hoveredId.value) closeOpen()
+    if (!hoveredId.value) closeExpanded()
   }, HOVER_CLOSE_DELAY_MS)
 }
 
@@ -745,10 +786,10 @@ function hoverCardEnter(): void {
 }
 
 function hoverCardLeave(): void {
-  if (!openId.value || hoverCloseTimer) return
+  if ((!openId.value && !stackZone.value) || hoverCloseTimer) return
   hoverCloseTimer = globalThis.setTimeout(() => {
     hoverCloseTimer = null
-    if (!hoveredId.value) closeOpen()
+    if (!hoveredId.value) closeExpanded()
   }, HOVER_CLOSE_DELAY_MS)
 }
 
@@ -762,6 +803,7 @@ function openNotification(targetId: string): void {
   clearHoverCloseTimer()
   if (openId.value) closeOpen()
   closeOverflow()
+  closeStack()
   openDetail(targetId)
 }
 
@@ -813,13 +855,27 @@ export function resolveConfirmation(requestId: string, value: boolean): void {
 // ---------------------------------------------------------------------------
 
 const statusZone = computed(() => statusItems())
-const transientZone = computed(() => queueItems().slice(0, VISIBLE_TRANSIENT))
+const transientZone = computed(() => queueItems())
 const visibleItems = computed(() => statusZone.value.concat(transientZone.value))
 const orderedItems = computed(() => statusItems().concat(queueItems()))
 const detailItem = computed(() => items.value.find((item) => item.id === detailId.value) ?? null)
 const openItem = computed(() => items.value.find((item) => item.id === openId.value) ?? null)
-const overflowCount = computed(() => Math.max(0, items.value.length - visibleItems.value.length))
 const hasPendingTask = computed(() => items.value.some((item) => item.taskState === 'pending'))
+
+// Dynamic Island "hero" aggregation: at rest only the most relevant capsule of
+// each zone is shown; the rest collapse behind a +N fold badge and reveal as a
+// stack panel on hover/focus. See NotificationIslandHost.vue.
+const statusHero = computed<NotificationItem | null>(() => statusZone.value[0] ?? null)
+const transientHero = computed<NotificationItem | null>(() => transientZone.value[0] ?? null)
+const statusFoldedCount = computed(() => Math.max(0, statusZone.value.length - 1))
+const transientFoldedCount = computed(() => Math.max(0, transientZone.value.length - 1))
+
+/** Rows shown in the open fold-stack panel, by zone. */
+const stackItems = computed(() =>
+  stackZone.value === 'status' ? statusZone.value
+  : stackZone.value === 'transient' ? transientZone.value
+  : [],
+)
 
 const notify = {
   info: (input: MessageOptions) => add('transient', 'info', input),
@@ -871,6 +927,7 @@ export function __resetNotificationsForTests(): void {
   detailId.value = null
   hoveredId.value = null
   openId.value = null
+  stackZone.value = null
   overflowOpen.value = false
   actionStates.value = {}
 }
@@ -890,9 +947,14 @@ export function useNotifications() {
     visibleItems,
     statusZone,
     transientZone,
+    statusHero,
+    transientHero,
+    statusFoldedCount,
+    transientFoldedCount,
+    stackZone,
+    stackItems,
     detailItem,
     openItem,
-    overflowCount,
     hasPendingTask,
     notify,
     status,
@@ -906,10 +968,14 @@ export function useNotifications() {
     setHovered,
     toggleOpen,
     closeOpen,
+    openStack,
+    closeStack,
+    toggleStack,
     toggleOverflow,
     closeOverflow,
     hoverCapsuleEnter,
     hoverCapsuleLeave,
+    hoverHeroEnter,
     hoverCardEnter,
     hoverCardLeave,
     openNotification,
