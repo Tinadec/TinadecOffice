@@ -1723,7 +1723,10 @@ box-shadow: var(--shadow-subtle);
   align-items: center;
   gap: 4px;
   padding: 6px;
-  background: var(--surface-chrome);
+  /* Transparent so the tab strip shares the panel root material with
+     the content area below, keeping the panel a single continuous
+     surface under every effect (opaque / translucent / blur). */
+  background: transparent;
   flex-shrink: 0;
   overflow-x: auto;
   scrollbar-width: thin;
