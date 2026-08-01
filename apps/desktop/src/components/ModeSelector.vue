@@ -2,9 +2,13 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChevronDown, Map, FileSearch, HelpCircle, Sparkles, Zap, Network } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import type { AgentMode } from '@/types/mode'
 
 const { t } = useI18n()
+const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
+const panelStyle = computed(() => getPanelStyle())
+const panelDataAttrs = computed(() => getPanelDataAttributes())
 
 interface ModeOption {
   key: AgentMode
@@ -87,7 +91,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       <div
         v-if="showDropdown"
         class="mode-selector-portal"
-        :style="dropdownStyle"
+        :style="[dropdownStyle, panelStyle]"
+        v-bind="panelDataAttrs"
       >
         <button
           v-for="mode in modes"

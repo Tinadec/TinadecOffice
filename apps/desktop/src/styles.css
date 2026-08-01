@@ -2211,12 +2211,6 @@ box-shadow: var(--shadow-subtle);
   opacity: 0.45;
 }
 
-.sidebar-divider {
-  height: 0;
-  margin: 0 12px;
-  background: transparent;
-}
-
 .sidebar-list {
   display: flex;
   flex-direction: column;
@@ -2442,7 +2436,6 @@ box-shadow: var(--shadow-subtle);
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid var(--border-muted);
 }
 
 .sidebar-user {
@@ -2738,7 +2731,6 @@ overflow: hidden;
   justify-content: space-between;
   gap: 10px;
   padding: 6px 12px;
-  border-top: 1px solid var(--border-muted);
 }
 
 .toolbar-left {
@@ -2770,7 +2762,7 @@ overflow: hidden;
   gap: 6px;
   padding: 5px 10px;
   border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-raised);
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
@@ -2780,7 +2772,7 @@ overflow: hidden;
 }
 
 .project-dropdown-trigger:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -2803,7 +2795,7 @@ overflow: hidden;
   max-height: 320px;
   overscroll-behavior: contain;
   border-radius: 12px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 1px solid var(--border-muted);
   box-shadow: var(--shadow-panel);
 }
@@ -2842,11 +2834,11 @@ overflow: hidden;
 }
 
 .project-dropdown-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .project-dropdown-item.active {
-  background: var(--bg-selected);
+  background: var(--surface-selected);
 }
 
 .project-dropdown-new {
@@ -2855,13 +2847,14 @@ overflow: hidden;
 }
 
 .project-dropdown-new:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .project-dropdown-divider {
   height: 1px;
   margin: 2px 6px;
-  background: var(--border-muted);
+  background: var(--surface-raised);
+  opacity: 0.7;
 }
 
 .toolbar-plan {
@@ -3362,7 +3355,6 @@ transition: left 0.2s ease, right 0.2s ease;
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px 5px;
-  border-top: 1px solid var(--border-muted);
 }
 
 .composer-toolbar-left {
@@ -3403,15 +3395,15 @@ transition: left 0.2s ease, right 0.2s ease;
   font-size: 12px;
   color: var(--text-secondary);
   background: transparent;
-  border: 1px solid var(--border-muted);
+  border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition: background 0.1s, color 0.1s;
 }
 
 .mode-selector-trigger:hover {
   color: var(--text-primary);
-  border-color: var(--text-secondary);
+  background: var(--surface-hover);
 }
 
 .mode-selector-label {
@@ -3428,7 +3420,7 @@ transition: left 0.2s ease, right 0.2s ease;
   flex-direction: column;
   overscroll-behavior: contain;
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 1px solid var(--border-muted);
   box-shadow: var(--shadow-panel);
   padding: 4px;
@@ -3453,12 +3445,12 @@ transition: left 0.2s ease, right 0.2s ease;
 
 .mode-selector-item:hover,
 .mode-selector-item:focus-visible {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .mode-selector-item.active {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   font-weight: 500;
 }
 
@@ -3470,15 +3462,15 @@ transition: left 0.2s ease, right 0.2s ease;
   font-size: 12px;
   color: var(--text-secondary);
   background: transparent;
-  border: 1px solid var(--border-muted);
+  border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition: background 0.1s, color 0.1s;
 }
 
 .permission-selector-trigger:hover {
   color: var(--text-primary);
-  border-color: var(--text-secondary);
+  background: var(--surface-hover);
 }
 
 .permission-selector-label {
@@ -3495,7 +3487,7 @@ transition: left 0.2s ease, right 0.2s ease;
   flex-direction: column;
   overscroll-behavior: contain;
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 1px solid var(--border-muted);
   box-shadow: var(--shadow-panel);
   padding: 4px;
@@ -3520,12 +3512,12 @@ transition: left 0.2s ease, right 0.2s ease;
 
 .permission-selector-item:hover,
 .permission-selector-item:focus-visible {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .permission-selector-item.active {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   font-weight: 500;
 }
 

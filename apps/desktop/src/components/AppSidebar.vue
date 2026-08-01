@@ -14,7 +14,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import type { ProjectDto, SessionDto } from '../api'
 import BrandLogo from '@/components/BrandLogo.vue'
-import { UiButton, UiDropdownMenu, UiSeparator } from '@/components/ui'
+import { UiButton, UiDropdownMenu } from '@/components/ui'
 
 const { t } = useI18n()
 
@@ -153,8 +153,6 @@ function openDebugStudio() {
         <span>Debug Studio</span>
       </UiButton>
     </nav>
-
-    <UiSeparator class="sidebar-divider" />
 
     <div class="sidebar-list">
       <div

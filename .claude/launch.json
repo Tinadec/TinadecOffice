@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "desktop-vite",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "-w", "@tinadec/desktop", "--", "--host", "127.0.0.1"],
+      "port": 5173
+    }
+  ]
+}

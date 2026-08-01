@@ -243,7 +243,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       <div
         v-if="showProjectDropdown"
         class="project-dropdown-portal"
-        :style="dropdownStyle"
+        :style="[dropdownStyle, panelStyle]"
+        v-bind="panelDataAttrs"
       >
         <UiScrollArea v-if="projects.length > 0" class="project-dropdown-scroll">
           <div class="project-dropdown-section">

@@ -2,9 +2,13 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ChevronDown, Shield, ShieldCheck, ShieldAlert } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import type { PermissionLevel } from '@/types/mode'
 
 const { t } = useI18n()
+const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
+const panelStyle = computed(() => getPanelStyle())
+const panelDataAttrs = computed(() => getPanelDataAttributes())
 
 interface PermissionOption {
   key: PermissionLevel
@@ -84,7 +88,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       <div
         v-if="showDropdown"
         class="permission-selector-portal"
-        :style="dropdownStyle"
+        :style="[dropdownStyle, panelStyle]"
+        v-bind="panelDataAttrs"
       >
         <button
           v-for="perm in permissions"
