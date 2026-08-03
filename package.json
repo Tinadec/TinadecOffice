@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "predev": "node scripts/setup-shadcn-ai.mjs",
     "dev": "concurrently -n core,gateway,desktop -c blue,magenta,green \"npm run dev:core\" \"npm run dev:gateway\" \"npm run dev:desktop\"",
     "dev:core": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731",
     "dev:gateway": "cd TinadecGateway && bun run dev",
@@ -14,6 +15,7 @@
     "dev:web": "npm run dev -w @tinadec/web",
     "build": "npm run build --workspaces --if-present && cd TinadecGateway && bun run build && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 build TinadecOffice.slnx --no-restore",
     "test": "npm run test --workspaces --if-present && cd TinadecGateway && bun test && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 test TinadecOffice.slnx --no-build",
+    "postinstall": "node scripts/setup-shadcn-ai.mjs",
     "restore:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 restore TinadecCore/TinadecCore.slnx && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 restore TinadecOffice.slnx",
     "ai:codegraph:init": "codegraph init",
     "ai:codegraph:sync": "codegraph sync",
@@ -24,7 +26,8 @@
     "ai:tools:install": "npm i -g @colbymchenry/codegraph && codegraph telemetry off && codegraph install --target=opencode --location=local --yes",
     "ai:tools:check": "npm run ai:codegraph:status && node .ponytail/validate.js",
     "ai:tools:setup": "powershell -ExecutionPolicy Bypass -File scripts/install-ai-tools.ps1",
-    "ai:tools:test": "powershell -ExecutionPolicy Bypass -File scripts/test-ai-tools.ps1"
+    "ai:tools:test": "powershell -ExecutionPolicy Bypass -File scripts/test-ai-tools.ps1",
+    "ai:shadcn:setup": "node scripts/setup-shadcn-ai.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

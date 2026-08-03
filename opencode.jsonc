@@ -12,6 +12,16 @@
         "--mcp"
       ],
       "enabled": true
+    },
+    "shadcnVue": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "npx",
+        "shadcn-vue@latest",
+        "mcp"
+      ],
+      "cwd": "apps/desktop"
     }
   }
 }
