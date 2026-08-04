@@ -1,5 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
+**Last Updated:** 2026-08-04
+**Last Updated By:** Claude (swapped provider brand icons in `providerTemplates.ts` to official `@lobehub/icons-static-svg` SVGs; added `typescript` devDependency and aligned `ignoreDeprecations` to TS 5.x so `npm run build` works)
+
 ## OVERVIEW
 Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
 
@@ -29,7 +32,7 @@ apps/desktop/
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; General Gateway connection plus model/providers/agents settings. |
 | Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
-| Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
+| Provider presentation templates | `src/providerTemplates.ts` | Presentation-only metadata (i18n keys, brand colors, placeholders, icons). Brand icons are official `@lobehub/icons-static-svg` SVGs imported via Vite `?raw` (23 drivers); drivers without a lobehub slug (`sglang`, `llamacpp`, `custom`) keep hand-written `currentColor` SVGs. `icon` is an inline `<svg>` string rendered via `v-html` inside `.provider-brand-icon`/`.modal-provider-logo` (24px/32px CSS sizing). || Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
 | Tool layer catalog/search | `src/pages/SettingsPage.vue`, `src/toolCatalog.ts`, `src/api.ts` | Settings presents Code-suite tools, Codex primitives, supported runtimes, Core manifest registry governance/design notes, and Core-owned tool search results. |
 | Tool execution visibility | `src/pages/HomePage.vue`, `src/components/ContextPanel.vue`, `src/components/OrchestrationTab.vue`, `src/api.ts` | Right rail presents Core-owned tool execution timeline state, provider layer, duration, checkpoint summary, and step-result evidence. |
 | Git management UI | `src/components/GitPanel.vue`, `src/components/ContextPanel.vue`, `src/gitDiffParser.ts`, `src/gitIndexPatch.ts`, `src/api.ts` | Right rail Git tab calls Gateway previews, builds approved hunk/line text patches for `git_stage` / `git_unstage`, and commits/pushes only through Core-approved tool calls; it never runs Git directly. |
@@ -55,7 +58,7 @@ apps/desktop/
 - Notifications with an identical key (or identical kind+level+title+message) merge in place with a repeat counter instead of stacking. Transient items auto-expire even while queued off-screen; only direct user attention (hover, open card, open detail) pauses their timer. Sticky transients, status items, and pending tasks never auto-expire.
 - Transient and status notifications render in separate island zones, so a standing condition can never starve transient feedback. Items beyond the visible three are reachable through the notification center, which pairs the live list (source-owned rows show a residency marker instead of a close button) with the cleared-history ring.
 - Notification state is per-window EXCEPT `status.*`, which is broadcast over Electron IPC (`tinadec:broadcast-status-notification` → `tinadec:status-notification`) to the main window, detached panels, and Debug Studio, excluding the sender and pet windows. Actions cannot cross IPC, so replicated items are flagged `remote` and render without an action button. Standard windows use the title-bar corridor; detached/Debug place islands below occupied title bars; pet windows never mount hosts.
-- UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, shadcn-style primitives.
+- UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, `@lobehub/icons-static-svg` (provider brand icons only; framework-agnostic SVG files, imported `?raw` in `providerTemplates.ts`), shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
 - Prompt Context UI is presentation and local preview only. The renderer calls Gateway APIs mirrored in `src/api.ts`; Core owns fragment selection, context pack handling, token estimates, and warnings.
 - Gateway URLs must use HTTP or HTTPS and contain no credentials, query, or fragment. Keep all renderer requests on `window.tinadec.gatewayUrl()` / `api.gatewayUrl`; do not add localhost request bypasses.
