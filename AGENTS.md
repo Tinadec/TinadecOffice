@@ -20,7 +20,7 @@
 TinadecOffice is a Windows-first intelligent agent desktop workbench built around a universal agent harness. The target product combines a .NET 10 Core state/runtime service, an Elysia TypeScript Gateway, and an Electron + Vue desktop UI under one npm workspace root. The Core has been rebuilt as a MAF-based modular monolith; storage and read paths are in place while several runtime write paths remain 501 stubs (see CURRENT REBUILD STATE).
 
 ## CURRENT REBUILD STATE
-- On 2026-07-15 the TinadecCore skeleton was rebuilt as a .NET 10 modular monolith based on Microsoft Agent Framework (MAF) 1.13.0.
+- On 2026-07-15 the TinadecCore skeleton was rebuilt as a .NET 10 modular monolith based on Microsoft Agent Framework (MAF) 1.15.0.
 - `TinadecCore/` now contains 18 source projects, including `Tenancy` for external-principal, tenant, workspace, and membership isolation, plus the `VectorStore` foundation capability, persistence, modules, migrations, runtime, and API projects.
 - Shared database abstraction lives in `TinadecCore/Persistence`: EF Core LINQ surface, default **SQLite** local file, optional **PostgreSQL** via config. Runtime histories, task graphs, events, and artifacts remain Core-owned files under `data/`; tenant-scoped control-plane projections and immutable configuration versions are module-owned relational data.
 - `TinadecCore/VectorStore` is a Core foundation capability: it chunks and retrieves semantic content, asks `Models` for embeddings through `IEmbeddingProvider`, and uses Persistence's `IProjectVectorDatabase`. Local SQLite stores independent `sqlite-vec` databases at `data/vectors/tenants/{tenant}/{workspace}/{project}.db`; PostgreSQL packages are registered but its `pgvector` persistence contract is still pending.
@@ -66,7 +66,7 @@ TinadecOffice采用三层架构设计，每层有明确的职责边界和技术�
 ### Core层 (智能体编排层)
 - **技术栈**: .NET 10 C# + ASP.NET Core
 - **端口**: 48731
-- **当前状态**: 已重建为基于 MAF 1.13.0 的 .NET 10 模块化单体，`TinadecCore/` 含 18 个源项目 + 3 个测试项目（详见 CURRENT REBUILD STATE）；项目/会话/消息 CRUD、会话运行列表与回放事件 SSE 已实现，invocation、scheduling、tool dispatch 与 approval 写入仍返回 501 stub
+- **当前状态**: 已重建为基于 MAF 1.15.0 的 .NET 10 模块化单体，`TinadecCore/` 含 18 个源项目 + 3 个测试项目（详见 CURRENT REBUILD STATE）；项目/会话/消息 CRUD、会话运行列表与回放事件 SSE 已实现，invocation、scheduling、tool dispatch 与 approval 写入仍返回 501 stub
 - **主要职责**: 
   - **唯一状态权威**: 管理会话、消息、项目、事件、审批等所有状态
   - **双层智能体编排**: Planning layer（主动规划与监督）和Execution layer（被动执行任务）

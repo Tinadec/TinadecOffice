@@ -8,7 +8,7 @@ public sealed class ReadinessResponseDto
     public string Status { get; init; } = "ready";
     public bool FrameworkReady { get; init; } = true;
     public string FrameworkName { get; init; } = "Microsoft Agent Framework";
-    public string FrameworkVersion { get; init; } = "1.13.0";
+    public string FrameworkVersion { get; init; } = "1.15.0";
     public ReadinessStorageDto? Storage { get; init; }
     public IReadOnlyList<ReadinessModuleDto> Modules { get; init; } = [];
 }

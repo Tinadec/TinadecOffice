@@ -75,7 +75,7 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(framework.TryGetProperty("name", out var fwName));
         Assert.Equal("Microsoft Agent Framework", fwName.GetString());
         Assert.True(framework.TryGetProperty("version", out var fwVersion));
-        Assert.Equal("1.13.0", fwVersion.GetString());
+        Assert.Equal("1.15.0", fwVersion.GetString());
         Assert.True(framework.TryGetProperty("primitives", out var primitives));
         Assert.True(primitives.GetArrayLength() > 0);
 
@@ -131,7 +131,7 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         Assert.Equal("Microsoft Agent Framework", fwName.GetString());
 
         Assert.True(root.TryGetProperty("framework_version", out var fwVersion));
-        Assert.Equal("1.13.0", fwVersion.GetString());
+        Assert.Equal("1.15.0", fwVersion.GetString());
 
         // Status should be "warning" because some modules are not_configured
         Assert.True(root.TryGetProperty("status", out var status));

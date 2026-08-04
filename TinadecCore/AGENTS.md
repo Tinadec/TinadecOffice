@@ -13,14 +13,14 @@
 - Verify rules against source files before relying on them.
 
 ## OVERVIEW
-TinadecCore is a .NET 10 modular monolith built on Microsoft Agent Framework (MAF) 1.13.0.
+TinadecCore is a .NET 10 modular monolith built on Microsoft Agent Framework (MAF) 1.15.0.
 It is the sole state authority for TinadecOffice: sessions, runs, tasks, approvals, events, traces, model routes, and tool policy.
 
 ## STRUCTURE
 ```
 TinadecCore/
 ├── Directory.Build.props          # Central MSBuild properties (net10.0, nullable, implicit usings)
-├── Directory.Packages.props       # Central package version management (MAF 1.13.0, no floating)
+├── Directory.Packages.props       # Central package version management (MAF 1.15.0, no floating)
 ├── TinadecCore.slnx               # Sub-solution: foundation / modules / host + tests
 ├── Contracts/                     # Pure C# DTOs — no MAF/ASP.NET/F# deps
 ├── Abstractions/                  # Port interfaces + ITinadecCoreBuilder + ModuleDescriptor
@@ -96,10 +96,10 @@ Api (Runtime, Web SDK)
 - Models, prompts, agents, integrations, policy/approval, run configuration bindings, artifacts, and control-event indexes now have module-owned provider-neutral DbContexts. Their current projections reference immutable versions or ContentStore bodies.
 
 ## MAF VERSIONS (locked in Directory.Packages.props)
-- `Microsoft.Agents.AI.Abstractions` 1.13.0
-- `Microsoft.Agents.AI` 1.13.0
-- `Microsoft.Agents.AI.Workflows` 1.13.0
-- `Microsoft.Agents.AI.OpenAI` 1.13.0
+- `Microsoft.Agents.AI.Abstractions` 1.15.0
+- `Microsoft.Agents.AI` 1.15.0
+- `Microsoft.Agents.AI.Workflows` 1.15.0
+- `Microsoft.Agents.AI.OpenAI` 1.15.0
 - No preview/alpha packages. No Anthropic provider (only preview available as of 2026-07-15).
 
 ## MODULE REGISTRATION

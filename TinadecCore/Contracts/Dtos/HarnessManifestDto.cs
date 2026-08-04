@@ -25,7 +25,7 @@ public sealed class HarnessManifestDto
 public sealed class FrameworkInfoDto
 {
     public string Name { get; init; } = "Microsoft Agent Framework";
-    public string Version { get; init; } = "1.13.0";
+    public string Version { get; init; } = "1.15.0";
     public IReadOnlyList<string> Primitives { get; init; } =
     [
         "agent",

@@ -142,7 +142,7 @@ app.MapGet("/api/v1/readiness", async (
         Status = status,
         FrameworkReady = true,
         FrameworkName = "Microsoft Agent Framework",
-        FrameworkVersion = "1.13.0",
+        FrameworkVersion = "1.15.0",
         Storage = storage,
         Modules = modules.Select(m => new ReadinessModuleDto
         {

@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: tools
+title: TinadecTools 工具运行时与代码生成器
+scope:
+    - TinadecTools/
+    - TinadecTools.Generators/
+source_files: []
+depends_on: []
+related_to:
+    - path: gateway
+    - path: tests

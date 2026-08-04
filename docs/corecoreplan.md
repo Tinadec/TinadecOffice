@@ -69,10 +69,10 @@ MAF 是技术底座，DmaEA等模块 是建立在其上的 Tinadec 双层多智�
 ## MAF 版本与公共接口
 
 - 集中锁定正式版：
-  - `Microsoft.Agents.AI.Abstractions` `1.13.0`
-  - `Microsoft.Agents.AI` `1.13.0`
-  - `Microsoft.Agents.AI.Workflows` `1.13.0`
-  - `Microsoft.Agents.AI.OpenAI` `1.13.0`
+  - `Microsoft.Agents.AI.Abstractions` `1.15.0`
+  - `Microsoft.Agents.AI` `1.15.0`
+  - `Microsoft.Agents.AI.Workflows` `1.15.0`
+  - `Microsoft.Agents.AI.OpenAI` `1.15.0`
 - 按用户选择允许 RC：建立可选 `Anthropic` provider 项目并锁定 `Microsoft.Agents.AI.Anthropic` `1.1.0-rc1`，默认不启用。
 - 不引入 preview/alpha Hosting、DurableTask、Foundry Hosting、MAF MCP 或独立 Harness 包；API 继续使用标准 ASP.NET Core，MCP 继续沿用官方 `ModelContextProtocol` SDK。
 - OpenAI 初始采用稳定的 `IChatClient`/Chat Completions 路径；Experimental Responses 能力保留 feature gate，不默认注册。

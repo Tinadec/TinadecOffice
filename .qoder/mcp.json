@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["serve", "--mcp"]
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn-vue@latest", "mcp"],
+      "cwd": "apps/desktop"
+    },
+    "vue-mcp": {
+      "type": "sse",
+      "url": "http://localhost:5173/__mcp/sse"
+    }
+  }
+}
