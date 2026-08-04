@@ -61,7 +61,7 @@ describe('NotificationDetailDialog', () => {
     // lifecycle hint. The owner clears them via dismissByKey on recovery.
     expect(document.body.querySelector('.detail-dialog__dismiss')).toBeNull()
     expect(document.body.querySelector('.detail-dialog__lifecycle-hint')).not.toBeNull()
-    document.body.querySelector<HTMLButtonElement>('.detail-dialog__secondary')?.click()
+    document.body.querySelector<HTMLButtonElement>('.detail-dialog__close')?.click()
     await nextTick()
     expect(notifications.items.value.some((item) => item.id === id)).toBe(true)
     expect(notifications.detailId.value).toBeNull()

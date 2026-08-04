@@ -274,9 +274,11 @@ onBeforeUnmount(() => {
             <span class="detail-dialog__kind">{{ kindLabel }}</span>
           </div>
           <button
+            ref="cancelButton"
             type="button"
             class="detail-dialog__close"
             :aria-label="t('app.close')"
+            :title="t('app.close')"
             @click="closeDetailDialog"
           >
             <X :size="16" aria-hidden="true" />
@@ -346,14 +348,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="detail-dialog__actions">
-          <button
-            ref="cancelButton"
-            type="button"
-            class="detail-dialog__secondary"
-            @click="closeDetailDialog"
-          >
-            {{ t('app.close') }}
-          </button>
           <!-- source-owned items (status, pending task) are never user-closable:
                show the lifecycle hint instead of the dismiss control -->
           <span
@@ -463,7 +457,7 @@ onBeforeUnmount(() => {
   color: var(--text-secondary, #7d8590);
 }
 
-.detail-dialog__close {
+.detail-dialog .detail-dialog__close {
   display: grid;
   place-items: center;
   width: 28px;
@@ -473,9 +467,10 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary, #7d8590);
   cursor: pointer;
+  padding: 0;
 }
 
-.detail-dialog__close:hover {
+.detail-dialog .detail-dialog__close:hover {
   background: var(--bg-hover, #161b22);
   color: var(--text-primary, #c9d1d9);
 }
