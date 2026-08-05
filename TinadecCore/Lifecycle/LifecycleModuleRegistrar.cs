@@ -48,19 +48,45 @@ internal sealed class LifecycleManager : ILifecycleManager
 
     public async Task<string> StartRunAsync(
         string sessionId,
-        string? parentRunId = null,
+        string? triggerMessageId = null,
         CancellationToken cancellationToken = default)
     {
         var storage = TryStorage();
         if (storage is not null && Guid.TryParse(sessionId, out var parsedSessionId))
         {
-            var run = await storage.StartRunAsync(parsedSessionId, Guid.NewGuid(), cancellationToken).ConfigureAwait(false);
+            var mid = Guid.TryParse(triggerMessageId, out var parsedMid) ? parsedMid : Guid.NewGuid();
+            var run = await storage.StartRunAsync(parsedSessionId, mid, cancellationToken).ConfigureAwait(false);
             return run.Id.ToString();
         }
 
         var runId = Guid.NewGuid().ToString("N");
         _fallbackRuns[runId] = new RunState { RunId = runId, SessionId = sessionId, Status = RunStatus.Running, StartedAt = DateTimeOffset.UtcNow };
         return runId;
+    }
+
+    public async Task<long> AppendEventAsync(
+        Guid runId,
+        string eventType,
+        object? payload,
+        string summary,
+        string severity = "info",
+        Guid? taskId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        if (storage is null) return 0L;
+        var index = await storage.AppendEventAsync(runId, eventType, payload, summary, severity, taskId: taskId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return index.Sequence;
+    }
+
+    public async Task UpdateTaskSnapshotAsync(
+        Guid runId,
+        object taskNode,
+        CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        if (storage is null) return;
+        await storage.UpdateTaskAsync(runId, taskNode, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task CompleteRunAsync(

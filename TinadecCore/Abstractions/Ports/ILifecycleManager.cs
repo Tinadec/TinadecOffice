@@ -9,7 +9,7 @@ public interface ILifecycleManager
 {
     Task<string> StartRunAsync(
         string sessionId,
-        string? parentRunId = null,
+        string? triggerMessageId = null,
         CancellationToken cancellationToken = default);
 
     Task CompleteRunAsync(
@@ -18,6 +18,20 @@ public interface ILifecycleManager
 
     Task<RunState> GetRunStateAsync(
         string runId,
+        CancellationToken cancellationToken = default);
+
+    Task<long> AppendEventAsync(
+        Guid runId,
+        string eventType,
+        object? payload,
+        string summary,
+        string severity = "info",
+        Guid? taskId = null,
+        CancellationToken cancellationToken = default);
+
+    Task UpdateTaskSnapshotAsync(
+        Guid runId,
+        object taskNode,
         CancellationToken cancellationToken = default);
 }
 

@@ -237,7 +237,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return (offset, checked(record.Length + 1));
     }
 
-    private async Task WriteTaskSnapshotAsync(Guid runId, TaskSnapshotFile snapshot, CancellationToken cancellationToken)
+    public async Task WriteTaskSnapshotAsync(Guid runId, TaskSnapshotFile snapshot, CancellationToken cancellationToken = default)
     {
         var path = _paths.TaskSnapshot(runId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -253,6 +253,31 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    public async Task UpdateTaskAsync(Guid runId, object taskNode, CancellationToken cancellationToken = default)
+    {
+        var path = _paths.TaskSnapshot(runId);
+        TaskSnapshotFile snapshot;
+        if (File.Exists(path))
+        {
+            await using var s = File.OpenRead(path);
+            snapshot = JsonSerializer.DeserializeAsync<TaskSnapshotFile>(s, JsonOptions, cancellationToken).ConfigureAwait(false).GetAwaiter().GetResult() ?? new TaskSnapshotFile { RunId = runId };
+        }
+        else
+        {
+            snapshot = new TaskSnapshotFile { RunId = runId };
+        }
+        snapshot.Tasks.Add(taskNode);
+        await WriteTaskSnapshotAsync(runId, snapshot, cancellationToken).ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var run = await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
+        if (run != null)
+        {
+            run.TaskRevision++;
+            run.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 }
 
