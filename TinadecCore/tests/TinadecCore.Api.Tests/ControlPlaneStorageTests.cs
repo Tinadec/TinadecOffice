@@ -54,7 +54,8 @@ public sealed class ControlPlaneStorageTests : IAsyncLifetime
         db.Providers.Add(provider);
         db.ProviderVersions.Add(version);
         await db.SaveChangesAsync();
-        Assert.Equal(1, await db.Providers.CountAsync());
+        Assert.Equal(1, await db.Providers.CountAsync(p => p.Driver == "test"));
+        Assert.Equal(1, await db.ProviderVersions.CountAsync(v => v.ProviderId == provider.Id));
     }
 
     private sealed class Factory : WebApplicationFactory<Program>

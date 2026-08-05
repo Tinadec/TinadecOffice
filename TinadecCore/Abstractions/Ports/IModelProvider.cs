@@ -48,3 +48,13 @@ public sealed class ModelReadiness
     public string? StatusMessage { get; init; }
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
+
+public sealed class ChatResolution
+{
+    public bool IsAvailable { get; init; }
+    public string? BaseUrl { get; init; }
+    public string? Model { get; init; }
+    public string? ApiKey { get; init; }
+    public string? ModelId { get; init; }
+    public string? Error { get; init; }
+}
