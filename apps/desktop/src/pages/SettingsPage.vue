@@ -39,7 +39,7 @@ import {
   Workflow,
   X
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, proxyRefs, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
@@ -111,8 +111,12 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
+import { useOptionalSettingsWorkbench, type SettingsSection as WorkbenchSettingsSection } from '@/workbench/settingsController'
+import SettingsModuleBoundary from '@/settings/SettingsModuleBoundary.vue'
+import { settingsModuleDescriptors } from '@/settings/settingsModuleRegistry'
+import { provideSettingsModuleContext } from '@/settings/settingsModuleContext'
 
-type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+type SettingsSection = WorkbenchSettingsSection
 
 interface DesktopAppConfig {
   gateway_url: string
@@ -219,8 +223,17 @@ function openExternal(url: string) {
   window.open(url, '_blank')
 }
 
-const activeSection = ref<SettingsSection>('general')
+const settingsWorkbench = useOptionalSettingsWorkbench()
+const localActiveSection = ref<SettingsSection>('general')
+const activeSection = settingsWorkbench?.activeSection ?? localActiveSection
+const localVisitedSections = ref<Set<SettingsSection>>(new Set(['general']))
+const visitedSections = settingsWorkbench?.visitedSections ?? localVisitedSections
+
+function hasVisitedSection(section: SettingsSection): boolean {
+  return visitedSections.value.has(section)
+}
 const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: 'default', managed: false })
+const appConfigLoaded = ref(false)
 const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
@@ -232,6 +245,7 @@ const petCatalogKind = ref('all')
 const petCatalogLimit = ref(PET_CATALOG_PAGE_SIZE)
 const petLoadMoreRef = ref<HTMLElement | null>(null)
 const petCatalogLoading = ref(false)
+const petCatalogLoaded = ref(false)
 const petActionSlug = ref('')
 
 
@@ -290,7 +304,9 @@ async function loadPets(force = false) {
     petCatalog.value = catalog
     downloadedPets.value = downloaded
     petCatalogLimit.value = PET_CATALOG_PAGE_SIZE
+    petCatalogLoaded.value = true
   } catch (error) {
+    petCatalogLoaded.value = false
     status.error({ key: 'pets', source: 'pets', message: error instanceof Error ? error.message : t('settings.petsLoadFailed') })
   } finally {
     petCatalogLoading.value = false
@@ -298,8 +314,11 @@ async function loadPets(force = false) {
 }
 
 function selectSettingsSection(section: SettingsSection) {
-  activeSection.value = section
-  if (section === 'pets' && petCatalog.value.length === 0) void loadPets()
+  if (settingsWorkbench) settingsWorkbench.selectSection(section)
+  else {
+    activeSection.value = section
+    localVisitedSections.value = new Set([...localVisitedSections.value, section])
+  }
 }
 
 async function downloadPet(slug: string) {
@@ -367,19 +386,28 @@ async function removePet(pet: DownloadedPet) {
 const aboutCoreStatus = ref<string>('')
 const aboutCoreVersion = ref<string>('')
 const aboutGatewayStatus = ref<string>('')
+const aboutHealthLoaded = ref(false)
 
 async function checkAboutHealth() {
+  dismissByKey('settings-about')
   try {
     const data = await api.health()
     aboutCoreStatus.value = data.status === 'ok' ? 'ok' : ''
     aboutCoreVersion.value = typeof data.version === 'string' ? data.version : ''
     aboutGatewayStatus.value = data.gateway === 'ok' ? 'ok' : ''
-  } catch {
+    aboutHealthLoaded.value = true
+  } catch (error) {
+    aboutHealthLoaded.value = false
     aboutCoreStatus.value = ''
     aboutGatewayStatus.value = ''
+    status.error({
+      key: 'settings-about',
+      source: 'settings',
+      message: error instanceof Error ? error.message : t('settings.centerLoadFailed'),
+      action: { label: t('settings.retry'), run: checkAboutHealth },
+    })
   }
 }
-checkAboutHealth()
 const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
 const agentCenterOverview = ref<AgentCenterOverviewDto | null>(null)
 const providers = ref<ModelProviderInstanceDto[]>([])
@@ -423,6 +451,9 @@ const busy = ref(false)
 const loading = ref(false)
 const modelCenterLoading = ref(false)
 const agentCenterLoading = ref(false)
+const modelCenterLoaded = ref(false)
+const agentCenterLoaded = ref(false)
+const promptContextLoaded = ref(false)
 const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
 
@@ -487,8 +518,20 @@ const navItems = computed(() => [
 ])
 
 async function loadAppConfig() {
-  appConfig.value = await window.tinadec.getAppConfig()
-  gatewayUrlDraft.value = appConfig.value.gateway_url
+  dismissByKey('gateway-config-load')
+  try {
+    appConfig.value = await window.tinadec.getAppConfig()
+    gatewayUrlDraft.value = appConfig.value.gateway_url
+    appConfigLoaded.value = true
+  } catch (error) {
+    appConfigLoaded.value = false
+    status.error({
+      key: 'gateway-config-load',
+      source: 'gateway',
+      message: error instanceof Error ? error.message : t('settings.centerLoadFailed'),
+      action: { label: t('settings.retry'), run: loadAppConfig },
+    })
+  }
 }
 
 function normalizedGatewayDraft() {
@@ -577,8 +620,6 @@ function clearGatewayRestartBanner() {
   const existing = notificationItems.value.find((item) => item.key === 'gateway-restart')
   if (existing) dismissNotification(existing.id)
 }
-
-void loadAppConfig()
 
 const modelCenterSections = computed(() => [
   { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.suppliers.length ?? 0 },
@@ -936,7 +977,9 @@ async function loadModelCenter() {
     if (selected) {
       selectedProviderId.value = selected.id
     }
+    modelCenterLoaded.value = true
   } catch (error) {
+    modelCenterLoaded.value = false
     status.error({ key: 'model-center', source: 'models', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadModelCenter } })
   } finally {
     modelCenterLoading.value = false
@@ -1021,7 +1064,9 @@ async function loadAgentCenter() {
       ?? overview.agents.find((agent) => agent.id === selectedAgentId.value)
       ?? overview.agents[0]
     if (activeAgent) openAgentConfig(activeAgent)
+    agentCenterLoaded.value = true
   } catch (error) {
+    agentCenterLoaded.value = false
     status.error({ key: 'agent-center', source: 'agents', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadAgentCenter } })
   } finally {
     agentCenterLoading.value = false
@@ -1046,6 +1091,7 @@ async function loadToolDiscovery() {
 
 async function loadPromptContextCenter() {
   loading.value = true
+  dismissByKey('prompt-context-center')
   try {
     const fragments = await api.listPromptFragments()
     promptFragments.value = fragments
@@ -1061,6 +1107,15 @@ async function loadPromptContextCenter() {
     if (!promptPreviewMode.value) {
       promptPreviewMode.value = agentModes.value.find((mode) => mode.id === 'plan-first')?.id ?? agentModes.value[0]?.id ?? 'plan-first'
     }
+    promptContextLoaded.value = true
+  } catch (error) {
+    promptContextLoaded.value = false
+    status.error({
+      key: 'prompt-context-center',
+      source: 'prompts',
+      message: error instanceof Error ? error.message : t('settings.centerLoadFailed'),
+      action: { label: t('settings.retry'), run: loadPromptContextCenter },
+    })
   } finally {
     loading.value = false
   }
@@ -1541,20 +1596,389 @@ function readinessStatusLabel(status: string) {
   return status
 }
 
-loadModelCenter()
-loadAgentCenter()
-loadPromptContextCenter()
+watch(activeSection, (section) => {
+  if (section === 'general' && !appConfigLoaded.value) void loadAppConfig()
+  else if (section === 'model' && !modelCenterLoaded.value) void loadModelCenter()
+  else if ((section === 'agents' || section === 'tools') && !agentCenterLoaded.value) void loadAgentCenter()
+  else if (section === 'promptContext' && !promptContextLoaded.value) {
+    void Promise.all([
+      loadPromptContextCenter(),
+      agentCenterLoaded.value ? Promise.resolve() : loadAgentCenter(),
+    ])
+  } else if (section === 'pets' && !petCatalogLoaded.value) void loadPets()
+  else if (section === 'about' && !aboutHealthLoaded.value) void checkAboutHealth()
+}, { immediate: true })
+
+const settingsModuleContext = proxyRefs({
+  ArrowLeft,
+  Bot,
+  Check,
+  ChevronRight,
+  Circle,
+  Cpu,
+  Database,
+  Download,
+  Dna,
+  Edit3,
+  FileText,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  Info,
+  KeyRound,
+  LayoutGrid,
+  List,
+  Minus,
+  Monitor,
+  Moon,
+  MoreHorizontal,
+  Palette,
+  PanelRight,
+  PawPrint,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Server,
+  Settings2,
+  ShieldCheck,
+  Square,
+  Sun,
+  Terminal,
+  Trash2,
+  Workflow,
+  X,
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  reactive,
+  ref,
+  watch,
+  useI18n,
+  useRouter,
+  useTheme,
+  api,
+  PROVIDER_TEMPLATES,
+  findTemplate,
+  buildModelCenterRows,
+  filterModelCenterRows,
+  bindingForAgent,
+  legacyRouteWarning,
+  modelOptionKey,
+  providerTemplateFromSupplier,
+  providersFromOverview,
+  runtimeSourceSummary,
+  codeSuiteTools,
+  languageSupportFromTools,
+  manifestTools,
+  projectTemplatesFromResult,
+  sortedAgentLayers,
+  sortedRiskPolicies,
+  sortedToolSearchResults,
+  sortedToolProviders,
+  BrandLogo,
+  PetPreview,
+  UiButton,
+  UiInput,
+  UiCard,
+  UiBadge,
+  UiLabel,
+  UiSkeleton,
+  UiSwitch,
+  UiDropdownMenu,
+  AgentTopologyCanvas,
+  AgentEvolutionPanel,
+  PromptEngineeringPanel,
+  BackgroundPreview,
+  PanelStyleControl,
+  useBackground,
+  usePanelStyles,
+  useNotifications,
+  useOptionalSettingsWorkbench,
+  t,
+  locale,
+  router,
+  theme,
+  setTheme,
+  accentColor,
+  setAccentColor,
+  accentColors,
+  notificationItems,
+  notify,
+  banner,
+  confirm,
+  dismissNotification,
+  status,
+  dismissByKey,
+  backgroundSettings,
+  setBackgroundType,
+  setBackgroundSource,
+  setBackgroundOpacity,
+  setBackgroundBlur,
+  setBackgroundSize,
+  setBackgroundPosition,
+  setBackgroundRepeat,
+  selectBackgroundFile,
+  resetBackground,
+  backgroundSource,
+  panelStyle,
+  updatePanelStyle,
+  resetPanelStyle,
+  getPanelStyle,
+  getPanelDataAttributes,
+  settingsNavStyle,
+  settingsNavDataAttrs,
+  settingsContentStyle,
+  settingsContentDataAttrs,
+  settingsPageDataAttrs,
+  settingsPageMaterialStyle,
+  changeTheme,
+  changeAccentColor,
+  minimizeWindow,
+  maximizeWindow,
+  closeWindow,
+  openExternal,
+  settingsWorkbench,
+  localActiveSection,
+  activeSection,
+  localVisitedSections,
+  visitedSections,
+  hasVisitedSection,
+  appConfig,
+  appConfigLoaded,
+  gatewayUrlDraft,
+  gatewayConfigBusy,
+  gatewayConnectionState,
+  PET_CATALOG_PAGE_SIZE,
+  petCatalog,
+  downloadedPets,
+  petCatalogQuery,
+  petCatalogKind,
+  petCatalogLimit,
+  petLoadMoreRef,
+  petCatalogLoading,
+  petCatalogLoaded,
+  petActionSlug,
+  downloadedPetBySlug,
+  petCatalogKinds,
+  matchingPetCatalog,
+  visiblePetCatalog,
+  canLoadMorePets,
+  petLoadMoreObserver,
+  stopPetChanged,
+  loadMorePets,
+  observePetLoadMore,
+  loadPets,
+  selectSettingsSection,
+  downloadPet,
+  setPetEnabled,
+  openPetFolder,
+  removePet,
+  aboutCoreStatus,
+  aboutCoreVersion,
+  aboutGatewayStatus,
+  aboutHealthLoaded,
+  checkAboutHealth,
+  modelCenterOverview,
+  agentCenterOverview,
+  providers,
+  modelReadiness,
+  modelCatalogReadiness,
+  routes,
+  agentModes,
+  agents,
+  agentCandidates,
+  availableTools,
+  harnessManifest,
+  toolLayerReadiness,
+  toolSearchResults,
+  promptFragments,
+  promptPreview,
+  projectTemplates,
+  selectedProviderId,
+  selectedAgentId,
+  configuringAgentId,
+  modelCenterSection,
+  agentRuntimeSelection,
+  agentRuntimeProviderId,
+  agentRuntimeModelKey,
+  agentRuntimeCliId,
+  agentRuntimeAcpId,
+  agentRuntimeModelQuery,
+  agentRuntimeProviderQuery,
+  agentRuntimeCliQuery,
+  agentRuntimeAcpQuery,
+  agentEditTools,
+  agentEditCapabilities,
+  agentEditSystemPrompt,
+  agentEditDescription,
+  agentNewCapability,
+  selectedProviderDetailId,
+  modelProviderFilter,
+  modelProviderQuery,
+  modelProviderListRef,
+  modelDiagnosticsRef,
+  busy,
+  loading,
+  modelCenterLoading,
+  agentCenterLoading,
+  modelCenterLoaded,
+  agentCenterLoaded,
+  promptContextLoaded,
+  modelCenterBusy,
+  agentRuntimeBusy,
+  showModal,
+  agentViewMode,
+  promptSelectedFragmentId,
+  promptFilterScope,
+  promptFilterCategory,
+  promptFilterAgentId,
+  promptFilterEnabled,
+  promptPreviewAgentId,
+  promptPreviewMode,
+  promptPreviewSessionId,
+  promptPreviewRunId,
+  promptPreviewUserContent,
+  toolDiscoveryQuery,
+  toolDiscoverySource,
+  toolDiscoveryRisk,
+  toolDiscoveryLoading,
+  promptForm,
+  providerForm,
+  navItems,
+  loadAppConfig,
+  normalizedGatewayDraft,
+  testGatewayConnection,
+  saveGatewayConfiguration,
+  resetGatewayConfiguration,
+  restartDesktop,
+  clearGatewayRestartBanner,
+  modelCenterSections,
+  supplierTemplates,
+  currentTemplate,
+  chatRoute,
+  chatProvider,
+  providerReadinessById,
+  blockedModelRoutes,
+  warningCatalogTemplates,
+  catalogReadinessByDriver,
+  formFields,
+  formPlaceholders,
+  modelCenterRows,
+  filteredModelCenterRows,
+  modelCenterIssueCount,
+  firstNeedsKeyProvider,
+  agentRuntimeBindings,
+  topologyAgentLabels,
+  topologyCandidateLabels,
+  configuringRuntimeBinding,
+  configuringLegacyWarning,
+  runtimeBindingWritable,
+  runtimeModels,
+  runtimeProviders,
+  runtimeCliOptions,
+  runtimeAcpOptions,
+  modelCenterDiagnostics,
+  agentCenterDiagnostics,
+  filteredRuntimeModels,
+  filteredRuntimeProviders,
+  filteredRuntimeCliOptions,
+  filteredRuntimeAcpOptions,
+  selectedProvider,
+  selectedProviderDetail,
+  selectedAgent,
+  configuringAgent,
+  planningAgents,
+  executionAgents,
+  configuredAgentMode,
+  manifestToolList,
+  manifestProviders,
+  manifestAgentLayers,
+  manifestRiskPolicies,
+  codeSuiteToolList,
+  codexPrimitiveTools,
+  supportedLanguages,
+  warningToolLayerTools,
+  warningToolLayerAgents,
+  toolSourceOptions,
+  toolRiskOptions,
+  sortedToolDiscoveryResults,
+  promptCategories,
+  promptFilteredFragments,
+  runtimeQueryMatches,
+  centerDiagnosticLabel,
+  configuredModelSourceLabel,
+  acpRuntimeSourceLabel,
+  modelCatalogModeLabel,
+  setLocale,
+  fillForm,
+  applyTemplateDefaults,
+  openAddModal,
+  openEditModal,
+  toggleProviderDetail,
+  focusModelProviderList,
+  openModelDiagnostics,
+  toggleProviderEnabled,
+  deleteProvider,
+  closeModal,
+  loadModelCenter,
+  refreshProviderModels,
+  probeAcpRuntime,
+  loadAgentCenter,
+  loadToolDiscovery,
+  loadPromptContextCenter,
+  selectPromptFragment,
+  newPromptFragment,
+  promptPayload,
+  savePromptFragment,
+  deletePromptFragment,
+  clonePromptFragment,
+  generatePromptPreview,
+  updateAgentMode,
+  setAgentEnabled,
+  saveAgentProfile,
+  toggleAgentTool,
+  removeAgentCapability,
+  addAgentCapability,
+  openAgentConfig,
+  closeAgentConfig,
+  openAgentConfigById,
+  runtimeBindingInput,
+  saveAgentRuntimeBinding,
+  saveProvider,
+  connectionKindLabel,
+  agentTypeLabel,
+  agentLayerLabel,
+  agentModeLabel,
+  agentModeSummary,
+  agentPolicyLabel,
+  supplierTransportLabel,
+  supplierCredentialLabel,
+  supplierSummary,
+  providerPresentation,
+  candidateStatusLabel,
+  statusLabel,
+  statusVariant,
+  readinessVariant,
+  readinessStatusLabel,
+})
+provideSettingsModuleContext(settingsModuleContext)
 
 import '../settings/settings.css'
+
+withDefaults(defineProps<{ embedded?: boolean; contentOnly?: boolean }>(), {
+  embedded: false,
+  contentOnly: false,
+})
 </script>
 
 <template>
-<div class="settings-page" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
+<div class="settings-page" :class="{ 'workbench-embedded': embedded, 'workbench-content-only': contentOnly }" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
 <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
 <!-- Full-width draggable bar for window dragging -->
-<div class="top-drag-bar" />
-<div class="settings-window-controls">
+<div v-if="!embedded" class="top-drag-bar" />
+<div v-if="!embedded" class="settings-window-controls">
       <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" @click="minimizeWindow">
         <Minus :size="14" />
       </UiButton>
@@ -1566,7 +1990,7 @@ import '../settings/settings.css'
       </UiButton>
     </div>
     <div class="settings-shell">
-      <nav class="settings-nav" :style="settingsNavStyle" v-bind="settingsNavDataAttrs">
+      <nav v-if="!contentOnly" class="settings-nav" :style="settingsNavStyle" v-bind="settingsNavDataAttrs">
         <div class="settings-nav-header">
           <UiButton variant="ghost" size="icon" :title="t('settings.back')" @click="router.push('/')">
             <ArrowLeft :size="16" />
@@ -1590,2064 +2014,19 @@ import '../settings/settings.css'
       </nav>
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
-        <Transition name="section-fade" mode="out-in">
-        <div :key="activeSection" class="settings-section-wrapper">
-        <template v-if="activeSection === 'general'">
-          <div class="general-settings-heading">
-            <div>
-              <h2>{{ t('settings.general') }}</h2>
-              <p>{{ t('settings.generalSubtitle') }}</p>
-            </div>
-          </div>
-
-          <section class="general-settings-group" aria-labelledby="gateway-settings-title">
-            <div class="general-settings-group-heading">
-              <div>
-                <h3 id="gateway-settings-title">{{ t('settings.gatewayConnection') }}</h3>
-                <p>{{ t('settings.gatewayConnectionHint') }}</p>
-              </div>
-              <UiBadge :variant="gatewayConnectionState === 'ready' ? 'secondary' : gatewayConnectionState === 'failed' ? 'destructive' : 'outline'">
-                {{ gatewayConnectionState === 'testing'
-                  ? t('settings.gatewayTesting')
-                  : gatewayConnectionState === 'ready'
-                    ? t('settings.gatewayConnected')
-                    : gatewayConnectionState === 'failed'
-                      ? t('settings.gatewayUnreachable')
-                      : t('settings.gatewayNotTested') }}
-              </UiBadge>
-            </div>
-
-            <div class="gateway-config-field">
-              <UiLabel for="gateway-url">{{ t('settings.gatewayUrl') }}</UiLabel>
-              <UiInput
-                id="gateway-url"
-                v-model="gatewayUrlDraft"
-                type="url"
-                :disabled="appConfig.managed || gatewayConfigBusy"
-                placeholder="https://tinadec.example.com"
-                @keydown.enter="testGatewayConnection"
-              />
-              <div class="gateway-config-meta">
-                <span>{{ t('settings.gatewayConfigSource') }}: {{ t(`settings.gatewaySource_${appConfig.source}`) }}</span>
-                <span>{{ t('settings.gatewayHttpsHint') }}</span>
-              </div>
-            </div>
-
-            <p v-if="appConfig.managed" class="gateway-config-managed">
-              <ShieldCheck :size="14" />
-              {{ t('settings.gatewayManaged') }}
-            </p>
-
-            <div class="gateway-config-actions">
-              <UiButton variant="outline" :disabled="gatewayConnectionState === 'testing'" @click="testGatewayConnection">
-                <RefreshCw :size="14" :class="{ spinning: gatewayConnectionState === 'testing' }" />
-                {{ t('settings.testConnection') }}
-              </UiButton>
-              <UiButton variant="outline" :disabled="appConfig.managed || gatewayConfigBusy" @click="resetGatewayConfiguration">
-                {{ t('settings.restoreDefault') }}
-              </UiButton>
-              <UiButton :disabled="appConfig.managed || gatewayConfigBusy" @click="saveGatewayConfiguration">
-                <Save :size="14" />
-                {{ t('settings.save') }}
-              </UiButton>
-            </div>
-          </section>
-        </template>
-
-        <template v-if="activeSection === 'model'">
-          <div class="center-page model-center-page">
-          <div class="center-command-bar">
-            <div>
-              <span class="center-kicker">{{ t('settings.model') }}</span>
-              <h2>{{ t('settings.modelCenter') }}</h2>
-              <p>{{ t('settings.modelCenterSubtitle') }}</p>
-            </div>
-            <div class="center-command-actions">
-              <UiButton variant="outline" size="sm" @click="focusModelProviderList('available')">
-                <Plus :size="14" />
-                <span>{{ t('settings.addProvider') }}</span>
-              </UiButton>
-              <UiButton variant="outline" size="sm" :disabled="modelCenterLoading || modelCenterBusy" @click="loadModelCenter">
-                <RefreshCw :size="14" />
-                <span>{{ t('settings.refresh') }}</span>
-              </UiButton>
-            </div>
-          </div>
-
-          <section class="center-overview-receipt" :aria-label="t('settings.centerOverview')">
-            <div class="center-receipt-item" :class="{ ready: modelCenterOverview?.capabilities.provider_crud }">
-              <Database :size="17" />
-              <div>
-                <span>{{ t('settings.modelProviderManagement') }}</span>
-                <strong>{{ t('settings.modelProviderManagementHint') }}</strong>
-              </div>
-              <UiBadge :variant="modelCenterOverview?.capabilities.provider_crud ? 'default' : 'secondary'">
-                {{ modelCenterOverview?.capabilities.provider_crud ? t('settings.writable') : t('settings.readOnly') }}
-              </UiBadge>
-            </div>
-            <div class="center-receipt-item configured">
-              <Cpu :size="17" />
-              <div>
-                <span>{{ t('settings.modelCatalogScope') }}</span>
-                <strong>{{ t('settings.configuredModelsOnly') }}</strong>
-              </div>
-              <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
-            </div>
-            <div class="center-receipt-item" :class="{ ready: modelCenterOverview?.capabilities.live_model_discovery, unavailable: !modelCenterOverview?.capabilities.live_model_discovery }">
-              <Search :size="17" />
-              <div>
-                <span>{{ t('settings.liveDiscovery') }}</span>
-                <strong>{{ modelCenterOverview?.capabilities.live_model_discovery ? t('settings.available') : t('settings.pendingCore') }}</strong>
-              </div>
-              <UiBadge :variant="modelCenterOverview?.capabilities.live_model_discovery ? 'default' : 'secondary'">
-                {{ modelCenterOverview?.capabilities.live_model_discovery ? t('settings.available') : t('settings.unavailable') }}
-              </UiBadge>
-            </div>
-          </section>
-
-          <div v-if="modelCenterLoading && !modelCenterOverview" class="center-loading-state" aria-live="polite">
-            <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
-          </div>
-
-          <div v-if="modelCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
-            <Info :size="16" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerDiagnostics') }}</strong>
-              <ul>
-                <li v-for="diagnostic in modelCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.status ?? ''}`">
-                  {{ centerDiagnosticLabel(diagnostic) }}
-                </li>
-              </ul>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="modelCenterLoading" @click="loadModelCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <div class="center-workbench model-workbench">
-          <aside class="center-inspector" :aria-label="t('settings.centerInspector')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerInspector') }}</span>
-                <strong>{{ t('settings.modelHealth') }}</strong>
-              </div>
-              <PanelRight :size="16" />
-            </div>
-
-          <section v-if="modelReadiness || modelCatalogReadiness" class="model-health-overview">
-            <div class="model-health-head">
-              <div>
-                <h3>{{ t('settings.modelHealth') }}</h3>
-                <span>{{ t('settings.modelHealthHint') }}</span>
-              </div>
-              <UiBadge v-if="modelReadiness" :variant="readinessVariant(modelReadiness.status)">
-                <Circle :size="8" />
-                {{ readinessStatusLabel(modelReadiness.status) }}
-              </UiBadge>
-            </div>
-            <div class="model-health-metrics">
-              <div>
-                <span>{{ t('settings.readyProvidersMetric') }}</span>
-                <strong>{{ modelReadiness ? `${modelReadiness.ready_provider_count}/${modelReadiness.provider_count}` : '—' }}</strong>
-              </div>
-              <div :class="{ attention: (modelReadiness?.blocked_route_count ?? 0) > 0 }">
-                <span>{{ t('settings.blockedRoutesMetric') }}</span>
-                <strong>{{ modelReadiness?.blocked_route_count ?? '—' }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.readyTemplatesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness ? `${modelCatalogReadiness.ready_template_count}/${modelCatalogReadiness.template_count}` : '—' }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.runtimeModulesMetric') }}</span>
-                <strong>{{ modelCatalogReadiness?.runtime_module_count ?? '—' }}</strong>
-              </div>
-            </div>
-            <div v-if="modelReadiness && modelReadiness.status !== 'ready'" class="model-health-alert">
-              <Info :size="16" />
-              <div>
-                <strong>
-                  {{ firstNeedsKeyProvider
-                    ? t('settings.missingKeySummary', { name: firstNeedsKeyProvider.display_name })
-                    : t('settings.modelIssuesSummary') }}
-                </strong>
-                <span>{{ t('settings.modelIssueHint') }}</span>
-              </div>
-              <UiButton v-if="firstNeedsKeyProvider" variant="outline" size="sm" @click="openEditModal(firstNeedsKeyProvider)">
-                {{ t('settings.configureNow') }}
-              </UiButton>
-              <UiButton v-else-if="modelCenterIssueCount > 0" variant="outline" size="sm" @click="focusModelProviderList('issues')">
-                {{ t('settings.viewIssues') }}
-              </UiButton>
-              <UiButton v-else variant="outline" size="sm" @click="openModelDiagnostics">
-                {{ t('settings.advancedDiagnostics') }}
-              </UiButton>
-            </div>
-          </section>
-
-          <details v-if="modelReadiness || modelCatalogReadiness" ref="modelDiagnosticsRef" class="model-diagnostics">
-            <summary>
-              <span>{{ t('settings.advancedDiagnostics') }}</span>
-              <ChevronRight :size="14" />
-            </summary>
-            <div class="model-diagnostics-grid">
-              <section v-if="modelReadiness" class="model-diagnostic-section">
-                <div class="model-diagnostic-head">
-                  <div>
-                    <strong>{{ t('settings.providerReceipt') }}</strong>
-                    <span>{{ modelReadiness.receipt_id }}</span>
-                  </div>
-                  <UiBadge :variant="readinessVariant(modelReadiness.status)">{{ readinessStatusLabel(modelReadiness.status) }}</UiBadge>
-                </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelReadiness.generated_at }}</p>
-                <div class="model-diagnostic-list">
-                  <strong>{{ t('settings.blockedRoutes') }}</strong>
-                  <div v-if="blockedModelRoutes.length > 0" class="model-readiness-routes">
-                    <span v-for="route in blockedModelRoutes" :key="route.purpose">
-                      {{ route.purpose }} · {{ route.provider_display_name ?? route.provider_instance_id }}
-                    </span>
-                  </div>
-                  <span v-else class="quiet">{{ t('settings.noBlockedRoutes') }}</span>
-                </div>
-                <ul v-if="modelReadiness.design_notes.length > 0" class="model-diagnostic-notes">
-                  <li v-for="note in modelReadiness.design_notes" :key="note">{{ note }}</li>
-                </ul>
-              </section>
-              <section v-if="modelCatalogReadiness" class="model-diagnostic-section">
-                <div class="model-diagnostic-head">
-                  <div>
-                    <strong>{{ t('settings.catalogReceipt') }}</strong>
-                    <span>{{ modelCatalogReadiness.receipt_id }}</span>
-                  </div>
-                  <UiBadge :variant="readinessVariant(modelCatalogReadiness.status)">{{ readinessStatusLabel(modelCatalogReadiness.status) }}</UiBadge>
-                </div>
-                <p class="model-diagnostic-meta">{{ t('settings.generatedAt') }} · {{ modelCatalogReadiness.generated_at }}</p>
-                <div class="model-diagnostic-list">
-                  <strong>{{ t('settings.catalogWarnings') }}</strong>
-                  <div v-if="warningCatalogTemplates.length > 0" class="catalog-readiness-rows">
-                    <div v-for="template in warningCatalogTemplates" :key="template.driver" class="catalog-readiness-row">
-                      <div>
-                        <strong>{{ template.display_name }}</strong>
-                        <span>{{ template.runtime_module_family }} · {{ template.live_discovery_policy }}</span>
-                      </div>
-                      <UiBadge :variant="readinessVariant(template.status)">{{ template.runtime_module_status }}</UiBadge>
-                    </div>
-                  </div>
-                  <span v-else class="quiet">{{ t('settings.noCatalogWarnings') }}</span>
-                </div>
-                <ul v-if="modelCatalogReadiness.design_notes.length > 0" class="model-diagnostic-notes">
-                  <li v-for="note in modelCatalogReadiness.design_notes" :key="note">{{ note }}</li>
-                </ul>
-              </section>
-            </div>
-          </details>
-
-            <section v-if="selectedProviderDetail" class="inspector-provider-detail">
-              <div class="provider-detail-head compact">
-                <span
-                  class="provider-brand-icon"
-                  :style="{ color: providerPresentation(selectedProviderDetail.driver)?.brand_color, backgroundColor: providerPresentation(selectedProviderDetail.driver)?.brand_bg }"
-                >
-                  <span v-if="providerPresentation(selectedProviderDetail.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(selectedProviderDetail.driver)?.icon"></span>
-                  <Database v-else :size="16" />
-                </span>
-                <div class="provider-detail-info">
-                  <strong>{{ selectedProviderDetail.display_name }}</strong>
-                  <span class="provider-detail-driver">{{ selectedProviderDetail.driver }} · {{ connectionKindLabel(selectedProviderDetail.connection_kind) }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(selectedProviderDetail.status)">
-                  <Circle :size="8" />
-                  {{ statusLabel(selectedProviderDetail.status) }}
-                </UiBadge>
-              </div>
-              <div class="provider-detail-grid compact">
-                <div v-if="selectedProviderDetail.base_url" class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.baseUrl') }}</span>
-                  <span class="provider-detail-value provider-detail-mono">{{ selectedProviderDetail.base_url }}</span>
-                </div>
-                <div v-if="selectedProviderDetail.model" class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.modelLabel') }}</span>
-                  <span class="provider-detail-value provider-detail-mono">{{ selectedProviderDetail.model }}</span>
-                </div>
-                <div class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.apiKey') }}</span>
-                  <span class="provider-detail-value">
-                    <span :class="['provider-key-indicator', selectedProviderDetail.has_api_key ? 'has-key' : 'no-key']"></span>
-                    {{ selectedProviderDetail.has_api_key ? t('settings.apiKeyStored') : t('settings.apiKeyNotSet') }}
-                  </span>
-                </div>
-                <div class="provider-detail-cell">
-                  <span class="provider-detail-label">{{ t('settings.connectionKind') }}</span>
-                  <span class="provider-detail-value">{{ connectionKindLabel(selectedProviderDetail.connection_kind) }}</span>
-                </div>
-              </div>
-              <div v-if="selectedProviderDetail.status_message" class="provider-status-note compact">
-                <Terminal :size="14" />
-                <span>{{ selectedProviderDetail.status_message }}</span>
-              </div>
-              <div class="provider-detail-actions compact">
-                <UiButton variant="outline" size="sm" @click="openEditModal(selectedProviderDetail)">
-                  <Edit3 :size="14" />
-                  <span>{{ t('settings.editConfig') }}</span>
-                </UiButton>
-                <UiButton variant="outline" size="sm" :disabled="modelCenterBusy" @click="toggleProviderEnabled(selectedProviderDetail)">
-                  <component :is="selectedProviderDetail.enabled ? X : Check" :size="14" />
-                  <span>{{ selectedProviderDetail.enabled ? t('settings.disable') : t('settings.enable') }}</span>
-                </UiButton>
-                <UiButton variant="ghost" size="sm" class="provider-delete-btn" :disabled="modelCenterBusy" @click="deleteProvider(selectedProviderDetail.id)">
-                  <Trash2 :size="14" />
-                  <span>{{ t('settings.delete') }}</span>
-                </UiButton>
-              </div>
-            </section>
-          </aside>
-
-          <aside class="center-resource-rail model-resource-navigation" :aria-label="t('settings.centerResources')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerResources') }}</span>
-                <strong>{{ t('settings.modelCenterResources') }}</strong>
-              </div>
-            </div>
-          <div class="model-center-tabs" role="tablist" :aria-label="t('settings.modelCenterResources')">
-            <button
-              v-for="section in modelCenterSections"
-              :key="section.key"
-              role="tab"
-              :aria-selected="modelCenterSection === section.key"
-              :class="{ active: modelCenterSection === section.key }"
-              @click="modelCenterSection = section.key"
-            >
-              <span>{{ section.label }}</span>
-              <UiBadge variant="secondary">{{ section.count }}</UiBadge>
-            </button>
-          </div>
-          </aside>
-
-          <main class="center-resource-stage">
-          <section v-if="modelCenterSection === 'suppliers'" ref="modelProviderListRef" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerSuppliers') }}</h3>
-                <p>{{ t('settings.suppliersHint') }}</p>
-              </div>
-              <UiBadge variant="outline">{{ t('settings.coreCatalog') }}</UiBadge>
-            </div>
-            <div class="center-resource-grid supplier-grid supplier-list">
-              <article v-for="supplier in modelCenterOverview?.suppliers ?? []" :key="supplier.supplier_id" class="center-resource-card">
-                <div class="center-resource-card-head">
-                    <span
-                      class="provider-brand-icon"
-                      :style="{ color: providerPresentation(supplier.driver)?.brand_color, backgroundColor: providerPresentation(supplier.driver)?.brand_bg }"
-                    >
-                      <span v-if="providerPresentation(supplier.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(supplier.driver)?.icon"></span>
-                      <Database v-else :size="16" />
-                    </span>
-                  <div>
-                    <strong>{{ supplier.display_name }}</strong>
-                    <span>{{ supplier.provider_family }} · {{ supplier.driver }}</span>
-                  </div>
-                  <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)?.status !== 'ready'" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown')">
-                    {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown') }}
-                  </UiBadge>
-                </div>
-                <p>{{ supplierSummary(supplier) }}</p>
-                <div class="center-resource-meta">
-                    <span>{{ supplierTransportLabel(supplier.transport_kind) }}</span>
-                    <span>{{ supplierCredentialLabel(supplier.credential_kind) }}</span>
-                  <span v-if="supplier.default_model">{{ supplier.default_model }}</span>
-                </div>
-                <div class="center-resource-actions">
-                  <UiButton variant="ghost" size="sm" @click="openAddModal(providerTemplateFromSupplier(supplier))">
-                    <Plus :size="14" />
-                    {{ t('settings.addProvider') }}
-                  </UiButton>
-                </div>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.suppliers.length ?? 0) === 0" class="center-empty-state">
-              <Server :size="20" />
-              <span>{{ t('settings.noSuppliers') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'models'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerModels') }}</h3>
-                <p>{{ t('settings.configuredModelsHint') }}</p>
-              </div>
-              <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
-            </div>
-            <div class="center-resource-list">
-              <article v-for="model in modelCenterOverview?.models ?? []" :key="model.id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Cpu :size="17" />
-                  <div>
-                    <strong>{{ model.model_id }}</strong>
-                    <span>{{ model.provider_display_name ?? model.provider_instance_id }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-meta">
-                  <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
-                  <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
-                <UiButton
-                  variant="outline"
-                  size="sm"
-                  :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
-                  :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.refreshModels') : t('settings.modelDiscoveryUnsupported')"
-                  @click="refreshProviderModels(model.provider_instance_id)"
-                >
-                  <Server :size="14" />
-                  {{ t('settings.refreshModels') }}
-                </UiButton>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.models.length ?? 0) === 0" class="center-empty-state">
-              <Cpu :size="20" />
-              <span>{{ t('settings.noConfiguredModels') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'cli'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>CLI</h3>
-                <p>{{ t('settings.cliRuntimeHint') }}</p>
-              </div>
-            </div>
-            <div class="center-resource-list">
-              <article v-for="runtime in modelCenterOverview?.cli_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Terminal :size="17" />
-                  <div>
-                    <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ runtime.driver }} · {{ runtime.runtime_id }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-paths">
-                  <code>{{ runtime.binary_path || t('settings.pathNotConfigured') }}</code>
-                  <code>{{ runtime.home_path || t('settings.workspaceNotConfigured') }}</code>
-                </div>
-                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <UiButton
-                  v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
-                  variant="outline"
-                  size="sm"
-                  @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
-                >
-                  <Settings2 :size="14" />
-                  {{ t('settings.editConfig') }}
-                </UiButton>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.cli_runtimes.length ?? 0) === 0" class="center-empty-state">
-              <Terminal :size="20" />
-              <span>{{ t('settings.noCliRuntimes') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'acp'" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>ACP</h3>
-                <p>{{ t('settings.acpRuntimeHint') }}</p>
-              </div>
-              <UiButton variant="outline" size="sm" @click="router.push('/market')">
-                <Plus :size="14" />
-                {{ t('settings.manageInMarketplace') }}
-              </UiButton>
-            </div>
-            <div class="center-resource-list">
-              <article v-for="runtime in modelCenterOverview?.acp_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
-                <div class="center-resource-primary">
-                  <Workflow :size="17" />
-                  <div>
-                    <strong>{{ runtime.display_name }}</strong>
-                    <span>{{ acpRuntimeSourceLabel(runtime.source) }} · {{ runtime.runtime_id }}</span>
-                  </div>
-                </div>
-                <div class="center-resource-meta">
-                  <span v-for="capability in runtime.capabilities.slice(0, 4)" :key="capability">{{ capability }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <UiButton
-                  v-if="runtime.adapter_id"
-                  variant="outline"
-                  size="sm"
-                  :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.acp_probe"
-                  @click="probeAcpRuntime(runtime)"
-                >
-                  <Server :size="14" />
-                  {{ t('settings.probe') }}
-                </UiButton>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.acp_runtimes.length ?? 0) === 0" class="center-empty-state">
-              <Workflow :size="20" />
-              <span>{{ t('settings.noAcpRuntimes') }}</span>
-            </div>
-          </section>
-
-          <section v-if="modelCenterSection === 'api'" ref="modelProviderListRef" class="model-provider-section">
-            <div class="model-provider-toolbar">
-              <div class="model-provider-search">
-                <Search :size="15" />
-                <UiInput v-model="modelProviderQuery" :placeholder="t('settings.providerSearchPlaceholder')" />
-              </div>
-              <div class="model-provider-filters" role="group" :aria-label="t('settings.providerFilters')">
-                <button :class="{ active: modelProviderFilter === 'all' }" :aria-pressed="modelProviderFilter === 'all'" @click="modelProviderFilter = 'all'">
-                  {{ t('settings.filterAll') }}
-                </button>
-                <button :class="{ active: modelProviderFilter === 'issues' }" :aria-pressed="modelProviderFilter === 'issues'" @click="modelProviderFilter = 'issues'">
-                  {{ t('settings.filterIssues') }}
-                  <span v-if="modelCenterIssueCount > 0">{{ modelCenterIssueCount }}</span>
-                </button>
-                <button :class="{ active: modelProviderFilter === 'configured' }" :aria-pressed="modelProviderFilter === 'configured'" @click="modelProviderFilter = 'configured'">
-                  {{ t('settings.filterConfigured') }}
-                </button>
-              </div>
-              <span class="model-provider-count">{{ t('settings.providerResultCount', { visible: filteredModelCenterRows.length, total: modelCenterRows.length }) }}</span>
-            </div>
-
-            <div class="model-provider-table">
-              <div class="model-provider-table-head" aria-hidden="true">
-                <span>{{ t('settings.providerName') }}</span>
-                <span>{{ t('settings.connectionKind') }}</span>
-                <span>{{ t('settings.modelLabel') }}</span>
-                <span>{{ t('settings.status') }}</span>
-                <span>{{ t('settings.actions') }}</span>
-              </div>
-              <template v-for="row in filteredModelCenterRows" :key="row.key">
-                <div class="model-provider-row" :class="{ issue: row.kind === 'instance' && ['blocked', 'warning'].includes(row.readiness?.status ?? '') }">
-                  <button
-                    class="model-provider-identity"
-                    :aria-expanded="row.kind === 'instance' ? selectedProviderDetailId === row.provider.id : undefined"
-                    @click="row.kind === 'instance' ? toggleProviderDetail(row.provider.id) : openAddModal(row.template)"
-                  >
-                    <span
-                      class="provider-brand-icon"
-                      :style="{ color: row.template?.brand_color, backgroundColor: row.template?.brand_bg }"
-                    >
-                      <span v-if="row.template?.icon" class="provider-brand-mark" v-html="row.template?.icon"></span>
-                      <Database v-else :size="16" />
-                    </span>
-                    <span>
-                      <strong :title="row.display_name">{{ row.display_name }}</strong>
-                      <small :title="row.driver">{{ row.driver }}</small>
-                    </span>
-                  </button>
-                  <span class="model-provider-cell model-provider-connection">{{ connectionKindLabel(row.connection_kind) }}</span>
-                  <span class="model-provider-cell model-provider-model" :title="row.model || t('settings.noModel')">{{ row.model || t('settings.noModel') }}</span>
-                  <div class="model-provider-status">
-                    <UiBadge v-if="row.kind === 'instance'" :variant="statusVariant(row.provider.status)">
-                      <Circle :size="8" />
-                      {{ statusLabel(row.provider.status) }}
-                    </UiBadge>
-                    <UiBadge v-else variant="outline">{{ t('settings.notAdded') }}</UiBadge>
-                  </div>
-                  <div class="model-provider-actions">
-                    <template v-if="row.kind === 'instance'">
-                      <UiButton
-                        v-if="row.template"
-                        variant="ghost"
-                        size="icon"
-                        :title="t('settings.addSameProvider')"
-                        @click="openAddModal(row.template)"
-                      >
-                        <Plus :size="14" />
-                      </UiButton>
-                      <UiButton variant="ghost" size="icon" :title="t('settings.editConfig')" @click="openEditModal(row.provider)">
-                        <Settings2 :size="14" />
-                      </UiButton>
-                      <UiButton
-                        variant="ghost"
-                        size="icon"
-                        :title="selectedProviderDetailId === row.provider.id ? t('settings.collapseDetails') : t('settings.expandDetails')"
-                        :aria-expanded="selectedProviderDetailId === row.provider.id"
-                        @click="toggleProviderDetail(row.provider.id)"
-                      >
-                        <ChevronRight :size="14" class="provider-chevron" :class="{ open: selectedProviderDetailId === row.provider.id }" />
-                      </UiButton>
-                    </template>
-                    <UiButton v-else variant="outline" size="sm" @click="openAddModal(row.template)">
-                      <Plus :size="14" />
-                      {{ t('settings.addProvider') }}
-                    </UiButton>
-                  </div>
-                  <span class="model-provider-mobile-meta">
-                    {{ connectionKindLabel(row.connection_kind) }} · {{ row.model || row.driver }}
-                  </span>
-                </div>
-
-              </template>
-              <div v-if="filteredModelCenterRows.length === 0" class="model-provider-empty">
-                <Search :size="18" />
-                <span>{{ t('settings.noProviderResults') }}</span>
-              </div>
-            </div>
-          </section>
-          </main>
-          </div>
-          </div>
-        </template>
-
-        <template v-if="activeSection === 'agents'">
-          <div class="center-page agent-center-page">
-          <div class="center-command-bar">
-            <div>
-              <span class="center-kicker">{{ t('settings.agents') }}</span>
-              <h2>{{ t('settings.agentCenter') }}</h2>
-              <p>{{ t('settings.agentCenterSubtitle') }}</p>
-            </div>
-            <div class="center-command-actions">
-              <div class="agent-view-toggle">
-                <button
-                  :class="['agent-view-btn', { active: agentViewMode === 'topology' }]"
-                  :title="t('settings.topologyView')"
-                  :aria-label="t('settings.topologyView')"
-                  :aria-pressed="agentViewMode === 'topology'"
-                  @click="agentViewMode = 'topology'"
-                >
-                  <LayoutGrid :size="15" />
-                </button>
-                <button
-                  :class="['agent-view-btn', { active: agentViewMode === 'list' }]"
-                  :title="t('settings.listView')"
-                  :aria-label="t('settings.listView')"
-                  :aria-pressed="agentViewMode === 'list'"
-                  @click="agentViewMode = 'list'"
-                >
-                  <List :size="15" />
-                </button>
-              </div>
-              <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || agentRuntimeBusy" @click="loadAgentCenter">
-                <RefreshCw :size="14" />
-                <span>{{ t('settings.refresh') }}</span>
-              </UiButton>
-            </div>
-          </div>
-
-          <section class="center-overview-receipt agent-overview-receipt" :aria-label="t('settings.centerOverview')">
-            <div class="center-receipt-item ready">
-              <Settings2 :size="17" />
-              <div>
-                <span>{{ t('settings.agentProfilesWritable') }}</span>
-                <strong>{{ t('settings.agentProfilesWritableHint') }}</strong>
-              </div>
-              <UiBadge variant="default">{{ t('settings.writable') }}</UiBadge>
-            </div>
-            <div class="center-receipt-item preview" :class="{ ready: agentCenterOverview?.capabilities.agent_runtime_binding_write }">
-              <Workflow :size="17" />
-              <div>
-                <span>{{ t('settings.runtimePreviewOnly') }}</span>
-                <strong>{{ t('settings.runtimePreviewOnlyHint') }}</strong>
-              </div>
-              <UiBadge :variant="agentCenterOverview?.capabilities.agent_runtime_binding_write ? 'default' : 'secondary'">
-                {{ agentCenterOverview?.capabilities.agent_runtime_binding_write ? t('settings.writable') : t('settings.previewOnly') }}
-              </UiBadge>
-            </div>
-            <div class="center-receipt-item configured">
-              <Bot :size="17" />
-              <div>
-                <span>{{ t('settings.activeAgents') }}</span>
-                <strong>{{ agents.filter(agent => agent.enabled).length }} / {{ agents.length }}</strong>
-              </div>
-              <UiBadge variant="outline">{{ planningAgents.length }} + {{ executionAgents.length }}</UiBadge>
-            </div>
-          </section>
-
-          <div v-if="agentCenterLoading && !agentCenterOverview" class="center-loading-state" aria-live="polite">
-            <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
-          </div>
-
-          <div v-if="agentCenterDiagnostics.length > 0" class="center-message warning center-diagnostics-message">
-            <Info :size="16" />
-            <div class="center-message-content">
-              <strong>{{ t('settings.centerDiagnostics') }}</strong>
-              <ul>
-                <li v-for="diagnostic in agentCenterDiagnostics" :key="`${diagnostic.code}:${diagnostic.source ?? ''}:${diagnostic.route_purpose ?? ''}:${diagnostic.agent_ids?.join(',') ?? ''}:${diagnostic.status ?? ''}`">
-                  {{ centerDiagnosticLabel(diagnostic) }}
-                </li>
-              </ul>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">{{ t('settings.retry') }}</UiButton>
-          </div>
-
-          <div v-if="!agentCenterLoading && agents.length === 0" class="center-empty-state center-empty-state-prominent">
-            <Bot :size="22" />
-            <div>
-              <strong>{{ t('settings.noAgents') }}</strong>
-              <span>{{ t('settings.noAgentsHint') }}</span>
-            </div>
-          </div>
-
-          <div class="center-workbench agent-workbench" :class="`view-${agentViewMode}`">
-          <aside class="center-resource-rail" :aria-label="t('settings.centerResources')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerResources') }}</span>
-                <strong>{{ t('settings.agentProfiles') }}</strong>
-              </div>
-            </div>
-
-            <section class="agent-column compact">
-              <div class="model-section-header">
-                <h3>{{ t('settings.planningLayer') }}</h3>
-                <UiBadge variant="secondary">{{ planningAgents.length }}</UiBadge>
-              </div>
-              <article
-                v-for="agent in planningAgents"
-                :key="agent.id"
-                class="agent-card"
-                :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-              >
-                <button class="agent-card-select" @click="openAgentConfig(agent)">
-                  <div class="agent-card-icon"><Workflow :size="17" /></div>
-                  <div class="agent-card-main">
-                    <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentModeLabel(agent.mode) }} · {{ agent.id }}</span>
-                    <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
-                  </div>
-                  <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                    {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-                  </UiBadge>
-                </button>
-                <button class="agent-card-more" :title="t('settings.openAgentConfig')" @click.stop="openAgentConfig(agent)">
-                  <MoreHorizontal :size="16" />
-                </button>
-              </article>
-            </section>
-
-            <section class="agent-column compact">
-              <div class="model-section-header">
-                <h3>{{ t('settings.executionLayer') }}</h3>
-                <UiBadge variant="secondary">{{ executionAgents.length }}</UiBadge>
-              </div>
-              <article
-                v-for="agent in executionAgents"
-                :key="agent.id"
-                class="agent-card"
-                :class="{ active: selectedAgentId === agent.id, disabled: !agent.enabled }"
-              >
-                <button class="agent-card-select" @click="openAgentConfig(agent)">
-                  <div class="agent-card-icon execution"><Cpu :size="17" /></div>
-                  <div class="agent-card-main">
-                    <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentModeLabel(agent.mode) }} · {{ agent.id }}</span>
-                    <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
-                  </div>
-                  <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
-                    {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
-                  </UiBadge>
-                </button>
-                <button class="agent-card-more" :title="t('settings.openAgentConfig')" @click.stop="openAgentConfig(agent)">
-                  <MoreHorizontal :size="16" />
-                </button>
-              </article>
-            </section>
-          </aside>
-
-          <main class="center-resource-stage">
-
-          <div v-if="agentViewMode === 'topology'" class="agent-topology-section">
-            <AgentTopologyCanvas
-              :agents="agents"
-              :candidates="agentCandidates"
-              :providers="providers"
-              :routes="routes"
-              :runtime-bindings="agentRuntimeBindings"
-              :selected-agent-id="selectedAgentId"
-              :agent-labels="topologyAgentLabels"
-              :candidate-labels="topologyCandidateLabels"
-              @select-agent="openAgentConfigById"
-              @configure-agent="openAgentConfigById"
-            />
-          </div>
-
-          <div v-if="agentViewMode === 'list'" class="agent-list-summary">
-            <PanelRight :size="16" />
-            <span>{{ selectedAgent ? agentTypeLabel(selectedAgent.agent_type) : t('settings.pleaseOpenAgentConfig') }}</span>
-            <UiButton v-if="selectedAgent" variant="outline" size="sm" @click="openAgentConfig(selectedAgent)">
-              <Settings2 :size="14" />
-              {{ t('settings.openAgentConfig') }}
-            </UiButton>
-          </div>
-          </main>
-
-          <aside class="center-inspector agent-inspector" :aria-label="t('settings.centerInspector')">
-            <div class="center-pane-heading">
-              <div>
-                <span>{{ t('settings.centerInspector') }}</span>
-                <strong>{{ configuringAgent ? agentTypeLabel(configuringAgent.agent_type) : t('settings.agentConfiguration') }}</strong>
-              </div>
-              <PanelRight :size="16" />
-            </div>
-            <div v-if="configuringAgent" class="agent-detail-panel">
-              <div class="agent-detail-head">
-                <div class="agent-card-icon" :class="{ execution: configuringAgent.layer === 'execution' }">
-                  <component :is="configuringAgent.layer === 'planning' ? Workflow : Cpu" :size="20" />
-                </div>
-                <div>
-                  <h3>{{ agentTypeLabel(configuringAgent.agent_type) }}</h3>
-                  <p>{{ agentTypeLabel(configuringAgent.agent_type) }} · {{ agentLayerLabel(configuringAgent.layer) }}</p>
-                </div>
-                <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="closeAgentConfig">
-                  <X :size="16" />
-                </UiButton>
-              </div>
-
-              <!-- 启用开关 -->
-              <div class="agent-config-switch">
-                <div>
-                  <strong>{{ t('settings.agentEnabled') }}</strong>
-                  <span>{{ configuringAgent.is_built_in ? t('settings.builtInAgent') : configuringAgent.id }}</span>
-                </div>
-                <UiSwitch
-                  :model-value="configuringAgent.enabled"
-                  :disabled="busy"
-                  @update:model-value="setAgentEnabled(configuringAgent, $event)"
-                />
-              </div>
-
-              <!-- 运行模式 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentModeTitle') }}</div>
-                <div class="agent-mode-grid">
-                  <button
-                    v-for="mode in agentModes"
-                    :key="mode.id"
-                    class="agent-mode-card"
-                    :class="{ active: configuringAgent.mode === mode.id }"
-                    @click="updateAgentMode(configuringAgent, mode.id)"
-                  >
-                    <strong>{{ agentModeLabel(mode.id) }}</strong>
-                    <span>{{ agentModeSummary(mode) }}</span>
-                    <small>
-                      {{ t('settings.parallelExecutors') }} {{ mode.max_parallel_executors }}
-                      · {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
-                    </small>
-                  </button>
-                </div>
-                <div v-if="configuredAgentMode" class="agent-policy-strip">
-                  <ShieldCheck :size="16" />
-                  <span>
-                    {{ configuredAgentMode.approval_required ? t('settings.approvalGateOn') : t('settings.approvalGateOff') }}
-                    · {{ agentPolicyLabel(configuredAgentMode.budget_policy) }}
-                  </span>
-                </div>
-              </div>
-
-              <!-- 运行来源 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentRuntimeSource') }}</div>
-                <div class="agent-detail-grid">
-                  <div>
-                    <span>{{ t('settings.routePurpose') }}</span>
-                    <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose }}</strong>
-                  </div>
-                  <div>
-                    <span>{{ t('settings.effectiveRuntime') }}</span>
-                    <strong>{{ runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="configuringLegacyWarning" class="runtime-binding-warning">
-                  <Info :size="16" />
-                  <div>
-                    <strong>{{ t('settings.sharedLegacyRoute', { purpose: configuringLegacyWarning.purpose }) }}</strong>
-                    <span>{{ t('settings.sharedLegacyRouteHint', { count: configuringLegacyWarning.agent_ids.length }) }}</span>
-                  </div>
-                </div>
-
-                <div class="runtime-source-grid">
-                  <button :class="{ active: agentRuntimeSelection === 'inherit' }" :aria-pressed="agentRuntimeSelection === 'inherit'" @click="agentRuntimeSelection = 'inherit'">
-                    <Workflow :size="16" />
-                    <strong>{{ t('settings.runtimeInherit') }}</strong>
-                    <span>{{ t('settings.runtimeInheritHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'fixed_model' }" :aria-pressed="agentRuntimeSelection === 'fixed_model'" @click="agentRuntimeSelection = 'fixed_model'">
-                    <Cpu :size="16" />
-                    <strong>{{ t('settings.runtimeFixedModel') }}</strong>
-                    <span>{{ t('settings.runtimeFixedModelHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'provider_auto' }" :aria-pressed="agentRuntimeSelection === 'provider_auto'" @click="agentRuntimeSelection = 'provider_auto'">
-                    <Server :size="16" />
-                    <strong>{{ t('settings.runtimeProviderAuto') }}</strong>
-                    <span>{{ t('settings.runtimeProviderAutoHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'cli' }" :aria-pressed="agentRuntimeSelection === 'cli'" @click="agentRuntimeSelection = 'cli'">
-                    <Terminal :size="16" />
-                    <strong>CLI</strong>
-                    <span>{{ t('settings.runtimeCliHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'acp' }" :aria-pressed="agentRuntimeSelection === 'acp'" @click="agentRuntimeSelection = 'acp'">
-                    <Bot :size="16" />
-                    <strong>ACP</strong>
-                    <span>{{ t('settings.runtimeAcpHint') }}</span>
-                  </button>
-                </div>
-
-                <div v-if="agentRuntimeSelection === 'inherit'" class="runtime-source-current">
-                  <ShieldCheck :size="16" />
-                  <span>{{ t('settings.runtimeInheritedCurrent', { source: runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }) }}</span>
-                </div>
-                <div v-else-if="agentRuntimeSelection === 'fixed_model'" class="settings-field runtime-source-picker">
-                  <UiLabel>{{ t('settings.runtimeFixedModel') }}</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeModelQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerModels') })" />
-                  </div>
-                  <select v-model="agentRuntimeModelKey" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectModel') }}</option>
-                    <option v-for="model in filteredRuntimeModels" :key="model.id" :value="modelOptionKey(model.provider_instance_id, model.model_id)">
-                      {{ model.model_id }} · {{ model.provider_display_name ?? model.provider_instance_id }} · {{ statusLabel(model.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeModels.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-                <div v-else-if="agentRuntimeSelection === 'provider_auto'" class="settings-field runtime-source-picker">
-                  <UiLabel>{{ t('settings.routeProvider') }}</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeProviderQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerApiConnections') })" />
-                  </div>
-                  <select v-model="agentRuntimeProviderId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectProvider') }}</option>
-                    <option v-for="provider in filteredRuntimeProviders" :key="provider.provider_instance_id" :value="provider.provider_instance_id">
-                      {{ provider.display_name }} · {{ statusLabel(provider.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeProviders.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                  <p class="agent-config-hint">{{ t('settings.providerAutoOwnedByCore') }}</p>
-                </div>
-                <div v-else-if="agentRuntimeSelection === 'cli'" class="settings-field runtime-source-picker">
-                  <UiLabel>CLI</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeCliQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'CLI' })" />
-                  </div>
-                  <select v-model="agentRuntimeCliId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectCliRuntime') }}</option>
-                    <option v-for="runtime in filteredRuntimeCliOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} · {{ statusLabel(runtime.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeCliOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-                <div v-else class="settings-field runtime-source-picker">
-                  <UiLabel>ACP</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeAcpQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'ACP' })" />
-                  </div>
-                  <select v-model="agentRuntimeAcpId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectAcpRuntime') }}</option>
-                    <option v-for="runtime in filteredRuntimeAcpOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} · {{ acpRuntimeSourceLabel(runtime.source) }} · {{ statusLabel(runtime.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-
-                <div v-if="!runtimeBindingWritable" class="runtime-binding-readonly">
-                  <Info :size="16" />
-                  <div>
-                    <strong>{{ t('settings.runtimeBindingPendingCore') }}</strong>
-                    <span>{{ t('settings.runtimeBindingPendingCoreHint') }}</span>
-                  </div>
-                </div>
-                <div class="modal-actions compact">
-                  <UiButton :disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()" size="sm" @click="saveAgentRuntimeBinding(configuringAgent)">
-                    <Save :size="14" />
-                    <span>{{ t('settings.saveRuntimeBinding') }}</span>
-                  </UiButton>
-                </div>
-              </div>
-
-              <!-- 描述 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentDescription') }}</div>
-                <div class="settings-field">
-                  <textarea
-                    v-model="agentEditDescription"
-                    class="settings-textarea"
-                    rows="2"
-                    :placeholder="t('settings.agentDescriptionPlaceholder')"
-                  ></textarea>
-                </div>
-              </div>
-
-              <!-- 工具绑定 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentTools') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
-                <div class="agent-tool-grid">
-                  <button
-                    v-for="tool in availableTools"
-                    :key="tool.id"
-                    class="agent-tool-chip"
-                    :class="{
-                      active: agentEditTools.includes(tool.id),
-                      risky: tool.requires_approval
-                    }"
-                    @click="toggleAgentTool(tool.id)"
-                  >
-                    <span class="agent-tool-name">{{ tool.display_name }}</span>
-                    <span class="agent-tool-risk">{{ tool.risk }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <!-- 能力标签 -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentCapabilities') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentCapabilitiesHint') }}</p>
-                <div class="agent-capability-list">
-                  <span v-for="cap in agentEditCapabilities" :key="cap" class="agent-cap-tag">
-                    {{ cap }}
-                    <button class="agent-cap-remove" @click="removeAgentCapability(cap)">×</button>
-                  </span>
-                </div>
-                <div class="agent-cap-add-row">
-                  <UiInput v-model="agentNewCapability" :placeholder="t('settings.newCapabilityPlaceholder')" @keydown.enter="addAgentCapability" />
-                  <UiButton variant="outline" size="sm" :disabled="!agentNewCapability.trim()" @click="addAgentCapability">
-                    <Plus :size="14" />
-                    {{ t('settings.addCapability') }}
-                  </UiButton>
-                </div>
-              </div>
-
-              <!-- System Prompt -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentSystemPrompt') }}</div>
-                <p class="agent-config-hint">{{ t('settings.agentSystemPromptOverrideHint') }}</p>
-                <div class="settings-field">
-                  <textarea
-                    v-model="agentEditSystemPrompt"
-                    class="settings-textarea prompt-editor"
-                    rows="6"
-                    :placeholder="t('settings.agentSystemPromptPlaceholder')"
-                  ></textarea>
-                </div>
-              </div>
-
-              <!-- 保存按钮 -->
-              <div class="agent-save-bar">
-                <UiButton :disabled="busy" @click="saveAgentProfile">
-                  <Save :size="14" />
-                  <span>{{ t('settings.saveAgent') }}</span>
-                </UiButton>
-              </div>
-            </div>
-            <div v-else class="center-empty-state inspector-empty">
-              <PanelRight :size="20" />
-              <span>{{ agents.length > 0 ? t('settings.pleaseOpenAgentConfig') : t('settings.noAgents') }}</span>
-            </div>
-
-            <details class="center-diagnostics-panel agent-candidates-panel">
-              <summary>
-                <span>{{ t('settings.evolutionCandidates') }}</span>
-                <UiBadge variant="outline">{{ agentCandidates.length }}</UiBadge>
-              </summary>
-              <div class="agent-candidate-list compact">
-                <article v-for="candidate in agentCandidates" :key="candidate.id" class="agent-candidate-row">
-                  <div>
-                    <strong>{{ candidate.name }}</strong>
-                    <span>{{ agentLayerLabel(candidate.layer) }} · {{ agentTypeLabel(candidate.agent_type) }} · {{ candidateStatusLabel(candidate.status) }}</span>
-                  </div>
-                  <UiBadge variant="secondary">{{ t('settings.generatedByEvolution') }}</UiBadge>
-                </article>
-              </div>
-            </details>
-          </aside>
-          </div>
-          </div>
-        </template>
-
-        <template v-if="activeSection === 'agentEvolution'">
-          <AgentEvolutionPanel />
-        </template>
-
-        <template v-if="activeSection === 'promptContext'">
-          <div class="model-center-heading">
-            <div>
-              <h2>Prompt Context</h2>
-              <p>Meeting Agent prompt fragments and preview</p>
-            </div>
-            <div class="agent-heading-actions">
-              <UiButton variant="outline" size="sm" :disabled="loading" @click="loadPromptContextCenter">
-                <Server :size="14" />
-                <span>{{ t('settings.refresh') }}</span>
-              </UiButton>
-              <UiButton size="sm" @click="newPromptFragment">
-                <Plus :size="14" />
-                <span>New Fragment</span>
-              </UiButton>
-            </div>
-          </div>
-
-          <div class="model-form-grid">
-            <div class="settings-field">
-              <UiLabel>Scope</UiLabel>
-              <select v-model="promptFilterScope" class="settings-select">
-                <option value="all">All</option>
-                <option value="global">Global</option>
-                <option value="agent">Agent</option>
-                <option value="mode">Mode</option>
-                <option value="session">Session</option>
-                <option value="project">Project</option>
-              </select>
-            </div>
-            <div class="settings-field">
-              <UiLabel>Category</UiLabel>
-              <select v-model="promptFilterCategory" class="settings-select">
-                <option value="all">All</option>
-                <option v-for="category in promptCategories" :key="category" :value="category">{{ category }}</option>
-              </select>
-            </div>
-            <div class="settings-field">
-              <UiLabel>Target Agent</UiLabel>
-              <select v-model="promptFilterAgentId" class="settings-select">
-                <option value="all">All</option>
-                <option value="">Global target</option>
-                <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-              </select>
-            </div>
-            <div class="settings-field">
-              <UiLabel>Status</UiLabel>
-              <select v-model="promptFilterEnabled" class="settings-select">
-                <option value="all">All</option>
-                <option value="enabled">Enabled</option>
-                <option value="disabled">Disabled</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="model-section-header">
-            <h3>Fragments</h3>
-            <UiBadge variant="outline">{{ promptFilteredFragments.length }}</UiBadge>
-          </div>
-
-          <div class="agent-tool-grid">
-            <button
-              v-for="fragment in promptFilteredFragments"
-              :key="fragment.id"
-              class="agent-tool-chip"
-              :class="{ active: promptSelectedFragmentId === fragment.id, risky: !fragment.enabled }"
-              @click="selectPromptFragment(fragment)"
-            >
-              <span class="agent-tool-name">{{ fragment.title }}</span>
-              <span class="agent-tool-risk">
-                {{ fragment.scope }} / {{ fragment.category }} / {{ fragment.priority }}
-                <template v-if="fragment.is_builtin"> / built-in</template>
-              </span>
-            </button>
-          </div>
-
-          <UiCard class="agent-detail-panel">
-            <template #content>
-              <div class="agent-detail-head">
-                <div class="agent-card-icon">
-                  <Bot :size="20" />
-                </div>
-                <div>
-                  <h3>{{ promptForm.id ? promptForm.title : 'New Prompt Fragment' }}</h3>
-                  <p>{{ promptForm.is_builtin ? 'Built-in read-only fragment' : 'Custom editable fragment' }}</p>
-                </div>
-                <UiBadge :variant="promptForm.enabled ? 'default' : 'secondary'">
-                  {{ promptForm.enabled ? 'enabled' : 'disabled' }}
-                </UiBadge>
-              </div>
-
-              <div class="agent-config-switch">
-                <div>
-                  <strong>Enabled</strong>
-                  <span>{{ promptForm.is_builtin ? 'Clone to customize built-in content' : promptForm.id || 'custom fragment' }}</span>
-                </div>
-                <UiSwitch v-model="promptForm.enabled" :disabled="promptForm.is_builtin" />
-              </div>
-
-              <div class="model-form-grid">
-                <div class="settings-field">
-                  <UiLabel>Key</UiLabel>
-                  <UiInput v-model="promptForm.key" :disabled="promptForm.is_builtin" />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Title</UiLabel>
-                  <UiInput v-model="promptForm.title" :disabled="promptForm.is_builtin" />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Scope</UiLabel>
-                  <select v-model="promptForm.scope" class="settings-select" :disabled="promptForm.is_builtin">
-                    <option value="global">Global</option>
-                    <option value="agent">Agent</option>
-                    <option value="mode">Mode</option>
-                    <option value="session">Session</option>
-                    <option value="project">Project</option>
-                  </select>
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Target</UiLabel>
-                  <select v-if="promptForm.scope === 'agent'" v-model="promptForm.target_agent_id" class="settings-select" :disabled="promptForm.is_builtin">
-                    <option value="">Any agent</option>
-                    <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-                  </select>
-                  <UiInput v-else v-model="promptForm.target_agent_id" :disabled="promptForm.is_builtin" placeholder="optional target id" />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Category</UiLabel>
-                  <UiInput v-model="promptForm.category" :disabled="promptForm.is_builtin" />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Priority</UiLabel>
-                  <UiInput v-model="promptForm.priority" type="number" :disabled="promptForm.is_builtin" />
-                </div>
-              </div>
-
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">Content</div>
-                <div class="settings-field">
-                  <textarea
-                    v-model="promptForm.content"
-                    class="settings-textarea prompt-editor"
-                    rows="7"
-                    :disabled="promptForm.is_builtin"
-                  ></textarea>
-                </div>
-              </div>
-
-              <div class="agent-save-bar">
-                <UiButton v-if="promptForm.is_builtin" :disabled="busy || !promptForm.id" @click="clonePromptFragment()">
-                  <Plus :size="14" />
-                  <span>Clone Custom</span>
-                </UiButton>
-                <UiButton v-else :disabled="busy || !promptForm.content.trim()" @click="savePromptFragment">
-                  <Save :size="14" />
-                  <span>{{ t('settings.save') }}</span>
-                </UiButton>
-                <UiButton v-if="!promptForm.is_builtin && promptForm.id" variant="ghost" :disabled="busy" @click="deletePromptFragment">
-                  <Trash2 :size="14" />
-                  <span>{{ t('settings.delete') }}</span>
-                </UiButton>
-              </div>
+        <div class="settings-section-wrapper">
+        <template v-for="module in settingsModuleDescriptors" :key="module.id">
+          <SettingsModuleBoundary
+            v-if="hasVisitedSection(module.id)"
+            v-show="activeSection === module.id"
+            :module-id="module.id"
+          >
+            <template #default="{ retryKey }">
+              <component :is="module.component" :key="retryKey" />
             </template>
-          </UiCard>
-
-          <UiCard class="agent-detail-panel">
-            <template #content>
-              <div class="agent-detail-head">
-                <div class="agent-card-icon">
-                  <FileText :size="20" />
-                </div>
-                <div>
-                  <h3>Preview</h3>
-                  <p>Final local system prompt</p>
-                </div>
-                <UiBadge v-if="promptPreview" variant="outline">{{ promptPreview.estimated_tokens }} tokens</UiBadge>
-              </div>
-
-              <div class="model-form-grid">
-                <div class="settings-field">
-                  <UiLabel>Agent</UiLabel>
-                  <select v-model="promptPreviewAgentId" class="settings-select">
-                    <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-                  </select>
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Mode</UiLabel>
-                  <select v-model="promptPreviewMode" class="settings-select">
-                    <option value="">Agent default</option>
-                    <option v-for="mode in agentModes" :key="mode.id" :value="mode.id">{{ mode.display_name }}</option>
-                  </select>
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Session ID</UiLabel>
-                  <UiInput v-model="promptPreviewSessionId" placeholder="optional" />
-                </div>
-                <div class="settings-field">
-                  <UiLabel>Run ID</UiLabel>
-                  <UiInput v-model="promptPreviewRunId" placeholder="optional" />
-                </div>
-              </div>
-
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">User content</div>
-                <textarea
-                  v-model="promptPreviewUserContent"
-                  class="settings-textarea"
-                  rows="3"
-                  placeholder="optional preview text"
-                ></textarea>
-              </div>
-
-              <div class="agent-save-bar">
-                <UiButton :disabled="busy" @click="generatePromptPreview">
-                  <FileText :size="14" />
-                  <span>Generate Preview</span>
-                </UiButton>
-              </div>
-
-              <template v-if="promptPreview">
-                <div class="model-capability-row">
-                  <span v-for="fragment in promptPreview.fragments" :key="fragment.id">{{ fragment.key }}</span>
-                </div>
-                <div v-if="promptPreview.context_pack_ids.length > 0" class="model-capability-row">
-                  <span v-for="contextPackId in promptPreview.context_pack_ids" :key="contextPackId">{{ contextPackId }}</span>
-                </div>
-                <div v-if="promptPreview.warnings.length > 0" class="provider-status-note">
-                  <ShieldCheck :size="14" />
-                  <span>{{ promptPreview.warnings.join(' ') }}</span>
-                </div>
-                <div class="settings-field">
-                  <textarea
-                    :value="promptPreview.system_prompt"
-                    class="settings-textarea prompt-editor"
-                    rows="14"
-                    readonly
-                  ></textarea>
-                </div>
-              </template>
-            </template>
-          </UiCard>
-        </template>
-
-        <template v-if="activeSection === 'promptEngineering'">
-          <PromptEngineeringPanel />
-        </template>
-
-        <template v-if="activeSection === 'tools'">
-          <div class="model-center-heading">
-            <div>
-              <h2>{{ t('settings.toolLayerTitle') }}</h2>
-              <p>{{ t('settings.toolLayerSubtitle') }}</p>
-            </div>
-            <UiButton variant="outline" size="sm" :disabled="loading" @click="loadAgentCenter">
-              <Server :size="14" />
-              <span>{{ t('settings.refresh') }}</span>
-            </UiButton>
-          </div>
-
-          <div v-if="harnessManifest" class="provider-status-note harness-manifest-note">
-            <ShieldCheck :size="14" />
-            <span>{{ harnessManifest.runtime }} · {{ harnessManifest.ownership_model }}</span>
-          </div>
-
-          <section v-if="toolLayerReadiness" class="tool-layer-readiness-panel">
-            <div class="model-readiness-head">
-              <div>
-                <h3>{{ t('settings.toolLayerReadiness') }}</h3>
-                <span>{{ toolLayerReadiness.receipt_id }}</span>
-              </div>
-              <UiBadge :variant="readinessVariant(toolLayerReadiness.status)">
-                <Circle :size="8" />
-                {{ toolLayerReadiness.status }}
-              </UiBadge>
-            </div>
-            <div class="model-readiness-metrics">
-              <div>
-                <strong>{{ toolLayerReadiness.tool_count }}</strong>
-                <span>{{ t('settings.toolsCount') }}</span>
-              </div>
-              <div>
-                <strong>{{ toolLayerReadiness.execution_agent_count }}</strong>
-                <span>{{ t('settings.executionAgents') }}</span>
-              </div>
-              <div>
-                <strong>{{ toolLayerReadiness.human_checkpoint_tool_count }}</strong>
-                <span>{{ t('settings.humanCheckpoints') }}</span>
-              </div>
-              <div>
-                <strong>{{ toolLayerReadiness.unresolved_scope_count }}</strong>
-                <span>{{ t('settings.unresolvedScopes') }}</span>
-              </div>
-            </div>
-            <div v-if="warningToolLayerTools.length > 0 || warningToolLayerAgents.length > 0" class="tool-layer-readiness-grid">
-              <div
-                v-for="tool in warningToolLayerTools.slice(0, 4)"
-                :key="tool.tool_id"
-                class="tool-layer-readiness-row"
-              >
-                <div>
-                  <strong>{{ tool.display_name }}</strong>
-                  <span>{{ tool.source }} · {{ tool.provider_layer }} · {{ tool.risk }}</span>
-                </div>
-                <UiBadge :variant="readinessVariant(tool.status)">{{ tool.status }}</UiBadge>
-              </div>
-              <div
-                v-for="agent in warningToolLayerAgents.slice(0, 4)"
-                :key="agent.agent_id"
-                class="tool-layer-readiness-row"
-              >
-                <div>
-                  <strong>{{ agent.agent_name }}</strong>
-                  <span>{{ agent.dispatchable_tool_count }} tools · {{ agent.unresolved_scope_count }} unresolved</span>
-                </div>
-                <UiBadge :variant="readinessVariant(agent.status)">{{ agent.status }}</UiBadge>
-              </div>
-            </div>
-          </section>
-
-          <div v-if="harnessManifest?.tool_registry" class="model-section-header">
-            <h3>{{ t('settings.toolRegistryGovernance') }}</h3>
-            <UiBadge variant="outline">{{ harnessManifest.tool_registry.canonical_tool_count }}</UiBadge>
-          </div>
-
-          <div v-if="harnessManifest?.tool_registry" class="harness-registry-summary">
-            <div class="harness-registry-metrics">
-              <div>
-                <span>{{ t('settings.declaredTools') }}</span>
-                <strong>{{ harnessManifest.tool_registry.declared_tool_count }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.canonicalTools') }}</span>
-                <strong>{{ harnessManifest.tool_registry.canonical_tool_count }}</strong>
-              </div>
-              <div>
-                <span>{{ t('settings.duplicateToolIds') }}</span>
-                <strong>{{ harnessManifest.tool_registry.duplicate_tool_id_count }}</strong>
-              </div>
-            </div>
-            <p>{{ harnessManifest.tool_registry.selection_policy }}</p>
-            <div class="model-capability-row compact">
-              <span v-for="source in harnessManifest.tool_registry.source_precedence" :key="source">{{ source }}</span>
-            </div>
-            <div v-if="harnessManifest.tool_registry.duplicate_tool_ids.length > 0" class="model-capability-row compact">
-              <span v-for="toolId in harnessManifest.tool_registry.duplicate_tool_ids" :key="toolId">{{ toolId }}</span>
-            </div>
-          </div>
-
-          <div v-if="harnessManifest?.design_notes.length" class="model-section-header">
-            <h3>{{ t('settings.harnessDesignNotes') }}</h3>
-            <UiBadge variant="outline">{{ harnessManifest.design_notes.length }}</UiBadge>
-          </div>
-
-          <div v-if="harnessManifest?.design_notes.length" class="harness-design-notes">
-            <span v-for="note in harnessManifest.design_notes" :key="note">{{ note }}</span>
-          </div>
-
-          <div v-if="manifestAgentLayers.length > 0" class="model-section-header">
-            <h3>{{ t('settings.harnessAgentLayers') }}</h3>
-            <UiBadge variant="outline">{{ manifestAgentLayers.length }}</UiBadge>
-          </div>
-
-          <div v-if="manifestAgentLayers.length > 0" class="harness-manifest-grid">
-            <div v-for="layer in manifestAgentLayers" :key="layer.layer" class="harness-manifest-panel">
-              <div class="harness-panel-head">
-                <span class="harness-panel-title">{{ layer.layer }}</span>
-                <UiBadge :variant="layer.approval_required ? 'secondary' : 'outline'">
-                  {{ layer.enabled_agent_count }}/{{ layer.agent_count }}
-                </UiBadge>
-              </div>
-              <p class="harness-panel-meta">{{ layer.role }}</p>
-              <div class="harness-panel-stats">
-                <span>{{ t('settings.maxParallel') }} {{ layer.max_parallel_executors }}</span>
-                <span>{{ layer.worktree_isolation ? t('settings.worktreeIsolated') : t('settings.sharedWorkspace') }}</span>
-              </div>
-              <div class="model-capability-row compact">
-                <span v-for="agentType in layer.agent_types" :key="agentType">{{ agentType }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="manifestProviders.length > 0" class="model-section-header">
-            <h3>{{ t('settings.toolProviders') }}</h3>
-            <UiBadge variant="outline">{{ manifestProviders.length }}</UiBadge>
-          </div>
-
-          <div v-if="manifestProviders.length > 0" class="harness-manifest-grid">
-            <div v-for="provider in manifestProviders" :key="provider.source" class="harness-manifest-panel">
-              <div class="harness-panel-head">
-                <span class="harness-panel-title">{{ provider.display_name }}</span>
-                <UiBadge :variant="provider.status === 'active' ? 'secondary' : 'outline'">{{ provider.status }}</UiBadge>
-              </div>
-              <p class="harness-panel-meta">{{ provider.layer }} · {{ provider.source }}</p>
-              <div class="harness-panel-stats">
-                <span>{{ t('settings.toolsCount') }} {{ provider.tool_count }}</span>
-                <span>{{ t('settings.approvalCount') }} {{ provider.approval_required_count }}</span>
-                <span>{{ t('settings.futureCount') }} {{ provider.future_tool_count }}</span>
-              </div>
-              <div class="model-capability-row compact">
-                <span v-for="prefix in provider.capability_prefixes" :key="prefix">{{ prefix }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="manifestRiskPolicies.length > 0" class="model-section-header">
-            <h3>{{ t('settings.riskPolicies') }}</h3>
-            <UiBadge variant="outline">{{ manifestRiskPolicies.length }}</UiBadge>
-          </div>
-
-          <div v-if="manifestRiskPolicies.length > 0" class="agent-tool-grid manifest-risk-row">
-            <button
-              v-for="risk in manifestRiskPolicies"
-              :key="risk.risk"
-              class="agent-tool-chip"
-              :class="{ risky: risk.requires_human_checkpoint }"
-            >
-              <span class="agent-tool-name">{{ risk.risk }}</span>
-              <span class="agent-tool-risk">{{ risk.tool_count }} · {{ risk.policy_summary }}</span>
-            </button>
-          </div>
-
-          <div class="model-section-header">
-            <h3>{{ t('settings.toolDiscovery') }}</h3>
-            <UiBadge variant="outline">{{ sortedToolDiscoveryResults.length }}</UiBadge>
-          </div>
-
-          <div class="tool-discovery-controls">
-            <UiInput
-              v-model="toolDiscoveryQuery"
-              :placeholder="t('settings.toolDiscoveryPlaceholder')"
-              @keyup.enter="loadToolDiscovery"
-            />
-            <select v-model="toolDiscoverySource" class="settings-select" @change="loadToolDiscovery">
-              <option value="all">{{ t('settings.allSources') }}</option>
-              <option v-for="source in toolSourceOptions" :key="source" :value="source">{{ source }}</option>
-            </select>
-            <select v-model="toolDiscoveryRisk" class="settings-select" @change="loadToolDiscovery">
-              <option value="all">{{ t('settings.allRisks') }}</option>
-              <option v-for="risk in toolRiskOptions" :key="risk" :value="risk">{{ risk }}</option>
-            </select>
-            <UiButton size="sm" :disabled="toolDiscoveryLoading" @click="loadToolDiscovery">
-              <Search :size="14" />
-              <span>{{ t('settings.search') }}</span>
-            </UiButton>
-          </div>
-
-          <div class="tool-discovery-grid">
-            <button
-              v-for="result in sortedToolDiscoveryResults"
-              :key="result.tool.id"
-              class="tool-discovery-card"
-              :class="{ risky: result.requires_human_checkpoint }"
-            >
-              <span class="tool-discovery-title">{{ result.tool.display_name }}</span>
-              <span class="tool-discovery-meta">{{ result.tool.source }} · {{ result.provider_layer }} · {{ result.tool.risk }}</span>
-              <span class="tool-discovery-meta">{{ result.approval_summary }}</span>
-              <span class="tool-discovery-fields">
-                {{ t('settings.matchedFields') }} {{ result.matched_fields.join(', ') }}
-              </span>
-            </button>
-          </div>
-          <p v-if="!toolDiscoveryLoading && sortedToolDiscoveryResults.length === 0" class="quiet">
-            {{ t('settings.noToolSearchResults') }}
-          </p>
-
-          <div class="model-section-header">
-            <h3>{{ t('settings.codeToolSuite') }}</h3>
-            <UiBadge variant="secondary">{{ codeSuiteToolList.length }}</UiBadge>
-          </div>
-
-          <div v-if="supportedLanguages.length > 0" class="model-capability-row">
-            <span v-for="language in supportedLanguages" :key="language">{{ language }}</span>
-          </div>
-
-          <div class="model-section-header">
-            <h3>{{ t('settings.projectTemplates') }}</h3>
-            <UiBadge variant="outline">{{ projectTemplates.length }}</UiBadge>
-          </div>
-
-          <div class="agent-tool-grid">
-            <button
-              v-for="template in projectTemplates"
-              :key="template.id"
-              class="agent-tool-chip"
-            >
-              <span class="agent-tool-name">{{ template.name }}</span>
-              <span class="agent-tool-risk">{{ template.language }} · {{ template.package_manager }}</span>
-            </button>
-          </div>
-
-          <div class="agent-tool-grid">
-            <button
-              v-for="tool in codeSuiteToolList"
-              :key="tool.id"
-              class="agent-tool-chip active"
-              :class="{ risky: tool.requires_approval }"
-            >
-              <span class="agent-tool-name">{{ tool.display_name }}</span>
-              <span class="agent-tool-risk">
-                {{ tool.requires_approval ? t('settings.approvalRequired') : t('settings.readOnlyTool') }} · {{ tool.risk }}
-              </span>
-            </button>
-          </div>
-          <p v-if="codeSuiteToolList.length === 0" class="quiet">{{ t('settings.noTools') }}</p>
-
-          <div class="model-section-header">
-            <h3>{{ t('settings.codexPrimitiveTools') }}</h3>
-            <UiBadge variant="outline">{{ codexPrimitiveTools.length }}</UiBadge>
-          </div>
-
-          <div class="agent-tool-grid">
-            <button
-              v-for="tool in codexPrimitiveTools"
-              :key="tool.id"
-              class="agent-tool-chip"
-              :class="{ risky: tool.requires_approval }"
-            >
-              <span class="agent-tool-name">{{ tool.display_name }}</span>
-              <span class="agent-tool-risk">{{ tool.source }} · {{ tool.risk }}</span>
-            </button>
-          </div>
-        </template>
-
-        <template v-if="activeSection === 'appearance'">
-          <h2>{{ t('settings.appearance') }}</h2>
-
-          <h3>{{ t('settings.theme') }}</h3>
-          <div class="theme-options">
-            <button
-              :class="['theme-option', { active: theme === 'dark' }]"
-              @click="changeTheme('dark')"
-            >
-              <Moon :size="18" />
-              {{ t('settings.dark') }}
-            </button>
-            <button
-              :class="['theme-option', { active: theme === 'light' }]"
-              @click="changeTheme('light')"
-            >
-              <Sun :size="18" />
-              {{ t('settings.light') }}
-            </button>
-            <button
-              :class="['theme-option', { active: theme === 'system' }]"
-              @click="changeTheme('system')"
-            >
-              <Monitor :size="18" />
-              {{ t('settings.system') }}
-            </button>
-          </div>
-
-          <h3>{{ t('settings.accentColor') }}</h3>
-          <p class="accent-color-hint">{{ t('settings.accentColorHint') }}</p>
-          <div class="accent-color-grid">
-            <button
-              v-for="color in accentColors"
-              :key="color.key"
-              :class="['accent-color-swatch', { active: accentColor === color.key }]"
-              :style="{ '--swatch-color': color.dark.accentPrimary }"
-              :title="t(color.labelKey)"
-              @click="changeAccentColor(color.key)"
-            >
-              <span class="accent-color-dot"></span>
-              <span class="accent-color-label">{{ t(color.labelKey) }}</span>
-              <Check v-if="accentColor === color.key" :size="14" class="accent-color-check" />
-            </button>
-          </div>
-          
-          <!-- Global Material Effect Section -->
-          <h3>{{ t('settings.globalMaterial') }}</h3>
-          <p class="accent-color-hint">{{ t('settings.globalMaterialHint') }}</p>
-          <div class="panel-styles-grid">
-            <PanelStyleControl
-              :label="t('settings.globalMaterial')"
-              :settings="panelStyle"
-              @update="updatePanelStyle($event)"
-            />
-          </div>
-          <div class="panel-styles-actions">
-            <UiButton variant="outline" size="sm" @click="resetPanelStyle">
-              {{ t('settings.resetPanelStyles') }}
-            </UiButton>
-          </div>
-          
-          <!-- Background Settings Section -->
-          <h2>{{ t('settings.background') }}</h2>
-          
-          <!-- Background Type Selection -->
-          <h3>{{ t('settings.backgroundType') }}</h3>
-          <div class="background-type-options">
-            <button
-              :class="['bg-type-option', { active: backgroundSettings.type === 'none' }]"
-              @click="setBackgroundType('none')"
-            >
-              {{ t('settings.bgNone') }}
-            </button>
-            <button
-              :class="['bg-type-option', { active: backgroundSettings.type === 'image' }]"
-              @click="setBackgroundType('image')"
-            >
-              {{ t('settings.bgImage') }}
-            </button>
-            <button
-              :class="['bg-type-option', { active: backgroundSettings.type === 'video' }]"
-              @click="setBackgroundType('video')"
-            >
-              {{ t('settings.bgVideo') }}
-            </button>
-            <button
-              :class="['bg-type-option', { active: backgroundSettings.type === 'html' }]"
-              @click="setBackgroundType('html')"
-            >
-              {{ t('settings.bgHtml') }}
-            </button>
-          </div>
-          
-          <!-- File/URL Input (for image and video) -->
-          <div v-if="backgroundSettings.type !== 'none'" class="background-source-section">
-            <h3>{{ t('settings.backgroundSource') }}</h3>
-            <div class="source-input-row">
-              <UiInput
-                v-model="backgroundSource"
-                :placeholder="t('settings.bgSourcePlaceholder')"
-                class="source-input"
-              />
-              <UiButton
-                v-if="backgroundSettings.type === 'image' || backgroundSettings.type === 'video'"
-                variant="outline"
-                @click="selectBackgroundFile"
-              >
-                {{ t('settings.browse') }}
-              </UiButton>
-            </div>
-            <p v-if="backgroundSettings.type === 'image'" class="source-hint">
-              {{ t('settings.bgImageFormats') }}
-            </p>
-            <p v-else-if="backgroundSettings.type === 'video'" class="source-hint">
-              {{ t('settings.bgVideoFormats') }}
-            </p>
-            <p v-else-if="backgroundSettings.type === 'html'" class="source-hint">
-              {{ t('settings.bgHtmlHint') }}
-            </p>
-          </div>
-          
-          <!-- Background Parameters -->
-          <div v-if="backgroundSettings.type !== 'none'" class="background-params-section">
-            <h3>{{ t('settings.backgroundParams') }}</h3>
-            
-            <!-- Opacity -->
-            <div class="param-row">
-              <label class="param-label">{{ t('settings.opacity') }}</label>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                :value="backgroundSettings.opacity"
-                class="param-slider"
-                @input="setBackgroundOpacity(parseInt(($event.target as HTMLInputElement).value))"
-              />
-              <span class="param-value">{{ backgroundSettings.opacity }}%</span>
-            </div>
-            
-            <!-- Blur -->
-            <div class="param-row">
-              <label class="param-label">{{ t('settings.blur') }}</label>
-              <input
-                type="range"
-                min="0"
-                max="20"
-                :value="backgroundSettings.blur"
-                class="param-slider"
-                @input="setBackgroundBlur(parseInt(($event.target as HTMLInputElement).value))"
-              />
-              <span class="param-value">{{ backgroundSettings.blur }}px</span>
-            </div>
-            
-            <!-- Size -->
-            <div v-if="backgroundSettings.type === 'image'" class="param-row">
-              <label class="param-label">{{ t('settings.bgSize') }}</label>
-              <select
-                :value="backgroundSettings.size"
-                class="param-select"
-                @change="setBackgroundSize(($event.target as HTMLSelectElement).value as any)"
-              >
-                <option value="cover">{{ t('settings.bgSizeCover') }}</option>
-                <option value="contain">{{ t('settings.bgSizeContain') }}</option>
-                <option value="auto">{{ t('settings.bgSizeAuto') }}</option>
-              </select>
-            </div>
-            
-            <!-- Position (for image) -->
-            <div v-if="backgroundSettings.type === 'image'" class="param-row">
-              <label class="param-label">{{ t('settings.bgPosition') }}</label>
-              <select
-                :value="backgroundSettings.position"
-                class="param-select"
-                @change="setBackgroundPosition(($event.target as HTMLSelectElement).value as any)"
-              >
-                <option value="center">{{ t('settings.bgPositionCenter') }}</option>
-                <option value="top">{{ t('settings.bgPositionTop') }}</option>
-                <option value="bottom">{{ t('settings.bgPositionBottom') }}</option>
-                <option value="left">{{ t('settings.bgPositionLeft') }}</option>
-                <option value="right">{{ t('settings.bgPositionRight') }}</option>
-              </select>
-            </div>
-            
-            <!-- Repeat (for image) -->
-            <div v-if="backgroundSettings.type === 'image'" class="param-row">
-              <label class="param-label">{{ t('settings.bgRepeat') }}</label>
-              <select
-                :value="backgroundSettings.repeat"
-                class="param-select"
-                @change="setBackgroundRepeat(($event.target as HTMLSelectElement).value as any)"
-              >
-                <option value="no-repeat">{{ t('settings.bgRepeatNoRepeat') }}</option>
-                <option value="repeat">{{ t('settings.bgRepeatRepeat') }}</option>
-                <option value="repeat-x">{{ t('settings.bgRepeatRepeatX') }}</option>
-                <option value="repeat-y">{{ t('settings.bgRepeatRepeatY') }}</option>
-              </select>
-            </div>
-          </div>
-          
-          <!-- Background Preview -->
-          <div v-if="backgroundSettings.type !== 'none'" class="background-preview-section">
-            <h3>{{ t('settings.preview') }}</h3>
-            <BackgroundPreview :settings="backgroundSettings" :height="150" />
-          </div>
-          
-          <!-- Reset Button -->
-          <div class="background-actions">
-            <UiButton variant="outline" size="sm" @click="resetBackground">
-              {{ t('settings.resetBackground') }}
-            </UiButton>
-          </div>
-          
-          <!-- Performance Warning -->
-          <div v-if="backgroundSettings.type !== 'none'" class="performance-warning">
-            <Info :size="14" />
-            <span>{{ t('settings.bgPerformanceWarning') }}</span>
-          </div>
-        </template>
-
-        <template v-if="activeSection === 'pets'">
-          <div class="pets-heading">
-            <h2>{{ t('settings.pets') }}</h2>
-            <UiButton variant="ghost" size="icon" :title="t('settings.refresh')" :disabled="petCatalogLoading" @click="loadPets(true)">
-              <RefreshCw :size="16" :class="{ spinning: petCatalogLoading }" />
-            </UiButton>
-          </div>
-
-          <section class="pets-section downloaded-pets-section" aria-labelledby="downloaded-pets-title">
-            <div class="pets-section-heading">
-              <h3 id="downloaded-pets-title">{{ t('settings.downloadedPets') }}</h3>
-              <span class="pets-count">{{ downloadedPets.length }}</span>
-            </div>
-            <div v-if="downloadedPets.length === 0" class="pets-empty">{{ t('settings.noDownloadedPets') }}</div>
-            <div v-else class="pet-gallery downloaded-pet-gallery">
-              <article v-for="pet in downloadedPets" :key="pet.slug" class="pet-gallery-card downloaded-pet-card">
-                <div class="pet-gallery-preview">
-                  <PetPreview :src="pet.imageDataUrl" :alt="pet.displayName" loading="eager" />
-                </div>
-                <div class="pet-gallery-body">
-                  <div class="pet-gallery-title-row">
-                    <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
-                    <UiBadge v-if="pet.enabled" variant="secondary" class="pet-card-badge">{{ t('settings.petEnabled') }}</UiBadge>
-                  </div>
-                  <span class="pet-item-meta" :title="[pet.kind, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.kind }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
-                  <div class="pet-gallery-actions">
-                    <UiButton
-                      class="pet-action-button"
-                      size="sm"
-                      :variant="pet.enabled ? 'secondary' : 'outline'"
-                      :disabled="Boolean(petActionSlug)"
-                      @click="setPetEnabled(pet, !pet.enabled)"
-                    >
-                      <span class="pet-action-label">{{ pet.enabled ? t('settings.disablePet') : t('settings.enablePet') }}</span>
-                    </UiButton>
-                    <UiDropdownMenu placement="top">
-                      <template #trigger>
-                        <UiButton variant="ghost" size="icon" :title="t('settings.petMoreActions')" :disabled="Boolean(petActionSlug)">
-                          <MoreHorizontal :size="17" />
-                        </UiButton>
-                      </template>
-                      <button class="pet-menu-action" type="button" @click="openPetFolder(pet)">
-                        <FolderOpen :size="15" />
-                        {{ t('settings.openPetFolder') }}
-                      </button>
-                      <button class="pet-menu-action danger" type="button" @click="removePet(pet)">
-                        <Trash2 :size="15" />
-                        {{ t('settings.deletePet') }}
-                      </button>
-                    </UiDropdownMenu>
-                  </div>
-                </div>
-              </article>
-            </div>
-          </section>
-
-          <section class="pets-section petdex-market-section" aria-labelledby="petdex-catalog-title">
-            <div class="pets-section-heading">
-              <div>
-                <h3 id="petdex-catalog-title">{{ t('settings.petdexCatalog') }}</h3>
-                <span class="pets-count">{{ t('settings.petCatalogCount', { visible: visiblePetCatalog.length, total: matchingPetCatalog.length }) }}</span>
-              </div>
-              <div class="pets-market-filters">
-                <UiInput v-model="petCatalogQuery" :placeholder="t('settings.searchPets')" class="pets-search" />
-                <select v-model="petCatalogKind" class="pets-kind-filter" :aria-label="t('settings.petKindFilter')">
-                  <option value="all">{{ t('settings.allPetKinds') }}</option>
-                  <option v-for="kind in petCatalogKinds" :key="kind" :value="kind">{{ kind }}</option>
-                </select>
-              </div>
-            </div>
-            <div v-if="petCatalogLoading && petCatalog.length === 0" class="pets-empty">{{ t('settings.loadingPets') }}</div>
-            <div v-else-if="matchingPetCatalog.length === 0" class="pets-empty">{{ t('settings.noPetsFound') }}</div>
-            <template v-else>
-              <div class="pet-gallery pet-market-gallery">
-                <article v-for="pet in visiblePetCatalog" :key="pet.slug" class="pet-gallery-card">
-                  <div class="pet-gallery-preview">
-                    <PetPreview :src="pet.previewUrl" :alt="pet.displayName" loading="lazy" />
-                  </div>
-                  <div class="pet-gallery-body">
-                    <div class="pet-gallery-title-row">
-                      <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
-                      <UiBadge variant="outline" class="pet-card-badge" :title="pet.kind">{{ pet.kind }}</UiBadge>
-                    </div>
-                    <span class="pet-item-meta" :title="[pet.slug, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.slug }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
-                    <div class="pet-gallery-actions">
-                      <UiBadge v-if="downloadedPetBySlug.has(pet.slug)" variant="secondary" class="pet-card-badge">{{ t('settings.petDownloaded') }}</UiBadge>
-                      <UiButton v-else class="pet-action-button" size="sm" :disabled="Boolean(petActionSlug)" @click="downloadPet(pet.slug)">
-                        <Download :size="15" />
-                        <span class="pet-action-label">{{ petActionSlug === pet.slug ? t('settings.downloadingPet') : t('settings.downloadPet') }}</span>
-                      </UiButton>
-                    </div>
-                  </div>
-                </article>
-              </div>
-              <div v-if="canLoadMorePets" ref="petLoadMoreRef" class="pets-load-more">
-                <UiButton variant="outline" :disabled="petCatalogLoading" @click="loadMorePets">
-                  {{ t('settings.loadMorePets', { count: Math.min(PET_CATALOG_PAGE_SIZE, matchingPetCatalog.length - visiblePetCatalog.length) }) }}
-                </UiButton>
-              </div>
-              <div v-else class="pets-catalog-end">{{ t('settings.allPetsLoaded') }}</div>
-            </template>
-          </section>
-
-        </template>
-
-        <template v-if="activeSection === 'language'">
-          <h2>{{ t('settings.language') }}</h2>
-          <div class="lang-options">
-            <UiButton
-              variant="outline"
-              :class="['lang-option', { active: locale === 'zh-CN' }]"
-              @click="setLocale('zh-CN')"
-            >
-              中文
-            </UiButton>
-            <UiButton
-              variant="outline"
-              :class="['lang-option', { active: locale === 'en' }]"
-              @click="setLocale('en')"
-            >
-              English
-            </UiButton>
-          </div>
-        </template>
-
-        <template v-if="activeSection === 'apiDocs'">
-          <h2>{{ t('settings.apiDocs') }}</h2>
-          <iframe class="api-docs-frame" :src="api.gatewayUrl + '/docs'" />
-        </template>
-
-        <template v-if="activeSection === 'about'">
-          <h2>{{ t('settings.about') }}</h2>
-
-          <!-- App identity -->
-          <div class="about-brand">
-            <div class="about-brand-icon">
-              <BrandLogo :size="28" />
-            </div>
-            <div class="about-brand-text">
-              <span class="about-brand-name">TinadecOffice</span>
-              <span class="about-brand-ver">v0.1.0</span>
-            </div>
-          </div>
-
-          <!-- Runtime status -->
-          <div class="about-status-grid">
-            <div class="about-status-card">
-              <div class="about-status-row">
-                <span class="about-status-label">Core (.NET)</span>
-                <span class="about-status-dot" :class="aboutCoreStatus === 'ok' ? 'ok' : 'off'" />
-                <span class="about-status-text" :class="aboutCoreStatus === 'ok' ? 'ok' : 'off'">
-                  {{ aboutCoreStatus === 'ok' ? t('aboutPage.running') : t('aboutPage.unreachable') }}
-                </span>
-              </div>
-              <div v-if="aboutCoreVersion" class="about-status-detail">{{ aboutCoreVersion }}</div>
-            </div>
-            <div class="about-status-card">
-              <div class="about-status-row">
-                <span class="about-status-label">Gateway</span>
-                <span class="about-status-dot" :class="aboutGatewayStatus === 'ok' ? 'ok' : 'off'" />
-                <span class="about-status-text" :class="aboutGatewayStatus === 'ok' ? 'ok' : 'off'">
-                  {{ aboutGatewayStatus === 'ok' ? t('aboutPage.running') : t('aboutPage.unreachable') }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Component versions -->
-          <UiCard class="about-section">
-            <div class="about-row">
-              <span>{{ t('settings.versionDesktop') }}</span>
-              <span>0.1.0</span>
-            </div>
-            <div class="about-row">
-              <span>{{ t('settings.versionCode') }}</span>
-              <span>0.1.0</span>
-            </div>
-            <div class="about-row">
-              <span>{{ t('settings.versionCore') }}</span>
-              <span>0.1.0</span>
-            </div>
-          </UiCard>
-
-          <!-- Architecture -->
-          <div class="about-arch">
-            <h3>{{ t('aboutPage.architecture') }}</h3>
-            <p class="about-decouple-hint">{{ t('settings.decoupleHint') }}</p>
-            <div class="about-layers">
-              <div class="about-layer">
-                <div class="about-layer-header">
-                  <Monitor :size="14" />
-                  <span>Desktop</span>
-                </div>
-                <div class="about-layer-tech">Electron + Vue 3 + Tailwind</div>
-                <div class="about-layer-port">:5173</div>
-              </div>
-              <div class="about-layer-arrow">
-                <ChevronRight :size="14" />
-              </div>
-              <div class="about-layer">
-                <div class="about-layer-header">
-                  <Globe :size="14" />
-                  <span>Gateway</span>
-                </div>
-                <div class="about-layer-tech">Elysia + Node.js</div>
-                <div class="about-layer-port">:48730</div>
-              </div>
-              <div class="about-layer-arrow">
-                <ChevronRight :size="14" />
-              </div>
-              <div class="about-layer about-layer--core">
-                <div class="about-layer-header">
-                  <Cpu :size="14" />
-                  <span>Core</span>
-                </div>
-                <div class="about-layer-tech">.NET 10 + SQLite</div>
-                <div class="about-layer-port">:48731</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Links -->
-          <div class="about-links">
-            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal('https://github.com/apanzinc/TinadecCode')">
-              <Globe :size="14" />
-              <span>GitHub</span>
-            </UiButton>
-            <UiButton variant="outline" size="sm" class="about-link-btn" @click="openExternal(api.gatewayUrl + '/docs')">
-              <FileText :size="14" />
-              <span>{{ t('settings.apiDocs') }}</span>
-            </UiButton>
-          </div>
-
-          <p class="about-license">&copy; {{ new Date().getFullYear() }} TinadecOffice &middot; GPL-3.0-or-later</p>
+          </SettingsModuleBoundary>
         </template>
         </div>
-        </Transition>
       </div>
     </div>
 

@@ -3641,3 +3641,39 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   }
 }
 
+.settings-page.workbench-embedded {
+  height: 100%;
+  min-height: 0;
+}
+
+.settings-page.workbench-embedded .settings-shell {
+  top: 8px;
+}
+
+.settings-page.workbench-content-only,
+.settings-page.workbench-content-only .settings-shell,
+.settings-page.workbench-content-only .settings-content {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.settings-page.workbench-content-only .settings-module-boundary {
+  width: 100%;
+  height: 100%;
+}
+
+.settings-page.workbench-content-only .settings-shell {
+  display: block;
+  padding: 0;
+}
+
+.settings-page.workbench-content-only .settings-content {
+  margin-top: 0;
+  padding: 20px 24px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+  background: transparent;
+}

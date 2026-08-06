@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, vaporInteropPlugin } from 'vue'
 import App from './App.vue'
 import router from './router'
 import i18n from './i18n'
@@ -7,6 +7,7 @@ import { setNotificationFallbackText } from './composables/useNotifications'
 import './styles.css'
 
 const app = createApp(App)
+app.use(vaporInteropPlugin)
 app.use(router)
 app.use(i18n)
 

@@ -1,8 +1,11 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
+const { createWorkbenchLayoutStore } = require('./workbenchLayoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const {
+  configurePanelWindowStore,
+  createWorkbenchCardWindow,
   createPanelWindow,
   closePanelWindow,
   closeAllPanelWindows,
@@ -11,6 +14,8 @@ const {
   persistPanelStatesForQuit,
   restorePersistedPanels,
   reattachPanelWindow,
+  getPanelWindowState,
+  updatePanelWindowState,
   broadcastToPanels,
   getMainWindow,
   tagMainWindow,
@@ -54,6 +59,14 @@ if (process.platform === 'win32') {
 
 function appConfigFile() {
   return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function workbenchLayoutFile() {
+  return path.join(app.getPath('userData'), 'workbench-layout.json');
+}
+
+function detachedCardsFile() {
+  return path.join(app.getPath('userData'), 'detached-cards.json');
 }
 
 async function createWindow() {
@@ -146,6 +159,13 @@ ipcMain.on('tinadec:close', (event) => {
 // --- Agent Debug Studio IPC ---
 ipcMain.handle('tinadec:open-debug-studio', async () => {
   return Boolean(await createDebugStudioWindow());
+});
+
+ipcMain.handle('tinadec:workbench-layout-load', () => {
+  return createWorkbenchLayoutStore(workbenchLayoutFile()).load();
+});
+ipcMain.handle('tinadec:workbench-layout-save', (_event, document) => {
+  return createWorkbenchLayoutStore(workbenchLayoutFile()).save(document);
 });
 
 // --- Local pet window IPC ---
@@ -242,15 +262,29 @@ ipcMain.handle('tinadec:detach-panel', async (event, tabId, type, title, state) 
   return result;
 });
 
+ipcMain.handle('tinadec:detach-workbench-card', async (_event, payload) => {
+  return createWorkbenchCardWindow(payload);
+});
+
+ipcMain.handle('tinadec:detached-card-state', (event) => {
+  return getPanelWindowState(event.sender);
+});
+
+ipcMain.handle('tinadec:detached-card-state-update', (event, state) => {
+  return updatePanelWindowState(event.sender, state);
+});
+
 // Reattach a panel window back to the main window (called from the panel window)
 // This uses the sender's window id to find the panel entry, notify the main
 // window to re-add the tab, then close the panel window cleanly.
 ipcMain.handle('tinadec:reattach-panel', async (event, tabId, type, title, state) => {
   const senderWin = BrowserWindow.fromWebContents(event.sender);
-  if (senderWin) {
-    reattachPanelWindow(senderWin.id, tabId, type, title, state);
-  }
-  return true;
+  return senderWin ? reattachPanelWindow(senderWin.id, tabId, type, title, state) : false;
+});
+
+ipcMain.handle('tinadec:reattach-workbench-card', async (event, state) => {
+  const senderWin = BrowserWindow.fromWebContents(event.sender);
+  return senderWin ? reattachPanelWindow(senderWin.id, '', '', '', state) : false;
 });
 
 // Close a specific panel window by windowId
@@ -333,6 +367,7 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
+  configurePanelWindowStore(detachedCardsFile());
   process.env.TINADEC_RESOLVED_GATEWAY_URL = loadAppConfig(appConfigFile()).gateway_url;
   protocol.handle('tinadec-pet-preview', async (request) => {
     try {

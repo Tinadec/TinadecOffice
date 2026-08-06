@@ -4,9 +4,20 @@ import { Search } from '@lucide/vue'
 
 interface Props {
   class?: string
+  modelValue?: string
+  placeholder?: string
+  showSearch?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  modelValue: '',
+  placeholder: 'Type a command or search...',
+  showSearch: true,
+})
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+}>()
 </script>
 
 <template>
@@ -16,11 +27,14 @@ const props = defineProps<Props>()
       props.class,
     )"
   >
-    <div class="flex items-center border-b px-3">
+    <div v-if="showSearch" class="flex items-center border-b px-3">
       <Search class="mr-2 h-4 w-4 shrink-0 opacity-50" />
       <input
         class="flex h-10 w-full rounded-md bg-[var(--surface-input)] py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        placeholder="Type a command or search..."
+        role="searchbox"
+        :placeholder="placeholder"
+        :value="modelValue"
+        @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       />
     </div>
     <div class="max-h-[300px] overflow-y-auto overflow-x-hidden">

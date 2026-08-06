@@ -13,6 +13,7 @@ import { useNotifications, startStatusSync } from '@/composables/useNotification
 import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
+import WorkbenchShell from '@/workbench/WorkbenchShell.vue'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -168,7 +169,11 @@ router.beforeEach((to, from, next) => {
        main-rise 入场动画由各页面（如 HomePage）内部 <Transition> 触发，
        而非在此处包裹 RouterView —— 因为路由组件是懒加载的，外层 Transition
        会在子元素挂载前就移除 enter-active 类，导致动画失效。 -->
-  <div v-if="!isConnecting" class="main-content">
+  <WorkbenchShell
+    v-if="!isConnecting && !isChildWindow"
+    :transition-name="transitionName"
+  />
+  <div v-else-if="!isConnecting" class="main-content">
     <RouterView v-slot="{ Component }">
       <Transition :name="transitionName" :css="!isChildWindow" mode="out-in">
         <component :is="Component" />

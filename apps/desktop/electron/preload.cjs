@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('tinadec', {
   maximizeWindow: () => ipcRenderer.send('tinadec:maximize'),
   closeWindow: () => ipcRenderer.send('tinadec:close'),
   openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
+  workbenchLayout: {
+    load: () => ipcRenderer.invoke('tinadec:workbench-layout-load'),
+    save: (document) => ipcRenderer.invoke('tinadec:workbench-layout-save', document),
+  },
 
   // --- Local Pet Window API ---
   pets: {
@@ -63,6 +67,14 @@ contextBridge.exposeInMainWorld('tinadec', {
   // --- Detached Panel Window API ---
   detachPanel: (tabId, type, title, state) =>
     ipcRenderer.invoke('tinadec:detach-panel', tabId, type, title, state),
+  detachWorkbenchCard: (payload) =>
+    ipcRenderer.invoke('tinadec:detach-workbench-card', payload),
+  getDetachedWorkbenchCard: () =>
+    ipcRenderer.invoke('tinadec:detached-card-state'),
+  updateDetachedWorkbenchCardState: (state) =>
+    ipcRenderer.invoke('tinadec:detached-card-state-update', state),
+  reattachWorkbenchCard: (state) =>
+    ipcRenderer.invoke('tinadec:reattach-workbench-card', state),
   reattachPanel: (tabId, type, title, state) =>
     ipcRenderer.invoke('tinadec:reattach-panel', tabId, type, title, state),
   closePanelWindow: (windowId) =>

@@ -12,11 +12,13 @@ import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
+import { useOptionalWorkbenchHost } from '@/workbench/host'
 import type { AgentMode, PermissionLevel } from '../types/mode'
 
 const router = useRouter()
 const { t } = useI18n()
 const { notify, banner, dismissByKey } = useNotifications()
+const workbench = useOptionalWorkbenchHost()
 
 // 子窗口（?splash=0）跳过 main-rise 入场动画：复用主窗口已建立的连接，不重播启动序列。
 const isChildWindow = new URLSearchParams(window.location.search).get('splash') === '0'
@@ -316,7 +318,8 @@ function reconnectEvents() {
   })
 }
 
-watch(selectedProjectId, () => {
+watch(selectedProjectId, (projectId) => {
+  void workbench?.setActiveProject(projectId)
   void loadSessions()
 })
 

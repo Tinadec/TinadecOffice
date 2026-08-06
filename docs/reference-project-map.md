@@ -11,7 +11,8 @@ TinadecOffice should continue absorbing ideas from the sibling repositories unde
 
 | Project | What to study | What to absorb | What to avoid |
 | --- | --- | --- | --- |
-| `vscode` | Workbench, built-in extensions, CLI, contribution boundaries. | Dense workbench UI, command surfaces, extension-style separation between platform and language/tool features. | Turning TinadecOffice into a monolithic editor shell before Core/tool contracts are stable. |
+| `vscode` | Workbench, editor groups, view containers, commands, built-in extensions, and contribution boundaries. | One layout authority, command-driven moves, dense tab/column affordances, layered persistence, and extension-style separation between platform and feature modules. | An unrestricted recursive docking tree or turning TinadecOffice into a monolithic editor shell before Core/tool contracts are stable. |
+| `Traycer` | Pure layout state, version repair, card registries, and stable mounted instance hosts. | Deterministic repairable snapshots, registry-governed modules, and preserving local component state while cards move or hide. | Treating renderer layout as Core business state or accepting arbitrary unvalidated layout mutation. |
 | `codex rust` | `codex-rs`, app-server protocol, sandbox/approval tests, tool search, rollout tracing, agent graph store. | Structured tool descriptors, approval callbacks, app-server style contracts, auditable tool/terminal reduction. | Letting a CLI runtime become TinadecOffice's state authority. |
 | `t3code` | `apps/server`, `apps/web`, provider runtime ingestion, typed WebSocket pushes, readiness barriers, runtime receipts, worktree bootstrap tests. | Ordered push bus, startup readiness, receipt-based async completion, Git/worktree UX. | Moving orchestration ownership into Desktop/Gateway. |
 | `opencode` | Session timeline, provider APIs, permission UI, app/CLI split, E2E timeline tests. | Timeline-focused tool/result UI, provider normalization, permission affordances. | Flattening TinadecOffice's planning/execution split into one agent loop. |
@@ -25,6 +26,7 @@ TinadecOffice should continue absorbing ideas from the sibling repositories unde
 
 ## Current TinadecOffice Mappings
 
+- VS Code and Traycer workbench ideas are reflected in the persistent three-slot `WorkbenchShell`, command reducer, card registry, stable Surface Pool, scoped layout persistence, and deterministic constraint degradation. TinadecOffice deliberately limits each column to one optional secondary stack.
 - Codex/OpenCode inspired tool descriptors are now Core-visible through the harness manifest and tool search APIs.
 - T3 Code/OpenCode timeline and readiness ideas are reflected in the Core-owned tool execution timeline, `/api/v1/readiness` receipts, `/api/v1/tool-layer-readiness` tool/scope receipts, `/api/v1/model-readiness` provider/route receipts, `/api/v1/model-catalog-readiness` catalog/module receipts, and Desktop right rail/settings surfaces.
 - Codex/T3 Code Git/worktree ideas are reflected in `executor_git_manager`, `git_worktree_manager`, and the Desktop Git push readiness panel.

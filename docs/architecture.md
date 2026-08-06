@@ -16,6 +16,57 @@ TinadecOffice intentionally studies sibling projects such as VS Code, Codex, t3c
 - TinadecCore runtime: `http://127.0.0.1:48731`
 - Vite renderer: `http://127.0.0.1:5173`
 
+## Desktop Modular Workbench
+
+The Desktop Workbench is a persistent, headless module runtime. Its pure layout model has three physical slots (`left`, `center`, and `right`); each has a `primary` stack and may have one `secondary` stack below it. This intentionally stops at one horizontal split per column; arbitrary recursive docking trees are out of scope.
+
+The default product does **not** expose the model as a new docking interface. `WorkbenchShell` keeps the established page DOM, styling, controls, route transitions, and interaction paths as the presentation adapter. It renders no layout toolbar, card header, tab strip, grip, resizer, drop target, or new panel-material frame. The registry, reducer, constraints, persistence, detach protocol, and stable-instance semantics remain available behind that unchanged UI.
+
+### Layout authority and routing
+
+- `apps/desktop/src/workbench/useWorkbenchLayout.ts` is the renderer layout authority. `WorkbenchLayoutSnapshot` is a pure, versioned model and `reducer.ts` is the only structural mutation path.
+- Main-window routes select one of the `home`, `settings`, `market`, `code`, or `debug` presets and focus the corresponding compatibility page. `/`, `/settings`, `/market`, `/code-editor`, and `/debug-studio` retain hash-history deep links, back/forward, and reload behavior. `WorkbenchShell` remains mounted and wraps the unchanged `RouterView` in `KeepAlive`, so visited page instances retain local state.
+- `RouterView` remains the rendering owner only for child-window routes: `/panel`, `/pet`, and the detached Debug Studio renderer selected by `?splash=0`.
+- Each visited page has one domain controller. Home shares project/session state, Code shares project/file state, Market shares source/catalog state, Debug shares one WebSocket/data pipeline, and Settings shares navigation/module state. These controllers are Desktop presentation state, not a replacement for Core business authority.
+
+### Layout model and commands
+
+The model is a flat three-column document: `columnOrder`, three `WorkbenchColumn` records, registered card instances, and a focused card id. A column contains tab stacks plus its persisted width, collapse flag, and split ratio. Cards are created from `registry.ts`; their descriptors declare page eligibility, minimum size, singleton/movement/close/detach policy, and optional state serialization.
+
+All layout changes use one of these commands: `openCard`, `closeCard`, `activateCard`, `moveCard`, `moveStack`, `swapColumns`, `splitStack`, `mergeStack`, `resizeColumn`, `resizeSplit`, `collapseColumn`, `applyPreset`, or `resetScope`. Every command envelope carries `expectedRevision` and a `user`, `route`, `restore`, or `ai` source. Revision mismatches and policy violations are rejected. `ai` is reserved and deliberately rejected until a future layout agent has an explicit validation policy.
+
+The reducer returns both a new snapshot and an inverse command. The controller keeps 50 undo/redo entries; pointer resize updates with the same coalescing key become one history entry. Settings is a locked policy surface: only the navigation width can change, while its navigation and content cards cannot be moved, closed, split, detached, or mixed with other cards.
+
+### Stable module hosts
+
+`WorkbenchCanvas.vue` remains a stable Surface Pool for a future opt-in presentation. A card component is keyed by its `instanceId`; moving, hiding, changing tabs, or losing route focus does not destroy it, and only explicit close removes it. Hidden card content uses `visibility`, `aria-hidden`, `inert`, and disabled pointer events.
+
+The default shell currently mounts no Canvas. It keeps the existing page material roots and their exact visible hierarchy instead of adding card frames or changing `backdrop-filter` ancestry. The legacy page transition remains visible, while `KeepAlive` prevents prior page state from being discarded after navigation.
+
+Pointer drag/drop, resize, and keyboard card menus are retained only as unmounted future-presentation capabilities. They must not be enabled, added behind a default-on flag, or used to change the current UI/UX without an explicit product decision.
+
+### Deterministic constraints
+
+`constraints.ts` derives render geometry from the persisted snapshot, viewport size, and registered card minimums. Default Home geometry remains approximately 260px left, 420px right, an elastic center, and 8px gaps. When width is insufficient, the resolved view temporarily collapses right and then left. When height is insufficient, a secondary stack temporarily merges into the primary tab stack. These degradations never mutate or persist the user's layout, so the original columns and 65/35 split return when space is restored.
+
+### Persistence and detached cards
+
+Layouts resolve from most specific to least specific: `{ ProjectDto.id + page }`, page, global geometry, then the built-in preset. With an active project, normal mutations save to the workspace-page scope; otherwise they save to page scope. The layout menu can set global geometry, set a page default, clear the current workspace override, or restore the built-in preset.
+
+- Electron stores the versioned document atomically at `userData/workbench-layout.json` through main-process IPC. Payloads are capped at 4 MiB.
+- Web stores the same document under localStorage key `tinadec-workbench-layout-v1`.
+- `repairLayoutDocument()` and `repairWorkbenchLayout()` remove unknown cards, duplicate singletons, and invalid dimensions. Unrepairable documents fall back to built-in presets instead of rendering an empty shell.
+- Detached card windows persist at `userData/detached-cards.json`. Their URL contains only `windowId`; sender-scoped IPC supplies and updates the card payload. Reattach preserves the card id, page, serialized state, slot, stack, and tab index.
+- `panelWindow.cjs` migrates the legacy `.tinadec-panel-layout.json` `PanelType` records into registered Workbench card types. The legacy detach IPC remains only as a compatibility adapter.
+
+### Vue Vapor boundary
+
+Desktop uses Vue `3.6.0-rc.2` and installs the official `vaporInteropPlugin`. `WorkbenchShell` owns the persistent host, while its internal, invisible `WorkbenchVaporRuntime.vue` opts into Vapor with `<script setup vapor>`. The existing RouterView, Transition, KeepAlive, and route pages remain VDOM components, avoiding an unsupported RouterView/Vapor composition while keeping the module runtime behind an isolated Vapor boundary. `vite.vapor.config.ts` tests that boundary with the Vapor runtime, while the normal Vitest configuration keeps the existing VDOM test environment.
+
+### Reference decisions
+
+From VS Code, TinadecOffice adopts one workbench layout authority, command-driven changes, and layered persistence. It deliberately does not expose VS Code-style tab/column affordances in the current product UI or adopt an unrestricted recursive editor-group tree. From Traycer, it adopts a pure repairable layout model, a versioned registry, and stable instance hosts. It does not make renderer layout state a Core business-state authority or allow arbitrary unvalidated layout mutation.
+
 ## Harness And Tool Layer APIs
 
 Core owns the agent harness model and Tool-layer policy semantics. Gateway proxies these endpoints, and Desktop renders them without recomputing risk or provider-layer meaning.

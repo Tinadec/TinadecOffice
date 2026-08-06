@@ -52,8 +52,23 @@ function rejectNotAvailable(reason: string): Promise<never> {
 
   // -- Debug Studio --
   openDebugStudio: () => {
-    window.open('#/debug-studio', '_blank')
-    return Promise.resolve(true)
+    return Promise.resolve(false)
+  },
+
+  // -- Workbench layout persistence (browser-local fallback) --
+  workbenchLayout: {
+    load: () => {
+      try {
+        const value = window.localStorage.getItem('tinadec-workbench-layout-v1')
+        return Promise.resolve(value ? JSON.parse(value) : null)
+      } catch {
+        return Promise.resolve(null)
+      }
+    },
+    save: (document: unknown) => {
+      window.localStorage.setItem('tinadec-workbench-layout-v1', JSON.stringify(document))
+      return Promise.resolve(document)
+    },
   },
 
   // -- Pets (local-only transparent OS windows, not available in web) --
@@ -79,6 +94,10 @@ function rejectNotAvailable(reason: string): Promise<never> {
 
   // -- Detachable panels (no-ops in browser) --
   detachPanel: () => Promise.resolve(null),
+  detachWorkbenchCard: () => Promise.resolve(null),
+  getDetachedWorkbenchCard: () => Promise.resolve(null),
+  updateDetachedWorkbenchCardState: () => Promise.resolve(false),
+  reattachWorkbenchCard: () => rejectNotAvailable('Panel windows are not available in the web version.'),
   reattachPanel: () => rejectNotAvailable('Panel windows are not available in the web version.'),
   closePanelWindow: noop,
   focusPanelWindow: noop,

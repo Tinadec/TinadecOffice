@@ -18,8 +18,13 @@ import SearchPanel from '@/components/code/SearchPanel.vue'
 import CodeViewer from '@/components/code/CodeViewer.vue'
 import CodeEditor from '@/components/code/CodeEditor.vue'
 import PatchPreview from '@/components/code/PatchPreview.vue'
+
+withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
 import { UiButton, UiSelect } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { useOptionalWorkbenchHost } from '@/workbench/host'
 
 interface OpenTab {
   path: string
@@ -29,6 +34,7 @@ interface OpenTab {
 
 const router = useRouter()
 const { notify, banner, dismissByKey } = useNotifications()
+const workbench = useOptionalWorkbenchHost()
 
 const projects = ref<ProjectDto[]>([])
 const selectedProjectId = ref<string | null>(null)
@@ -162,7 +168,8 @@ function handleRefresh(): void {
   void loadApprovals()
 }
 
-watch(selectedProjectId, () => {
+watch(selectedProjectId, (projectId) => {
+  void workbench?.setActiveProject(projectId)
   openTabs.value = []
   activeTabPath.value = null
   void loadSession()
@@ -174,10 +181,10 @@ onMounted(() => {
 </script>
 
 <template>
-<main class="shell">
+<main class="shell" :class="{ 'workbench-embedded': embedded }">
 <!-- Full-width draggable bar for window dragging -->
-<div class="top-drag-bar" />
-<AppHeader :busy="busy" />
+<div v-if="!embedded" class="top-drag-bar" />
+<AppHeader v-if="!embedded" :busy="busy" />
 
     <section class="code-workspace">
       <!-- Top toolbar -->
@@ -334,6 +341,11 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 0;
+}
+
+.shell.workbench-embedded {
+  height: 100%;
   min-height: 0;
 }
 .code-toolbar {

@@ -24,6 +24,10 @@ import { useRouter } from 'vue-router'
 import { api, type AcpAdapterDto, type ExtensionInstallPreviewDto, type ExtensionSourceDto, type InstalledExtensionDto, type MarketCatalogItemDto, type McpServerDto } from '../api'
 import AppHeader from '../components/AppHeader.vue'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
+
+withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
@@ -373,10 +377,10 @@ onMounted(() => {
 </script>
 
 <template>
-<main class="shell">
+<main class="shell" :class="{ 'workbench-embedded': embedded }">
 <!-- Full-width draggable bar for window dragging -->
-<div class="top-drag-bar" />
-<AppHeader :busy="busy || loading" />
+<div v-if="!embedded" class="top-drag-bar" />
+<AppHeader v-if="!embedded" :busy="busy || loading" />
 
     <section class="market-workspace">
       <aside class="market-rail">

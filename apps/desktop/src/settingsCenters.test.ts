@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import topologyCanvas from './components/AgentTopologyCanvas.vue?raw'
 import zhCn from './locales/zh-CN.ts?raw'
-import settingsPage from './pages/SettingsPage.vue?raw'
+import settingsShell from './pages/SettingsPage.vue?raw'
+
+const settingsModules = import.meta.glob<string>('./settings/modules/*.vue', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+const settingsPage = [settingsShell, ...Object.values(settingsModules)].join('\n')
 
 describe('settings centers presentation contract', () => {
   it('renders the rewritten model workbench contract', () => {

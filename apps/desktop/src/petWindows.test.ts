@@ -8,6 +8,8 @@ import petPreview from './components/PetPreview.vue?raw'
 import desktopPetPage from './pages/DesktopPetPage.vue?raw'
 import router from './router.ts?raw'
 import settingsPage from './pages/SettingsPage.vue?raw'
+import settingsPetsModule from './settings/modules/SettingsPetsModule.vue?raw'
+import settingsModuleRegistry from './settings/settingsModuleRegistry.ts?raw'
 import settingsCss from './settings/settings.css?raw'
 
 describe('local pet window shell', () => {
@@ -55,20 +57,21 @@ describe('local pet window shell', () => {
   })
 
   it('keeps downloaded pets above a lazy, incrementally rendered market gallery', () => {
-    const downloadedSection = settingsPage.indexOf('class="pets-section downloaded-pets-section"')
-    const marketSection = settingsPage.indexOf('class="pets-section petdex-market-section"')
+    const downloadedSection = settingsPetsModule.indexOf('class="pets-section downloaded-pets-section"')
+    const marketSection = settingsPetsModule.indexOf('class="pets-section petdex-market-section"')
     expect(downloadedSection).toBeGreaterThan(-1)
     expect(marketSection).toBeGreaterThan(downloadedSection)
     expect(settingsPage).toContain('const PET_CATALOG_PAGE_SIZE = 48')
     expect(settingsPage).toContain('new IntersectionObserver')
-    expect(settingsPage).toContain('ref="petLoadMoreRef"')
-    expect(settingsPage).toContain("t('settings.loadMorePets'")
-    expect(settingsPage).toContain('loading="lazy"')
+    expect(settingsModuleRegistry).toContain("pets: () => import('./modules/SettingsPetsModule.vue')")
+    expect(settingsPetsModule).toContain('ref="petLoadMoreRef"')
+    expect(settingsPetsModule).toContain("t('settings.loadMorePets'")
+    expect(settingsPetsModule).toContain('loading="lazy"')
   })
 
   it('shows stable preview loading states and constrains card content', () => {
-    expect(settingsPage).toContain('<PetPreview')
-    expect(settingsPage).toContain('class="pet-action-label"')
+    expect(settingsPetsModule).toContain('<PetPreview')
+    expect(settingsPetsModule).toContain('class="pet-action-label"')
     expect(petPreview).toContain('<UiSkeleton v-if="!loaded"')
     expect(petPreview).toContain('@error="markFailed"')
     expect(petPreview).toContain('setTimeout(() =>')

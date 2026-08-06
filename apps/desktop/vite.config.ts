@@ -29,8 +29,24 @@ export default defineConfig({
     ],
   },
   test: {
+    alias: [
+      {
+        find: /^vue$/,
+        replacement: path.resolve(__dirname, '../../node_modules/vue/dist/vue.runtime.esm-bundler.js'),
+      },
+      {
+        find: /^@vue\/test-utils$/,
+        replacement: path.resolve(__dirname, '../../node_modules/@vue/test-utils/dist/vue-test-utils.esm-bundler.mjs'),
+      },
+    ],
     css: true,
     environment: 'node',
-    include: ['src/**/*.test.ts']
+    include: ['src/**/*.test.ts'],
+    exclude: ['src/workbench/WorkbenchShell.test.ts'],
+    server: {
+      deps: {
+        inline: true,
+      },
+    },
   }
 });

@@ -25,9 +25,26 @@ interface WindowBounds {
   height: number;
 }
 
+interface WorkbenchLayoutApi {
+  load: () => Promise<unknown>
+  save: (document: unknown) => Promise<unknown>
+}
+
 interface DetachResult {
   windowId: number;
   tabId: string;
+}
+
+interface DetachedWorkbenchCardPayload {
+  version: 1;
+  card: { id: string; type: string; state: Record<string, unknown> };
+  pageId: 'home' | 'settings' | 'market' | 'code' | 'debug';
+  title: string;
+  returnPlacement: {
+    slotId: 'left' | 'center' | 'right';
+    stackId: 'primary' | 'secondary';
+    index: number;
+  };
 }
 
 interface ReattachData {
@@ -35,6 +52,7 @@ interface ReattachData {
   type: string;
   title: string;
   state: Record<string, unknown>;
+  workbench?: DetachedWorkbenchCardPayload;
 }
 
 interface PanelClosedData {
@@ -160,12 +178,19 @@ declare global {
       maximizeWindow: () => void;
       closeWindow: () => void;
       openDebugStudio: () => Promise<boolean>;
+      workbenchLayout?: WorkbenchLayoutApi;
       /** Local-only transparent pet windows. */
       pets: PetWindowApi;
       /** Terminal management API */
       terminal: TerminalApi;
       /** Detach a tab into a new floating BrowserWindow */
       detachPanel: (tabId: string, type: string, title: string, state: Record<string, unknown>) => Promise<DetachResult | null>;
+      /** Detach a registered Workbench card while preserving its page and return placement. */
+      detachWorkbenchCard?: (payload: DetachedWorkbenchCardPayload) => Promise<DetachResult | null>;
+      /** Read the sender-owned detached card state; URL query strings carry only the window id. */
+      getDetachedWorkbenchCard?: () => Promise<{ windowId: number; workbench: DetachedWorkbenchCardPayload } | null>;
+      updateDetachedWorkbenchCardState?: (state: Record<string, unknown>) => Promise<boolean>;
+      reattachWorkbenchCard?: (state: Record<string, unknown>) => Promise<boolean>;
       /** Reattach a panel window back to the main window */
       reattachPanel: (tabId: string, type: string, title: string, state: Record<string, unknown>) => Promise<boolean>;
       /** Close a specific panel window by windowId */

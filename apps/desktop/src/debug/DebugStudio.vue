@@ -18,6 +18,10 @@ import PreviewGallery from './preview/PreviewGallery.vue'
 import { Bug, Minus, Square, X, LayoutDashboard } from '@lucide/vue'
 import type { ForceApprovalDecisionRequest, SimulateMessageRequest } from './types/simulation'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
+
 const { t } = useI18n()
 const { notify, confirm } = useNotifications()
 const ws = useDebugWebSocket()
@@ -65,9 +69,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="debug-studio">
+  <div class="debug-studio" :class="{ 'workbench-embedded': embedded }">
     <!-- Title bar -->
-    <header class="debug-titlebar">
+    <header v-if="!embedded" class="debug-titlebar">
       <div class="debug-titlebar-left">
         <Bug :size="16" class="debug-icon" />
         <span class="debug-title">{{ t('debugStudio.title') }}</span>
