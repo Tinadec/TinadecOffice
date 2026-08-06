@@ -137,6 +137,47 @@ This fallback is not the primitive contract and must not be expanded into a per-
 - Component-owned glass effects (notification island, notification detail dialog) are intentionally independent of the global material and keep their own fixed blur values.
 - Detached panel windows and Electron windows stay opaque by design: there is no OS-level vibrancy/`backgroundMaterial`, so `backdrop-filter` only blurs the in-app background layer rendered by `App.vue`.
 
+## Workbench Layout Engine
+
+The Desktop main window is rendered by a **WorkbenchShell** — a deterministic layout engine (modeled after VS Code's single layout authority and Traycer's pure layout model / card registry) that owns the window layout behind a stable, command-driven interface. The visual UI is unchanged from the pre-refactor layout; only the engine behind it is new.
+
+### Layout model
+
+- Three physical slots: `left / center / right`. Each slot holds a tab stack (`primary`) and optionally one vertical split into a `secondary` stack. No arbitrary recursive docking tree.
+- The layout is a pure `WorkbenchLayoutSnapshot` (version 1): column order, column widths/collapsed/surface-mode/top-inset, per-stack ordered tab ids + active tab, a cards map (`instanceId -> {descriptorId, title, state}`), and the focused card id.
+- **Single layout authority**: `src/workbench/` is the only owner of layout state. The render layer only reads the snapshot → computes geometry → places DOM. Every mutation goes through `commandBus.dispatch({ command, source, expectedRevision })`.
+- **Commands** (fixed set): `openCard / closeCard / activateCard / moveCard / moveStack / swapColumns / splitStack / mergeStack / resizeColumn / resizeSplit / collapseColumn / applyPreset / resetScope`. The reducer returns the next snapshot AND the inverse command; the undo stack keeps 50 records, coalescing consecutive drag-resizes into one.
+- **Sources**: `user / route / restore` are executable; `ai` is reserved and rejected this round (a controlled entry point for future AI-driven layout).
+- **Constraint solver**: `computeGeometry(container, snapshot)` derives column/stack geometry from the container size and per-card min widths. Under space pressure it visually collapses the right column first, then the left; an over-short split degrades to a single stack. These degradations are visual only — never written back to the user layout.
+
+### Card registry & instance pool
+
+- `src/workbench/cards/index.ts` registers every card descriptor (`{ type, component, minWidth, minHeight, singleton, movable, closable, detachable, defaultTitle, titlebarMode }`).
+- The instance pool (`src/workbench/instancePool.ts`) hydrates each card instance ONCE by `instanceId`; hidden cards stay mounted (visibility/inert/aria-hidden), and only an explicit close destroys the instance. Moving between slots/tabs/routes never remounts a card.
+
+### Material integration
+
+- Material is applied on the **stable stack root** (`WorkbenchStack`), which binds `data-panel-effect` + `--surface-section`/`--bg-primary` — the same contract as the legacy `.float-panel`. Legacy page components embedded as card content are neutralized to fill their card frame (see `workbench-card-fill.css`).
+- `App.vue` no longer wraps the main `RouterView` in a `mode="out-in"` transition: the Workbench owns the layout, and a transition wrapper would unload the page host on route change, breaking `backdrop-filter` and hitting removed-node patches.
+
+### Route semantics
+
+- The router keeps all existing hash paths (`/`, `/settings`, `/market`, `/debug-studio`, `/code-editor`, `/panel`, `/pet`). The main window renders the WorkbenchShell for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
+
+### Persistence
+
+- Layouts persist to `userData/workbench-layout.json` via `electron/layoutStore.cjs` (atomic temp+rename) with IPC `tinadec:layout-load` / `tinadec:layout-save`.
+- The renderer `layerStore` holds three scope layers, resolved most-specific-first: `workspace-page(projectId, pageId)` > `page(pageId)` > `global(pageId)` > built-in preset. Auto-save is debounced (400 ms) to the write scope (workspace-scoped when a project is active).
+- `repairLayout()` fixes corrupt/unknown-card/duplicate-singleton/illegal-size layouts and falls back to the built-in preset — never a blank window.
+- Legacy detached-panel records (`~/.tinadec-panel-layout.json`, `PanelType`) migrate to generic card types via `src/workbench/persistence/migrate.ts`.
+
+### Vapor mode
+
+- Vue 3.6 (RC) Vapor is enabled **per-SFC** via the `<template vapor>` block attribute. The root `package.json` overrides pin `vue` + `@vue/compiler-sfc` to `3.6.0-rc.2` so the compiler and runtime agree.
+- `src/lib/vue-shim.ts` re-exports `@vue/runtime-dom` + `@vue/runtime-vapor` so vapor SFCs' `from 'vue'` resolves in both Vite build and vitest.
+- `main.ts` installs `vaporInteropPlugin` so vapor components can live inside the classic vdom tree.
+- Rollout is batched (`src/vapor/vaporBatch.ts`); exemptions are recorded in `src/vapor/VaporExemptions.ts`.
+
 ## Agent Debug Studio
 
 TinadecOffice includes an **Agent Debug Studio** — a dedicated debugging tool designed for Agent systems. See [`docs/agent-debug-studio-plan.md`](agent-debug-studio-plan.md) for the full implementation plan.

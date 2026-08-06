@@ -1,7 +1,7 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-04
-**Last Updated By:** Claude (swapped provider brand icons in `providerTemplates.ts` to official `@lobehub/icons-static-svg` SVGs; added `typescript` devDependency and aligned `ignoreDeprecations` to TS 5.x so `npm run build` works)
+**Last Updated:** 2026-08-07
+**Last Updated By:** Claude (added WorkbenchShell layout engine: deterministic 3-slot layout authority, card registry, command bus, undo, constraint solver, layer-scoped persistence via userData/workbench-layout.json; enabled Vue 3.6 Vapor per-SFC with vue-shim + vaporInteropPlugin; Home routed through WorkbenchShell; Code/Market data moved into per-page domain controllers)
 
 ## OVERVIEW
 Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
@@ -11,10 +11,13 @@ The General settings page owns the Desktop Gateway endpoint. The effective URL i
 ## STRUCTURE
 ```
 apps/desktop/
-├── electron/          # Electron main, preload, Debug Studio window, panel window manager, terminal manager
+├── electron/          # Electron main, preload, Debug Studio window, panel window manager, terminal manager, layout store
 ├── scripts/dev.mjs    # Vite then Electron launcher
 └── src/
     ├── pages/         # hash-router route pages
+    ├── controllers/   # per-page domain controllers (Home/Code/Market) — module singletons
+    ├── workbench/     # deterministic layout engine (types/reducer/commands/undo/scope/registry/presets/repair/constraints/commandBus/instancePool) + components + cards + persistence
+    ├── vapor/         # Vapor rollout batches + exemption registry
     ├── components/    # feature components (incl. TerminalPanel, TerminalView)
     ├── components/ui/ # shadcn-style Vue primitives + barrel
     ├── debug/         # self-contained Agent Debug Studio feature
@@ -43,6 +46,9 @@ apps/desktop/
 | Unified notifications | `src/composables/useNotifications.ts`, `src/components/NotificationIslandHost.vue`, `src/components/NotificationDetailDialog.vue`, `src/App.vue`, `electron/main.cjs`, `electron/preload.cjs` | Three kinds (`transient`/`status`/`task`) render in separate title-bar island zones; clicking a capsule opens the detail dialog, while hover expands a glass card that also opens the dialog when clicked. Repeated notifications merge with a counter; overflow opens the notification center with live + cleared sections. `status.*` replicates across renderer windows over IPC. System load/connection errors use islands; chat approvals stay contextual. |
 | Detached panel windows | `electron/panelWindow.cjs`, `src/pages/DetachedPanelPage.vue`, `src/components/ContextPanel.vue`, `src/composables/usePanelTabs.ts` | Electron multi-window management: BrowserWindow creation, cursor-polling drag-to-detach (Chrome-style tab tearing), disk-based layout persistence, reattach/focus, and cross-window theme broadcast. Main window is tagged with `_isTinadecMain` so `getMainWindow()` distinguishes it from Debug Studio. Panel layout persisted to `~/.tinadec-panel-layout.json` on move/resize/quit and restored on launch. |
 | Integrated terminal | `electron/terminalManager.cjs`, `src/composables/useTerminal.ts`, `src/components/TerminalPanel.vue`, `src/components/TerminalView.vue`, `src/components/ContextPanel.vue`, `src/components/PanelHome.vue` | Full PTY terminal via `node-pty` (with `child_process.spawn` fallback). Multi-instance tabs, shell profile selector (PowerShell/CMD/Git Bash/WSL/zsh/bash), xterm.js rendering with theme adaptation from CSS variables, keyboard shortcuts (Ctrl+Shift+T new, Ctrl+W close, Ctrl+Tab switch), auto-fit via ResizeObserver, and detachable panel windows. Terminal panel type is `'terminal'` in `usePanelTabs`; multiple instances allowed. Native module rebuild: `npm run rebuild:native` (requires Python + C++ build tools). |
+| Workbench layout engine | `src/workbench/**`, `src/controllers/*.ts` | Deterministic 3-slot (`left/center/right`) layout authority. Pure TS engine (`types/commands/reducer/undoStack/scope/registry/presets/repair/constraints/commandBus/instancePool`) owns layout state; the render layer only reads snapshot → geometry → DOM. All mutations go through `commandBus.dispatch({command, source, expectedRevision})`; `ai` source is reserved/rejected. Home renders via `WorkbenchShell`; card instances hydrate once by `instanceId`. Per-page domain controllers (`HomeController`/`CodeController`/`MarketController`) are module singletons that share SSE/WS/data across cards. |
+| Workbench persistence | `electron/layoutStore.cjs`, `src/workbench/persistence/**` | Layouts persist to `userData/workbench-layout.json` (atomic temp+rename, IPC `tinadec:layout-load/save`). Renderer `layerStore` resolves `workspace-page > page > global` per page; auto-save debounced 400 ms. `repairLayout()` never shows a blank window; legacy `~/.tinadec-panel-layout.json` PanelTypes migrate via `migrate.ts`. |
+| Vapor mode | `src/lib/vue-shim.ts`, `src/vapor/**`, `src/main.ts` | Vue 3.6 RC Vapor per-SFC via `<template vapor>`; root `overrides` pin `vue`/`@vue/compiler-sfc` to `3.6.0-rc.2`. `vue-shim.ts` re-exports runtime-dom + runtime-vapor so vapor SFCs resolve in build and vitest; `main.ts` installs `vaporInteropPlugin`. Rollout batched in `vaporBatch.ts`; exemptions in `VaporExemptions.ts`. |
 
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.
