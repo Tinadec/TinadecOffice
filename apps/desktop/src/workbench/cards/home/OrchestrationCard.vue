@@ -5,7 +5,7 @@ import { homeController } from '@/controllers/HomeController'
 const c = homeController
 </script>
 
-<template>
+<template vapor>
   <OrchestrationTab
     :snapshot="c.orchestration.value"
     :tool-executions="c.toolExecutions.value"

@@ -7,7 +7,7 @@ import { useWorkbench } from '../useWorkbench'
 const wb = useWorkbench()
 </script>
 
-<template>
+<template vapor>
   <main class="shell">
     <div class="top-drag-bar" />
     <AppHeader />

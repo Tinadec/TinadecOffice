@@ -5,7 +5,7 @@ import { homeController } from '@/controllers/HomeController'
 const c = homeController
 </script>
 
-<template>
+<template vapor>
   <ApprovalTab
     :approvals="c.approvals.value"
     :shell-command="c.shellCommand.value"

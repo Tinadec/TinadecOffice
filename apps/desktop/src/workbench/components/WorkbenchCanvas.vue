@@ -31,7 +31,7 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<template>
+<template vapor>
   <div ref="canvasRef" class="wb-canvas">
     <!-- Columns are absolutely positioned by the constraint solver. -->
     <WorkbenchColumn

@@ -43,7 +43,7 @@ function close(instanceId: string) {
 }
 </script>
 
-<template>
+<template vapor>
   <div
     class="wb-stack"
     :class="{

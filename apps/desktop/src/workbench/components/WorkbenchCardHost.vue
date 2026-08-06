@@ -20,7 +20,7 @@ provide('wb:cardState', props.instance.state)
 provide('wb:active', props.active)
 </script>
 
-<template>
+<template vapor>
   <div
     class="wb-card-host"
     :class="{ 'wb-card-host--hidden': !active }"

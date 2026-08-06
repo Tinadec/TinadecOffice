@@ -11,7 +11,7 @@ const active = inject<boolean>('wb:active', false)
 const visible = computed(() => active ?? false)
 </script>
 
-<template>
+<template vapor>
   <TerminalPanel
     :cwd="c.currentProject.value?.path"
     :visible="visible"

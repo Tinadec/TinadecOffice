@@ -36,6 +36,30 @@ export const VAPOR_BATCHES: readonly VaporBatch[] = [
     ],
   },
   // batch1 (M1): Workbench self-authored components — added as they are created.
+  {
+    id: 'batch1',
+    milestone: 'M1',
+    description: 'Workbench self-authored components + Home cards (built fresh on Vapor).',
+    files: [
+      'src/workbench/components/WorkbenchCanvas.vue',
+      'src/workbench/components/WorkbenchCardFrame.vue',
+      'src/workbench/components/WorkbenchCardHost.vue',
+      'src/workbench/components/WorkbenchColumn.vue',
+      'src/workbench/components/WorkbenchShell.vue',
+      'src/workbench/components/WorkbenchStack.vue',
+      'src/workbench/cards/home/AgentCard.vue',
+      'src/workbench/cards/home/ApprovalCard.vue',
+      'src/workbench/cards/home/BrowserCard.vue',
+      'src/workbench/cards/home/ChatCard.vue',
+      'src/workbench/cards/home/DoctorCard.vue',
+      'src/workbench/cards/home/EventsCard.vue',
+      'src/workbench/cards/home/GitCard.vue',
+      'src/workbench/cards/home/HomePickerCard.vue',
+      'src/workbench/cards/home/NavCard.vue',
+      'src/workbench/cards/home/OrchestrationCard.vue',
+      'src/workbench/cards/home/TerminalCard.vue',
+    ],
+  },
   // batch2 (M1-M2): Home cards + HomeController (TS, no SFC).
   // batch3 (M2): code/market/debug cards + controllers.
   // batch4 (M3): settings cards + lazy modules.

@@ -60,6 +60,7 @@ export const VAPOR_EXEMPTIONS: readonly VaporExemptionEntry[] = [
 
 /** Components explicitly opted into Vapor (for reporting/audit). */
 export const VAPOR_OPTED_IN: readonly string[] = [
+  // batch0 — leaf presentational + simple UI primitives
   'src/components/StatusPill.vue',
   'src/components/BrandLogo.vue',
   'src/components/AppSplash.vue',
@@ -68,4 +69,22 @@ export const VAPOR_OPTED_IN: readonly string[] = [
   'src/components/ui/skeleton.vue',
   'src/components/ui/label.vue',
   'src/components/ui/progress.vue',
+  // batch1 — Workbench self-authored components + Home cards
+  'src/workbench/components/WorkbenchCanvas.vue',
+  'src/workbench/components/WorkbenchCardFrame.vue',
+  'src/workbench/components/WorkbenchCardHost.vue',
+  'src/workbench/components/WorkbenchColumn.vue',
+  'src/workbench/components/WorkbenchShell.vue',
+  'src/workbench/components/WorkbenchStack.vue',
+  'src/workbench/cards/home/AgentCard.vue',
+  'src/workbench/cards/home/ApprovalCard.vue',
+  'src/workbench/cards/home/BrowserCard.vue',
+  'src/workbench/cards/home/ChatCard.vue',
+  'src/workbench/cards/home/DoctorCard.vue',
+  'src/workbench/cards/home/EventsCard.vue',
+  'src/workbench/cards/home/GitCard.vue',
+  'src/workbench/cards/home/HomePickerCard.vue',
+  'src/workbench/cards/home/NavCard.vue',
+  'src/workbench/cards/home/OrchestrationCard.vue',
+  'src/workbench/cards/home/TerminalCard.vue',
 ]

@@ -7,7 +7,7 @@ const router = useRouter()
 const c = homeController
 </script>
 
-<template>
+<template vapor>
   <AppSidebar
     :projects="c.projects.value"
     :sessions="c.sessions.value"

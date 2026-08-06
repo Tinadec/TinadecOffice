@@ -48,7 +48,7 @@ function openCard(descriptorId: string) {
 }
 </script>
 
-<template>
+<template vapor>
   <section class="panel-home">
     <div class="panel-home-header">
       <h2>{{ t('context.homeTitle') }}</h2>

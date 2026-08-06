@@ -5,6 +5,6 @@ import { homeController } from '@/controllers/HomeController'
 const c = homeController
 </script>
 
-<template>
+<template vapor>
   <EventsTab :events="c.recentEvents.value" />
 </template>

@@ -95,7 +95,7 @@ function onDividerUp() {
 }
 </script>
 
-<template>
+<template vapor>
   <div
     class="wb-column"
     :style="{

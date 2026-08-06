@@ -35,7 +35,7 @@ const showTitlebar = computed(() => mode.value !== 'hidden')
 const showTab = computed(() => mode.value === 'full')
 </script>
 
-<template>
+<template vapor>
   <article
     class="wb-card-frame float-panel"
     :class="{

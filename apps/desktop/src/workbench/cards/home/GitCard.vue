@@ -5,7 +5,7 @@ import { homeController } from '@/controllers/HomeController'
 const c = homeController
 </script>
 
-<template>
+<template vapor>
   <GitPanel
     :approvals="c.approvals.value"
     :current-project-path="c.currentProject.value?.path"
