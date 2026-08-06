@@ -5,9 +5,14 @@ import router from './router'
 import i18n from './i18n'
 import { useTheme } from './composables/useTheme'
 import { setNotificationFallbackText } from './composables/useNotifications'
+import { installPreviewShimIfNeeded } from './lib/previewShim'
 import './styles.css'
 // Overrides so legacy page components (AppSidebar/ChatPanel) fill their card frame.
 import './workbench/components/workbench-card-fill.css'
+
+// Install a minimal `window.tinadec` when running without the Electron preload
+// (bare-vite preview / MCP pane) so pages render instead of crashing.
+installPreviewShimIfNeeded()
 
 const app = createApp(App)
 
