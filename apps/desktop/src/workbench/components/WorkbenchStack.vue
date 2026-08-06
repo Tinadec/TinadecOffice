@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import WorkbenchCardHost from './WorkbenchCardHost.vue'
 import { useWorkbench } from '../useWorkbench'
-import type { StackGeometry, WorkbenchStack as StackModel, PersistedCardInstance } from '../types'
+import { usePanelStyles } from '@/composables/usePanelStyles'
+import type { StackGeometry, WorkbenchStack as StackModel, PersistedCardInstance, SurfaceMode } from '../types'
 
 const props = defineProps<{
   stack: StackModel
@@ -10,9 +12,19 @@ const props = defineProps<{
   instances: PersistedCardInstance[]
   /** Whether this stack is a degraded split (visual single stack). */
   degraded?: boolean
+  /** Column surface mode — float panels vs connected app layout. */
+  surfaceMode?: SurfaceMode
 }>()
 
 const wb = useWorkbench()
+
+// The stack is a single material root (like the old ContextPanel / .sidebar /
+// .conversation). Tab bar and content share one continuous surface.
+const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
+const materialStyle = computed(() => getPanelStyle())
+const materialAttrs = computed(() => getPanelDataAttributes())
+
+const showTabBar = computed(() => props.instances.length > 1)
 
 function activate(instanceId: string) {
   wb.bus.dispatch({
@@ -34,15 +46,20 @@ function close(instanceId: string) {
 <template>
   <div
     class="wb-stack"
+    :class="{
+      'wb-stack--app': surfaceMode === 'app',
+    }"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
       width: `${geometry.width}px`,
       height: `${geometry.height}px`,
+      ...materialStyle,
     }"
+    v-bind="materialAttrs"
   >
-    <!-- Browser-style tab bar for the stack -->
-    <div v-if="instances.length > 0" class="browser-tab-bar wb-stack-tabbar">
+    <!-- Browser-style tab bar for multi-card stacks -->
+    <div v-if="showTabBar" class="browser-tab-bar wb-stack-tabbar">
       <button
         v-for="inst in instances"
         :key="inst.id"
@@ -69,6 +86,7 @@ function close(instanceId: string) {
         :key="inst.id"
         :instance="inst"
         :active="stack.activeTabId === inst.id"
+        :surface-mode="surfaceMode"
       />
     </div>
   </div>
@@ -81,6 +99,19 @@ function close(instanceId: string) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: var(--surface-section);
+  /* Float-panel look: rounded, bordered, shadowed (matches old .float-panel). */
+  border: 1px solid var(--border-muted);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+}
+
+/* Connected app look: no rounding, no border, continuous surface. */
+.wb-stack--app {
+  background: var(--bg-primary);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .wb-stack-tabbar {

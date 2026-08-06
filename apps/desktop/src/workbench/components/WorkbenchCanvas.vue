@@ -12,7 +12,8 @@ function measure() {
   const el = canvasRef.value
   if (!el) return
   const rect = el.getBoundingClientRect()
-  wb.setContainerSize({ width: rect.width, height: rect.height })
+  // Round to integer pixels so ResizeObserver can't feed back sub-pixel drift.
+  wb.setContainerSize({ width: Math.round(rect.width), height: Math.round(rect.height) })
 }
 
 onMounted(() => {

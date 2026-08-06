@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 
-const props = defineProps<{
-  /** Serialized card state (may carry url). */
-  cardState?: Record<string, unknown>
-}>()
+// Card context is provided by WorkbenchCardHost (see WorkbenchCardHost.vue).
+const cardState = inject<Record<string, unknown> | undefined>('wb:cardState')
 
-const initialUrl = computed(() => (props.cardState?.url as string) ?? '')
+const initialUrl = computed(() => (cardState?.url as string) ?? '')
 </script>
 
 <template>

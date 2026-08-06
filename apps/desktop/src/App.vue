@@ -169,10 +169,12 @@ router.beforeEach((to, from, next) => {
        而非在此处包裹 RouterView —— 因为路由组件是懒加载的，外层 Transition
        会在子元素挂载前就移除 enter-active 类，导致动画失效。 -->
   <div v-if="!isConnecting" class="main-content">
+    <!-- No Transition wrapper around RouterView: the Workbench owns the main
+         window layout and the stable card-frame material root. A transition
+         would unload the page host on route change, breaking backdrop-filter
+         and hitting removed-node patches with the Workbench's absolute layout. -->
     <RouterView v-slot="{ Component }">
-      <Transition :name="transitionName" :css="!isChildWindow" mode="out-in">
-        <component :is="Component" />
-      </Transition>
+      <component :is="Component" />
     </RouterView>
   </div>
   <NotificationIslandHost v-if="!isConnecting" />

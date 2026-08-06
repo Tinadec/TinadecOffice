@@ -114,6 +114,7 @@ function onDividerUp() {
       :geometry="primaryGeometry"
       :instances="primaryInstances"
       :degraded="primaryDegraded"
+      :surface-mode="column.surfaceMode"
     />
 
     <!-- Secondary stack + divider -->
@@ -128,6 +129,7 @@ function onDividerUp() {
         :geometry="{ x: 0, y: split.lower.y - geometry.y, width: geometry.width, height: split.lower.height, degraded: !!split.lower.degraded }"
         :instances="secondaryInstances"
         :degraded="!!split.lower.degraded"
+        :surface-mode="column.surfaceMode"
       />
     </template>
   </div>

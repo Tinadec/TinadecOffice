@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
 import { useWorkbench } from '../useWorkbench'
 import type { PersistedCardInstance } from '../types'
 
@@ -12,6 +12,12 @@ const props = defineProps<{
 const wb = useWorkbench()
 
 const component = computed(() => wb.componentFor(props.instance.descriptorId))
+
+// Provide card context via inject so the card content can read its instance id,
+// serialized state, and visibility without extraneous non-props attribute warnings.
+provide('wb:instanceId', props.instance.id)
+provide('wb:cardState', props.instance.state)
+provide('wb:active', props.active)
 </script>
 
 <template>
@@ -25,9 +31,6 @@ const component = computed(() => wb.componentFor(props.instance.descriptorId))
       :is="component"
       v-if="component"
       :key="instance.id"
-      :instance-id="instance.id"
-      :card-state="instance.state"
-      :active="active"
     />
     <div v-else class="wb-card-unknown">
       Unknown card: {{ instance.descriptorId }}

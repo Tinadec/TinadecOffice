@@ -141,8 +141,14 @@ export function createWorkbench(options: WorkbenchStoreOptions): WorkbenchStore 
       bus.setSnapshot(repaired)
     },
     setContainerSize(size) {
-      containerSize.value = size
-      geometry.value = computeGeometry(size, snapshot.value)
+      const { width, height } = size
+      const prev = containerSize.value
+      // Guard against ResizeObserver feedback loops: only re-render geometry when
+      // the container size actually changed (rounded to integer pixels).
+      if (prev.width === width && prev.height === height) return
+      const next = { width, height }
+      containerSize.value = next
+      geometry.value = computeGeometry(next, snapshot.value)
     },
     undo() {
       const ok = bus.undo()
