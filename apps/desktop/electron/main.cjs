@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
+const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const {
   createPanelWindow,
@@ -146,6 +147,26 @@ ipcMain.on('tinadec:close', (event) => {
 // --- Agent Debug Studio IPC ---
 ipcMain.handle('tinadec:open-debug-studio', async () => {
   return Boolean(await createDebugStudioWindow());
+});
+
+// --- Workbench layout persistence IPC ---
+// The renderer owns layout semantics; the main process is a thin validated store.
+ipcMain.handle('tinadec:layout-load', async () => {
+  try {
+    return await layoutStore.load();
+  } catch (err) {
+    console.warn('[main] layout-load failed:', err.message);
+    return null;
+  }
+});
+ipcMain.handle('tinadec:layout-save', async (_event, payload) => {
+  try {
+    await layoutStore.save(payload);
+    return { ok: true };
+  } catch (err) {
+    console.warn('[main] layout-save failed:', err.message);
+    return { ok: false, error: err.message };
+  }
 });
 
 // --- Local pet window IPC ---

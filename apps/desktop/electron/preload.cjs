@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('tinadec', {
   closeWindow: () => ipcRenderer.send('tinadec:close'),
   openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
 
+  // --- Workbench layout persistence ---
+  layout: {
+    load: () => ipcRenderer.invoke('tinadec:layout-load'),
+    save: (payload) => ipcRenderer.invoke('tinadec:layout-save', payload),
+  },
+
   // --- Local Pet Window API ---
   pets: {
     create: (petId) => ipcRenderer.invoke('tinadec:pet-create', petId),

@@ -61,6 +61,10 @@ export interface WorkbenchStoreOptions {
   /** Optional initial snapshot (from persistence); falls back to home preset. */
   initialSnapshot?: WorkbenchLayoutSnapshot
   activeProjectId?: string | null
+  /** Optional layer store for layout persistence (auto-save on change). */
+  persistence?: {
+    store: import('./persistence/layerStore').LayerStore
+  }
 }
 
 let instanceCounter = 0
@@ -105,11 +109,35 @@ export function createWorkbench(options: WorkbenchStoreOptions): WorkbenchStore 
       geometry.value = computeGeometry(containerSize.value, next)
       canUndoRef.value = bus.canUndo()
       canRedoRef.value = bus.canRedo()
+      // Auto-save to the current write scope (project-scoped when a project is active).
+      options.persistence?.store.saveSnapshot(next, activeProjectId.value)
     },
   })
 
+  // Hydrate from disk asynchronously: if a stored layout exists for the current
+  // page/project, repair + restore it so the user's layout survives restarts.
+  if (options.persistence) {
+    const layerStore = options.persistence.store
+    void layerStore.hydrate().then((loaded) => {
+      if (!loaded) return
+      const stored = layerStore.resolveSnapshot(initialPage, activeProjectId.value)
+      if (stored) {
+        restoreSnapshot(stored)
+      }
+    })
+  }
+
   const pageId = computed<WorkbenchPageId>(() => snapshot.value.pageId)
   const focusedCardId = computed<string | null>(() => snapshot.value.focusedCardId)
+
+  function restoreSnapshot(next: WorkbenchLayoutSnapshot) {
+    // Run through repair so corrupt state never renders blank.
+    const repaired = repairLayout(next, {
+      registry,
+      preset: { nextInstanceId: createWorkbenchInstanceId },
+    })
+    bus.setSnapshot(repaired)
+  }
 
   return {
     bus,
@@ -132,14 +160,7 @@ export function createWorkbench(options: WorkbenchStoreOptions): WorkbenchStore 
         ? { kind: 'workspace-page', projectId: activeProjectId.value, pageId: nextPage }
         : { kind: 'page', pageId: nextPage }
     },
-    restoreSnapshot(next) {
-      // Run through repair so corrupt state never renders blank.
-      const repaired = repairLayout(next, {
-        registry,
-        preset: { nextInstanceId: createWorkbenchInstanceId },
-      })
-      bus.setSnapshot(repaired)
-    },
+    restoreSnapshot,
     setContainerSize(size) {
       const { width, height } = size
       const prev = containerSize.value
