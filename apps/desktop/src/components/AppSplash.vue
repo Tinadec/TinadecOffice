@@ -11,7 +11,7 @@
  */
 </script>
 
-<template>
+<template vapor>
   <div class="app-splash">
     <div class="app-splash__logo">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 453.04 350" fill="currentColor" aria-hidden="true">

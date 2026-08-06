@@ -8,6 +8,6 @@ interface Props {
 const props = defineProps<Props>()
 </script>
 
-<template>
+<template vapor>
   <div :class="cn('animate-pulse rounded-md bg-primary/10', props.class)" />
 </template>

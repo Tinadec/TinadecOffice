@@ -31,5 +31,9 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
+  },
+  "overrides": {
+    "@vue/compiler-sfc": "3.6.0-rc.2",
+    "vue": "3.6.0-rc.2"
   }
 }

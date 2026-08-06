@@ -10,6 +10,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Vapor SFCs compile to `import { defineVaporComponent } from 'vue'`, which the
+      // CJS `vue` entry used under Node (vitest) does not export. Point `vue` at a
+      // shim re-exporting both runtime-dom and runtime-vapor so the emitted import
+      // resolves under both build and vitest.
+      vue: path.resolve(__dirname, './src/lib/vue-shim.ts'),
     },
   },
   server: {
@@ -31,6 +36,6 @@ export default defineConfig({
   test: {
     css: true,
     environment: 'node',
-    include: ['src/**/*.test.ts']
+    include: ['src/**/*.test.ts'],
   }
 });

@@ -1,0 +1,29 @@
+/* workbench-card-fill.css
+   When legacy page components (AppSidebar, ChatPanel, ContextPanel) are embedded
+   as Workbench card content, their absolute-positioned roots must be neutralized:
+   the WorkbenchCardFrame owns position/size, so the content fills the frame.
+   Only safe overrides are scoped under .wb-card-host so nothing else is affected. */
+
+.wb-card-host .sidebar,
+.wb-card-host .conversation,
+.wb-card-host .float-panel {
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  z-index: auto !important;
+}
+
+/* The card frame already provides the material root; the legacy component's own
+   material background would double up. Clear it so the frame's shows through. */
+.wb-card-host .sidebar,
+.wb-card-host .conversation {
+  background: transparent !important;
+}

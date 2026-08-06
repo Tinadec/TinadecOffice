@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<Props>(), {
 const percentage = Math.min(100, Math.max(0, ((props.modelValue || 0) / props.max) * 100))
 </script>
 
-<template>
+<template vapor>
   <div
     :class="cn(
       'relative h-2 w-full overflow-hidden rounded-full bg-primary/20',

@@ -11,7 +11,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 </script>
 
-<template>
+<template vapor>
   <div
     :class="cn(
       'shrink-0 bg-border',
