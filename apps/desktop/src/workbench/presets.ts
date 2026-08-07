@@ -13,8 +13,10 @@ import { createEmptySnapshot } from './reducer'
 // Built-in layout presets.
 //
 // Each page has a default preset. Home deliberately mirrors the pre-refactor
-// geometry: left 260 / center auto / right 420, 8px gaps, floating panels with
-// top insets 8 (left/center) and 48 (right, clears the window chrome).
+// geometry: left 260 / center auto / right 420, 8px gaps. The center (chat)
+// column is immersive (transparent, lets the page background show through);
+// left/right float panels keep top insets 8 (left/center) and 48 (right, clears
+// the window chrome).
 // ---------------------------------------------------------------------------
 
 export interface PresetContext {
@@ -39,7 +41,7 @@ function column(
   slotId: WorkbenchSlotId,
   width: number,
   topInset: number,
-  surfaceMode: 'float' | 'app',
+  surfaceMode: 'float' | 'app' | 'immersive',
   primaryTabIds: string[],
   activeTabId: string | null,
   collapsed = false,
@@ -99,7 +101,7 @@ function buildHomePreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
 
   snapshot.columns = {
     left: column('left', HOME_GEOMETRY.leftWidth, HOME_GEOMETRY.leftTopInset, 'float', [nav.id], nav.id),
-    center: column('center', 0, HOME_GEOMETRY.leftTopInset, 'float', [chat.id], chat.id),
+    center: column('center', 0, HOME_GEOMETRY.leftTopInset, 'immersive', [chat.id], chat.id),
     right: column(
       'right',
       HOME_GEOMETRY.rightWidth,

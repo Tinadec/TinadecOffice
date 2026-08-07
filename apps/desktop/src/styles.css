@@ -2568,6 +2568,7 @@ box-shadow: var(--shadow-subtle);
   align-items: center;
   gap: 14px;
   width: 100%;
+  /* Adaptive: follows the conversation zone width, capped for readability. */
   max-width: 820px;
 }
 
@@ -2623,10 +2624,21 @@ display: flex;
 flex-direction: column;
 gap: 0;
 border-radius: 12px;
-background: var(--bg-secondary);
+/* The welcome dialog is an input surface — use --surface-input so it follows
+   the global material but stays clearly readable. */
+background: var(--surface-input);
 box-shadow: var(--shadow-panel);
+/* Adaptive: fills the welcome content, capped for readability — the dialog
+   floats as a material card on the transparent conversation zone. */
 width: 100%;
+max-width: 820px;
+margin: 0 auto;
 overflow: hidden;
+}
+
+/* Frosted-glass welcome dialog under the blur material. */
+[data-panel-effect="blur"] .welcome-dialog {
+  backdrop-filter: var(--material-filter-section, none);
 }
 
 .welcome-dialog-main {
@@ -3276,8 +3288,16 @@ transition: left 0.2s ease, right 0.2s ease;
 
 .composer-box {
   border-radius: 10px;
-  background: var(--bg-secondary);
+  /* The composer is an input surface — use --surface-input so it follows the
+     global material but stays clearly readable (denser than --surface-section). */
+  background: var(--surface-input);
   box-shadow: var(--shadow-subtle);
+}
+
+/* Frosted-glass composer under the blur material: backdrop blur on the box
+   itself, reusing the root's --material-filter-section. */
+[data-panel-effect="blur"] .composer-box {
+  backdrop-filter: var(--material-filter-section, none);
 }
 
 .composer-main {
@@ -4646,7 +4666,9 @@ flex: 1;
 min-height: 0;
 border-radius: 0;
 overflow: hidden;
-background: var(--bg-primary);
+/* Immersive conversation zone: transparent so the page background shows
+   through. Inner objects (composer, welcome dialog, bubbles) carry material. */
+background: transparent;
 border: none;
 box-shadow: none;
 }

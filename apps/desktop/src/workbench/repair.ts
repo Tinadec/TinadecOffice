@@ -79,7 +79,7 @@ function repairColumn(
     slotId,
     width: clampWidth(c.width, slotId === 'left' ? 260 : slotId === 'right' ? 420 : 600),
     collapsed: c.collapsed === true,
-    surfaceMode: c.surfaceMode === 'app' ? 'app' : 'float',
+    surfaceMode: c.surfaceMode === 'immersive' ? 'immersive' : c.surfaceMode === 'app' ? 'app' : 'float',
     topInset: typeof c.topInset === 'number' ? c.topInset : 8,
     primary,
     secondary,
@@ -129,6 +129,21 @@ export function repairLayout(
   const columns = {} as Record<WorkbenchSlotId, WorkbenchColumn>
   for (const slotId of VALID_SLOTS) {
     columns[slotId] = repairColumn(rawCols[slotId], slotId, cards, registry)
+  }
+
+  // Home's chat column is inherently immersive: migrate any persisted layout
+  // (which may predate the immersive surface mode) so the conversation zone
+  // stays transparent even when the saved snapshot still says 'float'. The chat
+  // card's descriptor is the source of truth, so whichever column hosts it
+  // becomes immersive (normally center).
+  if (pageId === 'home') {
+    for (const slotId of VALID_SLOTS) {
+      const col = columns[slotId]
+      const hostsChat = [...(col.primary?.tabIds ?? []), ...(col.secondary?.tabIds ?? [])].some(
+        (id) => cards[id]?.descriptorId === 'chat',
+      )
+      if (hostsChat) col.surfaceMode = 'immersive'
+    }
   }
 
   // Determine column order.

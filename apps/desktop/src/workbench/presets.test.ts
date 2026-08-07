@@ -24,6 +24,8 @@ describe('built-in presets', () => {
     expect(HOME_GEOMETRY.rightTopInset).toBe(48)
     expect(preset.columns.left.surfaceMode).toBe('float')
     expect(preset.columns.right.surfaceMode).toBe('float')
+    // The chat column is the immersive transparent zone.
+    expect(preset.columns.center.surfaceMode).toBe('immersive')
   })
 
   it('home preset has left/center/right columns in order', () => {

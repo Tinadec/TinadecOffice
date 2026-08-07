@@ -13,12 +13,17 @@ import { COLLAPSED_COLUMN_WIDTH } from './types'
 //
 // computeGeometry(container, snapshot) => WorkbenchGeometry
 //   - lays out columns by columnOrder with their widths, gaps, top insets.
+//   - the center column is adaptive: it fills the space left between the side
+//     columns, but NEVER below a minimum so the chat area stays usable.
 //   - under space pressure: visually collapse the right column first, then the
-//     left. This is a VISUAL-only degradation — never written back to the layout.
+//     left, so the center keeps its minimum. This is a VISUAL-only degradation
+//     — never written back to the layout.
 //   - if a split stack is too short, degrade it to a single stack (visual only).
 // ---------------------------------------------------------------------------
 
 const BOTTOM_INSET = 8
+/** The adaptive center column must stay at least this wide (chat usability). */
+const MIN_CENTER_WIDTH = 320
 
 function effectiveWidth(col: { width: number; collapsed: boolean }): number {
   return col.collapsed ? COLLAPSED_COLUMN_WIDTH : col.width
@@ -39,35 +44,45 @@ export function computeGeometry(
   const gap = snapshot.gap
   const inset = snapshot.edgeInset
   const slots = snapshot.columnOrder.filter((s) => snapshot.columns[s])
-
-  // Total width of all columns at their persisted (non-collapsed) widths.
-  const totalWidths = slots.reduce((sum, s) => sum + effectiveWidth(snapshot.columns[s]), 0)
-  const totalGaps = Math.max(0, slots.length - 1) * gap
-  const needed = totalWidths + totalGaps
-  // Width available inside the window-edge insets.
+  const hasCenter = slots.includes('center')
   const availableWidth = container.width - 2 * inset
-  const overflow = needed - availableWidth
 
-  // Under pressure, collapse right then left (visual only).
-  let collapsedSet = new Set<WorkbenchSlotId>()
-  if (overflow > 0) {
-    const right = slots.find((s) => s === 'right')
+  // Collapse budget: keep the center (if present) at its minimum, so side
+  // columns must fit in whatever remains. Work out how much room the side
+  // columns need, and collapse them (right first, then left) until it fits.
+  const sideSlots = slots.filter((s) => s !== 'center')
+  // The center is adaptive: if present, reserve MIN_CENTER_WIDTH for it (plus
+  // its share of the gaps). If absent, its width is zero.
+  const centerReserved = hasCenter ? MIN_CENTER_WIDTH : 0
+  const sideGaps = Math.max(0, sideSlots.length - 1) * gap
+  const reserved = centerReserved + sideGaps
+
+  // Collapse right first, then left, while the side columns still don't fit.
+  const collapsedSet = new Set<WorkbenchSlotId>()
+  const sideWidths = new Map<WorkbenchSlotId, number>()
+  for (const s of sideSlots) sideWidths.set(s, effectiveWidth(snapshot.columns[s]))
+
+  if (reserved + sum(sideWidths) > availableWidth) {
+    const right = sideSlots.find((s) => s === 'right')
     if (right && !snapshot.columns[right].collapsed) {
       collapsedSet.add(right)
+      sideWidths.set(right, COLLAPSED_COLUMN_WIDTH)
       degraded.collapsedRight = true
     }
   }
-  // Recompute overflow after collapsing right.
-  const widthsAfterRight = slots.map((s) =>
-    collapsedSet.has(s) ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns[s]),
-  )
-  const totalAfterRight = widthsAfterRight.reduce((a, b) => a + b, 0) + totalGaps
-  if (totalAfterRight > availableWidth) {
-    const left = slots.find((s) => s === 'left')
+  if (reserved + sum(sideWidths) > availableWidth) {
+    const left = sideSlots.find((s) => s === 'left')
     if (left && !snapshot.columns[left].collapsed) {
       collapsedSet.add(left)
+      sideWidths.set(left, COLLAPSED_COLUMN_WIDTH)
       degraded.collapsedLeft = true
     }
+  }
+
+  function sum(m: Map<WorkbenchSlotId, number>): number {
+    let total = 0
+    for (const v of m.values()) total += v
+    return total
   }
 
   // Lay out columns.
@@ -78,18 +93,17 @@ export function computeGeometry(
     const slotId = slots[i]
     const col = snapshot.columns[slotId]
     const isLast = i === slots.length - 1
-    const w = effectiveWidth(col)
     const isCollapsedVisual = collapsedSet.has(slotId)
 
-    let width = isCollapsedVisual ? COLLAPSED_COLUMN_WIDTH : w
-    // Center column is adaptive: it fills whatever remains between the left and
-    // right columns (including the gap to each neighbor).
+    // Center is adaptive: fills the space between the (possibly collapsed) side
+    // columns, but never below MIN_CENTER_WIDTH.
+    let width = isCollapsedVisual ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(col)
     if (slotId === 'center' && !isCollapsedVisual) {
       const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : 0
-      const rightX = snapshot.columns.right
-        ? (columnGeoms.right?.x ?? (container.width - inset - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right))))
-        : container.width - inset
-      width = Math.max(0, rightX - gap - usedLeft)
+      const rightX = columnGeoms.right
+        ? columnGeoms.right.x
+        : container.width - inset - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right ?? { width: 0, collapsed: false }))
+      width = Math.max(MIN_CENTER_WIDTH, rightX - gap - usedLeft)
     }
 
     const height = container.height - col.topInset - BOTTOM_INSET

@@ -140,4 +140,94 @@ describe('repairLayout', () => {
     const tooBig = repairLayout({ version: 1, pageId: 'home', columns: {}, cards: {}, edgeInset: 99 }, ctx)
     expect(tooBig.edgeInset).toBe(8)
   })
+
+  it('preserves an immersive surface mode and clamps anything else to float', () => {
+    const ctx = makeCtx()
+    const immersive = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          center: { width: 0, collapsed: false, surfaceMode: 'immersive', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          right: { width: 420, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+        },
+        cards: {},
+        focusedCardId: null,
+        gap: 8,
+      },
+      ctx,
+    )
+    expect(immersive.columns.center.surfaceMode).toBe('immersive')
+
+    // Unknown value degrades to the safe float fallback.
+    const garbled = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          center: { width: 0, collapsed: false, surfaceMode: 'weird', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          right: { width: 420, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+        },
+        cards: {},
+        focusedCardId: null,
+        gap: 8,
+      },
+      ctx,
+    )
+    expect(garbled.columns.center.surfaceMode).toBe('float')
+  })
+
+  it('migrates a persisted home layout so the chat column is immersive', () => {
+    const ctx = makeCtx()
+    // A layout saved before the immersive mode existed: center column hosts the
+    // chat card but still says 'float'. Repair must force it immersive.
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: ['n'], activeTabId: 'n' }, secondary: null, splitRatio: null },
+          center: { width: 0, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: ['c'], activeTabId: 'c' }, secondary: null, splitRatio: null },
+          right: { width: 420, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+        },
+        cards: {
+          n: { id: 'n', descriptorId: 'nav', title: '项目' },
+          c: { id: 'c', descriptorId: 'chat', title: '聊天' },
+        },
+        focusedCardId: 'c',
+        gap: 8,
+      },
+      ctx,
+    )
+    // The chat column becomes immersive; the non-chat columns stay float.
+    expect(out.columns.center.surfaceMode).toBe('immersive')
+    expect(out.columns.left.surfaceMode).toBe('float')
+    expect(out.columns.right.surfaceMode).toBe('float')
+  })
+
+  it('keeps an explicitly persisted immersive home column immersive', () => {
+    const ctx = makeCtx()
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          center: { width: 0, collapsed: false, surfaceMode: 'immersive', topInset: 8, primary: { stackId: 'primary', tabIds: ['c'], activeTabId: 'c' }, secondary: null, splitRatio: null },
+          right: { width: 420, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+        },
+        cards: { c: { id: 'c', descriptorId: 'chat', title: '聊天' } },
+        focusedCardId: 'c',
+        gap: 8,
+      },
+      ctx,
+    )
+    expect(out.columns.center.surfaceMode).toBe('immersive')
+  })
 })

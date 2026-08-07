@@ -22,8 +22,16 @@ export type LayoutScope =
 /** Source of a layout command. `ai` is reserved and rejected this round. */
 export type LayoutSource = 'user' | 'route' | 'restore' | 'ai'
 
-/** Floating-panel look vs. connected application look. */
-export type SurfaceMode = 'float' | 'app'
+/**
+ * Column surface look.
+ * - `float`: floating panel — rounded, shadowed, material root (sidebar/right rail on Home).
+ * - `app`: connected application look — flush, no radius/shadow (market/code/debug).
+ * - `immersive`: transparent immersive zone (Home chat column) — the root carries no
+ *   material and the page background shows through; inner objects (composer, welcome
+ *   dialog, bubbles) still carry material and follow the global panel effect via
+ *   the inherited `data-panel-effect` surface tokens.
+ */
+export type SurfaceMode = 'float' | 'app' | 'immersive'
 export type CardTitlebarMode = 'hidden' | 'minimal' | 'full'
 
 /** Versioned, pure-data layout snapshot. version:1 is fixed for this round. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import settingsCss from './settings.css?raw'
 import stylesCss from '../styles.css?raw'
+import workbenchStackSource from '../workbench/components/WorkbenchStack.vue?raw'
 import settingsPageSource from '../pages/SettingsPage.vue?raw'
 import agentEvolutionPanelSource from '../components/AgentEvolutionPanel.vue?raw'
 import promptEngineeringPanelSource from '../components/PromptEngineeringPanel.vue?raw'
@@ -494,6 +495,35 @@ describe('styles.css extraction contract', () => {
     expect(css).toContain('.background-layer')
     expect(css).toContain('.agent-card')
     expect(css).toContain('.agent-topology-node')
+  })
+
+  it('keeps the immersive conversation zone transparent with material-carrying objects', () => {
+    // The conversation zone itself is transparent (page background shows through).
+    const panel = assertCssBlock(css, /\.chat-active-panel\s*\{([^}]+)\}/)
+    expect(panel).toContain('background: transparent;')
+
+    // Composer + welcome dialog follow the material via the denser input token
+    // so they stay readable in translucent/blur modes.
+    const composer = assertCssBlock(css, /\.composer-box\s*\{([^}]+)\}/)
+    expect(composer).toContain('background: var(--surface-input);')
+    const welcome = assertCssBlock(css, /\.welcome-dialog\s*\{([^}]+)\}/)
+    expect(welcome).toContain('background: var(--surface-input);')
+
+    // Frosted-glass composer under the blur material.
+    expect(css).toMatch(/\[data-panel-effect="blur"\] \.composer-box\s*\{[^}]*backdrop-filter:\s*var\(--material-filter-section[^}]*\}/)
+    expect(css).toMatch(/\[data-panel-effect="blur"\] \.welcome-dialog\s*\{[^}]*backdrop-filter:\s*var\(--material-filter-section[^}]*\}/)
+
+    // The welcome dialog stays adaptive to the conversation zone width (not a
+    // fixed small card), capped at the readable 820px like the composer.
+    const welcomeBlock = assertCssBlock(css, /\.welcome-dialog\s*\{([^}]+)\}/)
+    expect(welcomeBlock).toMatch(/width:\s*100%;/)
+    expect(welcomeBlock).toMatch(/max-width:\s*820px;/)
+  })
+
+  it('renders immersive stacks with a transparent material root', () => {
+    const blocks = extractStyleBlocks(workbenchStackSource)
+    expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*background:\s*transparent[^}]*\}/)
+    expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*box-shadow:\s*none[^}]*\}/)
   })
 
   it('maps opaque surfaces to the solid theme tokens', () => {

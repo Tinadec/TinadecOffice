@@ -21,7 +21,20 @@ const wb = useWorkbench()
 // The stack is a single material root (like the old ContextPanel / .sidebar /
 // .conversation). Tab bar and content share one continuous surface.
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
-const materialStyle = computed(() => getPanelStyle())
+
+// Immersive stacks (Home chat column) are transparent: the root carries no
+// background/backdrop so the page background shows through, but it still keeps
+// the data-panel-effect attribute so inner objects (composer, welcome dialog,
+// bubbles) inherit the remapped --surface-* tokens and follow the global
+// material. Keep the --material-filter-* vars for blur-glass inner surfaces.
+const materialStyle = computed(() => {
+  const style = getPanelStyle()
+  if (props.surfaceMode === 'immersive') {
+    const { backgroundColor, backdropFilter, WebkitBackdropFilter, ...rest } = style
+    return rest
+  }
+  return style
+})
 const materialAttrs = computed(() => getPanelDataAttributes())
 
 const showTabBar = computed(() => props.instances.length > 1)
@@ -48,6 +61,7 @@ function close(instanceId: string) {
     class="wb-stack"
     :class="{
       'wb-stack--app': surfaceMode === 'app',
+      'wb-stack--immersive': surfaceMode === 'immersive',
     }"
     :style="{
       left: `${geometry.x}px`,
@@ -109,6 +123,15 @@ function close(instanceId: string) {
 /* Connected app look: no rounding, no border, continuous surface. */
 .wb-stack--app {
   background: var(--bg-primary);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Immersive zone (Home chat column): the root is transparent so the page
+   background shows through; inner objects carry their own material. */
+.wb-stack--immersive {
+  background: transparent;
   border: none;
   border-radius: 0;
   box-shadow: none;

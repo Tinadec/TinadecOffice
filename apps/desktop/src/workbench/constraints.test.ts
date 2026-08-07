@@ -51,6 +51,27 @@ describe('constraint solver', () => {
     // left may also collapse for 500 width
   })
 
+  it('collapses the right column instead of crushing the adaptive center below its minimum', () => {
+    // At 900px the naive "center width = 0 in overflow math" bug left the chat
+    // column at ~188px. The fixed solver collapses the right rail (420 -> 44)
+    // so the adaptive center stays at least MIN_CENTER_WIDTH.
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    const g = computeGeometry({ width: 900, height: 900 }, snapshot)
+    expect(g.degraded.collapsedRight).toBe(true)
+    expect(g.columns.center.width).toBeGreaterThanOrEqual(320)
+  })
+
+  it('never lets the adaptive center drop below its minimum at narrow widths', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    for (const w of [1000, 900, 762, 700, 600, 520, 460]) {
+      const g = computeGeometry({ width: w, height: 900 }, snapshot)
+      // center renders whenever the column exists and is not itself collapsed.
+      if (g.columns.center.width > 0) {
+        expect(g.columns.center.width).toBeGreaterThanOrEqual(320)
+      }
+    }
+  })
+
   it('does not collapse anything at wide width', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
     const g = computeGeometry({ width: 1920, height: 1080 }, snapshot)
