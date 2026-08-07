@@ -102,7 +102,7 @@ function buildFallback(message: string): void {
  * the full-screen fallback — they are non-fatal and common, and covering the
  * whole window for one would be worse than the error itself.
  */
-export function installRendererErrorFallback(app: { config: { errorHandler?: unknown } }): (err: unknown, ctx?: ErrorContext) => void {
+export function installRendererErrorFallback(app: { config: { errorHandler?: unknown } }): (err: unknown, ctx?: ErrorContext, fatal?: boolean) => void {
   const report = (err: unknown, ctx: ErrorContext = {}, fatal = false): void => {
     const message = messageOf(err)
     const detail = ctx.detail ?? (ctx.source === 'vue' && err && typeof err === 'object' ? '' : '')
