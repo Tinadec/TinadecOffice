@@ -116,15 +116,33 @@ export function createWorkbench(options: WorkbenchStoreOptions): WorkbenchStore 
 
   // Hydrate from disk asynchronously: if a stored layout exists for the current
   // page/project, repair + restore it so the user's layout survives restarts.
+  // A failed hydrate/restore must never become an unhandled rejection or take
+  // down the renderer — on failure we keep the built-in preset (repairLayout in
+  // restoreSnapshot is already the blank-window guard).
   if (options.persistence) {
     const layerStore = options.persistence.store
-    void layerStore.hydrate().then((loaded) => {
-      if (!loaded) return
-      const stored = layerStore.resolveSnapshot(initialPage, activeProjectId.value)
-      if (stored) {
-        restoreSnapshot(stored)
-      }
-    })
+    void layerStore
+      .hydrate()
+      .then((loaded) => {
+        if (!loaded) return
+        const stored = layerStore.resolveSnapshot(initialPage, activeProjectId.value)
+        if (stored) {
+          restoreSnapshot(stored)
+        }
+      })
+      .catch((err) => {
+        console.error('[workbench] layout hydrate/restore failed:', err)
+      })
+
+    // Flush the debounced auto-save on unload so Ctrl+R (full renderer reload)
+    // never loses the last 400ms of changes and no debounce timer races the
+    // reload. flush() is idempotent, so the double fire from beforeunload +
+    // pagehide is a no-op.
+    if (typeof window !== 'undefined') {
+      const flush = () => layerStore.flush()
+      window.addEventListener('beforeunload', flush)
+      window.addEventListener('pagehide', flush)
+    }
   }
 
   const pageId = computed<WorkbenchPageId>(() => snapshot.value.pageId)

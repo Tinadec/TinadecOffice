@@ -56,6 +56,12 @@ export const VAPOR_EXEMPTIONS: readonly VaporExemptionEntry[] = [
     file: 'src/settings/components/SettingsModuleBoundary.vue',
     reason: 'defineComponent render-function error boundary. Must be runtime-verified under Vapor interop.',
   },
+  {
+    file: 'src/components/AppSplash.vue',
+    reason: 'Wrapped by the root splash-exit <Transition> in App.vue. A classic Transition wrapping a Vapor SFC exercises the classic↔Vapor interop leave path (getInteropTransitionElement / vaporInteropImpl.unmount) that crashed on Ctrl+R reload — the same pattern commit 46a5988 removed the other root Transitions for. De-vapored so the Transition is classic-around-classic, the well-tested path. Zero visual change (markup/CSS untouched).',
+    verdict: 'exempt',
+    note: 'Do not opt back in until a clean Ctrl+R reload is proven in the running Electron app.',
+  },
 ]
 
 /** Components explicitly opted into Vapor (for reporting/audit). */
@@ -63,7 +69,6 @@ export const VAPOR_OPTED_IN: readonly string[] = [
   // batch0 — leaf presentational + simple UI primitives
   'src/components/StatusPill.vue',
   'src/components/BrandLogo.vue',
-  'src/components/AppSplash.vue',
   'src/components/ui/badge.vue',
   'src/components/ui/separator.vue',
   'src/components/ui/skeleton.vue',

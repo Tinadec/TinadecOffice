@@ -6,6 +6,7 @@ import i18n from './i18n'
 import { useTheme } from './composables/useTheme'
 import { setNotificationFallbackText } from './composables/useNotifications'
 import { installPreviewShimIfNeeded } from './lib/previewShim'
+import { installRendererErrorFallback } from './lib/rendererErrorFallback'
 import './styles.css'
 // Overrides so legacy page components (AppSidebar/ChatPanel) fill their card frame.
 import './workbench/components/workbench-card-fill.css'
@@ -34,4 +35,15 @@ if (applyInitialTheme) {
   applyInitialTheme()
 }
 
-app.mount('#app')  
+// Global error containment: logs every uncaught error and, on the first fatal
+// one, swaps the stuck splash for a recoverable DOM fallback instead of leaving
+// a silent solid-color window. Installed before mount so render errors during
+// boot are also caught.
+const report = installRendererErrorFallback(app)
+try {
+  app.mount('#app')
+} catch (err) {
+  // A throw at mount means nothing rendered — this is fatal, show the fallback.
+  report(err, { source: 'app.mount' }, true)
+}
+

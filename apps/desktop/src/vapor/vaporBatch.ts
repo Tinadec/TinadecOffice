@@ -27,7 +27,6 @@ export const VAPOR_BATCHES: readonly VaporBatch[] = [
     files: [
       'src/components/StatusPill.vue',
       'src/components/BrandLogo.vue',
-      'src/components/AppSplash.vue',
       'src/components/ui/badge.vue',
       'src/components/ui/separator.vue',
       'src/components/ui/skeleton.vue',
