@@ -35,5 +35,10 @@
   "overrides": {
     "@vue/compiler-sfc": "3.6.0-rc.2",
     "vue": "3.6.0-rc.2"
+  },
+  "allowScripts": {
+    "msw@2.14.6": true,
+    "node-pty@1.1.0": true,
+    "esbuild": true
   }
 }
