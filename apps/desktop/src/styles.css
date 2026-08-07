@@ -4644,11 +4644,11 @@ display: grid;
 grid-template-rows: auto 1fr auto;
 flex: 1;
 min-height: 0;
-border-radius: 12px;
+border-radius: 0;
 overflow: hidden;
 background: var(--bg-primary);
-border: 1px solid var(--border-muted);
-box-shadow: var(--shadow-panel);
+border: none;
+box-shadow: none;
 }
 
 .chat-panel-enter-active,

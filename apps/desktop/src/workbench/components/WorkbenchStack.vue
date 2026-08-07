@@ -100,8 +100,8 @@ function close(instanceId: string) {
   min-height: 0;
   overflow: hidden;
   background: var(--surface-section);
-  /* Float-panel look: rounded, bordered, shadowed (matches old .float-panel). */
-  border: 1px solid var(--border-muted);
+  /* Float-panel look: rounded, shadowed, no outline (borderless). */
+  border: none;
   border-radius: 12px;
   box-shadow: var(--shadow-panel);
 }
