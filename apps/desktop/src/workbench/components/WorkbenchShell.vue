@@ -17,8 +17,11 @@ const wb = useWorkbench()
 
 <style scoped>
 .shell {
-  position: absolute;
-  inset: 0;
+  /* relative + 100vh so the shell fills (and therefore props open) the
+     .main-content wrapper — an absolute/inset:0 root would collapse the
+     wrapper's height to 0 and its overflow:clip would blank the window. */
+  position: relative;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   min-height: 0;
