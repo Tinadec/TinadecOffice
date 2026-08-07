@@ -14,6 +14,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import type { ProjectDto, SessionDto } from '../api'
 import BrandLogo from '@/components/BrandLogo.vue'
+import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import { UiButton, UiDropdownMenu } from '@/components/ui'
 
 const { t } = useI18n()
@@ -110,7 +111,7 @@ function openDebugStudio() {
     <div class="sidebar-topbar">
       <div class="brand">
         <BrandLogo :size="14" />
-        <span>Tinadec</span>
+        <TinadecCalligraphy :size="16" />
       </div>
     </div>
 
