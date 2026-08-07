@@ -111,7 +111,7 @@ function openDebugStudio() {
     <div class="sidebar-topbar">
       <div class="brand">
         <BrandLogo :size="14" />
-        <TinadecCalligraphy :size="16" />
+        <TinadecCalligraphy :size="14" />
       </div>
     </div>
 
