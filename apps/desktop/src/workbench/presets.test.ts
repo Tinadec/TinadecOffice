@@ -12,6 +12,8 @@ describe('built-in presets', () => {
     expect(preset.pageId).toBe('home')
     expect(preset.gap).toBe(HOME_GEOMETRY.gap)
     expect(HOME_GEOMETRY.gap).toBe(8)
+    expect(preset.edgeInset).toBe(HOME_GEOMETRY.edgeInset)
+    expect(HOME_GEOMETRY.edgeInset).toBe(8)
     expect(preset.columns.left.width).toBe(HOME_GEOMETRY.leftWidth)
     expect(HOME_GEOMETRY.leftWidth).toBe(260)
     expect(preset.columns.right.width).toBe(HOME_GEOMETRY.rightWidth)
@@ -50,9 +52,10 @@ describe('built-in presets', () => {
     expect(preset.columns.right.collapsed).toBe(true)
   })
 
-  it('market preset has gap 1 and three app columns', () => {
+  it('market preset has gap 1, zero edge inset, and three app columns', () => {
     const preset = buildPreset('market', { nextInstanceId: nextId() })
     expect(preset.gap).toBe(1)
+    expect(preset.edgeInset).toBe(0)
     expect(preset.columns.left.width).toBe(292)
     expect(preset.columns.right.width).toBe(392)
     expect(preset.columns.left.surfaceMode).toBe('app')
@@ -64,6 +67,7 @@ describe('built-in presets', () => {
       expect(preset.pageId).toBe(pageId)
       expect(Object.keys(preset.cards).length).toBeGreaterThan(0)
       expect(preset.columnOrder.length).toBe(3)
+      expect(typeof preset.edgeInset).toBe('number')
     }
   })
 

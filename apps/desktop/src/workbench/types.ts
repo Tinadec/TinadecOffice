@@ -39,6 +39,8 @@ export interface WorkbenchLayoutSnapshot {
   focusedCardId: string | null
   /** Column gap (px). home/settings = 8, market = 1. */
   gap: number
+  /** Window-edge inset (px). home/settings = 8 (float pages); market/code/debug = 0 (app pages, flush to edges). */
+  edgeInset: number
 }
 
 export interface WorkbenchColumn {
@@ -136,4 +138,6 @@ export interface WorkbenchContainerSize {
 
 export const COLLAPSED_COLUMN_WIDTH = 44
 export const DEFAULT_GAP = 8
+/** Window-edge inset for float pages (home/settings). App pages use 0. */
+export const EDGE_INSET = 8
 export const UNDO_LIMIT = 50

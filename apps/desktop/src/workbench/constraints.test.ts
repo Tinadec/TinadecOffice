@@ -11,7 +11,7 @@ describe('constraint solver', () => {
   it('lays out home columns at 1440 width: 260 + center + 420 with 8px gaps', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
     const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
-    expect(g.columns.left.x).toBe(0)
+    expect(g.columns.left.x).toBe(HOME_GEOMETRY.edgeInset)
     expect(g.columns.left.width).toBe(HOME_GEOMETRY.leftWidth)
     expect(g.columns.left.topInset).toBe(8)
     expect(g.columns.right.x).toBeGreaterThan(0)
@@ -28,9 +28,11 @@ describe('constraint solver', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
     const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
     const rightEdge = g.columns.right.x + g.columns.right.width
-    expect(rightEdge).toBeLessThanOrEqual(1440)
+    expect(rightEdge).toBe(1440 - HOME_GEOMETRY.edgeInset)
     // center spans from after-left to before-right.
-    expect(g.columns.center.width).toBe(1440 - 260 - 420 - 16)
+    expect(g.columns.center.width).toBe(
+      1440 - 2 * HOME_GEOMETRY.edgeInset - HOME_GEOMETRY.leftWidth - HOME_GEOMETRY.rightWidth - 2 * HOME_GEOMETRY.gap,
+    )
   })
 
   it('collapses right column under space pressure (visual only)', () => {
@@ -84,5 +86,22 @@ describe('constraint solver', () => {
     // upper = 65% of height, lower = 35%
     expect(g.splits['right'].upper.height).toBeGreaterThanOrEqual(Math.round(rightH * 0.5))
     expect(g.splits['right'].lower.height).toBeGreaterThan(0)
+  })
+
+  it('settings keeps 8px window-edge gaps with the right rail collapsed', () => {
+    const snapshot = buildPreset('settings', { nextInstanceId: nextId() })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.columns.left.x).toBe(8)
+    // Right column is collapsed to 44 and pinned to the right inset.
+    expect(g.columns.right.x).toBe(1440 - 8 - 44)
+    expect(g.columns.right.width).toBe(44)
+    expect(g.columns.right.x + g.columns.right.width).toBe(1440 - 8)
+  })
+
+  it('app-mode pages stay flush to the window edges', () => {
+    const snapshot = buildPreset('market', { nextInstanceId: nextId() })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.columns.left.x).toBe(0)
+    expect(g.columns.right.x + g.columns.right.width).toBe(1440)
   })
 })

@@ -13,7 +13,7 @@ import type {
 } from './commands'
 import { isInternalCommand, isRejectedSource } from './commands'
 import type { CardRegistry } from './registry'
-import { COLLAPSED_COLUMN_WIDTH } from './types'
+import { COLLAPSED_COLUMN_WIDTH, EDGE_INSET } from './types'
 
 // ---------------------------------------------------------------------------
 // Layout reducer.
@@ -616,6 +616,7 @@ export function createEmptySnapshot(pageId: WorkbenchPageId, revision = 1): Work
     cards: {},
     focusedCardId: null,
     gap: 8,
+    edgeInset: EDGE_INSET,
   }
 }
 

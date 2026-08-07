@@ -37,13 +37,16 @@ export function computeGeometry(
   }
 
   const gap = snapshot.gap
+  const inset = snapshot.edgeInset
   const slots = snapshot.columnOrder.filter((s) => snapshot.columns[s])
 
   // Total width of all columns at their persisted (non-collapsed) widths.
   const totalWidths = slots.reduce((sum, s) => sum + effectiveWidth(snapshot.columns[s]), 0)
   const totalGaps = Math.max(0, slots.length - 1) * gap
   const needed = totalWidths + totalGaps
-  const overflow = needed - container.width
+  // Width available inside the window-edge insets.
+  const availableWidth = container.width - 2 * inset
+  const overflow = needed - availableWidth
 
   // Under pressure, collapse right then left (visual only).
   let collapsedSet = new Set<WorkbenchSlotId>()
@@ -59,7 +62,7 @@ export function computeGeometry(
     collapsedSet.has(s) ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns[s]),
   )
   const totalAfterRight = widthsAfterRight.reduce((a, b) => a + b, 0) + totalGaps
-  if (totalAfterRight > container.width) {
+  if (totalAfterRight > availableWidth) {
     const left = slots.find((s) => s === 'left')
     if (left && !snapshot.columns[left].collapsed) {
       collapsedSet.add(left)
@@ -68,7 +71,7 @@ export function computeGeometry(
   }
 
   // Lay out columns.
-  let cursorX = 0
+  let cursorX = inset
   const columnGeoms: Record<WorkbenchSlotId, ColumnGeometry> = {} as Record<WorkbenchSlotId, ColumnGeometry>
 
   for (let i = 0; i < slots.length; i++) {
@@ -84,8 +87,8 @@ export function computeGeometry(
     if (slotId === 'center' && !isCollapsedVisual) {
       const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : 0
       const rightX = snapshot.columns.right
-        ? (columnGeoms.right?.x ?? (container.width - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right))))
-        : container.width
+        ? (columnGeoms.right?.x ?? (container.width - inset - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right))))
+        : container.width - inset
       width = Math.max(0, rightX - gap - usedLeft)
     }
 

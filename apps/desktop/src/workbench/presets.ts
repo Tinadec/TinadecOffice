@@ -60,6 +60,7 @@ export const HOME_GEOMETRY = {
   leftWidth: 260,
   rightWidth: 420,
   gap: 8,
+  edgeInset: 8,
   leftTopInset: 8,
   rightTopInset: 48,
 } as const
@@ -68,6 +69,7 @@ function buildHomePreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('home')
   snapshot.gap = HOME_GEOMETRY.gap
+  snapshot.edgeInset = HOME_GEOMETRY.edgeInset
 
   const nav = card(n(), 'nav', '项目')
   const chat = card(n(), 'chat', '聊天')
@@ -115,6 +117,7 @@ function buildSettingsPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('settings')
   snapshot.gap = 8
+  snapshot.edgeInset = 8
 
   const nav = card(n(), 'settingsNav', '设置')
   const content = card(n(), 'settingsContent', '内容')
@@ -134,6 +137,7 @@ function buildMarketPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('market')
   snapshot.gap = 1
+  snapshot.edgeInset = 0
 
   const filter = card(n(), 'marketFilter', '筛选')
   const catalog = card(n(), 'marketCatalog', '目录')
@@ -153,6 +157,7 @@ function buildCodePreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('code')
   snapshot.gap = 1
+  snapshot.edgeInset = 0
 
   const toolbar = card(n(), 'codeToolbar', '代码')
   const fileTree = card(n(), 'fileTree', '文件')
@@ -181,6 +186,7 @@ function buildDebugPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('debug')
   snapshot.gap = 1
+  snapshot.edgeInset = 0
 
   const timeline = card(n(), 'debugTimeline', '时间线')
   const inspector = card(n(), 'debugInspector', 'Inspector')

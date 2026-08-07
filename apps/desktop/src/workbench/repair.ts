@@ -35,6 +35,11 @@ function clampWidth(w: unknown, fallback: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n))
 }
 
+/** Float pages keep an 8px window-edge gap; app pages stay flush. */
+function defaultEdgeInset(pageId: WorkbenchPageId): number {
+  return pageId === 'home' || pageId === 'settings' ? 8 : 0
+}
+
 function isValidPageId(p: unknown): p is WorkbenchPageId {
   return p === 'home' || p === 'settings' || p === 'market' || p === 'code' || p === 'debug'
 }
@@ -137,6 +142,10 @@ export function repairLayout(
   // (already handled by card dedup above)
 
   const gap = typeof r.gap === 'number' && r.gap >= 0 && r.gap <= 32 ? r.gap : 8
+  const edgeInset =
+    typeof r.edgeInset === 'number' && r.edgeInset >= 0 && r.edgeInset <= 32
+      ? Math.round(r.edgeInset)
+      : defaultEdgeInset(pageId)
   const focused =
     typeof r.focusedCardId === 'string' && cards[r.focusedCardId] ? r.focusedCardId : null
 
@@ -151,5 +160,6 @@ export function repairLayout(
     cards,
     focusedCardId: focused,
     gap,
+    edgeInset,
   }
 }
