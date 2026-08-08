@@ -1,5 +1,6 @@
 @import "@fontsource-variable/geist";
 @import "tailwindcss";
+@import "./animations/page-transitions.css";
 
 @theme {
   --color-border: hsl(var(--border));
@@ -169,6 +170,15 @@
   --shadow-elevated: 0 8px 28px rgba(0, 0, 0, 0.42);
   --shadow-focus: 0 0 0 2px rgba(46, 196, 182, 0.3);
 
+  /* Card boundary & subtle elevation */
+  --border-card: rgba(0, 0, 0, 0.08);
+  --border-card-active: rgba(0, 0, 0, 0.12);
+  --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.08),
+                        0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
+                       0 8px 24px rgba(0, 0, 0, 0.07);
+  --bg-immersive: rgba(17, 21, 28, 0.38);
+
   --scrollbar-thumb: rgba(125, 133, 144, 0.22);
   --scrollbar-thumb-hover: rgba(125, 133, 144, 0.4);
 }
@@ -229,6 +239,15 @@
   --shadow-panel: 0 4px 16px rgba(26, 37, 38, 0.07);
   --shadow-elevated: 0 8px 28px rgba(26, 37, 38, 0.12);
   --shadow-focus: 0 0 0 2px rgba(31, 143, 128, 0.18);
+
+  /* Card boundary & subtle elevation */
+  --border-card: rgba(0, 0, 0, 0.08);
+  --border-card-active: rgba(0, 0, 0, 0.12);
+  --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.06),
+                        0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
+                       0 8px 24px rgba(0, 0, 0, 0.07);
+  --bg-immersive: rgba(246, 248, 250, 0.70);
 
   --scrollbar-thumb: rgba(31, 35, 40, 0.18);
   --scrollbar-thumb-hover: rgba(31, 35, 40, 0.32);
@@ -4660,17 +4679,17 @@ Triggered by the page-level transition on the parent .settings-page. */
 
 
 .chat-active-panel {
-display: grid;
-grid-template-rows: auto 1fr auto;
-flex: 1;
-min-height: 0;
-border-radius: 0;
-overflow: hidden;
-/* Immersive conversation zone: transparent so the page background shows
-   through. Inner objects (composer, welcome dialog, bubbles) carry material. */
-background: transparent;
-border: none;
-box-shadow: none;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* Immersive conversation zone: transparent so the page background shows
+     through. Inner objects (composer, welcome dialog, bubbles) carry material.
+     NO border/shadow here — the parent stack owns visual boundary. */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .chat-panel-enter-active,

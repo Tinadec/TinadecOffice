@@ -113,14 +113,24 @@ function close(instanceId: string) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-section);
-  /* Float-panel look: rounded, shadowed, no outline (borderless). */
-  border: none;
-  border-radius: 12px;
-  box-shadow: var(--shadow-panel);
 }
 
-/* Connected app look: no rounding, no border, continuous surface. */
+/* Float-panel look (Left/Right): rounded, background + subtle border for island-style elevation */
+.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive) {
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  /* Conditional shadow: only when surface mode is not immersive */
+  box-shadow: var(--shadow-card-subtle);
+  transition: box-shadow 0.2s ease;
+}
+
+/* Hover elevation for floating panels */
+.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive):hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* Connected app look (Market/Code): no rounding, no border, continuous surface. */
 .wb-stack--app {
   background: var(--bg-primary);
   border: none;
@@ -128,13 +138,14 @@ function close(instanceId: string) {
   box-shadow: none;
 }
 
-/* Immersive zone (Home chat column): the root is transparent so the page
-   background shows through; inner objects carry their own material. */
+/* Immersive zone (Home chat center column): transparent so page background shows through.
+   User's global material setting controls backdrop-filter on inner objects.
+   NO background color here — the conversation area is truly invisible. */
 .wb-stack--immersive {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 .wb-stack-tabbar {

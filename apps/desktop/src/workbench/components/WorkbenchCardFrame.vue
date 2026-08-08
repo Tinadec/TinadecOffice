@@ -110,6 +110,16 @@ const showTab = computed(() => mode.value === 'full')
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  /* Island-style card boundary: subtle border + radius for visual separation */
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  /* Conditional shadow: only when not in immersive mode, applied by parent */
+}
+
+/* Light shadow variant for floating panels */
+.wb-card-frame--shadow {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08),
+              0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .wb-card-tabbar {

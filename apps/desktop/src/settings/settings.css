@@ -87,36 +87,62 @@ padding: 8px;
 overflow: hidden;
 }
 @keyframes settings-nav-enter {
-from {
-  opacity: 0;
-  transform: translateX(-16px);
-}
-to {
-  opacity: 1;
-  transform: translateX(0);
-}
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes settings-content-enter {
-from {
-  opacity: 0;
-  transform: translateX(20px);
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
-to {
-  opacity: 1;
-  transform: translateX(0);
+
+/* Exit keyframes — exact reverse of entry directions.
+   Driven by the .settings-exiting class toggled from SettingsPage.vue's
+   onBeforeRouteLeave. Uses ease-in for a quick, decisive exit. */
+@keyframes settings-nav-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
 }
+
+@keyframes settings-content-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
 }
 .settings-nav {
-position: relative;
-padding: 16px 12px;
-background: var(--surface-section);
-border-radius: 12px;
-border: none;
-box-shadow: var(--shadow-panel);
-overflow: auto;
-animation: settings-nav-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-animation-delay: 0.05s;
+  position: relative;
+  padding: 16px 12px;
+  background: var(--surface-section);
+  border-radius: 12px;
+  border: none;
+  box-shadow: var(--shadow-panel);
+  overflow: auto;
+  animation: settings-nav-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0.05s;
+  will-change: transform, opacity;
 }
 
 .settings-nav-header {
@@ -158,17 +184,32 @@ animation-delay: 0.05s;
   color: var(--accent-primary);
 }
 .settings-content {
-/* Push content below the 40px window-controls bar so it doesn't
-   overlap, while the sidebar (on the left) can start at the top. */
-margin-top: 40px;
-padding: 24px 32px;
-overflow: auto;
-background: var(--surface-section);
-border-radius: 12px;
-border: none;
-box-shadow: var(--shadow-panel);
-animation: settings-content-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-animation-delay: 0.12s;
+  /* Push content below the 40px window-controls bar so it doesn't
+     overlap, while the sidebar (on the left) can start at the top. */
+  margin-top: 40px;
+  padding: 24px 32px;
+  overflow: auto;
+  background: var(--surface-section);
+  border-radius: 12px;
+  border: none;
+  box-shadow: var(--shadow-panel);
+  animation: settings-content-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0.13s;
+  will-change: transform, opacity;
+}
+
+/* Exit state — overrides the entry keyframes via higher specificity.
+   The .settings-exiting class is toggled on the page root by
+   SettingsPage.vue before navigation completes. fill-mode forwards
+   keeps panels at their exit position until unmount. */
+.settings-exiting .settings-nav {
+  animation: settings-nav-exit 0.45s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation-delay: 0s;
+}
+
+.settings-exiting .settings-content {
+  animation: settings-content-exit 0.45s cubic-bezier(0.4, 0, 1, 1) forwards;
+  animation-delay: 0.08s;
 }
 
 .settings-content h2 {
@@ -3568,7 +3609,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 }
 
 /* ===== Reduced Motion Neutralization =====
-   Disable all settings-related entrance keyframes, section-fade,
+   Disable all settings-related entrance/exit keyframes, section-fade,
    settings-module fallback, and View Transition elements. */
 @media (prefers-reduced-motion: reduce) {
   @keyframes settings-nav-enter {
@@ -3581,6 +3622,16 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
     to   { opacity: 1; transform: none; }
   }
 
+  @keyframes settings-nav-exit {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes settings-content-exit {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 1; transform: none; }
+  }
+
   .settings-nav {
     animation: none !important;
     transition-duration: 0s !important;
@@ -3589,6 +3640,11 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   .settings-content {
     animation: none !important;
     transition-duration: 0s !important;
+  }
+
+  .settings-exiting .settings-nav,
+  .settings-exiting .settings-content {
+    animation: none !important;
   }
 
   .section-fade-enter-active,

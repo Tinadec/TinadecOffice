@@ -164,6 +164,15 @@ The Desktop main window is rendered by a **WorkbenchShell** — a deterministic 
 
 - The router keeps all existing hash paths (`/`, `/settings`, `/market`, `/debug-studio`, `/code-editor`, `/panel`, `/pet`). The main window renders the WorkbenchShell for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
 
+### Page transition animations
+
+Spatial route transitions are **declarative and CSS-class driven** — page code never manipulates engine nodes (`.wb-column`) via DOM queries or inline styles, so the Workbench remains the single layout authority.
+
+- **Home exit**: `HomePage.vue` wraps the shell in a classic `<Transition name="home-up-exit">` around a plain div (never the Vapor `WorkbenchShell` root — classic-around-Vapor leave paths crash the interop unmount, see `VaporExemptions.ts`). `onBeforeRouteLeave` flips a `visible` flag and defers navigation ~300 ms; `page-transitions.css` animates `.wb-column` `transform`/`opacity` only (the engine's `patchStyle` diff owns `left/top/width/height` and never touches these).
+- **Home entry**: the same Transition's enter classes rise the columns from below with stagger when returning.
+- **Settings entry/exit**: `settings.css` keyframes (`settings-nav-enter`/`settings-content-enter` and `settings-nav-exit`/`settings-content-exit`) drive both directions. Exit toggles a `.settings-exiting` class on the page root from `onBeforeRouteLeave` — no `document.querySelector`, no inline styles, no `animation: 'none'` detachment hack.
+- All spatial animations are neutralized under `prefers-reduced-motion` in both `page-transitions.css` and `settings.css`.
+
 ### Persistence
 
 - Layouts persist to `userData/workbench-layout.json` via `electron/layoutStore.cjs` (atomic temp+rename) with IPC `tinadec:layout-load` / `tinadec:layout-save`.

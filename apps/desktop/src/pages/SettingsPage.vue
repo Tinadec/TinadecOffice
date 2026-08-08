@@ -40,6 +40,7 @@ import {
   X
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
@@ -278,6 +279,26 @@ watch([activeSection, () => visiblePetCatalog.value.length, canLoadMorePets], ()
 onBeforeUnmount(() => {
   petLoadMoreObserver?.disconnect()
   stopPetChanged?.()
+})
+
+// Spatial exit animation — declarative, class-driven.
+// Toggling `settingsExiting` applies .settings-exiting on the page root;
+// settings.css keyframes (settings-nav-exit / settings-content-exit) then
+// slide the panels out. No document.querySelector, no inline styles.
+// The entry keyframes' fill-mode is overridden by the exit class rules,
+// eliminating the previous animation:'none' detachment hack.
+const settingsExiting = ref(false)
+
+// Exit duration must match settings.css exit keyframes (0.45s + 0.08s stagger).
+const SETTINGS_EXIT_DURATION_MS = 530
+
+onBeforeRouteLeave((_to, _from, next) => {
+  if (settingsExiting.value) {
+    next()
+    return
+  }
+  settingsExiting.value = true
+  setTimeout(() => next(), SETTINGS_EXIT_DURATION_MS)
 })
 
 async function loadPets(force = false) {
@@ -1550,7 +1571,7 @@ import '../settings/settings.css'
 </script>
 
 <template>
-<div class="settings-page" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
+<div class="settings-page" :class="{ 'settings-exiting': settingsExiting }" :style="settingsPageMaterialStyle" v-bind="settingsPageDataAttrs">
 <!-- Background Layer is now rendered globally in App.vue, outside the page transition -->
 
 <!-- Full-width draggable bar for window dragging -->
