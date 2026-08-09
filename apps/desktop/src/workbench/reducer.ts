@@ -179,6 +179,8 @@ function applyCommand(
       return resizeSplit(snapshot, command, ctx)
     case 'collapseColumn':
       return collapseColumn(snapshot, command, ctx)
+    case 'updateCardGrid':
+      return updateCardGrid(snapshot, command, ctx)
     case 'applyPreset':
       return applyPreset(snapshot, command, ctx)
     case 'resetScope':
@@ -562,6 +564,44 @@ function collapseColumn(
     scope: command.scope,
     slotId: command.slotId,
     collapsed: !command.collapsed,
+  }
+  return { next, inverse, changed: true }
+}
+
+function updateCardGrid(
+  snapshot: WorkbenchLayoutSnapshot,
+  command: Extract<WorkbenchCommand, { type: 'updateCardGrid' }>,
+  _ctx: ReduceContext,
+): ReducerResult | null {
+  const card = snapshot.cards[command.instanceId]
+  if (!card) return { next: snapshot, inverse: command, changed: false }
+
+  const prevGrid = { x: card.x, y: card.y, w: card.w, h: card.h }
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const target = next.cards[command.instanceId]
+
+  if ('x' in command) {
+    if (command.x === undefined) delete target.x
+    else target.x = command.x
+  }
+  if ('y' in command) {
+    if (command.y === undefined) delete target.y
+    else target.y = command.y
+  }
+  if ('w' in command) {
+    if (command.w === undefined) delete target.w
+    else target.w = command.w
+  }
+  if ('h' in command) {
+    if (command.h === undefined) delete target.h
+    else target.h = command.h
+  }
+
+  const inverse: WorkbenchCommand = {
+    type: 'updateCardGrid',
+    scope: command.scope,
+    instanceId: command.instanceId,
+    ...prevGrid,
   }
   return { next, inverse, changed: true }
 }

@@ -138,8 +138,8 @@ function buildSettingsPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
 function buildMarketPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
   const n = ctx.nextInstanceId
   const snapshot = createEmptySnapshot('market')
-  snapshot.gap = 1
-  snapshot.edgeInset = 0
+  snapshot.gap = 8
+  snapshot.edgeInset = 8
 
   const filter = card(n(), 'marketFilter', '筛选')
   const catalog = card(n(), 'marketCatalog', '目录')
@@ -147,9 +147,9 @@ function buildMarketPreset(ctx: PresetContext): WorkbenchLayoutSnapshot {
 
   snapshot.cards = { [filter.id]: filter, [catalog.id]: catalog, [detail.id]: detail }
   snapshot.columns = {
-    left: column('left', 292, 0, 'app', [filter.id], filter.id),
-    center: column('center', 0, 0, 'app', [catalog.id], catalog.id),
-    right: column('right', 392, 0, 'app', [detail.id], detail.id),
+    left: column('left', 260, 8, 'float', [filter.id], filter.id),
+    center: column('center', 0, 8, 'float', [catalog.id], catalog.id),
+    right: column('right', 380, 8, 'float', [detail.id], detail.id),
   }
   snapshot.focusedCardId = catalog.id
   return snapshot

@@ -78,6 +78,16 @@ export interface PersistedCardInstance {
   /** Registry key (e.g. 'git', 'chat', 'browser'). */
   descriptorId: string
   title: string
+  /** Grid position & dimensions in grid units. */
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  minW?: number
+  minH?: number
+  static?: boolean
+  isDraggable?: boolean
+  isResizable?: boolean
   /** Serializable card state (preview URL, sessionId, etc.). */
   state?: Record<string, unknown>
 }

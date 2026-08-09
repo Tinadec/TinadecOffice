@@ -11,6 +11,9 @@ import DoctorCard from './home/DoctorCard.vue'
 import BrowserCard from './home/BrowserCard.vue'
 import AgentCard from './home/AgentCard.vue'
 import TerminalCard from './home/TerminalCard.vue'
+import MarketFilterCard from './market/MarketFilterCard.vue'
+import MarketCatalogCard from './market/MarketCatalogCard.vue'
+import MarketDetailCard from './market/MarketDetailCard.vue'
 import type { WorkbenchCardDescriptor } from '../types'
 
 /**
@@ -32,6 +35,9 @@ export function buildWorkbenchRegistry(): CardRegistry {
     { type: 'browser', component: BrowserCard, minWidth: 260, minHeight: 160, singleton: false, movable: true, closable: true, detachable: true, defaultTitle: '浏览器' },
     { type: 'agent', component: AgentCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Agent' },
     { type: 'terminal', component: TerminalCard, minWidth: 260, minHeight: 160, singleton: false, movable: true, closable: true, detachable: true, defaultTitle: '终端' },
+    { type: 'marketFilter', component: MarketFilterCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '筛选' },
+    { type: 'marketCatalog', component: MarketCatalogCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '目录' },
+    { type: 'marketDetail', component: MarketDetailCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '详情' },
   ]
 
   for (const c of cards) reg.register(c)

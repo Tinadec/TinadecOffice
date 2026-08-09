@@ -500,7 +500,7 @@ describe('styles.css extraction contract', () => {
   it('keeps the immersive conversation zone transparent with material-carrying objects', () => {
     // The conversation zone itself is transparent (page background shows through).
     const panel = assertCssBlock(css, /\.chat-active-panel\s*\{([^}]+)\}/)
-    expect(panel).toContain('background: transparent;')
+    expect(panel).toContain('background: transparent')
 
     // Composer + welcome dialog follow the material via the denser input token
     // so they stay readable in translucent/blur modes.

@@ -54,13 +54,13 @@ describe('built-in presets', () => {
     expect(preset.columns.right.collapsed).toBe(true)
   })
 
-  it('market preset has gap 1, zero edge inset, and three app columns', () => {
+  it('market preset has gap 8, 8px edge inset, and three float columns', () => {
     const preset = buildPreset('market', { nextInstanceId: nextId() })
-    expect(preset.gap).toBe(1)
-    expect(preset.edgeInset).toBe(0)
-    expect(preset.columns.left.width).toBe(292)
-    expect(preset.columns.right.width).toBe(392)
-    expect(preset.columns.left.surfaceMode).toBe('app')
+    expect(preset.gap).toBe(8)
+    expect(preset.edgeInset).toBe(8)
+    expect(preset.columns.left.width).toBe(260)
+    expect(preset.columns.right.width).toBe(380)
+    expect(preset.columns.left.surfaceMode).toBe('float')
   })
 
   it('every page has a non-empty preset', () => {

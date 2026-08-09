@@ -37,7 +37,7 @@ function clampWidth(w: unknown, fallback: number): number {
 
 /** Float pages keep an 8px window-edge gap; app pages stay flush. */
 function defaultEdgeInset(pageId: WorkbenchPageId): number {
-  return pageId === 'home' || pageId === 'settings' ? 8 : 0
+  return pageId === 'home' || pageId === 'settings' || pageId === 'market' ? 8 : 0
 }
 
 function isValidPageId(p: unknown): p is WorkbenchPageId {
@@ -119,6 +119,15 @@ export function repairLayout(
       id,
       descriptorId: i.descriptorId,
       title: typeof i.title === 'string' && i.title ? i.title : descriptor?.defaultTitle ?? i.descriptorId,
+      ...(typeof i.x === 'number' && Number.isFinite(i.x) ? { x: Math.max(0, Math.round(i.x)) } : {}),
+      ...(typeof i.y === 'number' && Number.isFinite(i.y) ? { y: Math.max(0, Math.round(i.y)) } : {}),
+      ...(typeof i.w === 'number' && Number.isFinite(i.w) ? { w: Math.max(1, Math.round(i.w)) } : {}),
+      ...(typeof i.h === 'number' && Number.isFinite(i.h) ? { h: Math.max(1, Math.round(i.h)) } : {}),
+      ...(typeof i.minW === 'number' && Number.isFinite(i.minW) ? { minW: Math.max(1, Math.round(i.minW)) } : {}),
+      ...(typeof i.minH === 'number' && Number.isFinite(i.minH) ? { minH: Math.max(1, Math.round(i.minH)) } : {}),
+      ...(typeof i.static === 'boolean' ? { static: i.static } : {}),
+      ...(typeof i.isDraggable === 'boolean' ? { isDraggable: i.isDraggable } : {}),
+      ...(typeof i.isResizable === 'boolean' ? { isResizable: i.isResizable } : {}),
       ...(i.state && typeof i.state === 'object' ? { state: i.state as Record<string, unknown> } : {}),
     }
     count++

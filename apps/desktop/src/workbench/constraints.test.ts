@@ -120,7 +120,7 @@ describe('constraint solver', () => {
   })
 
   it('app-mode pages stay flush to the window edges', () => {
-    const snapshot = buildPreset('market', { nextInstanceId: nextId() })
+    const snapshot = buildPreset('code', { nextInstanceId: nextId() })
     const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
     expect(g.columns.left.x).toBe(0)
     expect(g.columns.right.x + g.columns.right.width).toBe(1440)

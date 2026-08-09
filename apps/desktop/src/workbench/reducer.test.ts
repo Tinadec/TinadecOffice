@@ -183,4 +183,29 @@ describe('workbench reducer', () => {
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.error.code).toBe('rejected')
   })
+
+  it('updateCardGrid updates grid coordinates and returns inverse', () => {
+    const snap = createEmptySnapshot('home')
+    const r1 = dispatch(snap, { type: 'openCard', scope: { kind: 'page', pageId: 'home' }, descriptorId: 'git' })
+    if (!r1.ok) throw new Error('open failed')
+    const afterOpen = r1.result.next
+    const cardId = Object.values(afterOpen.cards).find((c) => c.descriptorId === 'git')!.id
+
+    const r2 = dispatch(afterOpen, { type: 'updateCardGrid', scope: { kind: 'page', pageId: 'home' }, instanceId: cardId, x: 2, y: 3, w: 4, h: 5 }, afterOpen.revision)
+    expect(r2.ok).toBe(true)
+    if (!r2.ok) return
+    const updated = r2.result.next.cards[cardId]
+    expect(updated.x).toBe(2)
+    expect(updated.y).toBe(3)
+    expect(updated.w).toBe(4)
+    expect(updated.h).toBe(5)
+
+    const inv = r2.result.inverse as Extract<WorkbenchCommand, { type: 'updateCardGrid' }>
+    const r3 = dispatch(r2.result.next, inv, r2.result.next.revision)
+    expect(r3.ok).toBe(true)
+    if (!r3.ok) return
+    const restored = r3.result.next.cards[cardId]
+    expect(restored.x).toBeUndefined()
+    expect(restored.y).toBeUndefined()
+  })
 })

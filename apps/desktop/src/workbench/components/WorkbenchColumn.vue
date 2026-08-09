@@ -53,7 +53,7 @@ function resizeSplit(ratio: number) {
   )
 }
 
-// Pointer resize for the column edge (right edge).
+// Pointer resize for column edge.
 let resizeStart = 0
 let resizeWidth = 0
 function onResizeDown(event: PointerEvent) {
@@ -65,7 +65,8 @@ function onResizeDown(event: PointerEvent) {
 }
 function onResizeMove(event: PointerEvent) {
   const delta = event.clientX - resizeStart
-  resizeColumn(Math.max(160, resizeWidth + delta))
+  const newWidth = props.column.slotId === 'right' ? resizeWidth - delta : resizeWidth + delta
+  resizeColumn(Math.max(160, newWidth))
 }
 function onResizeUp() {
   window.removeEventListener('pointermove', onResizeMove)
@@ -105,8 +106,13 @@ function onDividerUp() {
       height: `${geometry.height}px`,
     }"
   >
-    <!-- Column resize handle on the right edge -->
-    <div class="wb-column-resizer" @pointerdown="onResizeDown" />
+    <!-- Resizer handle: Left column resizes via right edge, Right column resizes via left edge -->
+    <div
+      v-if="column.slotId === 'left' || column.slotId === 'right'"
+      class="wb-column-resizer"
+      :class="column.slotId === 'right' ? 'wb-column-resizer-left' : 'wb-column-resizer-right'"
+      @pointerdown="onResizeDown"
+    />
 
     <!-- Primary stack -->
     <WorkbenchStack
@@ -142,10 +148,17 @@ function onDividerUp() {
   overflow: hidden;
 }
 
+.wb-column-resizer-right {
+  right: -4px;
+}
+
+.wb-column-resizer-left {
+  left: -4px;
+}
+
 .wb-column-resizer {
   position: absolute;
   top: 0;
-  right: -4px;
   bottom: 0;
   width: 8px;
   cursor: col-resize;

@@ -6,6 +6,8 @@ import {
   FolderOpen,
   LayoutGrid,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   Store,
@@ -25,6 +27,7 @@ const props = defineProps<{
   selectedProjectId: string | null
   selectedSessionId: string | null
   busy: boolean
+  collapsed?: boolean
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
 }>()
@@ -36,6 +39,7 @@ const emit = defineEmits<{
   'open-project': []
   'go-settings': []
   'go-market': []
+  'toggle-collapse': []
 }>()
 
 const searchQuery = ref('')
@@ -107,11 +111,11 @@ function openDebugStudio() {
 </script>
 
 <template>
-  <aside class="sidebar" :style="panelStyle" v-bind="panelDataAttrs">
+  <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed }" :style="panelStyle" v-bind="panelDataAttrs">
     <div class="sidebar-topbar">
       <div class="brand">
         <BrandLogo :size="14" />
-        <TinadecCalligraphy :size="14" />
+        <TinadecCalligraphy v-if="!collapsed" :size="14" />
       </div>
     </div>
 
@@ -121,37 +125,41 @@ function openDebugStudio() {
         size="sm"
         class="sidebar-nav-item w-full justify-start"
         :disabled="busy || projects.length === 0"
+        :title="t('sidebar.newChat')"
         @click="handleNewThread"
       >
         <MessageSquare :size="16" />
-        <span>{{ t('sidebar.newChat') }}</span>
+        <span v-if="!collapsed">{{ t('sidebar.newChat') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.market')"
         @click="emit('go-market')"
       >
         <Store :size="16" />
-        <span>{{ t('sidebar.market') }}</span>
+        <span v-if="!collapsed">{{ t('sidebar.market') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.commandCenter')"
         disabled
       >
         <Terminal :size="16" />
-        <span>{{ t('sidebar.commandCenter') }}</span>
+        <span v-if="!collapsed">{{ t('sidebar.commandCenter') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        title="Debug Studio"
         @click="openDebugStudio()"
       >
         <Bug :size="16" />
-        <span>Debug Studio</span>
+        <span v-if="!collapsed">Debug Studio</span>
       </UiButton>
     </nav>
 
@@ -164,17 +172,20 @@ function openDebugStudio() {
         <div class="project-row">
           <button
             class="project-row-main"
+            :title="project.name"
             @click="handleProjectClick(project.id)"
           >
             <ChevronRight
+              v-if="!collapsed"
               :size="14"
               class="project-chevron"
               :class="{ expanded: isExpanded(project.id) }"
             />
             <FolderOpen :size="14" class="sidebar-list-item-icon" />
-            <span class="sidebar-list-item-text">{{ project.name }}</span>
+            <span v-if="!collapsed" class="sidebar-list-item-text">{{ project.name }}</span>
           </button>
           <button
+            v-if="!collapsed"
             class="project-row-action"
             :title="t('sidebar.newChat')"
             @click.stop="handleNewSession(project.id)"
@@ -183,7 +194,7 @@ function openDebugStudio() {
           </button>
         </div>
 
-        <div v-if="isExpanded(project.id)" class="project-sessions">
+        <div v-if="!collapsed && isExpanded(project.id)" class="project-sessions">
           <button
             v-for="session in getProjectSessions(project.id)"
             :key="session.id"
@@ -201,7 +212,7 @@ function openDebugStudio() {
       </div>
 
       <div v-if="filteredProjects.length === 0" class="sidebar-empty">
-        {{ t('sidebar.noResults') }}
+        {{ collapsed ? '...' : t('sidebar.noResults') }}
       </div>
     </div>
 
@@ -222,7 +233,7 @@ function openDebugStudio() {
     </div>
 
     <div class="sidebar-footer">
-      <div class="sidebar-footer-actions">
+      <div class="sidebar-footer-actions" :class="{ 'sidebar-footer-actions-collapsed': collapsed }">
         <UiButton
           variant="ghost"
           size="icon"
@@ -258,6 +269,15 @@ function openDebugStudio() {
             <span>空间模式</span>
           </button>
         </UiDropdownMenu>
+        <UiButton
+          variant="ghost"
+          size="icon"
+          class="sidebar-footer-action"
+          :title="collapsed ? '展开侧边栏' : '折叠侧边栏'"
+          @click="emit('toggle-collapse')"
+        >
+          <component :is="collapsed ? PanelLeftOpen : PanelLeftClose" :size="16" />
+        </UiButton>
       </div>
     </div>
   </aside>

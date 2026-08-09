@@ -57,6 +57,15 @@ export type WorkbenchCommand =
   | { type: 'resizeColumn'; scope: LayoutScope; slotId: WorkbenchSlotId; width: number }
   | { type: 'resizeSplit'; scope: LayoutScope; slotId: WorkbenchSlotId; ratio: number }
   | { type: 'collapseColumn'; scope: LayoutScope; slotId: WorkbenchSlotId; collapsed: boolean }
+  | {
+      type: 'updateCardGrid'
+      scope: LayoutScope
+      instanceId: string
+      x?: number
+      y?: number
+      w?: number
+      h?: number
+    }
   | { type: 'applyPreset'; scope: LayoutScope; presetId: WorkbenchPageId }
   | { type: 'resetScope'; scope: LayoutScope }
   /** Internal — only the reducer / undo may emit this. Not dispatched externally. */
