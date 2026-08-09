@@ -114,8 +114,8 @@ function openDebugStudio() {
   <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed }" :style="panelStyle" v-bind="panelDataAttrs">
     <div class="sidebar-topbar">
       <div class="brand">
-        <BrandLogo :size="14" />
-        <TinadecCalligraphy v-if="!collapsed" :size="14" />
+        <BrandLogo :size="14" class="sidebar-icon brand-logo-icon" />
+        <TinadecCalligraphy :size="14" class="sidebar-label brand-calligraphy" />
       </div>
     </div>
 
@@ -128,8 +128,8 @@ function openDebugStudio() {
         :title="t('sidebar.newChat')"
         @click="handleNewThread"
       >
-        <MessageSquare :size="16" />
-        <span v-if="!collapsed">{{ t('sidebar.newChat') }}</span>
+        <MessageSquare :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.newChat') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
@@ -138,8 +138,8 @@ function openDebugStudio() {
         :title="t('sidebar.market')"
         @click="emit('go-market')"
       >
-        <Store :size="16" />
-        <span v-if="!collapsed">{{ t('sidebar.market') }}</span>
+        <Store :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.market') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
@@ -148,8 +148,8 @@ function openDebugStudio() {
         :title="t('sidebar.commandCenter')"
         disabled
       >
-        <Terminal :size="16" />
-        <span v-if="!collapsed">{{ t('sidebar.commandCenter') }}</span>
+        <Terminal :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.commandCenter') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
@@ -158,8 +158,8 @@ function openDebugStudio() {
         title="Debug Studio"
         @click="openDebugStudio()"
       >
-        <Bug :size="16" />
-        <span v-if="!collapsed">Debug Studio</span>
+        <Bug :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">Debug Studio</span>
       </UiButton>
     </nav>
 
@@ -176,17 +176,15 @@ function openDebugStudio() {
             @click="handleProjectClick(project.id)"
           >
             <ChevronRight
-              v-if="!collapsed"
               :size="14"
-              class="project-chevron"
+              class="project-chevron sidebar-extra"
               :class="{ expanded: isExpanded(project.id) }"
             />
-            <FolderOpen :size="14" class="sidebar-list-item-icon" />
-            <span v-if="!collapsed" class="sidebar-list-item-text">{{ project.name }}</span>
+            <FolderOpen :size="14" class="sidebar-list-item-icon sidebar-icon" />
+            <span class="sidebar-list-item-text sidebar-label">{{ project.name }}</span>
           </button>
           <button
-            v-if="!collapsed"
-            class="project-row-action"
+            class="project-row-action sidebar-extra"
             :title="t('sidebar.newChat')"
             @click.stop="handleNewSession(project.id)"
           >
@@ -194,7 +192,7 @@ function openDebugStudio() {
           </button>
         </div>
 
-        <div v-if="!collapsed && isExpanded(project.id)" class="project-sessions">
+        <div v-if="isExpanded(project.id)" class="project-sessions sidebar-extra">
           <button
             v-for="session in getProjectSessions(project.id)"
             :key="session.id"
@@ -212,7 +210,7 @@ function openDebugStudio() {
       </div>
 
       <div v-if="filteredProjects.length === 0" class="sidebar-empty">
-        {{ collapsed ? '...' : t('sidebar.noResults') }}
+        <span class="sidebar-label">{{ t('sidebar.noResults') }}</span>
       </div>
     </div>
 

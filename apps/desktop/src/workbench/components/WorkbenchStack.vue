@@ -113,6 +113,7 @@ function close(instanceId: string) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Float-panel look (Left/Right): rounded, background + subtle border for island-style elevation */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import WorkbenchStack from './WorkbenchStack.vue'
 import { useWorkbench } from '../useWorkbench'
 import type { ColumnGeometry, SplitGeometry, WorkbenchColumn as ColumnModel } from '../types'
@@ -54,10 +54,12 @@ function resizeSplit(ratio: number) {
 }
 
 // Pointer resize for column edge.
+const isResizing = ref(false)
 let resizeStart = 0
 let resizeWidth = 0
 function onResizeDown(event: PointerEvent) {
   event.preventDefault()
+  isResizing.value = true
   resizeStart = event.clientX
   resizeWidth = props.geometry.width
   window.addEventListener('pointermove', onResizeMove)
@@ -69,6 +71,7 @@ function onResizeMove(event: PointerEvent) {
   resizeColumn(Math.max(160, newWidth))
 }
 function onResizeUp() {
+  isResizing.value = false
   window.removeEventListener('pointermove', onResizeMove)
   window.removeEventListener('pointerup', onResizeUp)
 }
@@ -99,6 +102,7 @@ function onDividerUp() {
 <template vapor>
   <div
     class="wb-column"
+    :class="{ 'is-resizing': isResizing }"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -146,6 +150,11 @@ function onDividerUp() {
   position: absolute;
   min-height: 0;
   overflow: hidden;
+  transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.wb-column.is-resizing {
+  transition: none !important;
 }
 
 .wb-column-resizer-right {
