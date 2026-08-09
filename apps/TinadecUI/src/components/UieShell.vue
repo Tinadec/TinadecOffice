@@ -1,29 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { UieCanvas, useUie } from '@tinadec/ui'
+import UieCanvas from './UieCanvas.vue'
 import AppHeader from '@/components/AppHeader.vue'
-import { marketController } from '@/controllers/MarketController'
+import { useUie } from './useUie'
 
+// The Uie store is a module singleton; this component reads it.
 const wb = useUie()
-const { busy, loading } = marketController
-
-onMounted(() => {
-  if (wb.pageId.value !== 'market') {
-    wb.applyPreset('market')
-  }
-})
 </script>
 
 <template vapor>
   <main class="shell">
     <div class="top-drag-bar" />
-    <AppHeader :busy="busy || loading" />
+    <AppHeader />
     <UieCanvas />
   </main>
 </template>
 
 <style scoped>
 .shell {
+  /* relative + 100vh so the shell fills (and therefore props open) the
+     .main-content wrapper — an absolute/inset:0 root would collapse the
+     wrapper's height to 0 and its overflow:clip would blank the window. */
   position: relative;
   height: 100vh;
   display: flex;

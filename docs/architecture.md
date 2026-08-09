@@ -137,38 +137,38 @@ This fallback is not the primitive contract and must not be expanded into a per-
 - Component-owned glass effects (notification island, notification detail dialog) are intentionally independent of the global material and keep their own fixed blur values.
 - Detached panel windows and Electron windows stay opaque by design: there is no OS-level vibrancy/`backgroundMaterial`, so `backdrop-filter` only blurs the in-app background layer rendered by `App.vue`.
 
-## Workbench Layout Engine
+## TinadecUIE Layout Engine
 
-The Desktop main window is rendered by a **WorkbenchShell** — a deterministic layout engine (modeled after VS Code's single layout authority and Traycer's pure layout model / card registry) that owns the window layout behind a stable, command-driven interface. The visual UI is unchanged from the pre-refactor layout; only the engine behind it is new.
+The Desktop main window is rendered by **TinadecUI** (in `apps/TinadecUI`), split into two modules: **TinadecUIE** (the Engine module — a pure-TS, DOM-free deterministic layout engine modeled after VS Code's single layout authority and Traycer's pure layout model / card registry) and the **Components module** (the Vue render components `UieShell`/`UieCanvas`/…, the `useUie` reactive store, and the cards). The engine owns the window layout behind a stable, command-driven interface; components depend on it one-way and only read the snapshot → geometry → DOM. The visual UI is unchanged from the pre-refactor layout; only the engine behind it is new. Consumers import it as `@tinadec/ui` (alias registered in `apps/desktop` and `apps/web` → `apps/TinadecUI/src/index.ts`).
 
 ### Layout model
 
 - Three physical slots: `left / center / right`. Each slot holds a tab stack (`primary`) and optionally one vertical split into a `secondary` stack. No arbitrary recursive docking tree.
-- The layout is a pure `WorkbenchLayoutSnapshot` (version 1): column order, column widths/collapsed/surface-mode/top-inset, per-stack ordered tab ids + active tab, a cards map (`instanceId -> {descriptorId, title, state}`), and the focused card id.
-- **Single layout authority**: `src/workbench/` is the only owner of layout state. The render layer only reads the snapshot → computes geometry → places DOM. Every mutation goes through `commandBus.dispatch({ command, source, expectedRevision })`.
+- The layout is a pure `UieLayoutSnapshot` (version 1): column order, column widths/collapsed/surface-mode/top-inset, per-stack ordered tab ids + active tab, a cards map (`instanceId -> {descriptorId, title, state}`), and the focused card id.
+- **Single layout authority**: `apps/TinadecUI/src/engine/` is the only owner of layout state. The render layer only reads the snapshot → computes geometry → places DOM. Every mutation goes through `commandBus.dispatch({ command, source, expectedRevision })`.
 - **Commands** (fixed set): `openCard / closeCard / activateCard / moveCard / moveStack / swapColumns / splitStack / mergeStack / resizeColumn / resizeSplit / collapseColumn / applyPreset / resetScope`. The reducer returns the next snapshot AND the inverse command; the undo stack keeps 50 records, coalescing consecutive drag-resizes into one.
 - **Sources**: `user / route / restore` are executable; `ai` is reserved and rejected this round (a controlled entry point for future AI-driven layout).
 - **Constraint solver**: `computeGeometry(container, snapshot)` derives column/stack geometry from the container size and per-card min widths. Under space pressure it visually collapses the right column first, then the left; an over-short split degrades to a single stack. These degradations are visual only — never written back to the user layout.
 
 ### Card registry & instance pool
 
-- `src/workbench/cards/index.ts` registers every card descriptor (`{ type, component, minWidth, minHeight, singleton, movable, closable, detachable, defaultTitle, titlebarMode }`).
-- The instance pool (`src/workbench/instancePool.ts`) hydrates each card instance ONCE by `instanceId`; hidden cards stay mounted (visibility/inert/aria-hidden), and only an explicit close destroys the instance. Moving between slots/tabs/routes never remounts a card.
+- `apps/TinadecUI/src/components/cards/index.ts` registers every card descriptor (`{ type, component, minWidth, minHeight, singleton, movable, closable, detachable, defaultTitle, titlebarMode }`).
+- The instance pool (`apps/TinadecUI/src/engine/instancePool.ts`) hydrates each card instance ONCE by `instanceId`; hidden cards stay mounted (visibility/inert/aria-hidden), and only an explicit close destroys the instance. Moving between slots/tabs/routes never remounts a card.
 
 ### Material integration
 
-- Material is applied on the **stable stack root** (`WorkbenchStack`), which binds `data-panel-effect` + `--surface-section`/`--bg-primary` — the same contract as the legacy `.float-panel`. Legacy page components embedded as card content are neutralized to fill their card frame (see `workbench-card-fill.css`).
-- `App.vue` no longer wraps the main `RouterView` in a `mode="out-in"` transition: the Workbench owns the layout, and a transition wrapper would unload the page host on route change, breaking `backdrop-filter` and hitting removed-node patches.
+- Material is applied on the **stable stack root** (`UieStack`), which binds `data-panel-effect` + `--surface-section`/`--bg-primary` — the same contract as the legacy `.float-panel`. Legacy page components embedded as card content are neutralized to fill their card frame (see `apps/TinadecUI/src/components/uie-card-fill.css`).
+- `App.vue` no longer wraps the main `RouterView` in a `mode="out-in"` transition: the engine owns the layout, and a transition wrapper would unload the page host on route change, breaking `backdrop-filter` and hitting removed-node patches.
 
 ### Route semantics
 
-- The router keeps all existing hash paths (`/`, `/settings`, `/market`, `/debug-studio`, `/code-editor`, `/panel`, `/pet`). The main window renders the WorkbenchShell for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
+- The router keeps all existing hash paths (`/`, `/settings`, `/market`, `/debug-studio`, `/code-editor`, `/panel`, `/pet`). The main window renders `UieShell` for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
 
 ### Page transition animations
 
-Spatial route transitions are **declarative and CSS-class driven** — page code never manipulates engine nodes (`.wb-column`) via DOM queries or inline styles, so the Workbench remains the single layout authority.
+Spatial route transitions are **declarative and CSS-class driven** — page code never manipulates engine nodes (`.wb-column`) via DOM queries or inline styles, so TinadecUIE remains the single layout authority.
 
-- **Home exit**: `HomePage.vue` wraps the shell in a classic `<Transition name="home-up-exit">` around a plain div (never the Vapor `WorkbenchShell` root — classic-around-Vapor leave paths crash the interop unmount, see `VaporExemptions.ts`). `onBeforeRouteLeave` flips a `visible` flag and defers navigation ~300 ms; `page-transitions.css` animates `.wb-column` `transform`/`opacity` only (the engine's `patchStyle` diff owns `left/top/width/height` and never touches these).
+- **Home exit**: `HomePage.vue` wraps the shell in a classic `<Transition name="home-up-exit">` around a plain div (never the Vapor `UieShell` root — classic-around-Vapor leave paths crash the interop unmount, see `VaporExemptions.ts`). `onBeforeRouteLeave` flips a `visible` flag and defers navigation ~300 ms; `page-transitions.css` animates `.wb-column` `transform`/`opacity` only (the engine's `patchStyle` diff owns `left/top/width/height` and never touches these).
 - **Home entry**: the same Transition's enter classes rise the columns from below with stagger when returning.
 - **Settings entry/exit**: `settings.css` keyframes (`settings-nav-enter`/`settings-content-enter` and `settings-nav-exit`/`settings-content-exit`) drive both directions. Exit toggles a `.settings-exiting` class on the page root from `onBeforeRouteLeave` — no `document.querySelector`, no inline styles, no `animation: 'none'` detachment hack.
 - All spatial animations are neutralized under `prefers-reduced-motion` in both `page-transitions.css` and `settings.css`.
@@ -178,7 +178,7 @@ Spatial route transitions are **declarative and CSS-class driven** — page code
 - Layouts persist to `userData/workbench-layout.json` via `electron/layoutStore.cjs` (atomic temp+rename) with IPC `tinadec:layout-load` / `tinadec:layout-save`.
 - The renderer `layerStore` holds three scope layers, resolved most-specific-first: `workspace-page(projectId, pageId)` > `page(pageId)` > `global(pageId)` > built-in preset. Auto-save is debounced (400 ms) to the write scope (workspace-scoped when a project is active).
 - `repairLayout()` fixes corrupt/unknown-card/duplicate-singleton/illegal-size layouts and falls back to the built-in preset — never a blank window.
-- Legacy detached-panel records (`~/.tinadec-panel-layout.json`, `PanelType`) migrate to generic card types via `src/workbench/persistence/migrate.ts`.
+- Legacy detached-panel records (`~/.tinadec-panel-layout.json`, `PanelType`) migrate to generic card types via `apps/TinadecUI/src/engine/persistence/migrate.ts`.
 
 ### Vapor mode
 

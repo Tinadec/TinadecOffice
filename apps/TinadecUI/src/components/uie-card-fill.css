@@ -1,0 +1,43 @@
+/* uie-card-fill.css
+   When legacy page components (AppSidebar, ChatPanel, ContextPanel) are embedded
+   as Uie card content, their absolute-positioned roots must be neutralized:
+   the UieCardFrame owns position/size, so the content fills the frame.
+   Only safe overrides are scoped under .wb-card-host so nothing else is affected.
+   
+   Design principle: Card boundary and material are owned by parent stack,
+   NOT inner content. Left/Right panels keep island-style appearance via
+   parent's background + border + shadow. Center chat column stays truly transparent.
+   Inner content should not add duplicate borders/shadows. */
+
+.wb-card-host .sidebar,
+.wb-card-host .conversation,
+.wb-card-host .float-panel {
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  /* Preserve rounded corners for visual consistency */
+  border-radius: 0 !important;
+  z-index: auto !important;
+}
+
+/* Content area fills the card frame without adding its own background.
+   Parent stack provides surface via --surface-section (left/right) or transparent (center).
+   User's global material setting controls backdrop-filter on inner objects. */
+.wb-card-host .sidebar {
+  /* Left sidebar keeps island appearance through parent stack styling */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Conversation/chat area in center column stays transparent */
+.wb-card-host .conversation {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}

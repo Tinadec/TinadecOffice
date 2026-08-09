@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   closeWindow: () => ipcRenderer.send('tinadec:close'),
   openDebugStudio: () => ipcRenderer.invoke('tinadec:open-debug-studio'),
 
-  // --- Workbench layout persistence ---
+  // --- TinadecUIE layout persistence ---
   layout: {
     load: () => ipcRenderer.invoke('tinadec:layout-load'),
     save: (payload) => ipcRenderer.invoke('tinadec:layout-save', payload),

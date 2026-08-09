@@ -22,7 +22,7 @@ describe('child window lifecycle', () => {
     expect(styles).toMatch(/:root\[data-skip-splash][\s\S]*min-width:\s*0;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/)
     expect(indexHtml).toMatch(/:root\[data-skip-splash] \.splash-placeholder\s*{[^}]*display:\s*none;/s)
     expect(app).toContain('if (!isPetWindow && !isChildWindow) startConnection()')
-    // The Workbench owns the main window layout; RouterView has no out-in
+    // TinadecUIE owns the main window layout; RouterView has no out-in
     // transition wrapper so the page host + card-frame material root stay stable.
     expect(app).not.toContain('mode="out-in"')
     expect(panelWindow).toContain('?splash=0#${hashPath}')

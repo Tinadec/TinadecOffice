@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import settingsCss from './settings.css?raw'
 import stylesCss from '../styles.css?raw'
-import workbenchStackSource from '../workbench/components/WorkbenchStack.vue?raw'
+import uieStackSource from '../../../TinadecUI/src/components/UieStack.vue?raw'
 import settingsPageSource from '../pages/SettingsPage.vue?raw'
 import agentEvolutionPanelSource from '../components/AgentEvolutionPanel.vue?raw'
 import promptEngineeringPanelSource from '../components/PromptEngineeringPanel.vue?raw'
@@ -521,7 +521,7 @@ describe('styles.css extraction contract', () => {
   })
 
   it('renders immersive stacks with a transparent material root', () => {
-    const blocks = extractStyleBlocks(workbenchStackSource)
+    const blocks = extractStyleBlocks(uieStackSource)
     expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*background:\s*transparent[^}]*\}/)
     expect(blocks).toMatch(/\.wb-stack--immersive\s*\{[^}]*box-shadow:\s*none[^}]*\}/)
   })

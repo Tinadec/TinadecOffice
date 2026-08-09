@@ -1,6 +1,6 @@
-// layoutStore.cjs — Workbench layout persistence for the Electron main process.
+// layoutStore.cjs — TinadecUIE layout persistence for the Electron main process.
 //
-// Stores versioned Workbench layout snapshots under userData/workbench-layout.json.
+// Stores versioned TinadecUIE layout snapshots under userData/workbench-layout.json.
 // Writes are atomic (temp file + rename) so a crash never leaves a corrupt file.
 // The renderer owns the layout semantics; the main process is a thin store that
 // validates the payload shape and persists it.

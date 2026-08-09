@@ -67,7 +67,7 @@ export function installPreviewShimIfNeeded(): void {
     onPanelClosed: () => noop,
     onPanelThemeChanged: () => noop,
 
-    // Workbench layout (in-memory no-op in preview; Electron IPC in real app).
+    // TinadecUIE layout (in-memory no-op in preview; Electron IPC in real app).
     layout: {
       load: () => Promise.resolve(null),
       save: () => Promise.resolve({ ok: false }),

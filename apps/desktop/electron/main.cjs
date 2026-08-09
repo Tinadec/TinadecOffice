@@ -149,7 +149,7 @@ ipcMain.handle('tinadec:open-debug-studio', async () => {
   return Boolean(await createDebugStudioWindow());
 });
 
-// --- Workbench layout persistence IPC ---
+// --- TinadecUIE layout persistence IPC ---
 // The renderer owns layout semantics; the main process is a thin validated store.
 ipcMain.handle('tinadec:layout-load', async () => {
   try {

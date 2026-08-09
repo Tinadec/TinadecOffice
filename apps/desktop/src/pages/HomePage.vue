@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import WorkbenchShell from '@/workbench/components/WorkbenchShell.vue'
-import { initWorkbench } from '@/workbench/useWorkbench'
-import { buildWorkbenchRegistry, createComponentLookup } from '@/workbench/cards'
-import { createElectronLayoutAdapter } from '@/workbench/persistence/types'
-import { createLayerStore } from '@/workbench/persistence/layerStore'
+import {
+  UieShell,
+  initUie,
+  buildUieRegistry,
+  createComponentLookup,
+  createElectronLayoutAdapter,
+  createLayerStore,
+} from '@tinadec/ui'
 import { homeController } from '@/controllers/HomeController'
 
-// Initialize the Workbench store once (module singleton). Subsequent mounts
+// Initialize the Uie store once (module singleton). Subsequent mounts
 // reuse the existing store so layout state survives route changes.
 if (typeof window !== 'undefined') {
-  const registry = buildWorkbenchRegistry()
+  const registry = buildUieRegistry()
   const layerStore = createLayerStore(createElectronLayoutAdapter())
-  initWorkbench({
+  initUie({
     registry,
     componentFor: createComponentLookup(registry),
     persistence: { store: layerStore },
@@ -26,12 +29,12 @@ if (typeof window !== 'undefined') {
 // page-transitions.css. No <Transition>, no v-show, no document.querySelector.
 //
 // NOTE: The transition container is a CLASSIC plain div — never the Vapor
-// WorkbenchShell component itself. Classic-around-Vapor Transition leave
+// UieShell component itself. Classic-around-Vapor Transition leave
 // paths crash the interop unmount (see VaporExemptions.ts, AppSplash entry,
 // commit 46a5988). We keep the classic wrapper and toggle classes on it.
 //
 // Entry animation: the container is always visible (never display:none), so
-// WorkbenchCanvas.measure() reads the real .wb-canvas size on the first frame
+// UieCanvas.measure() reads the real .wb-canvas size on the first frame
 // and the columns get correct geometry. The .home-entering class then plays
 // the rise-from-below keyframes on the freshly mounted stacks — on both
 // initial load and when returning from settings (fresh stacks replay the
@@ -74,7 +77,7 @@ onBeforeRouteLeave((_to, _from, next) => {
     class="home-page-container"
     :class="{ 'home-entering': homeEntering, 'home-exiting': homeExiting }"
   >
-    <WorkbenchShell />
+    <UieShell />
   </div>
 </template>
 
