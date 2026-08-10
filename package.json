@@ -13,6 +13,7 @@
     "dev:gateway": "cd TinadecGateway && bun run dev",
     "dev:desktop": "npm run dev -w @tinadec/desktop",
     "dev:web": "npm run dev -w @tinadec/web",
+    "dev:tui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 run --project apps/tui/TinadecOffice.Tui.csproj",
     "build": "npm run build --workspaces --if-present && cd TinadecGateway && bun run build && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 build TinadecOffice.slnx --no-restore",
     "test": "npm run test --workspaces --if-present && cd TinadecGateway && bun test && cd .. && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 test TinadecOffice.slnx --no-build",
     "postinstall": "node scripts/setup-shadcn-ai.mjs",
