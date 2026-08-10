@@ -175,10 +175,35 @@ function onDividerUp() {
   background: transparent;
 }
 
-.wb-column-resizer:hover,
-.wb-column-resizer:active {
+/* Small translucent pill handle, vertically centered on the column edge.
+   Hidden by default; fades in on hover/active. The 8px full-height hit
+   area stays (pointerdown + cursor) — only the visual is a tiny pill. */
+.wb-column-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 28px;
+  border-radius: 999px;
   background: var(--accent-primary);
-  opacity: 0.3;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.15s ease;
+}
+
+.wb-column-resizer-right::after {
+  /* Right edge extends 4px outside the column and is clipped by
+     overflow:hidden, so the pill anchors fully inside the column. */
+  left: 1px;
+}
+
+.wb-column-resizer-left::after {
+  right: 1px;
+}
+
+.wb-column-resizer:hover::after,
+.wb-column-resizer:active::after {
+  opacity: 0.45;
 }
 
 .wb-split-divider {
@@ -192,9 +217,24 @@ function onDividerUp() {
   border-top: 1px solid var(--border-muted);
 }
 
-.wb-split-divider:hover,
-.wb-split-divider:active {
+/* Horizontal pill handle, centered on the split line. Same style as the
+   column-edge pill so both dividers read consistently. */
+.wb-split-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 3px;
+  border-radius: 999px;
   background: var(--accent-primary);
-  opacity: 0.3;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.15s ease;
+}
+
+.wb-split-divider:hover::after,
+.wb-split-divider:active::after {
+  opacity: 0.45;
 }
 </style>

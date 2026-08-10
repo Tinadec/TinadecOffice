@@ -2881,6 +2881,13 @@ overflow: hidden;
   overscroll-behavior: contain;
 }
 
+/* The welcome composer is a frameless input surface — suppress the global
+   textarea:focus glow (border-color + --shadow-focus halo) on focus. */
+.welcome-dialog-input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .welcome-dialog-input::placeholder {
   color: var(--text-muted);
 }
