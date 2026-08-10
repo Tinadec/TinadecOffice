@@ -7,6 +7,13 @@
       "runtimeArgs": ["vite", "--host", "127.0.0.1", "--port", "5173"],
       "cwd": "apps/desktop",
       "port": 5173
+    },
+    {
+      "name": "desktop-vite-verify",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--host", "127.0.0.1", "--port", "5199"],
+      "cwd": "apps/desktop",
+      "port": 5199
     }
   ]
 }

@@ -2538,6 +2538,8 @@ box-shadow: var(--shadow-subtle);
   transform: scale(0.8);
   pointer-events: none;
   height: 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
   padding: 0 !important;
   margin: 0 !important;
   overflow: hidden;
@@ -2581,6 +2583,10 @@ box-shadow: var(--shadow-subtle);
   justify-content: center;
 }
 
+.sidebar-collapsed .brand {
+  gap: 0;
+}
+
 .sidebar-collapsed .sidebar-list {
   padding: 4px 2px;
   transition: padding 0.28s cubic-bezier(0.2, 0, 0, 1);
@@ -2613,6 +2619,10 @@ box-shadow: var(--shadow-subtle);
 .sidebar-collapsed .project-row-main {
   justify-content: center;
   padding: 6px 0;
+}
+
+.sidebar-collapsed .project-row {
+  padding-right: 0;
 }
 
 .sidebar-collapsed .sidebar-list-item-icon {
