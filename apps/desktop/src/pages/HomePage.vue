@@ -4,6 +4,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import {
   UieShell,
   initUie,
+  useUie,
   buildUieRegistry,
   createComponentLookup,
   createElectronLayoutAdapter,
@@ -22,6 +23,13 @@ if (typeof window !== 'undefined') {
     persistence: { store: layerStore },
   })
 }
+
+// The store is a module singleton, so its snapshot survives route changes.
+// Entering a page must switch it to that page's layout — mirror MarketPage's
+// `if (wb.pageId.value !== 'market') wb.applyPreset('market')`. Without this
+// symmetric reset, returning from market leaves the snapshot on the market
+// layout and the home shell keeps rendering the market columns.
+const wb = useUie()
 
 // Spatial transition state — declarative, class-driven.
 // Same mechanism as the Settings page: toggling container classes
@@ -53,6 +61,12 @@ const EXIT_DURATION_MS = 300
 
 onMounted(() => {
   homeController.start()
+  // Mirror MarketPage: switch the singleton store back to the home layout when
+  // this page was entered from another page (cold-start already has pageId
+  // 'home', so the persisted home layout survives).
+  if (wb.pageId.value !== 'home') {
+    wb.applyPreset('home')
+  }
   homeEntering.value = true
   window.setTimeout(() => {
     homeEntering.value = false

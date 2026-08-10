@@ -44,6 +44,10 @@
 - 与现有 AI 工具配置统一
 - 符合项目架构原则
 
+**Claude Code 项目级链接(2026-08-10)**:
+- 项目 skill `.claude/skills/ponytail/SKILL.md`(Claude Code 自动发现,`/ponytail`)。
+- 官方插件(可选,获得 `/ponytail-review` 等命令)按 `.claude/ponytail-plugin-install.md` 在交互式终端安装。
+
 **实施步骤**：
 
 1. **在 AGENTS.md 中添加 Ponytail 规则部分**
@@ -203,7 +207,11 @@ codegraph init
 
 **Claude Code 集成**：
 ```powershell
+# 把 codegraph stdio MCP server 写入 .mcp.json(本项目已接入,见仓库根 .mcp.json)
 codegraph install --target=claude
+
+# 验证 MCP server 可响应
+codegraph serve --mcp   # 应打印 JSON-RPC initialize 应答
 ```
 
 **OpenCode 集成**：
@@ -542,7 +550,7 @@ codegraph explore "How does approval gate mechanism work?"
 
 ---
 
-**文档版本**: 1.0  
+**文档版本**: 1.1  
 **创建日期**: 2026-06-29  
 **维护者**: TinadecOffice 开发团队  
-**最后更新**: 2026-06-29
+**最后更新**: 2026-08-10（Claude Code 侧补 Ponytail skill + CodeGraph MCP 链接）

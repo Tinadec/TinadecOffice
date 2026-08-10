@@ -179,6 +179,12 @@ Claude MUST apply Ponytail principles when:
 - Adding new features
 - Fixing bugs
 
+**Project linkage**: The Ponytail ruleset is available to Claude as a project skill
+(`.claude/skills/ponytail/SKILL.md`, `/ponytail`), referencing the canonical
+TinadecOffice rules in `.ponytail/rules.md`. For the full official plugin (hooks +
+`/ponytail-review` etc.), see `.claude/ponytail-plugin-install.md` — run the two
+`/plugin` commands in an interactive Claude Code terminal.
+
 **Architecture-Aware Rules**:
 - Desktop层: 优先使用 Vue 3 组合式 API，避免 Options API
 - Gateway层: 保持 Elysia 路由简洁，不添加中间件逻辑
@@ -225,13 +231,15 @@ codegraph explore "How does approval gate mechanism work?"
 # 安装 CodeGraph CLI
 npm i -g @colbymchenry/codegraph
 
-# 初始化项目索引
-cd d:\github\agent\TinadecCode
+# 初始化项目索引(本项目已初始化,见 .codegraph/)
 codegraph init
 
-# 配置 Claude 集成
+# 配置 Claude 集成:把 codegraph stdio MCP server 写入 .mcp.json(本项目已接入),
+# 重新启动 Claude Code 即可使用 codegraph_explore
 codegraph install --target=claude
 ```
+
+> **现状(2026-08-10)**:CodeGraph MCP 已接入本项目 `.mcp.json`(`codegraph serve --mcp`),索引已同步。Claude Code 重启后 `codegraph_explore` 工具即可用;CLAUDE.md 的 CodeGraph 指引现已生效。
 
 **Verification Commands**:
 ```powershell

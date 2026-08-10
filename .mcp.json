@@ -8,6 +8,11 @@
       "command": "npx",
       "args": ["shadcn-vue@latest", "mcp"],
       "cwd": "apps/desktop"
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": ["serve", "--mcp"]
     }
   }
 }
