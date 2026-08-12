@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeGeometry, flattenDock } from './constraints'
+import { computeGeometry, flattenDock, maxFittingColumnWidth } from './constraints'
 import { buildPreset, HOME_GEOMETRY } from './presets'
 import type { UieDockNode, UieDockPane } from './types'
 
@@ -255,5 +255,33 @@ describe('dock flattening', () => {
     expect(flat.panes[0]).toMatchObject({ x: 0, y: 0 })
     expect(flat.panes[0].width).toBe((420 - 4) / 2)
     expect(flat.panes[1].width).toBe((420 - 4) / 2)
+  })
+})
+
+describe('maxFittingColumnWidth', () => {
+  it('right column fits = available minus center min, side gap, and left column (home@1440)', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    // 1424 available − 320 center minimum − 8 side gap − 260 left column.
+    expect(maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')).toBe(836)
+  })
+
+  it('is the exact visual-collapse threshold for the right column', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    const max = maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')
+    snapshot.columns.right.width = max
+    expect(computeGeometry({ width: 1440, height: 920 }, snapshot).degraded.collapsedRight).toBe(false)
+    snapshot.columns.right.width = max + 1
+    expect(computeGeometry({ width: 1440, height: 920 }, snapshot).degraded.collapsedRight).toBe(true)
+  })
+
+  it('clamps to zero on a window too narrow to fit any side column', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    const fit = maxFittingColumnWidth({ width: 600, height: 800 }, snapshot, 'right')
+    expect(fit).toBeLessThanOrEqual(280)
+  })
+
+  it('code page (gap 1, flush edges) yields 1440 − 0 − 320 − 1 − 280 = 839', () => {
+    const snapshot = buildPreset('code', { nextInstanceId: nextId() })
+    expect(maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')).toBe(839)
   })
 })

@@ -25,7 +25,7 @@ import { COLLAPSED_COLUMN_WIDTH, DOCK_DIVIDER, MIN_DOCK_PANE_HEIGHT, MIN_DOCK_PA
 
 const BOTTOM_INSET = 8
 /** The adaptive center column must stay at least this wide (chat usability). */
-const MIN_CENTER_WIDTH = 320
+export const MIN_CENTER_WIDTH = 320
 
 function effectiveWidth(col: { width: number; collapsed: boolean }): number {
   return col.collapsed ? COLLAPSED_COLUMN_WIDTH : col.width
@@ -94,8 +94,12 @@ function flattenDockNode(
 /**
  * Flatten a dock split tree into pane rects + dividers (column-relative).
  * When a pane is smaller than the dock minimums, it is visually degraded out
- * (hidden) — mirroring the existing split-degradation: the larger sibling
+ * (hidden) — mirroring the existing split-degradation: the surviving sibling
  * absorbs the space, and no divider is produced for the affected split.
+ *
+ * The column's single main pane (hosts homePicker + the collapse button) is
+ * never degraded: whatever remains of the column stays alive around it, so the
+ * panel can never go visually blank no matter how narrow the column gets.
  */
 export function flattenDock(
   container: { width: number; height: number },
@@ -104,14 +108,30 @@ export function flattenDock(
   const out: DockFlattenResult = { panes: [], dividers: [], degradedPanes: [] }
   flattenDockNode(dock, { x: 0, y: 0, width: container.width, height: container.height }, out)
 
+  // Collect the main pane id so the visibility pass can exempt it.
+  const mainIds = new Set<string>()
+  function collectMain(node: UieDockNode): void {
+    if (node.kind === 'pane') {
+      if (node.main) mainIds.add(node.paneId)
+    } else {
+      collectMain(node.a)
+      collectMain(node.b)
+    }
+  }
+  collectMain(dock)
+
   // Degrade: drop dividers that belong to splits whose subtree contains a
   // too-small pane. We recompute visibility bottom-up per split: a split is
   // "collapsed" if either child branch fails its minimum along that axis.
+  // The main pane is exempt — the column always stays alive around it.
   const visibleSplits = new Set<string>()
+  const degradedSet = new Set<string>()
   function markVisible(node: UieDockNode, rect: { width: number; height: number }): boolean {
     if (node.kind === 'pane') {
-      const ok = rect.width >= MIN_DOCK_PANE_WIDTH && rect.height >= MIN_DOCK_PANE_HEIGHT
+      const isMain = mainIds.has(node.paneId)
+      const ok = isMain || (rect.width >= MIN_DOCK_PANE_WIDTH && rect.height >= MIN_DOCK_PANE_HEIGHT)
       if (!ok) {
+        degradedSet.add(node.paneId)
         out.degradedPanes.push(node.paneId)
         const g = out.panes.find((p) => p.paneId === node.paneId)
         if (g) g.degraded = true
@@ -137,6 +157,51 @@ export function flattenDock(
   }
   markVisible(dock, container)
   out.dividers = out.dividers.filter((d) => visibleSplits.has(d.splitId))
+
+  // Absorb: any surviving pane whose sibling branch fully degraded expands into
+  // that branch's space, so the kept content fills the column instead of leaving
+  // a dead half. Rects are keyed by paneId — re-walking a subtree overwrites the
+  // stale half-rects, so the array keeps its original (tree) order.
+  const absorbed = new Map<string, { x: number; y: number; width: number; height: number }>()
+  function absorb(
+    node: UieDockNode,
+    rect: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    if (node.kind === 'pane') {
+      if (degradedSet.has(node.paneId)) return false
+      absorbed.set(node.paneId, rect)
+      return true
+    }
+    const gutter = DOCK_DIVIDER
+    if (node.dir === 'row') {
+      const aWidth = Math.round((rect.width - gutter) * node.ratio)
+      const aRect = { x: rect.x, y: rect.y, width: aWidth, height: rect.height }
+      const bRect = { x: rect.x + aWidth + gutter, y: rect.y, width: rect.width - aWidth - gutter, height: rect.height }
+      const aOk = absorb(node.a, aRect)
+      const bOk = absorb(node.b, bRect)
+      if (aOk && !bOk) return absorb(node.a, rect)
+      if (bOk && !aOk) return absorb(node.b, rect)
+      return aOk || bOk
+    }
+    const aHeight = Math.round((rect.height - gutter) * node.ratio)
+    const aRect = { x: rect.x, y: rect.y, width: rect.width, height: aHeight }
+    const bRect = { x: rect.x, y: rect.y + aHeight + gutter, width: rect.width, height: rect.height - aHeight - gutter }
+    const aOk = absorb(node.a, aRect)
+    const bOk = absorb(node.b, bRect)
+    if (aOk && !bOk) return absorb(node.a, rect)
+    if (bOk && !aOk) return absorb(node.b, rect)
+    return aOk || bOk
+  }
+  absorb(dock, { x: 0, y: 0, width: container.width, height: container.height })
+  for (const p of out.panes) {
+    const r = absorbed.get(p.paneId)
+    if (r) {
+      p.x = r.x
+      p.y = r.y
+      p.width = r.width
+      p.height = r.height
+    }
+  }
 
   return out
 }
@@ -279,7 +344,7 @@ export function computeGeometry(
     const geom = columnGeoms[slotId]
     const collapsedVisually = col.collapsed || collapsedSet.has(slotId)
     if (!col.dock || collapsedVisually) {
-      docks[slotId] = { slotId, panes: [], dividers: [], degradedPanes: [] }
+      docks[slotId] = { slotId, panes: [], dividers: [], degradedPanes: [], collapsible: false }
       continue
     }
     const flat = flattenDock({ width: geom.width, height: geom.height }, col.dock)
@@ -288,8 +353,36 @@ export function computeGeometry(
       panes: flat.panes,
       dividers: flat.dividers,
       degradedPanes: flat.degradedPanes,
+      // Flag for the UI: the whole dock tree fits at ≥2 panes, so the
+      // "restore single panel" affordance stays available.
+      collapsible: flat.panes.filter((p) => !p.degraded).length > 1,
     }
   }
 
   return { columns, splits, docks, degraded }
+}
+
+/**
+ * The widest a column can be without the solver visually collapsing it.
+ * Mirrors the collapse budget above: available width minus the adaptive center
+ * minimum, the side gaps, and the other side columns' effective widths. For the
+ * right column — the solver's first collapse target — this is the exact
+ * threshold (≤ width keeps it visible, > collapses it). Used by the UI to clamp
+ * dock-column drag resizing so widening never triggers a surprise collapse.
+ */
+export function maxFittingColumnWidth(
+  container: UieContainerSize,
+  snapshot: UieLayoutSnapshot,
+  slotId: UieSlotId,
+): number {
+  const gap = snapshot.gap
+  const availableWidth = container.width - 2 * snapshot.edgeInset
+  const slots = snapshot.columnOrder.filter((s) => snapshot.columns[s])
+  const sideSlots = slots.filter((s) => s !== 'center')
+  const otherWidth = sideSlots
+    .filter((s) => s !== slotId)
+    .reduce((sum, s) => sum + effectiveWidth(snapshot.columns[s]), 0)
+  const centerReserved = slots.includes('center') ? MIN_CENTER_WIDTH : 0
+  const sideGaps = Math.max(0, sideSlots.length - 1) * gap
+  return Math.max(0, Math.round(availableWidth - centerReserved - sideGaps - otherWidth))
 }

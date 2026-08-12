@@ -9,6 +9,7 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useDockDrag } from '@/composables/useDockDrag'
 import { FEATURE_CATALOG } from './cards/home/featureCatalog'
 import { collectDockPanes, collectDockTabIds } from '../engine/reducer'
+import { maxFittingColumnWidth } from '../engine/constraints'
 import type {
   ColumnGeometry,
   PersistedCardInstance,
@@ -16,7 +17,7 @@ import type {
   UieColumn as ColumnModel,
   UieDockGeometry,
 } from '../engine/types'
-import { MAX_DOCK_COLUMN_WIDTH } from '../engine/types'
+import { COLLAPSED_COLUMN_WIDTH, MAX_DOCK_COLUMN_WIDTH } from '../engine/types'
 
 const props = defineProps<{
   column: ColumnModel
@@ -57,6 +58,14 @@ const isHomeActive = computed(() => {
   return props.column.primary.activeTabId === home
 })
 
+// True when the constraint solver visually collapsed this column (the window is
+// too narrow to fit it at its persisted width) but the user did NOT collapse it
+// in the layout. The feature panel then renders the 44px icon rail instead of a
+// blank strip — same as a real collapse, so the panel never "disappears".
+const visualCollapsed = computed(
+  () => !props.column.collapsed && props.geometry.width <= COLLAPSED_COLUMN_WIDTH,
+)
+
 // Open feature tabs (everything in the column except the pinned homePicker),
 // used to render the vertical icon rail while the panel is collapsed.
 const openFeatureInstances = computed<PersistedCardInstance[]>(() =>
@@ -90,6 +99,15 @@ const railAttrs = computed(() => getPanelDataAttributes())
  * card (used by the rail's feature icons and the Home button).
  */
 function expand(instanceId?: string | null) {
+  // Visually collapsed (window too narrow, or the persisted width overflows the
+  // window) but NOT user-collapsed: if the persisted width is too wide for the
+  // window, shrink it to the largest fitting width first so the panel can
+  // actually reopen. When the window itself is the constraint the fit clamps to
+  // 280 and the solver keeps the rail — correct, the panel simply doesn't fit.
+  if (!props.column.collapsed && visualCollapsed.value && props.column.width > COLLAPSED_COLUMN_WIDTH) {
+    const fit = dockFitWidth.value
+    if (fit !== null && fit < props.column.width) resizeColumn(fit)
+  }
   wb.bus.dispatch({
     command: { type: 'collapseColumn', scope: wb.scope.value, slotId: props.column.slotId, collapsed: false },
     source: 'user',
@@ -125,6 +143,20 @@ const secondaryInstances = computed(() =>
 
 // Feature-panel width limits match the legacy ContextPanel (280–760px); other
 // columns keep the reducer's global clamp (160–1200px).
+// A dock column's drag ceiling is the widest the solver can fit without
+// visually collapsing the panel (window / left column dependent), capped by
+// MAX_DOCK_COLUMN_WIDTH so a wide window can't stretch it unbounded.
+const dockFitWidth = computed<number | null>(() =>
+  props.column.dock
+    ? Math.max(
+        280,
+        Math.min(
+          MAX_DOCK_COLUMN_WIDTH,
+          maxFittingColumnWidth(wb.containerSize.value, wb.snapshot.value, props.column.slotId),
+        ),
+      )
+    : null,
+)
 function resizeColumn(width: number) {
   wb.bus.dispatch(
     {
@@ -162,9 +194,8 @@ function onResizeDown(event: PointerEvent) {
 function onResizeMove(event: PointerEvent) {
   const delta = event.clientX - resizeStart
   const newWidth = props.column.slotId === 'right' ? resizeWidth - delta : resizeWidth + delta
-  const [minW, maxW] = isFeatureColumn.value
-    ? [280, props.column.dock ? MAX_DOCK_COLUMN_WIDTH : 760]
-    : [160, 1200]
+  const maxW = isFeatureColumn.value ? (dockFitWidth.value ?? 760) : 1200
+  const minW = isFeatureColumn.value ? 280 : 160
   resizeColumn(Math.min(maxW, Math.max(minW, newWidth)))
 }
 function onResizeUp() {
@@ -246,9 +277,11 @@ function onDividerUp() {
     }"
   >
     <!-- Collapsed feature panel: 44px rail (expand + Home + open feature-tab
-         icons), same material as the stack. -->
+         icons), same material as the stack. Shows both for a real user
+         collapse and for a visual (solver-forced) collapse — without this the
+         dock column would render an empty pane list and blank out. -->
     <div
-      v-if="isFeatureColumn && column.collapsed"
+      v-if="isFeatureColumn && (column.collapsed || visualCollapsed)"
       class="float-panel-collapsed-bar wb-column-rail"
       :style="railStyle"
       v-bind="railAttrs"

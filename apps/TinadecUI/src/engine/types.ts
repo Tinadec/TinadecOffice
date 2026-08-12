@@ -192,6 +192,8 @@ export interface UieDockGeometry {
   dividers: UieDockDividerGeometry[]
   /** paneIds visually degraded out (too small); never written back. */
   degradedPanes: string[]
+  /** True when ≥2 panes fit — enables the "restore single panel" action. */
+  collapsible: boolean
 }
 
 export interface UieDockPaneGeometry {
