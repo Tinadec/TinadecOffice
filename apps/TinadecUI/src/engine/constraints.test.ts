@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeGeometry, flattenDock, maxFittingColumnWidth } from './constraints'
+import { computeGeometry, flattenDock, maxOverlayColumnWidth } from './constraints'
 import { buildPreset, HOME_GEOMETRY } from './presets'
 import type { UieDockNode, UieDockPane } from './types'
 
@@ -52,14 +52,15 @@ describe('constraint solver', () => {
     // left may also collapse for 500 width
   })
 
-  it('collapses the right column instead of crushing the adaptive center below its minimum', () => {
-    // At 900px the naive "center width = 0 in overflow math" bug left the chat
-    // column at ~188px. The fixed solver collapses the right rail (420 -> 44)
-    // so the adaptive center stays at least MIN_CENTER_WIDTH.
+  it('overlays the right feature column instead of crushing the adaptive center below comfort at narrow widths', () => {
+    // At 900px the panel (420) can't sit beside a comfortable center, so the
+    // solver floats it over the chat (window-stacking) and the center keeps
+    // MIN_CHAT_COMFORT_WIDTH — the composer never wraps.
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
     const g = computeGeometry({ width: 900, height: 900 }, snapshot)
-    expect(g.degraded.collapsedRight).toBe(true)
-    expect(g.columns.center.width).toBeGreaterThanOrEqual(320)
+    expect(g.degraded.overlayRight).toBe(true)
+    expect(g.degraded.collapsedRight).toBe(false)
+    expect(g.columns.center.width).toBeGreaterThanOrEqual(560)
   })
 
   it('never lets the adaptive center drop below its minimum at narrow widths', () => {
@@ -258,30 +259,68 @@ describe('dock flattening', () => {
   })
 })
 
-describe('maxFittingColumnWidth', () => {
-  it('right column fits = available minus center min, side gap, and left column (home@1440)', () => {
+describe('right-panel overlay', () => {
+  it('overlays the feature panel when it can no longer sit beside a comfortable center', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
-    // 1424 available − 320 center minimum − 8 side gap − 260 left column.
-    expect(maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')).toBe(836)
+    snapshot.columns.right.width = 700
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.degraded.overlayRight).toBe(true)
+    expect(g.degraded.collapsedRight).toBe(false)
+    // The chat keeps its comfort width; the panel floats flush to the right edge.
+    expect(g.columns.center.width).toBe(560)
+    expect(g.columns.right.overlay).toBe(true)
+    expect(g.columns.right.x).toBe(1440 - 8 - 700)
   })
 
-  it('is the exact visual-collapse threshold for the right column', () => {
+  it('keeps the panel side-by-side when it fits beside the comfortable center', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
-    const max = maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')
-    snapshot.columns.right.width = max
-    expect(computeGeometry({ width: 1440, height: 920 }, snapshot).degraded.collapsedRight).toBe(false)
-    snapshot.columns.right.width = max + 1
-    expect(computeGeometry({ width: 1440, height: 920 }, snapshot).degraded.collapsedRight).toBe(true)
+    snapshot.columns.right.width = 500
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.degraded.overlayRight).toBe(false)
+    expect(g.columns.center.width).toBe(1424 - 260 - 500 - 16)
+    expect(g.columns.right.overlay).toBeUndefined()
   })
 
-  it('clamps to zero on a window too narrow to fit any side column', () => {
+  it('never covers the chat fully — clamps the overlaid panel to the visible strip', () => {
     const snapshot = buildPreset('home', { nextInstanceId: nextId() })
-    const fit = maxFittingColumnWidth({ width: 600, height: 800 }, snapshot, 'right')
-    expect(fit).toBeLessThanOrEqual(280)
+    snapshot.columns.right.width = 1200
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    // available 1424 − left 260 − gap 8 − strip 300 = 856 max rendered.
+    expect(g.degraded.overlayRight).toBe(true)
+    expect(g.columns.right.width).toBe(856)
+    // The visible chat = from the center's left edge to the panel's left edge.
+    const strip = g.columns.right.x - g.columns.center.x
+    expect(strip).toBe(300)
   })
 
-  it('code page (gap 1, flush edges) yields 1440 − 0 − 320 − 1 − 280 = 839', () => {
+  it('rails instead of overlaying when the window cannot hold comfortable chat + left column', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    const g = computeGeometry({ width: 600, height: 800 }, snapshot)
+    expect(g.degraded.overlayRight).toBe(false)
+    expect(g.degraded.collapsedRight).toBe(true)
+  })
+
+  it('never overlays an app-mode (non-feature) right column', () => {
     const snapshot = buildPreset('code', { nextInstanceId: nextId() })
-    expect(maxFittingColumnWidth({ width: 1440, height: 920 }, snapshot, 'right')).toBe(839)
+    snapshot.columns.right.width = 1200
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.degraded.overlayRight).toBe(false)
+  })
+})
+
+describe('maxOverlayColumnWidth', () => {
+  it('home@1440 leaves a 300px chat strip: 1424 − 260 − 8 − 300 = 856', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    expect(maxOverlayColumnWidth({ width: 1440, height: 920 }, snapshot)).toBe(856)
+  })
+
+  it('home@1120 leaves a 300px strip: 1104 − 260 − 8 − 300 = 536', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    expect(maxOverlayColumnWidth({ width: 1120, height: 920 }, snapshot)).toBe(536)
+  })
+
+  it('caps at MAX_DOCK_COLUMN_WIDTH on very wide windows', () => {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    expect(maxOverlayColumnWidth({ width: 2560, height: 920 }, snapshot)).toBe(1040)
   })
 })

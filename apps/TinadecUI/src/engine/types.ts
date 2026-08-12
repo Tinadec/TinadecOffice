@@ -161,6 +161,8 @@ export interface UieGeometry {
   degraded: {
     collapsedRight: boolean
     collapsedLeft: boolean
+    /** True when the right feature column floats over the center (window-stacking). */
+    overlayRight: boolean
     degradedSplits: string[]
   }
 }
@@ -175,6 +177,8 @@ export interface ColumnGeometry {
   effectiveWidth: number
   /** Top inset carried over from the column (rendering anchor). */
   topInset: number
+  /** True when this column floats over the adjacent center column (window-stacking). */
+  overlay?: boolean
 }
 
 export interface SplitGeometry {

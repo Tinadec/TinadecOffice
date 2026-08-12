@@ -9,7 +9,7 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useDockDrag } from '@/composables/useDockDrag'
 import { FEATURE_CATALOG } from './cards/home/featureCatalog'
 import { collectDockPanes, collectDockTabIds } from '../engine/reducer'
-import { maxFittingColumnWidth } from '../engine/constraints'
+import { maxOverlayColumnWidth } from '../engine/constraints'
 import type {
   ColumnGeometry,
   PersistedCardInstance,
@@ -17,7 +17,7 @@ import type {
   UieColumn as ColumnModel,
   UieDockGeometry,
 } from '../engine/types'
-import { COLLAPSED_COLUMN_WIDTH, MAX_DOCK_COLUMN_WIDTH } from '../engine/types'
+import { COLLAPSED_COLUMN_WIDTH } from '../engine/types'
 
 const props = defineProps<{
   column: ColumnModel
@@ -143,18 +143,12 @@ const secondaryInstances = computed(() =>
 
 // Feature-panel width limits match the legacy ContextPanel (280–760px); other
 // columns keep the reducer's global clamp (160–1200px).
-// A dock column's drag ceiling is the widest the solver can fit without
-// visually collapsing the panel (window / left column dependent), capped by
-// MAX_DOCK_COLUMN_WIDTH so a wide window can't stretch it unbounded.
+// A float feature column's drag ceiling is the widest it can be while leaving
+// at least MIN_OVERLAY_STRIP of the chat visible when it overlays (the solver
+// floats the panel over the chat instead of squeezing the composer).
 const dockFitWidth = computed<number | null>(() =>
-  props.column.dock
-    ? Math.max(
-        280,
-        Math.min(
-          MAX_DOCK_COLUMN_WIDTH,
-          maxFittingColumnWidth(wb.containerSize.value, wb.snapshot.value, props.column.slotId),
-        ),
-      )
+  isFeatureColumn.value && props.column.surfaceMode === 'float'
+    ? Math.max(280, maxOverlayColumnWidth(wb.containerSize.value, wb.snapshot.value))
     : null,
 )
 function resizeColumn(width: number) {
@@ -268,7 +262,7 @@ function onDividerUp() {
   <div
     ref="colRef"
     class="wb-column"
-    :class="{ 'is-resizing': isResizing }"
+    :class="{ 'is-resizing': isResizing, 'wb-column--overlay': geometry.overlay }"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -378,6 +372,18 @@ function onDividerUp() {
 
 .wb-column.is-resizing {
   transition: none !important;
+}
+
+/* Window-stacking overlay: a very wide right feature panel floats over the chat
+   (raised above the other columns) so the composer keeps its comfortable width.
+   The float stack inside already carries the panel border/shadow; a leftward
+   drop shadow makes the overlap read as stacked windows. */
+.wb-column--overlay {
+  z-index: 20;
+}
+
+.wb-column--overlay .wb-stack {
+  box-shadow: -8px 0 16px -12px rgba(0, 0, 0, 0.4), var(--shadow-card-subtle);
 }
 
 /* Collapsed feature panel rail: carries the same island material as the stack

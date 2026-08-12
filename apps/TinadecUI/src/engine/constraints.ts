@@ -1,6 +1,7 @@
 import type {
   ColumnGeometry,
   SplitGeometry,
+  UieColumn,
   UieContainerSize,
   UieDockGeometry,
   UieDockNode,
@@ -8,7 +9,7 @@ import type {
   UieLayoutSnapshot,
   UieSlotId,
 } from './types'
-import { COLLAPSED_COLUMN_WIDTH, DOCK_DIVIDER, MIN_DOCK_PANE_HEIGHT, MIN_DOCK_PANE_WIDTH } from './types'
+import { COLLAPSED_COLUMN_WIDTH, DOCK_DIVIDER, MAX_DOCK_COLUMN_WIDTH, MIN_DOCK_PANE_HEIGHT, MIN_DOCK_PANE_WIDTH } from './types'
 
 // ---------------------------------------------------------------------------
 // Constraint solver — deterministic geometry computation.
@@ -26,6 +27,16 @@ import { COLLAPSED_COLUMN_WIDTH, DOCK_DIVIDER, MIN_DOCK_PANE_HEIGHT, MIN_DOCK_PA
 const BOTTOM_INSET = 8
 /** The adaptive center column must stay at least this wide (chat usability). */
 export const MIN_CENTER_WIDTH = 320
+/**
+ * When the right feature panel is visible, the chat keeps at least this width
+ * so the composer (mode/permission toolbar) stays on one row and never wraps.
+ */
+export const MIN_CHAT_COMFORT_WIDTH = 560
+/**
+ * A right panel overlaying the chat may cover it, but never fully — at least
+ * this many pixels of the chat stay visible so adjustments remain possible.
+ */
+export const MIN_OVERLAY_STRIP = 300
 
 function effectiveWidth(col: { width: number; collapsed: boolean }): number {
   return col.collapsed ? COLLAPSED_COLUMN_WIDTH : col.width
@@ -215,6 +226,7 @@ export function computeGeometry(
   const degraded: UieGeometry['degraded'] = {
     collapsedRight: false,
     collapsedLeft: false,
+    overlayRight: false,
     degradedSplits: [],
   }
 
@@ -228,31 +240,54 @@ export function computeGeometry(
   // columns must fit in whatever remains. Work out how much room the side
   // columns need, and collapse them (right first, then left) until it fits.
   const sideSlots = slots.filter((s) => s !== 'center')
-  // The center is adaptive: if present, reserve MIN_CENTER_WIDTH for it (plus
-  // its share of the gaps). If absent, its width is zero.
-  const centerReserved = hasCenter ? MIN_CENTER_WIDTH : 0
   const sideGaps = Math.max(0, sideSlots.length - 1) * gap
-  const reserved = centerReserved + sideGaps
+  const leftCol = sideSlots.includes('left') ? snapshot.columns.left : null
+  const rightCol = sideSlots.includes('right') ? snapshot.columns.right : null
+  const leftW = leftCol ? effectiveWidth(leftCol) : 0
+  const rightRaw = rightCol ? effectiveWidth(rightCol) : 0
 
-  // Collapse right first, then left, while the side columns still don't fit.
+  // Window-stacking overlay. When the user makes the right feature panel wider
+  // than the center's comfort width allows side-by-side, the panel floats over
+  // the chat (like stacked windows) instead of squeezing it: the center keeps
+  // MIN_CHAT_COMFORT_WIDTH (the composer never wraps) and the panel covers at
+  // most all-but-MIN_OVERLAY_STRIP of it.
+  const rightFeature =
+    rightCol !== null && !rightCol.collapsed && columnHostsHomePicker(snapshot, rightCol)
+  const comfortFit = availableWidth - leftW - MIN_CHAT_COMFORT_WIDTH - sideGaps
+  const overlayMax = Math.max(0, availableWidth - leftW - sideGaps - MIN_OVERLAY_STRIP)
+  const overlayRight =
+    rightFeature &&
+    hasCenter &&
+    rightRaw > comfortFit &&
+    leftW + MIN_CHAT_COMFORT_WIDTH + sideGaps <= availableWidth
+  degraded.overlayRight = overlayRight
+
   const collapsedSet = new Set<UieSlotId>()
   const sideWidths = new Map<UieSlotId, number>()
   for (const s of sideSlots) sideWidths.set(s, effectiveWidth(snapshot.columns[s]))
 
-  if (reserved + sum(sideWidths) > availableWidth) {
-    const right = sideSlots.find((s) => s === 'right')
-    if (right && !snapshot.columns[right].collapsed) {
-      collapsedSet.add(right)
-      sideWidths.set(right, COLLAPSED_COLUMN_WIDTH)
-      degraded.collapsedRight = true
+  if (overlayRight) {
+    // Keep the persisted width but clamp so at least MIN_OVERLAY_STRIP of the
+    // chat stays visible (the panel never covers the composer fully).
+    sideWidths.set('right', Math.min(rightRaw, Math.min(MAX_DOCK_COLUMN_WIDTH, overlayMax)))
+  } else {
+    // Collapse right first, then left, while the side columns still don't fit.
+    const reserved = (hasCenter ? MIN_CENTER_WIDTH : 0) + sideGaps
+    if (reserved + sum(sideWidths) > availableWidth) {
+      const right = sideSlots.find((s) => s === 'right')
+      if (right && !snapshot.columns[right].collapsed) {
+        collapsedSet.add(right)
+        sideWidths.set(right, COLLAPSED_COLUMN_WIDTH)
+        degraded.collapsedRight = true
+      }
     }
-  }
-  if (reserved + sum(sideWidths) > availableWidth) {
-    const left = sideSlots.find((s) => s === 'left')
-    if (left && !snapshot.columns[left].collapsed) {
-      collapsedSet.add(left)
-      sideWidths.set(left, COLLAPSED_COLUMN_WIDTH)
-      degraded.collapsedLeft = true
+    if (reserved + sum(sideWidths) > availableWidth) {
+      const left = sideSlots.find((s) => s === 'left')
+      if (left && !snapshot.columns[left].collapsed) {
+        collapsedSet.add(left)
+        sideWidths.set(left, COLLAPSED_COLUMN_WIDTH)
+        degraded.collapsedLeft = true
+      }
     }
   }
 
@@ -273,19 +308,25 @@ export function computeGeometry(
     const isCollapsedVisual = collapsedSet.has(slotId)
 
     // Center is adaptive: fills the space between the (possibly collapsed) side
-    // columns, but never below MIN_CENTER_WIDTH.
+    // columns, but never below MIN_CENTER_WIDTH. In overlay the center keeps
+    // MIN_CHAT_COMFORT_WIDTH so the composer stays wide enough to never wrap.
     let width = isCollapsedVisual ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(col)
+    if (slotId === 'right' && overlayRight) width = sideWidths.get('right') ?? width
     if (slotId === 'center' && !isCollapsedVisual) {
-      const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : 0
-      const rightX = columnGeoms.right
-        ? columnGeoms.right.x
-        : container.width - inset - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right ?? { width: 0, collapsed: false }))
-      width = Math.max(MIN_CENTER_WIDTH, rightX - gap - usedLeft)
+      if (overlayRight) {
+        width = MIN_CHAT_COMFORT_WIDTH
+      } else {
+        const usedLeft = columnGeoms.left ? columnGeoms.left.x + columnGeoms.left.width + gap : 0
+        const rightX = columnGeoms.right
+          ? columnGeoms.right.x
+          : container.width - inset - (collapsedSet.has('right') ? COLLAPSED_COLUMN_WIDTH : effectiveWidth(snapshot.columns.right ?? { width: 0, collapsed: false }))
+        width = Math.max(MIN_CENTER_WIDTH, rightX - gap - usedLeft)
+      }
     }
 
     const height = container.height - col.topInset - BOTTOM_INSET
     const y = col.topInset
-    columnGeoms[slotId] = {
+    const geom: ColumnGeometry = {
       slotId,
       x: cursorX,
       y,
@@ -294,6 +335,12 @@ export function computeGeometry(
       effectiveWidth: width,
       topInset: col.topInset,
     }
+    if (slotId === 'right' && overlayRight) {
+      // Float over the chat, flush to the window's right edge.
+      geom.x = container.width - inset - width
+      geom.overlay = true
+    }
+    columnGeoms[slotId] = geom
     cursorX += width + (isLast ? 0 : gap)
   }
 
@@ -362,27 +409,46 @@ export function computeGeometry(
   return { columns, splits, docks, degraded }
 }
 
+/** Recursively collect a column's tab instance ids (stacks + dock panes). */
+function columnTabIds(col: UieColumn): string[] {
+  const ids = [...(col.primary?.tabIds ?? [])]
+  if (col.secondary) ids.push(...col.secondary.tabIds)
+  if (col.dock) {
+    const walk = (node: UieDockNode): void => {
+      if (node.kind === 'pane') ids.push(...node.tabIds)
+      else {
+        walk(node.a)
+        walk(node.b)
+      }
+    }
+    walk(col.dock)
+  }
+  return ids
+}
+
+/** True when a column hosts the pinned homePicker card (the feature panel). */
+function columnHostsHomePicker(snapshot: UieLayoutSnapshot, col: UieColumn): boolean {
+  return columnTabIds(col).some((id) => snapshot.cards[id]?.descriptorId === 'homePicker')
+}
+
 /**
- * The widest a column can be without the solver visually collapsing it.
- * Mirrors the collapse budget above: available width minus the adaptive center
- * minimum, the side gaps, and the other side columns' effective widths. For the
- * right column — the solver's first collapse target — this is the exact
- * threshold (≤ width keeps it visible, > collapses it). Used by the UI to clamp
- * dock-column drag resizing so widening never triggers a surprise collapse.
+ * Widest the right feature panel may be dragged while leaving at least
+ * MIN_OVERLAY_STRIP of the chat visible when it overlays. The UI clamps
+ * dock-column drag resizing to this: widening can slide the panel into
+ * window-stacking overlay, but never covers the composer fully.
  */
-export function maxFittingColumnWidth(
+export function maxOverlayColumnWidth(
   container: UieContainerSize,
   snapshot: UieLayoutSnapshot,
-  slotId: UieSlotId,
 ): number {
   const gap = snapshot.gap
   const availableWidth = container.width - 2 * snapshot.edgeInset
   const slots = snapshot.columnOrder.filter((s) => snapshot.columns[s])
   const sideSlots = slots.filter((s) => s !== 'center')
-  const otherWidth = sideSlots
-    .filter((s) => s !== slotId)
-    .reduce((sum, s) => sum + effectiveWidth(snapshot.columns[s]), 0)
-  const centerReserved = slots.includes('center') ? MIN_CENTER_WIDTH : 0
   const sideGaps = Math.max(0, sideSlots.length - 1) * gap
-  return Math.max(0, Math.round(availableWidth - centerReserved - sideGaps - otherWidth))
+  const leftW = sideSlots.includes('left') ? effectiveWidth(snapshot.columns.left) : 0
+  return Math.max(
+    0,
+    Math.min(MAX_DOCK_COLUMN_WIDTH, availableWidth - leftW - sideGaps - MIN_OVERLAY_STRIP),
+  )
 }
