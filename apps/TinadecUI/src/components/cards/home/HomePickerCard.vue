@@ -1,43 +1,32 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  Bot,
-  TerminalSquare,
-  GitBranch,
-  ShieldCheck,
-  Layers3,
-  Globe,
-  Activity,
-  Stethoscope,
-  type LucideIcon,
-} from '@lucide/vue'
 import { useUie } from '../../useUie'
+import { useResponsiveMode } from '@/composables/useElementSize'
 import { homeController } from '@/controllers/HomeController'
+import { FEATURE_CATALOG } from './featureCatalog'
 
 const { t } = useI18n()
 const wb = useUie()
 const c = homeController
 
-interface FeatureCard {
-  descriptorId: string
-  titleKey: string
-  descKey: string
-  icon: LucideIcon
-  color: string
-  badge?: () => number
-}
+// Compact mode mirrors the legacy PanelHome behavior: when the feature panel
+// is narrower than 420px the grid becomes single-column with row-aligned cards
+// and the subtitle/descriptions/footer are hidden. The width is measured on a
+// no-padding wrapper so the threshold matches the stack width (the legacy code
+// measured the panel root, not the padded section).
+const rootRef = ref<HTMLElement | null>(null)
+const { isCompact } = useResponsiveMode(rootRef)
 
-const features = computed<FeatureCard[]>(() => [
-  { descriptorId: 'agent', titleKey: 'context.homeAgent', descKey: 'context.homeAgentDesc', icon: Bot, color: '#58a6ff' },
-  { descriptorId: 'terminal', titleKey: 'context.homeTerminal', descKey: 'context.homeTerminalDesc', icon: TerminalSquare, color: '#3fb950' },
-  { descriptorId: 'git', titleKey: 'context.homeGit', descKey: 'context.homeGitDesc', icon: GitBranch, color: '#f1502f' },
-  { descriptorId: 'approval', titleKey: 'context.homeApproval', descKey: 'context.homeApprovalDesc', icon: ShieldCheck, color: '#d29922', badge: () => c.approvals.value.filter((a) => a.status === 'pending').length },
-  { descriptorId: 'orchestration', titleKey: 'context.homeOrchestration', descKey: 'context.homeOrchestrationDesc', icon: Layers3, color: '#a371f7' },
-  { descriptorId: 'browser', titleKey: 'context.homePreview', descKey: 'context.homePreviewDesc', icon: Globe, color: '#58a6ff' },
-  { descriptorId: 'events', titleKey: 'context.homeEvents', descKey: 'context.homeEventsDesc', icon: Activity, color: '#7d8590' },
-  { descriptorId: 'doctor', titleKey: 'context.homeDoctor', descKey: 'context.homeDoctorDesc', icon: Stethoscope, color: '#3fb950' },
-])
+// The feature list is the shared catalog; the approval card additionally
+// shows the pending-count badge.
+const features = computed(() =>
+  FEATURE_CATALOG.map((entry) =>
+    entry.descriptorId === 'approval'
+      ? { ...entry, badge: () => c.approvals.value.filter((a) => a.status === 'pending').length }
+      : entry,
+  ),
+)
 
 function openCard(descriptorId: string) {
   wb.dispatch({
@@ -49,39 +38,47 @@ function openCard(descriptorId: string) {
 </script>
 
 <template vapor>
-  <section class="panel-home">
-    <div class="panel-home-header">
-      <h2>{{ t('context.homeTitle') }}</h2>
-      <p>{{ t('context.homeSubtitle') }}</p>
-    </div>
+  <div ref="rootRef" class="panel-home-root">
+    <section class="panel-home" :class="{ 'panel-home-compact': isCompact }">
+      <div class="panel-home-header">
+        <h2>{{ t('context.homeTitle') }}</h2>
+        <p v-if="!isCompact">{{ t('context.homeSubtitle') }}</p>
+      </div>
 
-    <div class="panel-home-grid">
-      <button
-        v-for="feature in features"
-        :key="feature.descriptorId"
-        class="panel-home-card"
-        @click="openCard(feature.descriptorId)"
-      >
-        <div class="panel-home-card-icon" :style="{ '--card-color': feature.color }">
-          <component :is="feature.icon" :size="22" />
-        </div>
-        <div class="panel-home-card-body">
-          <span class="panel-home-card-title">{{ t(feature.titleKey) }}</span>
-          <span class="panel-home-card-desc">{{ t(feature.descKey) }}</span>
-        </div>
-        <span v-if="feature.badge && feature.badge() > 0" class="panel-home-card-badge">
-          {{ feature.badge() }}
-        </span>
-      </button>
-    </div>
+      <div class="panel-home-grid">
+        <button
+          v-for="feature in features"
+          :key="feature.descriptorId"
+          class="panel-home-card"
+          :class="{ 'panel-home-card-compact': isCompact }"
+          @click="openCard(feature.descriptorId)"
+        >
+          <div class="panel-home-card-icon" :style="{ '--card-color': feature.color }">
+            <component :is="feature.icon" :size="isCompact ? 18 : 22" />
+          </div>
+          <div class="panel-home-card-body">
+            <span class="panel-home-card-title">{{ t(feature.titleKey) }}</span>
+            <span v-if="!isCompact" class="panel-home-card-desc">{{ t(feature.descKey) }}</span>
+          </div>
+          <span v-if="feature.badge && feature.badge() > 0" class="panel-home-card-badge">
+            {{ feature.badge() }}
+          </span>
+        </button>
+      </div>
 
-    <div class="panel-home-footer">
-      <span>{{ t('context.homeFooterHint') }}</span>
-    </div>
-  </section>
+      <div v-if="!isCompact" class="panel-home-footer">
+        <span>{{ t('context.homeFooterHint') }}</span>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+.panel-home-root {
+  width: 100%;
+  height: 100%;
+}
+
 .panel-home {
   display: flex;
   flex-direction: column;
@@ -94,6 +91,32 @@ function openCard(descriptorId: string) {
 .panel-home-header h2 { margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary); }
 .panel-home-header p { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.4; }
 .panel-home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Compact mode: single column, reduced padding (legacy PanelHome parity) */
+.panel-home-compact {
+  padding: 12px 10px;
+  gap: 10px;
+}
+.panel-home-compact .panel-home-grid {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.panel-home-card-compact {
+  flex-direction: row;
+  align-items: center;
+  padding: 8px 10px;
+  gap: 10px;
+}
+.panel-home-card-compact .panel-home-card-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.panel-home-card-compact .panel-home-card-body {
+  flex-direction: column;
+  gap: 0;
+}
+
 .panel-home-card {
   position: relative;
   display: flex;

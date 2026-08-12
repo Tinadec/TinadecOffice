@@ -1926,28 +1926,35 @@ box-shadow: var(--shadow-subtle);
    below, which dynamically calculate based on tab count + panel width. */
 
 /* ===== Smart tab label visibility (dynamic, not fixed breakpoint) ===== */
-/* tab-labels-hidden: Not enough space for any label — icon-only mode */
-.float-panel.tab-labels-hidden .browser-tab-label {
+/* tab-labels-hidden: Not enough space for any label — icon-only mode.
+   Applies to both the legacy .float-panel and the UIE .wb-stack feature panel. */
+.float-panel.tab-labels-hidden .browser-tab-label,
+.wb-stack.tab-labels-hidden .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab {
+.float-panel.tab-labels-hidden .browser-tab,
+.wb-stack.tab-labels-hidden .browser-tab {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
-.float-panel.tab-labels-hidden .browser-tab-home {
+.float-panel.tab-labels-hidden .browser-tab-home,
+.wb-stack.tab-labels-hidden .browser-tab-home {
   max-width: 36px;
 }
 
 /* Hide close/detach buttons in icon-only; show on hover */
 .float-panel.tab-labels-hidden .browser-tab-close,
-.float-panel.tab-labels-hidden .browser-tab-detach {
+.float-panel.tab-labels-hidden .browser-tab-detach,
+.wb-stack.tab-labels-hidden .browser-tab-close,
+.wb-stack.tab-labels-hidden .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close {
+.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close,
+.wb-stack.tab-labels-hidden .browser-tab:hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -1956,22 +1963,27 @@ box-shadow: var(--shadow-subtle);
 }
 
 /* tab-labels-active-only: Enough space for the active tab's label only */
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active) {
+.float-panel.tab-labels-active-only .browser-tab:not(.active),
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
 .float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
+.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -1981,64 +1993,76 @@ box-shadow: var(--shadow-subtle);
 
 /* ===== Responsive: Ultra-compact mode (panel width < 340px) ===== */
 /* Strategy: Hide secondary actions, keep only essential icons. */
-.float-panel.mode-ultra .browser-tab-add {
+.float-panel.mode-ultra .browser-tab-add,
+.wb-stack.mode-ultra .browser-tab-add {
   display: none;
 }
 
-.float-panel.mode-ultra .browser-tab-bar {
+.float-panel.mode-ultra .browser-tab-bar,
+.wb-stack.mode-ultra .browser-tab-bar {
   padding: 4px;
   gap: 2px;
 }
 
-.float-panel.mode-ultra .browser-tab {
+.float-panel.mode-ultra .browser-tab,
+.wb-stack.mode-ultra .browser-tab {
   max-width: 30px;
   min-width: 28px;
   padding: 5px 4px;
 }
 
-.float-panel.mode-ultra .browser-tab-collapse {
+.float-panel.mode-ultra .browser-tab-collapse,
+.wb-stack.mode-ultra .browser-tab-collapse {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Preview browser toolbar ===== */
 /* Compact: hide secondary nav buttons (forward, home) to save space */
-.float-panel.mode-compact .preview-nav-secondary {
+.float-panel.mode-compact .preview-nav-secondary,
+.wb-stack.mode-compact .preview-nav-secondary {
   display: none;
 }
 
-.float-panel.mode-compact .preview-toolbar {
+.float-panel.mode-compact .preview-toolbar,
+.wb-stack.mode-compact .preview-toolbar {
   gap: 2px;
   padding: 4px 6px;
 }
 
 /* Ultra-compact: further reduce toolbar */
-.float-panel.mode-ultra .preview-nav-btn {
+.float-panel.mode-ultra .preview-nav-btn,
+.wb-stack.mode-ultra .preview-nav-btn {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Commit panel ===== */
 /* Compact: stack action buttons vertically */
-.float-panel.mode-compact .commit-actions {
+.float-panel.mode-compact .commit-actions,
+.wb-stack.mode-compact .commit-actions {
   flex-direction: column;
 }
 
-.float-panel.mode-compact .commit-action-btn {
+.float-panel.mode-compact .commit-action-btn,
+.wb-stack.mode-compact .commit-action-btn {
   width: 100%;
 }
 
 /* Compact: reduce file list height */
-.float-panel.mode-compact .commit-file-list {
+.float-panel.mode-compact .commit-file-list,
+.wb-stack.mode-compact .commit-file-list {
   max-height: 160px;
 }
 
 /* ===== Responsive: General panel padding ===== */
-.float-panel.mode-compact .panel {
+.float-panel.mode-compact .panel,
+.wb-stack.mode-compact .panel {
   padding: 10px 8px;
 }
 
-.float-panel.mode-ultra .panel {
+.float-panel.mode-ultra .panel,
+.wb-stack.mode-ultra .panel {
   padding: 8px 6px;
 }
 

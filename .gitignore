@@ -22,3 +22,4 @@ output/
 *.log
 config.json
 oc-debug.log
+/.mimosa

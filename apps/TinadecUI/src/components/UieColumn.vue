@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { Home as HomeIcon, PanelRightOpen } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import UieStack from './UieStack.vue'
 import { useUie } from './useUie'
+import { usePanelStyles } from '@/composables/usePanelStyles'
 import type { ColumnGeometry, SplitGeometry, UieColumn as ColumnModel } from '../engine/types'
 
 const props = defineProps<{
@@ -10,7 +13,42 @@ const props = defineProps<{
   split?: SplitGeometry
 }>()
 
+const { t } = useI18n()
 const wb = useUie()
+
+// The feature panel is the right column that hosts the pinned homePicker card.
+// It gets the old ContextPanel treatment: browser tab chrome (in UieStack) and
+// a 44px collapsed rail with expand + Home buttons.
+const isFeatureColumn = computed(() =>
+  props.column.primary.tabIds.some((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
+)
+const featureHomeId = computed(
+  () =>
+    props.column.primary.tabIds.find((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker') ??
+    null,
+)
+const isHomeActive = computed(() => featureHomeId.value !== null && props.column.primary.activeTabId === featureHomeId.value)
+
+// Collapsed rail shares the float-panel material (translucent/blur follow the
+// global panel-style setting just like the stack they replace).
+const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
+const railStyle = computed(() => getPanelStyle())
+const railAttrs = computed(() => getPanelDataAttributes())
+
+function expand(goHome = false) {
+  wb.bus.dispatch({
+    command: { type: 'collapseColumn', scope: wb.scope.value, slotId: props.column.slotId, collapsed: false },
+    source: 'user',
+    expectedRevision: wb.snapshot.value.revision,
+  })
+  if (goHome && featureHomeId.value) {
+    wb.bus.dispatch({
+      command: { type: 'activateCard', scope: wb.scope.value, instanceId: featureHomeId.value },
+      source: 'user',
+      expectedRevision: wb.snapshot.value.revision,
+    })
+  }
+}
 
 const primaryGeometry = computed(() =>
   props.split
@@ -31,6 +69,8 @@ const secondaryInstances = computed(() =>
     : [],
 )
 
+// Feature-panel width limits match the legacy ContextPanel (280–760px); other
+// columns keep the reducer's global clamp (160–1200px).
 function resizeColumn(width: number) {
   wb.bus.dispatch(
     {
@@ -68,7 +108,8 @@ function onResizeDown(event: PointerEvent) {
 function onResizeMove(event: PointerEvent) {
   const delta = event.clientX - resizeStart
   const newWidth = props.column.slotId === 'right' ? resizeWidth - delta : resizeWidth + delta
-  resizeColumn(Math.max(160, newWidth))
+  const [minW, maxW] = isFeatureColumn.value ? [280, 760] : [160, 1200]
+  resizeColumn(Math.min(maxW, Math.max(minW, newWidth)))
 }
 function onResizeUp() {
   isResizing.value = false
@@ -110,37 +151,67 @@ function onDividerUp() {
       height: `${geometry.height}px`,
     }"
   >
-    <!-- Resizer handle: Left column resizes via right edge, Right column resizes via left edge -->
+    <!-- Collapsed feature panel: 44px rail (expand + Home), same material as the stack. -->
     <div
-      v-if="column.slotId === 'left' || column.slotId === 'right'"
-      class="wb-column-resizer"
-      :class="column.slotId === 'right' ? 'wb-column-resizer-left' : 'wb-column-resizer-right'"
-      @pointerdown="onResizeDown"
-    />
+      v-if="isFeatureColumn && column.collapsed"
+      class="float-panel-collapsed-bar wb-column-rail"
+      :style="railStyle"
+      v-bind="railAttrs"
+    >
+      <button
+        class="float-panel-toggle-btn"
+        :title="t('app.expand')"
+        @click="expand(false)"
+      >
+        <PanelRightOpen :size="16" />
+      </button>
+      <button
+        class="float-panel-collapsed-icon"
+        :class="{ active: isHomeActive }"
+        :title="t('context.homeTitle')"
+        @click="expand(true)"
+      >
+        <HomeIcon :size="18" />
+      </button>
+    </div>
 
-    <!-- Primary stack -->
-    <UieStack
-      :stack="column.primary"
-      :geometry="primaryGeometry"
-      :instances="primaryInstances"
-      :degraded="primaryDegraded"
-      :surface-mode="column.surfaceMode"
-    />
-
-    <!-- Secondary stack + divider -->
-    <template v-if="column.secondary && split">
+    <template v-else>
+      <!-- Resizer handle: Left column resizes via right edge, Right column resizes via left edge -->
       <div
-        class="wb-split-divider"
-        :style="{ top: `${split.dividerY - geometry.y - 2}px` }"
-        @pointerdown="onDividerDown"
+        v-if="column.slotId === 'left' || column.slotId === 'right'"
+        class="wb-column-resizer"
+        :class="column.slotId === 'right' ? 'wb-column-resizer-left' : 'wb-column-resizer-right'"
+        @pointerdown="onResizeDown"
       />
+
+      <!-- Primary stack -->
       <UieStack
-        :stack="column.secondary"
-        :geometry="{ x: 0, y: split.lower.y - geometry.y, width: geometry.width, height: split.lower.height, degraded: !!split.lower.degraded }"
-        :instances="secondaryInstances"
-        :degraded="!!split.lower.degraded"
+        :stack="column.primary"
+        :geometry="primaryGeometry"
+        :instances="primaryInstances"
+        :degraded="primaryDegraded"
         :surface-mode="column.surfaceMode"
+        :slot-id="column.slotId"
+        :resizing="isResizing"
       />
+
+      <!-- Secondary stack + divider -->
+      <template v-if="column.secondary && split">
+        <div
+          class="wb-split-divider"
+          :style="{ top: `${split.dividerY - geometry.y - 2}px` }"
+          @pointerdown="onDividerDown"
+        />
+        <UieStack
+          :stack="column.secondary"
+          :geometry="{ x: 0, y: split.lower.y - geometry.y, width: geometry.width, height: split.lower.height, degraded: !!split.lower.degraded }"
+          :instances="secondaryInstances"
+          :degraded="!!split.lower.degraded"
+          :surface-mode="column.surfaceMode"
+          :slot-id="column.slotId"
+          :resizing="isResizing"
+        />
+      </template>
     </template>
   </div>
 </template>
@@ -155,6 +226,18 @@ function onDividerUp() {
 
 .wb-column.is-resizing {
   transition: none !important;
+}
+
+/* Collapsed feature panel rail: carries the same island material as the stack
+   it replaces (rounded, bordered, shadowed). Buttons use the shared
+   .float-panel-* rules from styles.css. */
+.wb-column-rail {
+  width: 100%;
+  height: 100%;
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-subtle);
 }
 
 .wb-column-resizer-right {

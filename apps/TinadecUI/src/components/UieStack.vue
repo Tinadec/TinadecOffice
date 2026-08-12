@@ -1,9 +1,32 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import {
+  Activity,
+  Bot,
+  GitBranch,
+  Globe,
+  Layers3,
+  ShieldCheck,
+  Stethoscope,
+  TerminalSquare,
+  type LucideIcon,
+} from '@lucide/vue'
 import UieCardHost from './UieCardHost.vue'
+import BrowserTabBar from './BrowserTabBar.vue'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import type { StackGeometry, UieStack as StackModel, PersistedCardInstance, SurfaceMode } from '../engine/types'
+import { useResponsiveMode, useTabLabelMode } from '@/composables/useElementSize'
+import {
+  descriptorForDetachedType,
+  useDetachedTabs,
+} from '@/composables/useDetachedTabs'
+import type {
+  PersistedCardInstance,
+  StackGeometry,
+  SurfaceMode,
+  UieSlotId,
+  UieStack as StackModel,
+} from '../engine/types'
 
 const props = defineProps<{
   stack: StackModel
@@ -14,6 +37,10 @@ const props = defineProps<{
   degraded?: boolean
   /** Column surface mode — float panels vs connected app layout. */
   surfaceMode?: SurfaceMode
+  /** Owning column slot (used for collapse/resize of the feature panel). */
+  slotId?: UieSlotId
+  /** True while the owning column is being dragged (disables width transition). */
+  resizing?: boolean
 }>()
 
 const wb = useUie()
@@ -37,8 +64,63 @@ const materialStyle = computed(() => {
 })
 const materialAttrs = computed(() => getPanelDataAttributes())
 
-const showTabBar = computed(() => props.instances.length > 1)
+// The feature panel is the stack that hosts the pinned homePicker card (the
+// Home grid). It gets the full browser-style tab chrome from 2b4377c7's
+// ContextPanel; all other stacks keep the minimal tab bar.
+const isFeaturePanel = computed(() =>
+  props.instances.some((i) => i.descriptorId === 'homePicker'),
+)
+const homeInstance = computed(
+  () => props.instances.find((i) => i.descriptorId === 'homePicker') ?? null,
+)
 
+const showTabBar = computed(() => isFeaturePanel.value || props.instances.length > 1)
+
+// ---- Feature-panel responsive modes (ported from ContextPanel) ----
+const panelRef = ref<HTMLElement | null>(null)
+const { mode: responsiveMode, isCompact } = useResponsiveMode(panelRef)
+
+const detached = useDetachedTabs()
+const openTabCount = computed(
+  () => props.instances.filter((i) => i.descriptorId !== 'homePicker').length,
+)
+const detachedCount = computed(() => detached.detachedTabs.value.length)
+const tabLabelMode = useTabLabelMode(
+  computed(() => props.geometry.width),
+  openTabCount,
+  detachedCount,
+)
+
+const stackClass = computed(() => ({
+  'wb-stack--app': props.surfaceMode === 'app',
+  'wb-stack--immersive': props.surfaceMode === 'immersive',
+  'wb-stack--resizing': !!props.resizing,
+  // Responsive classes mirror the legacy .float-panel.mode-* / .tab-labels-*
+  // hooks; styles.css has matching .wb-stack selectors.
+  'mode-compact': isFeaturePanel.value && isCompact.value,
+  'mode-ultra': isFeaturePanel.value && responsiveMode.value === 'ultra',
+  'tab-labels-hidden': isFeaturePanel.value && tabLabelMode.value === 'hidden',
+  'tab-labels-active-only': isFeaturePanel.value && tabLabelMode.value === 'active-only',
+}))
+
+// ---- Tab icons (descriptorId -> icon; 'preview' matches the detached type) ----
+const FEATURE_ICONS: Record<string, LucideIcon> = {
+  agent: Bot,
+  terminal: TerminalSquare,
+  git: GitBranch,
+  approval: ShieldCheck,
+  orchestration: Layers3,
+  browser: Globe,
+  preview: Globe,
+  events: Activity,
+  doctor: Stethoscope,
+}
+
+function iconFor(descriptorId: string): LucideIcon {
+  return FEATURE_ICONS[descriptorId] ?? Globe
+}
+
+// ---- Dispatch helpers ----
 function activate(instanceId: string) {
   wb.bus.dispatch({
     command: { type: 'activateCard', scope: wb.scope.value, instanceId },
@@ -54,15 +136,89 @@ function close(instanceId: string) {
     expectedRevision: wb.snapshot.value.revision,
   })
 }
+
+function goHome() {
+  const home = homeInstance.value
+  if (home) activate(home.id)
+}
+
+function collapse() {
+  if (!props.slotId) return
+  wb.bus.dispatch({
+    command: {
+      type: 'collapseColumn',
+      scope: wb.scope.value,
+      slotId: props.slotId,
+      collapsed: true,
+    },
+    source: 'user',
+    expectedRevision: wb.snapshot.value.revision,
+  })
+}
+
+function focusDetached(windowId: number) {
+  detached.focus(windowId)
+}
+
+/**
+ * Open a feature page from the "+" new-tab menu. The reducer handles
+ * singleton dedup (git/approval/orchestration/events/doctor/agent reuse the
+ * open tab and just activate it); browser/terminal allow multiple instances.
+ */
+function openFeature(descriptorId: string) {
+  wb.bus.dispatch({
+    command: {
+      type: 'openCard',
+      scope: wb.scope.value,
+      descriptorId,
+      slotId: props.slotId,
+    },
+    source: 'user',
+    expectedRevision: wb.snapshot.value.revision,
+  })
+}
+
+/** Detach a card into a floating window, then remove its tab from the stack. */
+async function detachTab(instanceId: string) {
+  const inst = props.instances.find((i) => i.id === instanceId)
+  if (!inst) return
+  const ok = await detached.detach(inst, inst.state)
+  if (ok) close(instanceId)
+}
+
+// ---- Reattach from a floating window back into the stack ----
+let unsubscribeDetached: (() => void) | null = null
+
+onMounted(() => {
+  if (!isFeaturePanel.value) return
+  unsubscribeDetached = detached.bind((data) => {
+    wb.bus.dispatch({
+      command: {
+        type: 'openCard',
+        scope: wb.scope.value,
+        descriptorId: descriptorForDetachedType(data.type),
+        slotId: props.slotId,
+        title: data.title,
+        state: data.state,
+        instanceId: data.tabId,
+      },
+      source: 'user',
+      expectedRevision: wb.snapshot.value.revision,
+    })
+  })
+})
+
+onUnmounted(() => {
+  unsubscribeDetached?.()
+  unsubscribeDetached = null
+})
 </script>
 
 <template vapor>
   <div
+    ref="panelRef"
     class="wb-stack"
-    :class="{
-      'wb-stack--app': surfaceMode === 'app',
-      'wb-stack--immersive': surfaceMode === 'immersive',
-    }"
+    :class="stackClass"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -72,8 +228,25 @@ function close(instanceId: string) {
     }"
     v-bind="materialAttrs"
   >
-    <!-- Browser-style tab bar for multi-card stacks -->
-    <div v-if="showTabBar" class="browser-tab-bar wb-stack-tabbar">
+    <!-- Feature panel: full browser-style tab chrome (pinned Home, detach,
+         indicators, add, collapse, drag-to-detach). -->
+    <BrowserTabBar
+      v-if="isFeaturePanel && showTabBar"
+      :instances="instances"
+      :active-tab-id="stack.activeTabId"
+      :icon-for="iconFor"
+      :home-instance="homeInstance"
+      @home="goHome"
+      @activate="activate"
+      @close="close"
+      @detach="detachTab"
+      @collapse="collapse"
+      @focus-detached="focusDetached"
+      @open-panel="openFeature"
+    />
+
+    <!-- Other stacks: minimal browser-style tab bar for multi-card stacks -->
+    <div v-else-if="showTabBar" class="browser-tab-bar wb-stack-tabbar">
       <button
         v-for="inst in instances"
         :key="inst.id"
@@ -114,6 +287,11 @@ function close(instanceId: string) {
   min-height: 0;
   overflow: hidden;
   transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* While the column is being dragged, snap geometry (matches .float-panel.resizing). */
+.wb-stack--resizing {
+  transition: none !important;
 }
 
 /* Float-panel look (Left/Right): rounded, background + subtle border for island-style elevation */
