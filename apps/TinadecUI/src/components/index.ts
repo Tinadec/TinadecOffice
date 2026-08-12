@@ -13,6 +13,7 @@ export { default as UieShell } from './UieShell.vue'
 export { default as UieCanvas } from './UieCanvas.vue'
 export { default as UieColumn } from './UieColumn.vue'
 export { default as UieStack } from './UieStack.vue'
+export { default as UieDock } from './UieDock.vue'
 export { default as UieCardHost } from './UieCardHost.vue'
 export { default as UieCardFrame } from './UieCardFrame.vue'
 

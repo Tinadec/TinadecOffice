@@ -22,6 +22,8 @@ export type UieCommand =
       descriptorId: string
       slotId?: UieSlotId
       stackId?: UieStackId
+      /** Target dock pane (when the column hosts a dock). Defaults to main pane. */
+      paneId?: string
       toIndex?: number
       title?: string
       state?: Record<string, unknown>
@@ -66,6 +68,35 @@ export type UieCommand =
       w?: number
       h?: number
     }
+  | {
+      type: 'splitDockPane'
+      scope: LayoutScope
+      slotId: UieSlotId
+      /** The target pane to split. */
+      paneId: string
+      /** `row` = left/right split; `column` = top/bottom split. */
+      dir: 'row' | 'column'
+      /** `start` puts the new pane first (left/top); `end` second (right/bottom). */
+      place: 'start' | 'end'
+      /** The card instance moved into the new pane. */
+      instanceId: string
+      ratio?: number
+      /** Explicit new pane id (tests only). */
+      paneId2?: string
+      /** Explicit new split id (tests only). */
+      splitId?: string
+    }
+  | { type: 'mergeDockPane'; scope: LayoutScope; slotId: UieSlotId; paneId: string }
+  /** Merge every dock pane back into a single stack and clear the dock. */
+  | { type: 'mergeDockColumn'; scope: LayoutScope; slotId: UieSlotId }
+  | {
+      type: 'moveCardToDockPane'
+      scope: LayoutScope
+      instanceId: string
+      toPaneId: string
+      toIndex?: number
+    }
+  | { type: 'resizeDockSplit'; scope: LayoutScope; slotId: UieSlotId; splitId: string; ratio: number }
   | { type: 'applyPreset'; scope: LayoutScope; presetId: UiePageId }
   | { type: 'resetScope'; scope: LayoutScope }
   /** Internal — only the reducer / undo may emit this. Not dispatched externally. */

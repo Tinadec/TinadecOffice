@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { repairLayout, type RepairContext } from './repair'
 import { makeRegistry } from './__testUtils'
 import { buildPreset } from './presets'
-import { createEmptySnapshot } from './reducer'
+import { createEmptySnapshot, collectDockPanes } from './reducer'
 
 function makeCtx(): RepairContext {
   return { registry: makeRegistry(), preset: { nextInstanceId: () => `repair-${Math.random()}` } }
@@ -237,7 +237,9 @@ describe('repairLayout', () => {
       {
         version: 1,
         pageId: 'home',
-        columns: {},
+        columns: {
+          center: { width: 0, collapsed: false, surfaceMode: 'immersive', topInset: 8, primary: { stackId: 'primary', tabIds: ['c'], activeTabId: 'c' }, secondary: null, splitRatio: null, dock: null },
+        },
         cards: {
           c: { id: 'c', descriptorId: 'chat', title: '聊天', x: -5, y: 3.8, w: 10, h: 0, static: true },
         },
@@ -251,5 +253,167 @@ describe('repairLayout', () => {
     expect(card.w).toBe(10)
     expect(card.h).toBe(1)
     expect(card.static).toBe(true)
+  })
+
+  it('repairs a dock tree and forces exactly one main pane with homePicker first', () => {
+    const ctx = makeCtx()
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 260, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          center: { width: 0, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null },
+          right: {
+            width: 640,
+            collapsed: false,
+            surfaceMode: 'float',
+            topInset: 48,
+            primary: { stackId: 'primary', tabIds: ['hp'], activeTabId: 'hp' },
+            secondary: null,
+            splitRatio: null,
+            dock: {
+              kind: 'split',
+              splitId: 's1',
+              dir: 'row',
+              ratio: 2, // out of range → clamped
+              a: {
+                kind: 'split',
+                splitId: 's2',
+                dir: 'column',
+                ratio: 0.5,
+                a: { kind: 'pane', paneId: 'p-side', main: false, tabIds: ['appr'], activeTabId: 'appr' },
+                b: { kind: 'pane', paneId: 'p-main-dup', main: true, tabIds: ['git', 'hp'], activeTabId: 'git' }, // duplicate main
+              },
+              b: { kind: 'pane', paneId: 'p-dup-main', main: true, tabIds: ['hp'], activeTabId: 'hp' }, // duplicate main
+            },
+          },
+        },
+        cards: {
+          hp: { id: 'hp', descriptorId: 'homePicker', title: 'Home' },
+          git: { id: 'git', descriptorId: 'git', title: 'Git' },
+          appr: { id: 'appr', descriptorId: 'approval', title: '审批' },
+        },
+        focusedCardId: 'git',
+        gap: 8,
+      },
+      ctx,
+    )
+    const dock = out.columns.right.dock!
+    expect(dock).not.toBeNull()
+    // primary/secondary are cleared while dock is present.
+    expect(out.columns.right.primary.tabIds).toEqual([])
+    // Ratio clamped to [0.1, 0.9].
+    expect(dock.kind === 'split' && dock.ratio).toBe(0.9)
+    // Exactly one main pane.
+    const panes = collectDockPanes(dock)
+    expect(panes.filter((p) => p.main)).toHaveLength(1)
+    const main = panes.find((p) => p.main)!
+    // homePicker forced to the front of the main pane.
+    expect(main.tabIds[0]).toBe('hp')
+  })
+
+  it('drops unknown card references and dedupes dock tabIds', () => {
+    const ctx = makeCtx()
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columns: {
+          right: {
+            width: 640,
+            collapsed: false,
+            surfaceMode: 'float',
+            topInset: 48,
+            primary: { stackId: 'primary', tabIds: [], activeTabId: null },
+            secondary: null,
+            splitRatio: null,
+            dock: {
+              kind: 'pane',
+              paneId: 'p-main',
+              main: true,
+              tabIds: ['hp', 'hp', 'git', 'missing'],
+              activeTabId: 'hp',
+            },
+          },
+        },
+        cards: {
+          hp: { id: 'hp', descriptorId: 'homePicker', title: 'Home' },
+          git: { id: 'git', descriptorId: 'git', title: 'Git' },
+        },
+        focusedCardId: null,
+      },
+      ctx,
+    )
+    const dock = out.columns.right.dock
+    expect(dock).not.toBeNull()
+    if (dock && dock.kind === 'pane') {
+      expect(dock.tabIds).toEqual(['hp', 'git'])
+    }
+  })
+
+  it('falls back to the built-in preset when cards are orphaned (corrupt snapshot)', () => {
+    const ctx = makeCtx()
+    // A snapshot where cards exist but no stack/dock references them — the
+    // signature of a corrupted layout file. Repair must recover, never blank.
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columnOrder: ['left', 'center', 'right'],
+        columns: {
+          left: { width: 289, collapsed: false, surfaceMode: 'float', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null, dock: null },
+          center: { width: 160, collapsed: false, surfaceMode: 'immersive', topInset: 8, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null, dock: null },
+          right: { width: 281, collapsed: false, surfaceMode: 'float', topInset: 48, primary: { stackId: 'primary', tabIds: [], activeTabId: null }, secondary: null, splitRatio: null, dock: null },
+        },
+        cards: {
+          n: { id: 'n', descriptorId: 'nav', title: '项目' },
+          c: { id: 'c', descriptorId: 'chat', title: '聊天' },
+          h: { id: 'h', descriptorId: 'homePicker', title: 'Home' },
+          a: { id: 'a', descriptorId: 'agent', title: 'Agent' },
+        },
+        focusedCardId: 'a',
+        gap: 8,
+        edgeInset: 8,
+      },
+      ctx,
+    )
+    // Recovered to the home preset: every card referenced, columns populated.
+    const refs = new Set<string>()
+    for (const slot of Object.values(out.columns)) {
+      for (const st of [slot.primary, slot.secondary]) if (st) st.tabIds.forEach((id) => refs.add(id))
+    }
+    expect(Object.keys(out.cards).length).toBeGreaterThan(0)
+    for (const id of Object.keys(out.cards)) expect(refs.has(id)).toBe(true)
+    // The home preset hosts homePicker in the right column.
+    expect(out.columns.right.primary.tabIds.some((id) => out.cards[id].descriptorId === 'homePicker')).toBe(true)
+  })
+
+  it('falls back to stacks when the dock is unusable', () => {
+    const ctx = makeCtx()
+    const out = repairLayout(
+      {
+        version: 1,
+        pageId: 'home',
+        columns: {
+          right: {
+            width: 640,
+            collapsed: false,
+            surfaceMode: 'float',
+            topInset: 48,
+            primary: { stackId: 'primary', tabIds: ['hp'], activeTabId: 'hp' },
+            secondary: null,
+            splitRatio: null,
+            dock: { kind: 'nonsense' },
+          },
+        },
+        cards: { hp: { id: 'hp', descriptorId: 'homePicker', title: 'Home' } },
+        focusedCardId: null,
+      },
+      ctx,
+    )
+    expect(out.columns.right.dock).toBeNull()
+    expect(out.columns.right.primary.tabIds).toEqual(['hp'])
   })
 })

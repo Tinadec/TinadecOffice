@@ -81,6 +81,7 @@ export const VAPOR_OPTED_IN: readonly string[] = [
   '../../TinadecUI/src/components/UieColumn.vue',
   '../../TinadecUI/src/components/UieShell.vue',
   '../../TinadecUI/src/components/UieStack.vue',
+  '../../TinadecUI/src/components/UieDock.vue',
   '../../TinadecUI/src/components/BrowserTabBar.vue',
   '../../TinadecUI/src/components/cards/home/AgentCard.vue',
   '../../TinadecUI/src/components/cards/home/ApprovalCard.vue',

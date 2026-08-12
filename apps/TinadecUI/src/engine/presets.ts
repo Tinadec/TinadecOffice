@@ -55,6 +55,7 @@ function column(
     primary: stack('primary', primaryTabIds, activeTabId),
     secondary: null,
     splitRatio: null,
+    dock: null,
   }
 }
 

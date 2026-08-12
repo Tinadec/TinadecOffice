@@ -13,6 +13,7 @@
 // Shared styles come from apps/desktop/src/styles.css (.browser-tab-*).
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
+  ChevronsLeft,
   ExternalLink,
   Home as HomeIcon,
   PanelRightClose,
@@ -22,8 +23,9 @@ import {
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useDetachedTabs } from '@/composables/useDetachedTabs'
+import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
 import { FEATURE_CATALOG } from './cards/home/featureCatalog'
-import type { PersistedCardInstance } from '../engine/types'
+import type { PersistedCardInstance, UieSlotId } from '../engine/types'
 
 const { t } = useI18n()
 
@@ -35,6 +37,12 @@ const props = defineProps<{
   iconFor: (descriptorId: string) => LucideIcon
   /** The pinned home card instance (tab 0). */
   homeInstance: PersistedCardInstance | null
+  /** Owning column slot (drag source for dock splits). */
+  slotId?: UieSlotId
+  /** Dock pane id (drag source origin; main pane id on the feature panel). */
+  paneId?: string
+  /** Show the "restore single panel" button (dock has >1 panes). */
+  canRestore?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -46,9 +54,14 @@ const emit = defineEmits<{
   'focus-detached': [windowId: number]
   /** Open a feature page from the "+" new-tab menu. */
   'open-panel': [descriptorId: string]
+  /** A dock drop was committed by the shared drag state. */
+  'dock-drop': [target: DockDropTarget, tabId: string]
+  /** Restore the whole dock back to a single panel. */
+  'restore-dock': []
 }>()
 
 const detached = useDetachedTabs()
+const dockDrag = useDockDrag()
 
 const featureInstances = computed(() =>
   props.instances.filter((i) => i.id !== props.homeInstance?.id),
@@ -113,30 +126,11 @@ onMounted(() => {
   window.addEventListener('resize', onDocResize)
 })
 
-// ---- Drag-to-detach (Chrome-style tab tearing) ----
-// Ported verbatim from ContextPanel.vue. mousedown tracks the starting point;
-// after a 30px threshold we poll the cursor via Electron IPC because renderer
-// mousemove events stop once the cursor leaves the window. When the cursor is
-// detected outside the main window bounds, the tab detaches into a floating
-// window.
-const DRAG_THRESHOLD = 30 // pixels of movement before considering it a drag
-const DETACH_EDGE_MARGIN = 8 // pixels from window edge to trigger detach
-
-const dragState = ref<{
-  tabId: string
-  startClientX: number
-  startClientY: number
-  dragging: boolean
-  detachTriggered: boolean
-  polling: boolean
-} | null>(null)
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function isDraggingTab(tabId: string): boolean {
-  return dragState.value?.tabId === tabId && dragState.value.dragging
-}
-
+// ---- Drag-to-split / drag-to-detach (shared dock drag state) ----
+// The shared useDockDrag owns the 30px threshold, in-window drop target
+// computation, and the Electron cursor polling that detaches a floating window
+// when the cursor leaves the main window. The tab bar only seeds the drag and
+// forwards the outcome (detach → floating window; dock drop → split/merge).
 function onTabMouseDown(event: MouseEvent, instance: PersistedCardInstance) {
   // Only closable (non-pinned) cards can be torn out.
   if (instance.id === props.homeInstance?.id) return
@@ -145,92 +139,18 @@ function onTabMouseDown(event: MouseEvent, instance: PersistedCardInstance) {
   const target = event.target as HTMLElement
   if (target.closest('.browser-tab-close') || target.closest('.browser-tab-detach')) return
 
-  dragState.value = {
-    tabId: instance.id,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    dragging: false,
-    detachTriggered: false,
-    polling: false,
-  }
-
-  document.addEventListener('mousemove', onDragMouseMove)
-  document.addEventListener('mouseup', onDragMouseUp)
-}
-
-function onDragMouseMove(event: MouseEvent) {
-  if (!dragState.value || dragState.value.detachTriggered) return
-
-  const dx = Math.abs(event.clientX - dragState.value.startClientX)
-  const dy = Math.abs(event.clientY - dragState.value.startClientY)
-
-  if (!dragState.value.dragging && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
-    dragState.value.dragging = true
-    startCursorPolling()
-  }
-}
-
-/**
- * Poll the cursor screen position via Electron IPC. When the cursor is
- * detected outside the main window bounds, trigger the detach.
- */
-function startCursorPolling() {
-  if (!dragState.value || dragState.value.polling) return
-  dragState.value.polling = true
-
-  if (pollTimer) clearInterval(pollTimer)
-  pollTimer = setInterval(async () => {
-    if (!dragState.value || dragState.value.detachTriggered) {
-      stopCursorPolling()
-      return
-    }
-
-    try {
-      const [cursor, mainBounds] = await Promise.all([
-        window.tinadec?.getCursorScreen?.(),
-        window.tinadec?.getMainBounds?.(),
-      ])
-
-      if (!cursor || !mainBounds) {
-        stopCursorPolling()
-        return
-      }
-
-      // Check if cursor is outside the main window bounds (with margin)
-      const outsideX = cursor.x < mainBounds.x + DETACH_EDGE_MARGIN ||
-                        cursor.x > mainBounds.x + mainBounds.width - DETACH_EDGE_MARGIN
-      const outsideY = cursor.y < mainBounds.y + DETACH_EDGE_MARGIN ||
-                        cursor.y > mainBounds.y + mainBounds.height - DETACH_EDGE_MARGIN
-
-      if (outsideX || outsideY) {
-        // Cursor left the main window — trigger detach
-        dragState.value.detachTriggered = true
-        stopCursorPolling()
-        const tabId = dragState.value.tabId
-        dragState.value = null
-        emit('detach', tabId)
-      }
-    } catch {
-      stopCursorPolling()
-    }
-  }, 50) // Poll every 50ms for responsive detection
-}
-
-function stopCursorPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-  if (dragState.value) {
-    dragState.value.polling = false
-  }
-}
-
-function onDragMouseUp(_event: MouseEvent) {
-  document.removeEventListener('mousemove', onDragMouseMove)
-  document.removeEventListener('mouseup', onDragMouseUp)
-  stopCursorPolling()
-  dragState.value = null
+  dockDrag.startDrag(
+    instance,
+    {
+      slotId: props.slotId ?? 'right',
+      sourcePaneId: props.paneId ?? null,
+      onDetach: (tabId) => emit('detach', tabId),
+      onEnd: (target_, tabId) => {
+        if (target_) emit('dock-drop', target_, tabId)
+      },
+    },
+    { x: event.clientX, y: event.clientY },
+  )
 }
 
 /** Right-click context menu on tabs for detach option. */
@@ -243,17 +163,15 @@ function onTabContextMenu(event: MouseEvent, instance: PersistedCardInstance) {
 
 function onTabClick(event: MouseEvent, instanceId: string) {
   // Suppress activation when the drag threshold was crossed (click follows drag).
-  if (dragState.value?.tabId === instanceId && dragState.value.dragging) return
+  if (dockDrag.isDraggingTab(instanceId)) return
   emit('activate', instanceId)
 }
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', onDragMouseMove)
-  document.removeEventListener('mouseup', onDragMouseUp)
   document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onDocKeydown)
   window.removeEventListener('resize', onDocResize)
-  stopCursorPolling()
+  dockDrag.cancel()
 })
 </script>
 
@@ -275,7 +193,7 @@ onUnmounted(() => {
       v-for="inst in featureInstances"
       :key="inst.id"
       class="browser-tab"
-      :class="{ active: activeTabId === inst.id, 'tab-dragging': isDraggingTab(inst.id) }"
+      :class="{ active: activeTabId === inst.id, 'tab-dragging': dockDrag.isDraggingTab(inst.id) }"
       :title="inst.title"
       @click="onTabClick($event, inst.id)"
       @mousedown="onTabMouseDown($event, inst)"
@@ -323,6 +241,16 @@ onUnmounted(() => {
       @click="toggleMenu"
     >
       <Plus :size="14" />
+    </button>
+
+    <!-- Restore single panel (dock has more than one pane) -->
+    <button
+      v-if="canRestore"
+      class="browser-tab-collapse"
+      :title="t('context.restoreDock')"
+      @click="emit('restore-dock')"
+    >
+      <ChevronsLeft :size="14" />
     </button>
 
     <!-- Collapse button -->

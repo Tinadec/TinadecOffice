@@ -21,6 +21,7 @@ export * from './repair'
 export * from './constraints'
 export * from './commandBus'
 export * from './instancePool'
+export * from './dockDrop'
 
 // --- Persistence ---
 export * from './persistence/types'

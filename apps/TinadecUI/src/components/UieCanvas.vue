@@ -40,6 +40,7 @@ onBeforeUnmount(() => {
       :column="wb.snapshot.value.columns[slotId]"
       :geometry="wb.geometry.value.columns[slotId]"
       :split="wb.geometry.value.splits[slotId]"
+      :dock="wb.geometry.value.docks[slotId]"
     />
   </div>
 </template>

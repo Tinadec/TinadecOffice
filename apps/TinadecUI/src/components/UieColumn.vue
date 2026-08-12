@@ -1,43 +1,74 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Home as HomeIcon, PanelRightOpen, type LucideIcon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import UieStack from './UieStack.vue'
+import UieDock from './UieDock.vue'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { useDockDrag } from '@/composables/useDockDrag'
 import { FEATURE_CATALOG } from './cards/home/featureCatalog'
-import type { ColumnGeometry, PersistedCardInstance, SplitGeometry, UieColumn as ColumnModel } from '../engine/types'
+import { collectDockPanes, collectDockTabIds } from '../engine/reducer'
+import type {
+  ColumnGeometry,
+  PersistedCardInstance,
+  SplitGeometry,
+  UieColumn as ColumnModel,
+  UieDockGeometry,
+} from '../engine/types'
+import { MAX_DOCK_COLUMN_WIDTH } from '../engine/types'
 
 const props = defineProps<{
   column: ColumnModel
   geometry: ColumnGeometry
   split?: SplitGeometry
+  dock?: UieDockGeometry
 }>()
 
 const { t } = useI18n()
 const wb = useUie()
 
-// The feature panel is the right column that hosts the pinned homePicker card.
+/** All tab instanceIds in this column — dock panes first, else the primary stack. */
+const columnTabIds = computed<string[]>(() => {
+  if (props.column.dock) return collectDockTabIds(props.column.dock)
+  return props.column.primary.tabIds
+})
+
+// The feature panel is the column that hosts the pinned homePicker card.
 // It gets the old ContextPanel treatment: browser tab chrome (in UieStack) and
 // a 44px collapsed rail with expand + Home buttons + the open feature-tab icons.
 const isFeatureColumn = computed(() =>
-  props.column.primary.tabIds.some((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
+  columnTabIds.value.some((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
 )
 const featureHomeId = computed(
   () =>
-    props.column.primary.tabIds.find((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker') ??
+    columnTabIds.value.find((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker') ??
     null,
 )
-const isHomeActive = computed(() => featureHomeId.value !== null && props.column.primary.activeTabId === featureHomeId.value)
+const isHomeActive = computed(() => {
+  const home = featureHomeId.value
+  if (home === null) return false
+  if (props.column.dock) {
+    // Home lives in the main pane; active when the main pane shows it.
+    const panes = collectDockPanes(props.column.dock)
+    const main = panes.find((p) => p.main)
+    return main?.activeTabId === home
+  }
+  return props.column.primary.activeTabId === home
+})
 
-// Open feature tabs (everything in the stack except the pinned homePicker),
+// Open feature tabs (everything in the column except the pinned homePicker),
 // used to render the vertical icon rail while the panel is collapsed.
 const openFeatureInstances = computed<PersistedCardInstance[]>(() =>
-  props.column.primary.tabIds
+  columnTabIds.value
     .map((id) => wb.snapshot.value.cards[id])
     .filter((c): c is PersistedCardInstance => !!c && c.descriptorId !== 'homePicker'),
 )
 function isFeatureActive(instanceId: string): boolean {
+  if (props.column.dock) {
+    const panes = collectDockPanes(props.column.dock)
+    return panes.some((p) => p.activeTabId === instanceId)
+  }
   return props.column.primary.activeTabId === instanceId
 }
 
@@ -131,7 +162,9 @@ function onResizeDown(event: PointerEvent) {
 function onResizeMove(event: PointerEvent) {
   const delta = event.clientX - resizeStart
   const newWidth = props.column.slotId === 'right' ? resizeWidth - delta : resizeWidth + delta
-  const [minW, maxW] = isFeatureColumn.value ? [280, 760] : [160, 1200]
+  const [minW, maxW] = isFeatureColumn.value
+    ? [280, props.column.dock ? MAX_DOCK_COLUMN_WIDTH : 760]
+    : [160, 1200]
   resizeColumn(Math.min(maxW, Math.max(minW, newWidth)))
 }
 function onResizeUp() {
@@ -139,6 +172,43 @@ function onResizeUp() {
   window.removeEventListener('pointermove', onResizeMove)
   window.removeEventListener('pointerup', onResizeUp)
 }
+
+// ---- Virtual main-pane drop rect (pre-dock) ----
+// Before the first split there is no UieDock to register pane rects, so the
+// drag target resolver has nothing to hit. Register the whole feature column
+// as a single virtual main pane; the first edge drop then splits it.
+const dockDrag = useDockDrag()
+const colRef = ref<HTMLElement | null>(null)
+let virtualUnsub: (() => void) | null = null
+
+function syncVirtualPane() {
+  virtualUnsub?.()
+  virtualUnsub = null
+  if (props.column.dock || !isFeatureColumn.value) return
+  const el = colRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  virtualUnsub = dockDrag.registerDock(props.column.slotId, { x: rect.x, y: rect.y }, [
+    {
+      paneId: 'virtual-main',
+      x: 0,
+      y: 0,
+      width: props.geometry.width,
+      height: props.geometry.height,
+      degraded: false,
+    },
+  ])
+}
+
+onMounted(() => syncVirtualPane())
+watch(
+  () => [props.column.dock, props.geometry.width, props.geometry.height, isFeatureColumn.value],
+  syncVirtualPane,
+)
+onBeforeUnmount(() => {
+  virtualUnsub?.()
+  virtualUnsub = null
+})
 
 // Split divider drag.
 let splitStartY = 0
@@ -165,6 +235,7 @@ function onDividerUp() {
 
 <template vapor>
   <div
+    ref="colRef"
     class="wb-column"
     :class="{ 'is-resizing': isResizing }"
     :style="{
@@ -220,33 +291,45 @@ function onDividerUp() {
         @pointerdown="onResizeDown"
       />
 
-      <!-- Primary stack -->
-      <UieStack
-        :stack="column.primary"
-        :geometry="primaryGeometry"
-        :instances="primaryInstances"
-        :degraded="primaryDegraded"
-        :surface-mode="column.surfaceMode"
-        :slot-id="column.slotId"
+      <!-- Dock (multi-pane split) column: panes + dividers + drop overlay -->
+      <UieDock
+        v-if="column.dock && dock"
+        :column="column"
+        :geometry="geometry"
+        :dock="dock"
         :resizing="isResizing"
       />
 
-      <!-- Secondary stack + divider -->
-      <template v-if="column.secondary && split">
-        <div
-          class="wb-split-divider"
-          :style="{ top: `${split.dividerY - geometry.y - 2}px` }"
-          @pointerdown="onDividerDown"
-        />
+      <!-- Plain stacks: primary + optional secondary -->
+      <template v-else>
+        <!-- Primary stack -->
         <UieStack
-          :stack="column.secondary"
-          :geometry="{ x: 0, y: split.lower.y - geometry.y, width: geometry.width, height: split.lower.height, degraded: !!split.lower.degraded }"
-          :instances="secondaryInstances"
-          :degraded="!!split.lower.degraded"
+          :stack="column.primary"
+          :geometry="primaryGeometry"
+          :instances="primaryInstances"
+          :degraded="primaryDegraded"
           :surface-mode="column.surfaceMode"
           :slot-id="column.slotId"
           :resizing="isResizing"
         />
+
+        <!-- Secondary stack + divider -->
+        <template v-if="column.secondary && split">
+          <div
+            class="wb-split-divider"
+            :style="{ top: `${split.dividerY - geometry.y - 2}px` }"
+            @pointerdown="onDividerDown"
+          />
+          <UieStack
+            :stack="column.secondary"
+            :geometry="{ x: 0, y: split.lower.y - geometry.y, width: geometry.width, height: split.lower.height, degraded: !!split.lower.degraded }"
+            :instances="secondaryInstances"
+            :degraded="!!split.lower.degraded"
+            :surface-mode="column.surfaceMode"
+            :slot-id="column.slotId"
+            :resizing="isResizing"
+          />
+        </template>
       </template>
     </template>
   </div>

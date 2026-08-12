@@ -21,6 +21,10 @@ export interface CommandBusOptions {
   /** Locked slots (settings) that reject mutations. */
   lockedSlots?: ReadonlySet<UieSlotId> | readonly UieSlotId[]
   nextInstanceId?: () => string
+  /** Factory for new dock pane ids. */
+  nextDockId?: () => string
+  /** Factory for new dock split ids. */
+  nextDockSplitId?: () => string
 }
 
 export interface CommandBus {
@@ -41,6 +45,14 @@ function defaultNextInstanceId(): string {
   return `wb-instance-${++counter}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+let dockCounter = 0
+function defaultNextDockId(): string {
+  return `dock-pane-${++dockCounter}`
+}
+function defaultNextDockSplitId(): string {
+  return `dock-split-${++dockCounter}`
+}
+
 export function createCommandBus(
   initial: UieLayoutSnapshot,
   options: CommandBusOptions,
@@ -53,6 +65,8 @@ export function createCommandBus(
   const reduceCtx: ReduceContext = {
     registry,
     nextInstanceId: options.nextInstanceId ?? defaultNextInstanceId,
+    nextDockId: options.nextDockId ?? defaultNextDockId,
+    nextDockSplitId: options.nextDockSplitId ?? defaultNextDockSplitId,
     lockedSlots,
   }
 

@@ -1,16 +1,18 @@
 import type {
   PersistedCardInstance,
   UieColumn,
+  UieDockNode,
+  UieDockPane,
   UieLayoutSnapshot,
   UiePageId,
   UieSlotId,
   UieStack,
   UieStackId,
 } from './types'
-import { COLLAPSED_COLUMN_WIDTH } from './types'
+import { COLLAPSED_COLUMN_WIDTH, DEFAULT_DOCK_RATIO } from './types'
 import type { CardRegistry } from './registry'
 import { buildPreset, type PresetContext } from './presets'
-import { createEmptySnapshot } from './reducer'
+import { createEmptySnapshot, collectDockPanes } from './reducer'
 
 // ---------------------------------------------------------------------------
 // Layout repair.
@@ -64,6 +66,102 @@ function repairStack(
   return { stackId, tabIds: unique, activeTabId: active }
 }
 
+// ---------------------------------------------------------------------------
+// Dock repair — validate/normalize a column's dock split tree.
+// ---------------------------------------------------------------------------
+
+let dockIdCounter = 0
+function nextRepairId(kind: 'pane' | 'split'): string {
+  return `dock-${kind}-${++dockIdCounter}`
+}
+
+function repairDockPane(
+  raw: unknown,
+  cards: Record<string, PersistedCardInstance>,
+  registry: CardRegistry,
+): UieDockPane | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const tabIds = Array.isArray(r.tabIds) ? r.tabIds : []
+  const valid = tabIds.filter(
+    (id): id is string => typeof id === 'string' && !!cards[id] && registry.has(cards[id].descriptorId),
+  )
+  const seen = new Set<string>()
+  const unique = valid.filter((id) => (seen.has(id) ? false : (seen.add(id), true)))
+  const active =
+    typeof r.activeTabId === 'string' && unique.includes(r.activeTabId)
+      ? r.activeTabId
+      : unique[0] ?? null
+  return {
+    kind: 'pane',
+    paneId: typeof r.paneId === 'string' && r.paneId ? r.paneId : nextRepairId('pane'),
+    main: r.main === true,
+    tabIds: unique,
+    activeTabId: active,
+  }
+}
+
+function repairDockNode(
+  raw: unknown,
+  cards: Record<string, PersistedCardInstance>,
+  registry: CardRegistry,
+): UieDockNode | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.kind === 'pane') return repairDockPane(r, cards, registry)
+  if (r.kind === 'split') {
+    const a = repairDockNode(r.a, cards, registry)
+    const b = repairDockNode(r.b, cards, registry)
+    if (!a || !b) return null
+    const dir = r.dir === 'row' || r.dir === 'column' ? (r.dir as 'row' | 'column') : 'column'
+    const ratio = typeof r.ratio === 'number' && Number.isFinite(r.ratio)
+      ? Math.max(0.1, Math.min(0.9, r.ratio))
+      : DEFAULT_DOCK_RATIO
+    return {
+      kind: 'split',
+      splitId: typeof r.splitId === 'string' && r.splitId ? r.splitId : nextRepairId('split'),
+      dir,
+      ratio,
+      a,
+      b,
+    }
+  }
+  return null
+}
+
+/**
+ * Repair a column's dock tree: valid structure, exactly one main pane
+ * (homePicker is forced there at tabIds[0]), known/deduped tab references.
+ * Returns null when the raw dock is unusable (caller falls back to stacks).
+ */
+export function repairDock(
+  raw: unknown,
+  cards: Record<string, PersistedCardInstance>,
+  registry: CardRegistry,
+): UieDockNode | null {
+  const root = repairDockNode(raw, cards, registry)
+  if (!root) return null
+
+  const panes = collectDockPanes(root)
+  const mains = panes.filter((p) => p.main)
+  const homePickerId = Object.values(cards).find((c) => c.descriptorId === 'homePicker')?.id
+  let main = mains[0]
+  if (mains.length !== 1) {
+    // No or multiple mains: promote the pane hosting homePicker (else the first).
+    main = panes.find((p) => homePickerId !== undefined && p.tabIds.includes(homePickerId)) ?? panes[0]
+    for (const p of panes) p.main = p === main
+  }
+  // Force homePicker to the front of the main pane.
+  if (homePickerId !== undefined) {
+    const hpIndex = main.tabIds.indexOf(homePickerId)
+    if (hpIndex > 0) {
+      main.tabIds.splice(hpIndex, 1)
+      main.tabIds.unshift(homePickerId)
+    }
+  }
+  return root
+}
+
 function repairColumn(
   col: unknown,
   slotId: UieSlotId,
@@ -75,15 +173,19 @@ function repairColumn(
   const secondaryRaw = c.secondary
   const secondary = secondaryRaw ? repairStack(secondaryRaw, 'secondary', cards, registry) : null
   const splitRatio = secondary && typeof c.splitRatio === 'number' ? Math.max(0.1, Math.min(0.9, c.splitRatio)) : null
+  const dock = repairDock(c.dock, cards, registry)
   return {
     slotId,
     width: clampWidth(c.width, slotId === 'left' ? 260 : slotId === 'right' ? 420 : 600),
     collapsed: c.collapsed === true,
     surfaceMode: c.surfaceMode === 'immersive' ? 'immersive' : c.surfaceMode === 'app' ? 'app' : 'float',
     topInset: typeof c.topInset === 'number' ? c.topInset : 8,
-    primary,
-    secondary,
-    splitRatio,
+    // Dock and stacks are mutually exclusive: when a dock survives repair, the
+    // stacks are emptied (the main pane already holds every referenced card).
+    primary: dock ? { stackId: 'primary' as const, tabIds: [], activeTabId: null } : primary,
+    secondary: dock ? null : secondary,
+    splitRatio: dock ? null : splitRatio,
+    dock,
   }
 }
 
@@ -164,6 +266,27 @@ export function repairLayout(
 
   // Ensure each column stack hosts at most one instance of a singleton.
   // (already handled by card dedup above)
+
+  // Orphan guard: every known card must be referenced by a stack or dock pane.
+  // In a valid layout closing a card deletes it, so a card that survives in
+  // `cards` while being referenced nowhere is a signature of a corrupted
+  // snapshot. Recover by rebuilding the page's built-in preset — the window is
+  // never blank/empty, mirroring the module's "never a blank window" rule.
+  const referenced = new Set<string>()
+  for (const slotId of VALID_SLOTS) {
+    const col = columns[slotId]
+    for (const stack of [col.primary, col.secondary]) {
+      if (!stack) continue
+      for (const id of stack.tabIds) referenced.add(id)
+    }
+    if (col.dock) {
+      for (const pane of collectDockPanes(col.dock)) {
+        for (const id of pane.tabIds) referenced.add(id)
+      }
+    }
+  }
+  const orphaned = Object.values(cards).some((c) => !referenced.has(c.id))
+  if (orphaned) return buildPreset(pageId, preset)
 
   const gap = typeof r.gap === 'number' && r.gap >= 0 && r.gap <= 32 ? r.gap : 8
   const edgeInset =

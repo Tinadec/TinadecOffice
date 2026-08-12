@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { computeGeometry } from './constraints'
+import { computeGeometry, flattenDock } from './constraints'
 import { buildPreset, HOME_GEOMETRY } from './presets'
+import type { UieDockNode, UieDockPane } from './types'
 
 function nextId() {
   let i = 0
@@ -124,5 +125,135 @@ describe('constraint solver', () => {
     const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
     expect(g.columns.left.x).toBe(0)
     expect(g.columns.right.x + g.columns.right.width).toBe(1440)
+  })
+})
+
+describe('dock flattening', () => {
+  function pane(paneId: string, tabIds: string[], main = false): UieDockPane {
+    return { kind: 'pane', paneId, main, tabIds, activeTabId: tabIds[0] ?? null }
+  }
+
+  function homeWithDock(dock: UieDockNode) {
+    const snapshot = buildPreset('home', { nextInstanceId: nextId() })
+    snapshot.columns.right.dock = dock
+    snapshot.columns.right.primary.tabIds = []
+    return snapshot
+  }
+
+  it('single pane fills the column', () => {
+    const snapshot = homeWithDock(pane('main', ['x'], true))
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    const dock = g.docks['right']
+    expect(dock.panes).toHaveLength(1)
+    expect(dock.panes[0]).toMatchObject({ paneId: 'main', x: 0, y: 0 })
+    expect(dock.panes[0].width).toBe(g.columns.right.width)
+    expect(dock.panes[0].height).toBe(g.columns.right.height)
+    expect(dock.dividers).toHaveLength(0)
+  })
+
+  it('row split lays out left/right panes with a vertical divider', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 's', dir: 'row', ratio: 0.5,
+      a: pane('a', ['x']), b: pane('b', ['y']),
+    })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    const dock = g.docks['right']
+    const pa = dock.panes.find((p) => p.paneId === 'a')!
+    const pb = dock.panes.find((p) => p.paneId === 'b')!
+    expect(pa.x).toBe(0)
+    expect(pa.y).toBe(0)
+    expect(pb.x).toBeGreaterThan(pa.x)
+    expect(pb.y).toBe(0)
+    // Divider sits between them, 4px wide.
+    const div = dock.dividers[0]
+    expect(div.splitId).toBe('s')
+    expect(div.dir).toBe('row')
+    expect(div.width).toBe(4)
+    expect(div.x).toBe(pa.x + pa.width)
+    expect(div.y).toBe(0)
+    expect(div.height).toBe(g.columns.right.height)
+    // Panes do not overlap and leave the divider gap.
+    expect(pb.x - (pa.x + pa.width)).toBe(4)
+  })
+
+  it('column split lays out top/bottom panes with a horizontal divider', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 's', dir: 'column', ratio: 0.65,
+      a: pane('top', ['x']), b: pane('bot', ['y']),
+    })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    const dock = g.docks['right']
+    const pt = dock.panes.find((p) => p.paneId === 'top')!
+    const pb = dock.panes.find((p) => p.paneId === 'bot')!
+    expect(pt.x).toBe(0)
+    expect(pt.y).toBe(0)
+    expect(pb.y).toBeGreaterThan(pt.y)
+    const div = dock.dividers[0]
+    expect(div.dir).toBe('column')
+    expect(div.height).toBe(4)
+    expect(div.y).toBe(pt.y + pt.height)
+    expect(pb.y - (pt.y + pt.height)).toBe(4)
+  })
+
+  it('mixed row+column tree flattens all panes and dividers', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 'r', dir: 'column', ratio: 0.5,
+      a: {
+        kind: 'split', splitId: 'c', dir: 'row', ratio: 0.5,
+        a: pane('a', ['x']), b: pane('b', ['y']),
+      },
+      b: pane('c', ['z']),
+    })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    const dock = g.docks['right']
+    expect(dock.panes).toHaveLength(3)
+    expect(dock.dividers).toHaveLength(2)
+    const dividerDirs = dock.dividers.map((d) => d.dir).sort()
+    expect(dividerDirs).toEqual(['column', 'row'])
+  })
+
+  it('degrades a pane below the minimum (visual only)', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 's', dir: 'column', ratio: 0.05,
+      a: pane('tiny', ['x']), b: pane('big', ['y']),
+    })
+    // Column height ~864px → a is ~43px (< MIN_DOCK_PANE_HEIGHT=120) → degraded.
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    const dock = g.docks['right']
+    expect(dock.degradedPanes).toContain('tiny')
+    // Degraded split hides its divider.
+    expect(dock.dividers).toHaveLength(0)
+    expect(dock.panes.find((p) => p.paneId === 'tiny')?.degraded).toBe(true)
+  })
+
+  it('does not degrade healthy panes', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 's', dir: 'row', ratio: 0.5,
+      a: pane('a', ['x']), b: pane('b', ['y']),
+    })
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.docks['right'].degradedPanes).toEqual([])
+    expect(g.docks['right'].dividers).toHaveLength(1)
+  })
+
+  it('emits empty dock geometry when the column is collapsed', () => {
+    const snapshot = homeWithDock({
+      kind: 'split', splitId: 's', dir: 'row', ratio: 0.5,
+      a: pane('a', ['x']), b: pane('b', ['y']),
+    })
+    snapshot.columns.right.collapsed = true
+    const g = computeGeometry({ width: 1440, height: 920 }, snapshot)
+    expect(g.docks['right'].panes).toHaveLength(0)
+    expect(g.docks['right'].dividers).toHaveLength(0)
+  })
+
+  it('flattenDock is a pure column-relative layout', () => {
+    const flat = flattenDock({ width: 420, height: 800 }, {
+      kind: 'split', splitId: 's', dir: 'row', ratio: 0.5,
+      a: pane('a', ['x']), b: pane('b', ['y']),
+    })
+    expect(flat.panes[0]).toMatchObject({ x: 0, y: 0 })
+    expect(flat.panes[0].width).toBe((420 - 4) / 2)
+    expect(flat.panes[1].width).toBe((420 - 4) / 2)
   })
 })

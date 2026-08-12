@@ -63,6 +63,17 @@ export interface UieColumn {
   secondary: UieStack | null
   /** Split ratio (0..1) dividing primary (top) and secondary (bottom). */
   splitRatio: number | null
+  /**
+   * Dock layout (feature/right column). A recursive split tree of panes.
+   * When non-null it REPLACES primary/secondary rendering and the two are
+   * mutually exclusive: primary.tabIds=[], secondary=null, splitRatio=null.
+   * Invariants (reducer + repair):
+   *   - exactly one pane has `main: true`; homePicker lives there at tabIds[0].
+   *   - non-main panes are never empty (removed on close/move/merge).
+   *   - when the tree collapses to a single main pane, dock is normalized back
+   *     to null and primary restores the main pane's tabs.
+   */
+  dock: UieDockNode | null
 }
 
 export interface UieStack {
@@ -71,6 +82,38 @@ export interface UieStack {
   tabIds: string[]
   activeTabId: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Dock layout — a recursive binary split tree of panes within one column.
+//
+// Each pane behaves like a mini stack (browser tabs); splits divide the column
+// horizontally (`row` = left/right panes) or vertically (`column` = top/bottom).
+// The tree is binary: a split has exactly two children. Repeated splitting
+// yields arbitrary row/column mixed layouts, all confined to the column.
+// ---------------------------------------------------------------------------
+
+export interface UieDockPane {
+  kind: 'pane'
+  paneId: string
+  /** Exactly one pane is the main pane: hosts homePicker + the collapse button. */
+  main: boolean
+  /** Ordered card instanceIds (like a UieStack). */
+  tabIds: string[]
+  activeTabId: string | null
+}
+
+export interface UieDockSplit {
+  kind: 'split'
+  splitId: string
+  /** `row` = children laid out left/right; `column` = top/bottom. */
+  dir: 'row' | 'column'
+  /** 0..1 — share of the first child (a) along the split axis. */
+  ratio: number
+  a: UieDockNode
+  b: UieDockNode
+}
+
+export type UieDockNode = UieDockPane | UieDockSplit
 
 export interface PersistedCardInstance {
   /** instanceId — globally unique across the app. */
@@ -112,6 +155,8 @@ export interface UieCardDescriptor {
 export interface UieGeometry {
   columns: Record<UieSlotId, ColumnGeometry>
   splits: Record<string, SplitGeometry>
+  /** Flattened dock panes/dividers per column (column-relative coordinates). */
+  docks: Record<UieSlotId, UieDockGeometry>
   /** Visual-only degradations — never written back to the layout. */
   degraded: {
     collapsedRight: boolean
@@ -139,6 +184,37 @@ export interface SplitGeometry {
   lower: StackGeometry
 }
 
+export interface UieDockGeometry {
+  slotId: UieSlotId
+  /** Pane rects in column-relative coordinates, in rendering order. */
+  panes: UieDockPaneGeometry[]
+  /** Split divider hit-areas (4px), in column-relative coordinates. */
+  dividers: UieDockDividerGeometry[]
+  /** paneIds visually degraded out (too small); never written back. */
+  degradedPanes: string[]
+}
+
+export interface UieDockPaneGeometry {
+  paneId: string
+  /** Column-relative x/y/width/height. */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** True when this pane is visually degraded (not rendered). */
+  degraded: boolean
+}
+
+export interface UieDockDividerGeometry {
+  splitId: string
+  dir: 'row' | 'column'
+  /** Column-relative hit-area rect (4px thick, expanded for the pill). */
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface StackGeometry {
   x: number
   y: number
@@ -159,3 +235,16 @@ export const DEFAULT_GAP = 8
 /** Window-edge inset for float pages (home/settings). App pages use 0. */
 export const EDGE_INSET = 8
 export const UNDO_LIMIT = 50
+
+// --- Dock (multi-pane split) constants ---
+/** Feature-column width ceiling while a dock is active. */
+export const MAX_DOCK_COLUMN_WIDTH = 1040
+/** Minimum pane width/height before a pane is visually degraded. */
+export const MIN_DOCK_PANE_WIDTH = 200
+export const MIN_DOCK_PANE_HEIGHT = 120
+/** Split-divider thickness (px). */
+export const DOCK_DIVIDER = 4
+/** Fraction of a pane's width/height treated as a split edge (drop target). */
+export const DOCK_DROP_EDGE = 0.2
+/** Default ratio for a newly created split. */
+export const DEFAULT_DOCK_RATIO = 0.5

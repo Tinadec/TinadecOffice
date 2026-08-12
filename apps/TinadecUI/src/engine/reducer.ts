@@ -1,6 +1,8 @@
 import type {
   PersistedCardInstance,
   UieColumn,
+  UieDockNode,
+  UieDockPane,
   UieLayoutSnapshot,
   UiePageId,
   UieSlotId,
@@ -13,7 +15,10 @@ import type {
 } from './commands'
 import { isInternalCommand, isRejectedSource } from './commands'
 import type { CardRegistry } from './registry'
-import { COLLAPSED_COLUMN_WIDTH, EDGE_INSET } from './types'
+import { COLLAPSED_COLUMN_WIDTH, DEFAULT_DOCK_RATIO, EDGE_INSET, MAX_DOCK_COLUMN_WIDTH } from './types'
+
+/** Target width after the first row (side-by-side) dock split. */
+const INITIAL_DOCK_SPLIT_WIDTH = 480
 
 // ---------------------------------------------------------------------------
 // Layout reducer.
@@ -36,8 +41,21 @@ export interface ReduceContext {
   registry: CardRegistry
   /** Used to create new instance ids (openCard). */
   nextInstanceId: () => string
+  /** Used to create new dock pane ids (splitDockPane). */
+  nextDockId?: () => string
+  /** Used to create new dock split ids (splitDockPane). */
+  nextDockSplitId?: () => string
   /** Slot that is "locked" (e.g. settings nav) and rejects mutations. */
   lockedSlots?: ReadonlySet<UieSlotId>
+}
+
+export interface InstanceLocation {
+  slotId: UieSlotId
+  /** Stack within the column (null when the card lives in a dock pane). */
+  stackId: UieStackId | null
+  /** Dock pane (null when the card lives in a column stack). */
+  paneId: string | null
+  index: number
 }
 
 export interface LayoutError {
@@ -73,20 +91,126 @@ function emptyColumn(slotId: UieSlotId): UieColumn {
     primary: emptyStack('primary'),
     secondary: null,
     splitRatio: null,
+    dock: null,
   }
 }
 
-/** Find the stack (slot + stackId) that currently hosts an instance, if any. */
+// ---------------------------------------------------------------------------
+// Dock tree helpers (operate on the cloned snapshot's column.dock).
+// ---------------------------------------------------------------------------
+
+/** Find a pane node by id (DFS). */
+export function findDockPane(
+  node: UieDockNode,
+  paneId: string,
+): UieDockPane | null {
+  if (node.kind === 'pane') {
+    return node.paneId === paneId ? node : null
+  }
+  return findDockPane(node.a, paneId) ?? findDockPane(node.b, paneId)
+}
+
+/** Find a split node by id (DFS). */
+export function findDockSplit(node: UieDockNode, splitId: string): Extract<UieDockNode, { kind: 'split' }> | null {
+  if (node.kind === 'split') {
+    if (node.splitId === splitId) return node
+    return findDockSplit(node.a, splitId) ?? findDockSplit(node.b, splitId)
+  }
+  return null
+}
+
+/** Collect all panes (DFS, rendering order). */
+export function collectDockPanes(node: UieDockNode): UieDockPane[] {
+  if (node.kind === 'pane') return [node]
+  return [...collectDockPanes(node.a), ...collectDockPanes(node.b)]
+}
+
+/** Collect all tab instanceIds across every pane (main first). */
+export function collectDockTabIds(node: UieDockNode): string[] {
+  if (node.kind === 'pane') return [...node.tabIds]
+  return [...collectDockTabIds(node.a), ...collectDockTabIds(node.b)]
+}
+
+/** Find the single main pane. */
+function mainDockPane(node: UieDockNode): UieDockPane {
+  const panes = collectDockPanes(node)
+  const main = panes.find((p) => p.main)
+  return main ?? panes[0]
+}
+
+/** Find the pane hosting an instance (DFS). */
+export function findDockPaneForInstance(node: UieDockNode, instanceId: string): UieDockPane | null {
+  if (node.kind === 'pane') {
+    return node.tabIds.includes(instanceId) ? node : null
+  }
+  return findDockPaneForInstance(node.a, instanceId) ?? findDockPaneForInstance(node.b, instanceId)
+}
+
+/** Replace the subtree rooted at `targetId` with `newNode` (returns new root). */
+export function replaceDockNode(node: UieDockNode, targetId: string, newNode: UieDockNode): UieDockNode {
+  if (node.kind === 'pane') {
+    return node.paneId === targetId ? newNode : node
+  }
+  if (node.splitId === targetId) return newNode
+  const a = replaceDockNode(node.a, targetId, newNode)
+  const b = replaceDockNode(node.b, targetId, newNode)
+  if (a === node.a && b === node.b) return node
+  return { ...node, a, b }
+}
+
+/**
+ * Remove a pane from the tree, normalizing like dockview: an empty pane is
+ * removed, and a split left with a single child is replaced by that child
+ * (grandchild spread). Returns null when the tree becomes empty.
+ */
+export function removeDockPane(node: UieDockNode, paneId: string): UieDockNode | null {
+  if (node.kind === 'pane') {
+    return node.paneId === paneId ? null : node
+  }
+  const a = removeDockPane(node.a, paneId)
+  const b = removeDockPane(node.b, paneId)
+  if (a === null && b === null) return null
+  if (a === null) return b
+  if (b === null) return a
+  if (a === node.a && b === node.b) return node
+  return { ...node, a: a!, b: b! }
+}
+
+/**
+ * Build the initial dock tree for a column that has no dock yet, using the
+ * column's existing stacks. Mutates the given (cloned) column: primary keeps
+ * the main pane's tabs, secondary/splitRatio are cleared.
+ */
+function ensureDockFromColumn(col: UieColumn, mainPaneId: string): UieDockPane {
+  const tabs = [...col.primary.tabIds]
+  if (col.secondary) tabs.push(...col.secondary.tabIds)
+  col.primary.tabIds = []
+  col.secondary = null
+  col.splitRatio = null
+  return {
+    kind: 'pane',
+    paneId: mainPaneId,
+    main: true,
+    tabIds: tabs,
+    activeTabId: tabs[0] ?? null,
+  }
+}
+
+/** Find the stack (slot + stackId) or dock pane that currently hosts an instance. */
 export function findInstanceLocation(
   snapshot: UieLayoutSnapshot,
   instanceId: string,
-): { slotId: UieSlotId; stackId: UieStackId; index: number } | null {
+): InstanceLocation | null {
   for (const slotId of snapshot.columnOrder) {
     const col = snapshot.columns[slotId]
     for (const stack of [col.primary, col.secondary]) {
       if (!stack) continue
       const index = stack.tabIds.indexOf(instanceId)
-      if (index !== -1) return { slotId, stackId: stack.stackId, index }
+      if (index !== -1) return { slotId, stackId: stack.stackId, paneId: null, index }
+    }
+    if (col.dock) {
+      const pane = findDockPaneForInstance(col.dock, instanceId)
+      if (pane) return { slotId, stackId: null, paneId: pane.paneId, index: pane.tabIds.indexOf(instanceId) }
     }
   }
   return null
@@ -181,6 +305,16 @@ function applyCommand(
       return collapseColumn(snapshot, command, ctx)
     case 'updateCardGrid':
       return updateCardGrid(snapshot, command, ctx)
+    case 'splitDockPane':
+      return splitDockPane(snapshot, command, ctx)
+    case 'mergeDockPane':
+      return mergeDockPane(snapshot, command, ctx)
+    case 'mergeDockColumn':
+      return mergeDockColumn(snapshot, command, ctx)
+    case 'moveCardToDockPane':
+      return moveCardToDockPane(snapshot, command, ctx)
+    case 'resizeDockSplit':
+      return resizeDockSplit(snapshot, command, ctx)
     case 'applyPreset':
       return applyPreset(snapshot, command, ctx)
     case 'resetScope':
@@ -220,17 +354,26 @@ function openCard(
   const slotId = command.slotId ?? defaultSlotId(snapshot)
   const stackId = command.stackId ?? 'primary'
   const col = next.columns[slotId]
-  const stack = stackOf(col, stackId)
-  if (!stack) {
-    return null
-  }
   if (isLocked(slotId, ctx) && !desc.movable) {
     return null
   }
 
-  const index = command.toIndex ?? stack.tabIds.length
-  stack.tabIds.splice(Math.max(0, Math.min(index, stack.tabIds.length)), 0, instanceId)
-  stack.activeTabId = instanceId
+  if (col.dock) {
+    // Dock column: open into the requested pane (default: main pane).
+    const main = mainDockPane(col.dock)
+    const pane = command.paneId ? (findDockPane(col.dock, command.paneId) ?? main) : main
+    const index = command.toIndex ?? pane.tabIds.length
+    pane.tabIds.splice(Math.max(0, Math.min(index, pane.tabIds.length)), 0, instanceId)
+    pane.activeTabId = instanceId
+  } else {
+    const stack = stackOf(col, stackId)
+    if (!stack) {
+      return null
+    }
+    const index = command.toIndex ?? stack.tabIds.length
+    stack.tabIds.splice(Math.max(0, Math.min(index, stack.tabIds.length)), 0, instanceId)
+    stack.activeTabId = instanceId
+  }
   next.cards[instanceId] = instance
   next.focusedCardId = instanceId
 
@@ -258,14 +401,46 @@ function closeCard(
 
   const next = bumpRevision(cloneSnapshot(snapshot))
   const col = next.columns[loc.slotId]
-  const stack = stackOf(col, loc.stackId)!
-  stack.tabIds.splice(loc.index, 1)
-  if (stack.activeTabId === command.instanceId) {
-    const remaining = stack.tabIds
-    stack.activeTabId = remaining[Math.max(0, loc.index - 1)] ?? remaining[0] ?? null
+
+  let nextFocus: string | null = null
+  if (loc.paneId !== null) {
+    const pane = findDockPane(col.dock!, loc.paneId)
+    if (!pane) {
+      return { next: snapshot, inverse: command, changed: false }
+    }
+    // Guard: never empty the main pane (homePicker is closable:false, but a
+    // defensively cleared main pane would break the whole dock).
+    if (pane.main && pane.tabIds.length === 1) {
+      return { next: snapshot, inverse: command, changed: false }
+    }
+    pane.tabIds.splice(loc.index, 1)
+    if (pane.activeTabId === command.instanceId) {
+      pane.activeTabId = pane.tabIds[Math.max(0, loc.index - 1)] ?? pane.tabIds[0] ?? null
+    }
+    nextFocus = pane.activeTabId
+    if (!pane.main && pane.tabIds.length === 0) {
+      col.dock = removeDockPane(col.dock!, pane.paneId)
+      // Normalize back to a stack when only the main pane remains.
+      if (col.dock && collectDockPanes(col.dock).length === 1) {
+        const only = collectDockPanes(col.dock)[0]
+        col.primary.tabIds = [...only.tabIds]
+        col.primary.activeTabId = only.activeTabId
+        col.dock = null
+        nextFocus = only.activeTabId
+      }
+    }
+  } else {
+    const stack = stackOf(col, loc.stackId!)
+    if (!stack) return { next: snapshot, inverse: command, changed: false }
+    stack.tabIds.splice(loc.index, 1)
+    if (stack.activeTabId === command.instanceId) {
+      const remaining = stack.tabIds
+      stack.activeTabId = remaining[Math.max(0, loc.index - 1)] ?? remaining[0] ?? null
+    }
+    nextFocus = stack.activeTabId
   }
   if (next.focusedCardId === command.instanceId) {
-    next.focusedCardId = stack.activeTabId
+    next.focusedCardId = nextFocus
   }
   delete next.cards[command.instanceId]
 
@@ -274,7 +449,8 @@ function closeCard(
     scope: command.scope,
     descriptorId: instance.descriptorId,
     slotId: loc.slotId,
-    stackId: loc.stackId,
+    stackId: loc.stackId ?? undefined,
+    paneId: loc.paneId ?? undefined,
     toIndex: loc.index,
     title: instance.title,
     instanceId: command.instanceId,
@@ -292,11 +468,20 @@ function activateCard(
   if (!loc) {
     return { next: snapshot, inverse: command, changed: false }
   }
-  const prevActive = snapshot.columns[loc.slotId].primary.activeTabId
+  const col = snapshot.columns[loc.slotId]
+  const prevActive = loc.paneId !== null
+    ? (findDockPane(col.dock!, loc.paneId)?.activeTabId ?? null)
+    : (stackOf(col, loc.stackId!)?.activeTabId ?? null)
   const next = bumpRevision(cloneSnapshot(snapshot))
-  const col = next.columns[loc.slotId]
-  const stack = stackOf(col, loc.stackId)!
-  stack.activeTabId = command.instanceId
+  const nextCol = next.columns[loc.slotId]
+  if (loc.paneId !== null) {
+    const pane = findDockPane(nextCol.dock!, loc.paneId)
+    if (!pane) return { next: snapshot, inverse: command, changed: false }
+    pane.activeTabId = command.instanceId
+  } else {
+    const stack = stackOf(nextCol, loc.stackId!)!
+    stack.activeTabId = command.instanceId
+  }
   next.focusedCardId = command.instanceId
 
   const inverse: UieCommand = {
@@ -328,23 +513,44 @@ function moveCard(
 
   const next = bumpRevision(cloneSnapshot(snapshot))
   const fromCol = next.columns[loc.slotId]
-  const fromStack = stackOf(fromCol, loc.stackId)!
-  fromStack.tabIds.splice(loc.index, 1)
-  if (fromStack.activeTabId === command.instanceId) {
-    const rem = fromStack.tabIds
-    fromStack.activeTabId = rem[Math.max(0, loc.index - 1)] ?? rem[0] ?? null
+
+  if (loc.paneId !== null) {
+    const srcPane = findDockPane(fromCol.dock!, loc.paneId)
+    if (!srcPane) return { next: snapshot, inverse: command, changed: false }
+    srcPane.tabIds.splice(loc.index, 1)
+    if (srcPane.activeTabId === command.instanceId) {
+      const rem = srcPane.tabIds
+      srcPane.activeTabId = rem[Math.max(0, loc.index - 1)] ?? rem[0] ?? null
+    }
+    if (!srcPane.main && srcPane.tabIds.length === 0) {
+      fromCol.dock = removeDockPane(fromCol.dock!, srcPane.paneId)
+    }
+  } else {
+    const fromStack = stackOf(fromCol, loc.stackId!)!
+    fromStack.tabIds.splice(loc.index, 1)
+    if (fromStack.activeTabId === command.instanceId) {
+      const rem = fromStack.tabIds
+      fromStack.activeTabId = rem[Math.max(0, loc.index - 1)] ?? rem[0] ?? null
+    }
   }
 
-  const toStackId = command.toStackId ?? 'primary'
   const toCol = next.columns[toSlotId]
-  const toStack = stackOf(toCol, toStackId)
-  if (!toStack) {
-    // If secondary doesn't exist yet, create it by splitting.
-    return null
+  if (toCol.dock) {
+    const toPane = mainDockPane(toCol.dock)
+    const index = command.toIndex ?? toPane.tabIds.length
+    toPane.tabIds.splice(Math.max(0, Math.min(index, toPane.tabIds.length)), 0, command.instanceId)
+    toPane.activeTabId = command.instanceId
+  } else {
+    const toStackId = command.toStackId ?? 'primary'
+    const toStack = stackOf(toCol, toStackId)
+    if (!toStack) {
+      // If secondary doesn't exist yet, create it by splitting.
+      return null
+    }
+    const index = command.toIndex ?? toStack.tabIds.length
+    toStack.tabIds.splice(Math.max(0, Math.min(index, toStack.tabIds.length)), 0, command.instanceId)
+    toStack.activeTabId = command.instanceId
   }
-  const index = command.toIndex ?? toStack.tabIds.length
-  toStack.tabIds.splice(Math.max(0, Math.min(index, toStack.tabIds.length)), 0, command.instanceId)
-  toStack.activeTabId = command.instanceId
   next.focusedCardId = command.instanceId
 
   const inverse: UieCommand = {
@@ -352,7 +558,7 @@ function moveCard(
     scope: command.scope,
     instanceId: command.instanceId,
     toSlotId: loc.slotId,
-    toStackId: loc.stackId,
+    toStackId: loc.stackId ?? undefined,
     toIndex: loc.index,
   }
   return { next, inverse, changed: true }
@@ -423,7 +629,7 @@ function splitStack(
   ctx: ReduceContext,
 ): ReducerResult | null {
   const col = snapshot.columns[command.slotId]
-  if (!col || col.secondary) {
+  if (!col || col.secondary || col.dock) {
     return { next: snapshot, inverse: command, changed: false }
   }
   if (isLocked(command.slotId, ctx)) {
@@ -466,7 +672,7 @@ function mergeStack(
   ctx: ReduceContext,
 ): ReducerResult | null {
   const col = snapshot.columns[command.slotId]
-  if (!col || !col.secondary) {
+  if (!col || !col.secondary || col.dock) {
     return { next: snapshot, inverse: command, changed: false }
   }
   if (isLocked(command.slotId, ctx)) {
@@ -503,7 +709,8 @@ function resizeColumn(
   const col = snapshot.columns[command.slotId]
   if (!col) return { next: snapshot, inverse: command, changed: false }
   const prevWidth = col.width
-  const width = Math.max(160, Math.min(1200, Math.round(command.width)))
+  const maxW = col.dock ? MAX_DOCK_COLUMN_WIDTH : 1200
+  const width = Math.max(160, Math.min(maxW, Math.round(command.width)))
   if (width === prevWidth) {
     return { next: snapshot, inverse: command, changed: false }
   }
@@ -525,7 +732,7 @@ function resizeSplit(
   ctx: ReduceContext,
 ): ReducerResult {
   const col = snapshot.columns[command.slotId]
-  if (!col || !col.secondary) return { next: snapshot, inverse: command, changed: false }
+  if (!col || !col.secondary || col.dock) return { next: snapshot, inverse: command, changed: false }
   const prevRatio = col.splitRatio ?? 0.65
   const ratio = Math.max(0.1, Math.min(0.9, command.ratio))
   if (ratio === prevRatio) {
@@ -538,6 +745,337 @@ function resizeSplit(
     type: 'resizeSplit',
     scope: command.scope,
     slotId: command.slotId,
+    ratio: prevRatio,
+  }
+  return { next, inverse, changed: true }
+}
+
+// ---------------------------------------------------------------------------
+// Dock commands — multi-pane splitting inside a column (feature/right column).
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a dock pane in two along `dir`, moving `instanceId` into the new pane.
+ * On the first split the column's primary/secondary stacks are folded into the
+ * main pane. The instance must be movable (homePicker is rejected upstream by
+ * the UI; this is a defensive check too).
+ */
+function splitDockPane(
+  snapshot: UieLayoutSnapshot,
+  command: Extract<UieCommand, { type: 'splitDockPane' }>,
+  ctx: ReduceContext,
+): ReducerResult | null {
+  const col = snapshot.columns[command.slotId]
+  if (!col) return { next: snapshot, inverse: command, changed: false }
+  if (isLocked(command.slotId, ctx)) return null
+  if (command.dir !== 'row' && command.dir !== 'column') return null
+  if (command.place !== 'start' && command.place !== 'end') return null
+
+  const instance = snapshot.cards[command.instanceId]
+  const desc = instance ? ctx.registry.get(instance.descriptorId) : undefined
+  if (desc && !desc.movable) return null
+  if (!instance) return { next: snapshot, inverse: command, changed: false }
+
+  // No dock yet: fold the existing stacks into a main pane first.
+  if (!col.dock) {
+    const loc = findInstanceLocation(snapshot, command.instanceId)
+    if (!loc || loc.slotId !== command.slotId || loc.paneId !== null) {
+      return { next: snapshot, inverse: command, changed: false }
+    }
+    const next = bumpRevision(cloneSnapshot(snapshot))
+    const nextCol = next.columns[command.slotId]
+    const mainId = command.paneId2 ?? ctx.nextDockId?.() ?? 'dock-main'
+    const mainPane = ensureDockFromColumn(nextCol, mainId)
+    const idx = mainPane.tabIds.indexOf(command.instanceId)
+    if (idx !== -1) mainPane.tabIds.splice(idx, 1)
+    if (mainPane.activeTabId === command.instanceId) {
+      mainPane.activeTabId = mainPane.tabIds[Math.max(0, idx - 1)] ?? mainPane.tabIds[0] ?? null
+    }
+
+    const newPane: UieDockPane = {
+      kind: 'pane',
+      paneId: command.paneId2 ?? ctx.nextDockId?.() ?? 'dock-pane-new',
+      main: false,
+      tabIds: [command.instanceId],
+      activeTabId: command.instanceId,
+    }
+    const splitId = command.splitId ?? ctx.nextDockSplitId?.() ?? 'dock-split-new'
+    const splitNode: UieDockNode = {
+      kind: 'split',
+      splitId,
+      dir: command.dir,
+      ratio: command.ratio ?? DEFAULT_DOCK_RATIO,
+      a: newPane,
+      b: mainPane,
+    }
+    if (command.place === 'end') {
+      splitNode.a = mainPane
+      splitNode.b = newPane
+    }
+    nextCol.dock = splitNode
+    // Initial row split widens the column a bit so both panes fit comfortably.
+    // The ceiling is capped well below MAX_DOCK_COLUMN_WIDTH so a narrow window
+    // does not push the constraint solver into collapsing the right column.
+    if (command.dir === 'row') {
+      nextCol.width = Math.max(nextCol.width, Math.min(INITIAL_DOCK_SPLIT_WIDTH, MAX_DOCK_COLUMN_WIDTH))
+    }
+    next.focusedCardId = command.instanceId
+
+    const inverse: UieCommand = {
+      type: 'mergeDockPane',
+      scope: command.scope,
+      slotId: command.slotId,
+      paneId: newPane.paneId,
+    }
+    return { next, inverse, changed: true }
+  }
+
+  // Dock already exists: remove the instance from its source, then split.
+  const loc = findInstanceLocation(snapshot, command.instanceId)
+  if (!loc || loc.slotId !== command.slotId) {
+    return { next: snapshot, inverse: command, changed: false }
+  }
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const nextCol = next.columns[command.slotId]
+
+  if (loc.paneId !== null) {
+    const srcPane = findDockPane(nextCol.dock!, loc.paneId)
+    if (!srcPane) return { next: snapshot, inverse: command, changed: false }
+    // A pane with a single card cannot split itself (would leave it empty).
+    if (loc.paneId === command.paneId && srcPane.tabIds.length === 1) {
+      return { next: snapshot, inverse: command, changed: false }
+    }
+    const idx = srcPane.tabIds.indexOf(command.instanceId)
+    srcPane.tabIds.splice(idx, 1)
+    if (srcPane.activeTabId === command.instanceId) {
+      srcPane.activeTabId = srcPane.tabIds[Math.max(0, idx - 1)] ?? srcPane.tabIds[0] ?? null
+    }
+    if (srcPane !== mainDockPane(nextCol.dock!) && srcPane.tabIds.length === 0) {
+      nextCol.dock = removeDockPane(nextCol.dock!, srcPane.paneId)
+    }
+  } else {
+    const srcStack = stackOf(nextCol, loc.stackId!)
+    if (!srcStack) return { next: snapshot, inverse: command, changed: false }
+    srcStack.tabIds.splice(loc.index, 1)
+    if (srcStack.activeTabId === command.instanceId) {
+      srcStack.activeTabId = srcStack.tabIds[Math.max(0, loc.index - 1)] ?? srcStack.tabIds[0] ?? null
+    }
+  }
+
+  if (!nextCol.dock) return { next: snapshot, inverse: command, changed: false }
+  const targetPane = findDockPane(nextCol.dock, command.paneId)
+  if (!targetPane) return { next: snapshot, inverse: command, changed: false }
+
+  const newPane: UieDockPane = {
+    kind: 'pane',
+    paneId: command.paneId2 ?? ctx.nextDockId?.() ?? 'dock-pane-new',
+    main: false,
+    tabIds: [command.instanceId],
+    activeTabId: command.instanceId,
+  }
+  const splitId = command.splitId ?? ctx.nextDockSplitId?.() ?? 'dock-split-new'
+  const splitNode: UieDockNode = {
+    kind: 'split',
+    splitId,
+    dir: command.dir,
+    ratio: command.ratio ?? DEFAULT_DOCK_RATIO,
+    a: newPane,
+    b: targetPane,
+  }
+  if (command.place === 'end') {
+    splitNode.a = targetPane
+    splitNode.b = newPane
+  }
+  nextCol.dock = replaceDockNode(nextCol.dock, command.paneId, splitNode)
+  if (command.dir === 'row') {
+    nextCol.width = Math.max(nextCol.width, Math.min(INITIAL_DOCK_SPLIT_WIDTH, MAX_DOCK_COLUMN_WIDTH))
+  }
+  next.focusedCardId = command.instanceId
+
+  const inverse: UieCommand = {
+    type: 'mergeDockPane',
+    scope: command.scope,
+    slotId: command.slotId,
+    paneId: newPane.paneId,
+  }
+  return { next, inverse, changed: true }
+}
+
+/** Merge one dock pane back into the main pane; normalize when only main remains. */
+function mergeDockPane(
+  snapshot: UieLayoutSnapshot,
+  command: Extract<UieCommand, { type: 'mergeDockPane' }>,
+  ctx: ReduceContext,
+): ReducerResult | null {
+  const col = snapshot.columns[command.slotId]
+  if (!col || !col.dock) return { next: snapshot, inverse: command, changed: false }
+  if (isLocked(command.slotId, ctx)) return null
+
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const nextCol = next.columns[command.slotId]
+  const main = mainDockPane(nextCol.dock!)
+  if (command.paneId === main.paneId) {
+    return { next: snapshot, inverse: command, changed: false }
+  }
+  const pane = findDockPane(nextCol.dock!, command.paneId)
+  if (!pane) return { next: snapshot, inverse: command, changed: false }
+
+  main.tabIds.push(...pane.tabIds)
+  nextCol.dock = removeDockPane(nextCol.dock!, command.paneId)
+  if (nextCol.dock && collectDockPanes(nextCol.dock).length === 1) {
+    const only = collectDockPanes(nextCol.dock)[0]
+    nextCol.primary.tabIds = [...only.tabIds]
+    nextCol.primary.activeTabId = only.activeTabId
+    nextCol.dock = null
+  }
+
+  const inverse: UieCommand = {
+    type: 'mergeDockPane',
+    scope: command.scope,
+    slotId: command.slotId,
+    paneId: command.paneId,
+  }
+  return { next, inverse, changed: true }
+}
+
+/** Atomically merge every dock pane back into a single stack (dock=null). */
+function mergeDockColumn(
+  snapshot: UieLayoutSnapshot,
+  command: Extract<UieCommand, { type: 'mergeDockColumn' }>,
+  ctx: ReduceContext,
+): ReducerResult | null {
+  const col = snapshot.columns[command.slotId]
+  if (!col || !col.dock) return { next: snapshot, inverse: command, changed: false }
+  if (isLocked(command.slotId, ctx)) return null
+
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const nextCol = next.columns[command.slotId]
+  const dock = nextCol.dock!
+  const main = mainDockPane(dock)
+  const others = collectDockPanes(dock).filter((p) => p.paneId !== main.paneId)
+  for (const p of others) main.tabIds.push(...p.tabIds)
+  nextCol.primary.tabIds = [...main.tabIds]
+  nextCol.primary.activeTabId = main.activeTabId
+  nextCol.dock = null
+
+  const inverse: UieCommand = {
+    type: 'mergeDockColumn',
+    scope: command.scope,
+    slotId: command.slotId,
+  }
+  return { next, inverse, changed: others.length > 0 }
+}
+
+/** Move a card into a specific dock pane (center drop = merge tab into pane). */
+function moveCardToDockPane(
+  snapshot: UieLayoutSnapshot,
+  command: Extract<UieCommand, { type: 'moveCardToDockPane' }>,
+  ctx: ReduceContext,
+): ReducerResult | null {
+  const loc = findInstanceLocation(snapshot, command.instanceId)
+  if (!loc) return { next: snapshot, inverse: command, changed: false }
+  const instance = snapshot.cards[command.instanceId]
+  if (!instance) return { next: snapshot, inverse: command, changed: false }
+  const desc = ctx.registry.get(instance.descriptorId)
+  if (desc && !desc.movable) return null
+
+  // Locate the target pane in the current snapshot (before mutation).
+  let targetSlot: UieSlotId | null = null
+  for (const slotId of snapshot.columnOrder) {
+    const col = snapshot.columns[slotId]
+    if (!col.dock) continue
+    if (findDockPane(col.dock, command.toPaneId)) {
+      targetSlot = slotId
+      break
+    }
+  }
+  if (!targetSlot) return { next: snapshot, inverse: command, changed: false }
+
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const fromCol = next.columns[loc.slotId]
+  let removedPaneId: string | null = null
+
+  if (loc.paneId !== null) {
+    const srcPane = findDockPane(fromCol.dock!, loc.paneId)
+    if (!srcPane) return { next: snapshot, inverse: command, changed: false }
+    const idx = srcPane.tabIds.indexOf(command.instanceId)
+    srcPane.tabIds.splice(idx, 1)
+    if (srcPane.activeTabId === command.instanceId) {
+      srcPane.activeTabId = srcPane.tabIds[Math.max(0, idx - 1)] ?? srcPane.tabIds[0] ?? null
+    }
+    if (srcPane !== mainDockPane(fromCol.dock!) && srcPane.tabIds.length === 0) {
+      fromCol.dock = removeDockPane(fromCol.dock!, srcPane.paneId)
+      removedPaneId = srcPane.paneId
+    }
+    // Moving the last card out of a split collapses the dock back to a stack.
+    if (fromCol.dock && collectDockPanes(fromCol.dock).length === 1) {
+      const only = collectDockPanes(fromCol.dock)[0]
+      fromCol.primary.tabIds = [...only.tabIds]
+      fromCol.primary.activeTabId = only.activeTabId
+      fromCol.dock = null
+    }
+  } else {
+    const srcStack = stackOf(fromCol, loc.stackId!)
+    if (!srcStack) return { next: snapshot, inverse: command, changed: false }
+    srcStack.tabIds.splice(loc.index, 1)
+    if (srcStack.activeTabId === command.instanceId) {
+      srcStack.activeTabId = srcStack.tabIds[Math.max(0, loc.index - 1)] ?? srcStack.tabIds[0] ?? null
+    }
+  }
+
+  // The source pane cannot also be the target (it is now empty/removed).
+  if (removedPaneId === command.toPaneId) {
+    return { next: snapshot, inverse: command, changed: false }
+  }
+
+  // Insert into the target pane (re-locate post-clone), or — when removing the
+  // source collapsed the target column's dock back to a stack — its primary.
+  const targetCol = next.columns[targetSlot]
+  const targetPaneAfter = targetCol.dock ? findDockPane(targetCol.dock, command.toPaneId) : null
+  if (targetPaneAfter) {
+    const index = command.toIndex ?? targetPaneAfter.tabIds.length
+    targetPaneAfter.tabIds.splice(Math.max(0, Math.min(index, targetPaneAfter.tabIds.length)), 0, command.instanceId)
+    targetPaneAfter.activeTabId = command.instanceId
+  } else {
+    const index = command.toIndex ?? targetCol.primary.tabIds.length
+    targetCol.primary.tabIds.splice(Math.max(0, Math.min(index, targetCol.primary.tabIds.length)), 0, command.instanceId)
+    targetCol.primary.activeTabId = command.instanceId
+  }
+  next.focusedCardId = command.instanceId
+
+  const inverse: UieCommand = {
+    type: 'moveCardToDockPane',
+    scope: command.scope,
+    instanceId: command.instanceId,
+    toPaneId: command.toPaneId,
+    toIndex: command.toIndex,
+  }
+  return { next, inverse, changed: true }
+}
+
+/** Set a dock split's ratio (clamped 0.1..0.9). */
+function resizeDockSplit(
+  snapshot: UieLayoutSnapshot,
+  command: Extract<UieCommand, { type: 'resizeDockSplit' }>,
+  _ctx: ReduceContext,
+): ReducerResult {
+  const col = snapshot.columns[command.slotId]
+  if (!col || !col.dock) return { next: snapshot, inverse: command, changed: false }
+  const split = findDockSplit(col.dock, command.splitId)
+  if (!split) return { next: snapshot, inverse: command, changed: false }
+  const prevRatio = split.ratio
+  const ratio = Math.max(0.1, Math.min(0.9, command.ratio))
+  if (ratio === prevRatio) return { next: snapshot, inverse: command, changed: false }
+
+  const next = bumpRevision(cloneSnapshot(snapshot))
+  const s = findDockSplit(next.columns[command.slotId].dock!, command.splitId)!
+  s.ratio = ratio
+
+  const inverse: UieCommand = {
+    type: 'resizeDockSplit',
+    scope: command.scope,
+    slotId: command.slotId,
+    splitId: command.splitId,
     ratio: prevRatio,
   }
   return { next, inverse, changed: true }

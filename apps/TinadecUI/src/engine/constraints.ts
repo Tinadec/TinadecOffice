@@ -2,11 +2,13 @@ import type {
   ColumnGeometry,
   SplitGeometry,
   UieContainerSize,
+  UieDockGeometry,
+  UieDockNode,
   UieGeometry,
   UieLayoutSnapshot,
   UieSlotId,
 } from './types'
-import { COLLAPSED_COLUMN_WIDTH } from './types'
+import { COLLAPSED_COLUMN_WIDTH, DOCK_DIVIDER, MIN_DOCK_PANE_HEIGHT, MIN_DOCK_PANE_WIDTH } from './types'
 
 // ---------------------------------------------------------------------------
 // Constraint solver — deterministic geometry computation.
@@ -27,6 +29,116 @@ const MIN_CENTER_WIDTH = 320
 
 function effectiveWidth(col: { width: number; collapsed: boolean }): number {
   return col.collapsed ? COLLAPSED_COLUMN_WIDTH : col.width
+}
+
+// ---------------------------------------------------------------------------
+// Dock flattening — recursively lay a column's dock split tree out into
+// column-relative pane rects + divider hit-areas.
+// ---------------------------------------------------------------------------
+
+interface DockFlattenResult {
+  panes: UieDockGeometry['panes']
+  dividers: UieDockGeometry['dividers']
+  degradedPanes: string[]
+}
+
+function flattenDockNode(
+  node: UieDockNode,
+  rect: { x: number; y: number; width: number; height: number },
+  out: DockFlattenResult,
+): void {
+  if (node.kind === 'pane') {
+    out.panes.push({
+      paneId: node.paneId,
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      degraded: false,
+    })
+    return
+  }
+
+  const gutter = DOCK_DIVIDER
+  if (node.dir === 'row') {
+    const aWidth = Math.round((rect.width - gutter) * node.ratio)
+    const aRect = { x: rect.x, y: rect.y, width: aWidth, height: rect.height }
+    const bRect = { x: rect.x + aWidth + gutter, y: rect.y, width: rect.width - aWidth - gutter, height: rect.height }
+    flattenDockNode(node.a, aRect, out)
+    flattenDockNode(node.b, bRect, out)
+    out.dividers.push({
+      splitId: node.splitId,
+      dir: 'row',
+      x: rect.x + aWidth,
+      y: rect.y,
+      width: gutter,
+      height: rect.height,
+    })
+  } else {
+    const aHeight = Math.round((rect.height - gutter) * node.ratio)
+    const aRect = { x: rect.x, y: rect.y, width: rect.width, height: aHeight }
+    const bRect = { x: rect.x, y: rect.y + aHeight + gutter, width: rect.width, height: rect.height - aHeight - gutter }
+    flattenDockNode(node.a, aRect, out)
+    flattenDockNode(node.b, bRect, out)
+    out.dividers.push({
+      splitId: node.splitId,
+      dir: 'column',
+      x: rect.x,
+      y: rect.y + aHeight,
+      width: rect.width,
+      height: gutter,
+    })
+  }
+}
+
+/**
+ * Flatten a dock split tree into pane rects + dividers (column-relative).
+ * When a pane is smaller than the dock minimums, it is visually degraded out
+ * (hidden) — mirroring the existing split-degradation: the larger sibling
+ * absorbs the space, and no divider is produced for the affected split.
+ */
+export function flattenDock(
+  container: { width: number; height: number },
+  dock: UieDockNode,
+): { panes: UieDockGeometry['panes']; dividers: UieDockGeometry['dividers']; degradedPanes: string[] } {
+  const out: DockFlattenResult = { panes: [], dividers: [], degradedPanes: [] }
+  flattenDockNode(dock, { x: 0, y: 0, width: container.width, height: container.height }, out)
+
+  // Degrade: drop dividers that belong to splits whose subtree contains a
+  // too-small pane. We recompute visibility bottom-up per split: a split is
+  // "collapsed" if either child branch fails its minimum along that axis.
+  const visibleSplits = new Set<string>()
+  function markVisible(node: UieDockNode, rect: { width: number; height: number }): boolean {
+    if (node.kind === 'pane') {
+      const ok = rect.width >= MIN_DOCK_PANE_WIDTH && rect.height >= MIN_DOCK_PANE_HEIGHT
+      if (!ok) {
+        out.degradedPanes.push(node.paneId)
+        const g = out.panes.find((p) => p.paneId === node.paneId)
+        if (g) g.degraded = true
+      }
+      return ok
+    }
+    // Recompute child rects for the visibility pass.
+    const gutter = DOCK_DIVIDER
+    let ok: boolean
+    if (node.dir === 'row') {
+      const aWidth = Math.round((rect.width - gutter) * node.ratio)
+      const aOk = markVisible(node.a, { width: aWidth, height: rect.height })
+      const bOk = markVisible(node.b, { width: rect.width - aWidth - gutter, height: rect.height })
+      ok = aOk && bOk
+    } else {
+      const aHeight = Math.round((rect.height - gutter) * node.ratio)
+      const aOk = markVisible(node.a, { width: rect.width, height: aHeight })
+      const bOk = markVisible(node.b, { width: rect.width, height: rect.height - aHeight - gutter })
+      ok = aOk && bOk
+    }
+    if (ok) visibleSplits.add(node.splitId)
+    return ok
+  }
+  markVisible(dock, container)
+  out.dividers = out.dividers.filter((d) => visibleSplits.has(d.splitId))
+
+  return out
 }
 
 export function computeGeometry(
@@ -159,5 +271,25 @@ export function computeGeometry(
     }
   }
 
-  return { columns, splits, degraded }
+  // Docks: flatten each column's dock tree (only when the column is visible
+  // and not collapsed — collapsed/visually-degraded columns show the rail).
+  const docks = {} as Record<UieSlotId, UieDockGeometry>
+  for (const slotId of slots) {
+    const col = snapshot.columns[slotId]
+    const geom = columnGeoms[slotId]
+    const collapsedVisually = col.collapsed || collapsedSet.has(slotId)
+    if (!col.dock || collapsedVisually) {
+      docks[slotId] = { slotId, panes: [], dividers: [], degradedPanes: [] }
+      continue
+    }
+    const flat = flattenDock({ width: geom.width, height: geom.height }, col.dock)
+    docks[slotId] = {
+      slotId,
+      panes: flat.panes,
+      dividers: flat.dividers,
+      degradedPanes: flat.degradedPanes,
+    }
+  }
+
+  return { columns, splits, docks, degraded }
 }
