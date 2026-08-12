@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Home as HomeIcon, PanelRightOpen } from '@lucide/vue'
+import { Home as HomeIcon, PanelRightOpen, type LucideIcon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import UieStack from './UieStack.vue'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import type { ColumnGeometry, SplitGeometry, UieColumn as ColumnModel } from '../engine/types'
+import { FEATURE_CATALOG } from './cards/home/featureCatalog'
+import type { ColumnGeometry, PersistedCardInstance, SplitGeometry, UieColumn as ColumnModel } from '../engine/types'
 
 const props = defineProps<{
   column: ColumnModel
@@ -18,7 +19,7 @@ const wb = useUie()
 
 // The feature panel is the right column that hosts the pinned homePicker card.
 // It gets the old ContextPanel treatment: browser tab chrome (in UieStack) and
-// a 44px collapsed rail with expand + Home buttons.
+// a 44px collapsed rail with expand + Home buttons + the open feature-tab icons.
 const isFeatureColumn = computed(() =>
   props.column.primary.tabIds.some((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
 )
@@ -29,21 +30,43 @@ const featureHomeId = computed(
 )
 const isHomeActive = computed(() => featureHomeId.value !== null && props.column.primary.activeTabId === featureHomeId.value)
 
+// Open feature tabs (everything in the stack except the pinned homePicker),
+// used to render the vertical icon rail while the panel is collapsed.
+const openFeatureInstances = computed<PersistedCardInstance[]>(() =>
+  props.column.primary.tabIds
+    .map((id) => wb.snapshot.value.cards[id])
+    .filter((c): c is PersistedCardInstance => !!c && c.descriptorId !== 'homePicker'),
+)
+function isFeatureActive(instanceId: string): boolean {
+  return props.column.primary.activeTabId === instanceId
+}
+
+// Icon lookup reuses the shared feature catalog so the collapsed rail matches
+// the tab bar and the "+" menu (same single-color icons).
+const FEATURE_ICON_BY_DESCRIPTOR = new Map(FEATURE_CATALOG.map((f) => [f.descriptorId, f.icon]))
+function featureIconFor(descriptorId: string): LucideIcon {
+  return FEATURE_ICON_BY_DESCRIPTOR.get(descriptorId) ?? HomeIcon
+}
+
 // Collapsed rail shares the float-panel material (translucent/blur follow the
 // global panel-style setting just like the stack they replace).
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const railStyle = computed(() => getPanelStyle())
 const railAttrs = computed(() => getPanelDataAttributes())
 
-function expand(goHome = false) {
+/**
+ * Expand the collapsed panel. When `instanceId` is given, also activate that
+ * card (used by the rail's feature icons and the Home button).
+ */
+function expand(instanceId?: string | null) {
   wb.bus.dispatch({
     command: { type: 'collapseColumn', scope: wb.scope.value, slotId: props.column.slotId, collapsed: false },
     source: 'user',
     expectedRevision: wb.snapshot.value.revision,
   })
-  if (goHome && featureHomeId.value) {
+  if (instanceId) {
     wb.bus.dispatch({
-      command: { type: 'activateCard', scope: wb.scope.value, instanceId: featureHomeId.value },
+      command: { type: 'activateCard', scope: wb.scope.value, instanceId },
       source: 'user',
       expectedRevision: wb.snapshot.value.revision,
     })
@@ -151,7 +174,8 @@ function onDividerUp() {
       height: `${geometry.height}px`,
     }"
   >
-    <!-- Collapsed feature panel: 44px rail (expand + Home), same material as the stack. -->
+    <!-- Collapsed feature panel: 44px rail (expand + Home + open feature-tab
+         icons), same material as the stack. -->
     <div
       v-if="isFeatureColumn && column.collapsed"
       class="float-panel-collapsed-bar wb-column-rail"
@@ -161,7 +185,7 @@ function onDividerUp() {
       <button
         class="float-panel-toggle-btn"
         :title="t('app.expand')"
-        @click="expand(false)"
+        @click="expand()"
       >
         <PanelRightOpen :size="16" />
       </button>
@@ -169,9 +193,21 @@ function onDividerUp() {
         class="float-panel-collapsed-icon"
         :class="{ active: isHomeActive }"
         :title="t('context.homeTitle')"
-        @click="expand(true)"
+        @click="expand(featureHomeId)"
       >
         <HomeIcon :size="18" />
+      </button>
+      <!-- Open feature-tab icons: icon-only, vertical; clicking activates the
+           tab and expands the panel. -->
+      <button
+        v-for="inst in openFeatureInstances"
+        :key="inst.id"
+        class="float-panel-collapsed-icon"
+        :class="{ active: isFeatureActive(inst.id) }"
+        :title="inst.title"
+        @click="expand(inst.id)"
+      >
+        <component :is="featureIconFor(inst.descriptorId)" :size="16" />
       </button>
     </div>
 
@@ -230,7 +266,8 @@ function onDividerUp() {
 
 /* Collapsed feature panel rail: carries the same island material as the stack
    it replaces (rounded, bordered, shadowed). Buttons use the shared
-   .float-panel-* rules from styles.css. */
+   .float-panel-* rules from styles.css. Vertical scrolling lets the icon rail
+   grow past the rail height when many tabs are open. */
 .wb-column-rail {
   width: 100%;
   height: 100%;
@@ -238,6 +275,7 @@ function onDividerUp() {
   border: 1px solid var(--border-card);
   border-radius: 12px;
   box-shadow: var(--shadow-card-subtle);
+  overflow-y: auto;
 }
 
 .wb-column-resizer-right {
