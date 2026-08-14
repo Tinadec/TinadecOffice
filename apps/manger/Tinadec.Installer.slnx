@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Installer.Core/Installer.Core.csproj" />
+  <Project Path="Installer.TUI/Installer.TUI.csproj" />
+  <Project Path="Installer.GUI/Installer.GUI.csproj" />
+  <Project Path="Installer.Core.Tests/Installer.Core.Tests.csproj" />
+</Solution>

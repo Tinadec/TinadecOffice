@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Tinadec.Installer.TUI</RootNamespace>
+    <AssemblyName>Tinadec.Installer.TUI</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Terminal.Gui v2 for the interactive dashboard -->
+    <PackageReference Include="Terminal.Gui" Version="2.0.0" />
+
+    <!-- DI container -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+
+    <!-- Shared installer engine -->
+    <ProjectReference Include="..\Installer.Core\Installer.Core.csproj" />
+  </ItemGroup>
+
+</Project>
