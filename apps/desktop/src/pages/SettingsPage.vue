@@ -881,6 +881,14 @@ function focusModelProviderList(filter: ModelCenterFilter) {
   })
 }
 
+function handleAddProviderClick() {
+  if ((modelCenterOverview.value?.suppliers.length ?? 0) === 0) {
+    openAddModal()
+    return
+  }
+  focusModelProviderList('available')
+}
+
 function openModelDiagnostics() {
   if (!modelDiagnosticsRef.value) return
   modelDiagnosticsRef.value.open = true
@@ -1685,7 +1693,7 @@ import '../settings/settings.css'
               <p>{{ t('settings.modelCenterSubtitle') }}</p>
             </div>
             <div class="center-command-actions">
-              <UiButton variant="outline" size="sm" @click="focusModelProviderList('available')">
+              <UiButton variant="outline" size="sm" @click="handleAddProviderClick">
                 <Plus :size="14" />
                 <span>{{ t('settings.addProvider') }}</span>
               </UiButton>
