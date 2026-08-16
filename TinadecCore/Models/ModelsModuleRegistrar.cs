@@ -21,7 +21,9 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
     {
         builder.Services.AddDbContextFactory<ModelControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<ModelControlDbContext>>();
-        builder.Services.AddSingleton<IModelProvider, ModelProvider>();
+        builder.Services.AddSingleton<ModelProvider>();
+        builder.Services.AddSingleton<IModelProvider>(sp => sp.GetRequiredService<ModelProvider>());
+        builder.Services.AddSingleton<IChatResolver>(sp => sp.GetRequiredService<ModelProvider>());
         builder.Services.AddSingleton<IEmbeddingProvider, EmbeddingProvider>();
         builder.RegisterModule(new ModuleDescriptor
         {
@@ -37,11 +39,26 @@ public sealed class ModelsModuleRegistrar : IModuleRegistrar
 }
 
 /// <summary>
-/// Skeleton model provider. Uses IChatClient / ChatClientAgent as entry point.
-/// Does not rewrite model HTTP clients.
+/// Model provider. Resolves the configured <c>chat</c> route into a concrete
+/// OpenAI-compatible endpoint, model, and API key via <see cref="IChatResolver"/>.
+/// Keeps the legacy <see cref="GetChatClientAsync"/> skeleton untouched; chat client
+/// construction is owned by DmaEA callers through the resolved <see cref="ChatResolution"/>.
 /// </summary>
-internal sealed class ModelProvider : IModelProvider
+internal sealed class ModelProvider : IModelProvider, IChatResolver
 {
+    private readonly IDbContextFactory<ModelControlDbContext> _dbFactory;
+    private readonly IContentStore _content;
+    private readonly ISecretStore _secrets;
+    private readonly ITenantContextAccessor _tenant;
+
+    public ModelProvider(IDbContextFactory<ModelControlDbContext> dbFactory, IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant)
+    {
+        _dbFactory = dbFactory;
+        _content = content;
+        _secrets = secrets;
+        _tenant = tenant;
+    }
+
     public Task<IChatClient?> GetChatClientAsync(
         string? routeId = null,
         CancellationToken cancellationToken = default)
@@ -59,6 +76,55 @@ internal sealed class ModelProvider : IModelProvider
             Warnings = ["models module is in skeleton state — no providers registered."]
         });
     }
+
+    public async Task<ChatResolution> ResolveChatAsync(string? routePurpose = null, CancellationToken cancellationToken = default)
+    {
+        var tenant = _tenant.Current;
+        var purpose = string.IsNullOrWhiteSpace(routePurpose) ? "chat" : routePurpose;
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var route = await db.Routes.AsNoTracking().Where(x => x.Purpose == purpose && x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (route is null) return Unavailable("No chat model route is configured for this workspace.");
+        var routeVersion = await db.RouteVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == route.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+        if (routeVersion is null) return Unavailable("Chat route has no current version.");
+
+        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == routeVersion.ProviderId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (provider is null) return Unavailable("Chat route references a missing provider instance.");
+        if (!provider.Enabled) return Unavailable("Configured chat provider is disabled.");
+
+        var providerVersion = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == provider.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+        if (providerVersion is null) return Unavailable("Provider instance has no current version.");
+
+        var configJson = await ReadContentAsync(providerVersion.ContentReference, cancellationToken).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(configJson);
+        string? String(string key) => doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        var model = string.IsNullOrWhiteSpace(routeVersion.Model) ? String("model") : routeVersion.Model;
+        if (string.IsNullOrWhiteSpace(model)) return Unavailable("Chat model name is not configured.");
+        var baseUrl = String("base_url");
+        if (string.IsNullOrWhiteSpace(baseUrl)) return Unavailable("Provider base_url is not configured.");
+
+        if (string.IsNullOrWhiteSpace(provider.SecretReference)) return Unavailable("Provider has no API key reference.");
+        var apiKey = await _secrets.GetAsync(provider.SecretReference, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(apiKey)) return Unavailable("Provider API key is not stored.");
+
+        return new ChatResolution
+        {
+            IsAvailable = true,
+            BaseUrl = baseUrl,
+            Model = model,
+            ApiKey = apiKey,
+            ModelId = $"{provider.Driver}/{model}"
+        };
+    }
+
+    private async Task<string> ReadContentAsync(string reference, CancellationToken cancellationToken)
+    {
+        await using var stream = await _content.OpenReadAsync(new ContentReference(reference, "", 0, "application/json"), cancellationToken).ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static ChatResolution Unavailable(string error) => new() { IsAvailable = false, Error = error };
 }
 
 /// <summary>

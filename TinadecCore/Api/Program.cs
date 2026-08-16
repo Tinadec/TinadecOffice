@@ -38,6 +38,12 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// Idempotent dev bootstrap: chat route + planner/executor agents when missing.
+using (var seedScope = app.Services.CreateScope())
+{
+    await TinadecCore.Runtime.DevSeed.SeedIfMissingAsync(seedScope.ServiceProvider, CancellationToken.None);
+}
+
 // ============================================================
 // GET /api/v1/health — legacy-compatible {name, status, version, time}
 // ============================================================
@@ -169,6 +175,7 @@ app.MapGet("/api/v1/readiness", async (
 // Write endpoints return 501 Not Implemented.
 // ============================================================
 app.MapStorageEndpoints();
+app.MapDmaeaEndpoints();
 app.MapControlPlaneEndpoints();
 app.MapStubEndpoints();
 

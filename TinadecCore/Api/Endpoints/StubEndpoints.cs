@@ -98,21 +98,6 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapProjectSessionStubs(this WebApplication app)
     {
-        app.MapPost("/api/v1/sessions/{sessionId}/invoke-stream", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Invoke-stream is not implemented in skeleton mode." }, statusCode: 501));
-
-        app.MapGet("/api/v1/sessions/{sessionId}/orchestration", () => Results.Ok(new
-        {
-            run = (object?)null,
-            graph = (object?)null,
-            nodes = Array.Empty<object>(),
-            assignments = Array.Empty<object>(),
-            step_results = Array.Empty<object>(),
-            context_packs = Array.Empty<object>(),
-            supervision_findings = Array.Empty<object>()
-        }));
-
-        app.MapGet("/api/v1/sessions/{sessionId}/tool-executions", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/sessions/{sessionId}/task-nodes", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/context-packs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/supervision-findings", () => Results.Ok(Array.Empty<object>()));
 

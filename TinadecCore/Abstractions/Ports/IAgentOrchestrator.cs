@@ -11,6 +11,7 @@ public interface IAgentOrchestrator
     Task<OrchestrationResult> OrchestrateAsync(
         string sessionId,
         string userGoal,
+        string? triggerMessageId = null,
         CancellationToken cancellationToken = default);
 }
 
