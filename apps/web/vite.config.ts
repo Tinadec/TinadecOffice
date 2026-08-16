@@ -9,6 +9,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '../desktop/src'),
+      // TinadecUI — same barrel as desktop so the shared renderer resolves '@tinadec/ui'.
+      '@tinadec/ui': path.resolve(__dirname, '../TinadecUI/src/index.ts'),
     },
   },
   server: {

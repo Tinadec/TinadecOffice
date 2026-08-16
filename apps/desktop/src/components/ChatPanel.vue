@@ -61,6 +61,9 @@ function handleReject(approvalId: string) {
 </script>
 
 <template>
+  <!-- Immersive chat zone: transparent background so page background shows through.
+       User's global material setting controls backdrop-filter on inner objects (composer, welcome dialog, bubbles).
+       NO border or shadow here — the card frame and parent stack own the visual boundary. -->
   <section ref="conversationRef" class="conversation" :class="conversationClass">
     <Transition name="chat-panel" mode="out-in">
       <template v-if="messages.length === 0">
@@ -79,7 +82,8 @@ function handleReject(approvalId: string) {
         />
       </template>
       <template v-else>
-        <div class="chat-active-panel" key="chat-active" :style="panelStyle" v-bind="panelDataAttrs">
+        <!-- Active chat panel: transparent so background layer shows through -->
+        <div class="chat-active-panel" key="chat-active" style="background: transparent !important; border: none !important; box-shadow: none !important;">
           <ChatHeader :current-session="currentSession" />
           <MessageList
             :messages="messages"

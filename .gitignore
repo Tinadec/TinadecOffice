@@ -18,6 +18,8 @@ output/
 /.tinadec/sandbox.json
 /.tinadec/worktrees/
 .opencode/
+.claude/better-harness/
 *.log
 config.json
 oc-debug.log
+/.mimosa

@@ -1,0 +1,159 @@
+/* ===================================================================
+   SPATIAL PAGE TRANSITION ANIMATION SYSTEM
+   Progressive, spatial design leveraging Workbench layout engine
+====================================================================
+
+DESIGN PRINCIPLES:
+1. Background layer ALWAYS outside transitions (App.vue line 122-165)
+2. Only opacity + transform on animated elements - NO color/background
+3. Parent chain MUST NOT have transform when child has backdrop-filter
+4. Staggered animations for depth perception
+5. Easing: cubic-bezier(0.16, 1, 0.3, 1) - "snap ease-out" native feel
+
+ARCHITECTURE CONTRACT:
+- This file contains ONLY declarative CSS rules: @keyframes + class-driven
+  rules toggled by HomePage.vue (.home-entering / .home-exiting) and
+  SettingsPage.vue (.settings-exiting). No JavaScript inline-style
+  manipulation of engine nodes.
+- The Workbench layout engine (src/workbench/) is the single authority
+  for geometry (left/top/width/height). These rules only animate
+  transform + opacity, which the engine's patchStyle diff never touches.
+- HomePage.vue keeps a CLASSIC plain div as the transition container (never
+  the Vapor WorkbenchShell root) to avoid the classic↔Vapor interop leave
+  crash documented in VaporExemptions.ts.
+
+ANIMATION LAYERS (stacked order, lowest z-index first):
+Layer 0: .background-layer (static, z-index: 0) - backdrop-filter applied here
+Layer 1: .main-content (transparent container, z-index: 1)
+Layer 2: Page transition containers (z-index: 2)
+Layer 3: Panel materials with data-panel-effect (z-index: 3)
+Layer 4: Floating UI (notifications, dialogs, z-index: 10+)
+
+----------------------------------------------------------------------------
+HOME PAGE UPWARD EXIT / ENTRY ANIMATION
+Class-driven keyframes (no Vue <Transition>) — same mechanism as the Settings
+page. HomePage.vue toggles .home-entering / .home-exiting on the classic
+.home-page-container wrapper; these rules animate the blur roots (.wb-stack)
+themselves. Columns fly upward with scale-down and stagger on exit, and rise
+from below with stagger on entry.
+---------------------------------------------------------------------------- */
+
+/* During the animation let the column overflow so a rising/flying stack is not
+   clipped by .wb-column's overflow:hidden. !important is required because
+   .wb-column's overflow:hidden lives in a Vue <style scoped> block whose
+   [data-v-xxx] attribute selector wins over plain global specificity (0,2,0).
+   overflow does NOT create a backdrop root, so blur is unaffected;
+   .wb-canvas stays overflow:hidden and clips at the window edge. */
+.home-page-container.home-entering .wb-column,
+.home-page-container.home-exiting .wb-column {
+  overflow: visible !important;
+}
+
+/* EXIT: stacks fly upward and scale down, staggered per column.
+   CSS animations override the scoped .wb-stack transition (animation wins over
+   transition for the animated properties), so no !important is needed here —
+   unlike the old <Transition> rule, which had to fight a competing transition. */
+@keyframes home-up-exit {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-80px) scale(0.92);
+    opacity: 0;
+  }
+}
+
+.home-page-container.home-exiting .wb-stack {
+  animation: home-up-exit 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+/* Stagger: first column exits/enters earlier, last column later. */
+.home-page-container.home-exiting .wb-column:nth-child(1) .wb-stack {
+  animation-delay: 0s;
+}
+.home-page-container.home-exiting .wb-column:nth-child(2) .wb-stack {
+  animation-delay: 0.05s;
+}
+.home-page-container.home-exiting .wb-column:nth-child(3) .wb-stack {
+  animation-delay: 0.1s;
+}
+
+/* ENTRY: stacks rise from below with stagger. ease-out for a natural landing.
+   'both' fill-mode holds the from-state during the stagger delay, so columns
+   start below and rise in sequence instead of popping in late. */
+@keyframes home-up-enter {
+  from {
+    transform: translateY(40px) scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.home-page-container.home-entering .wb-stack {
+  animation: home-up-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.home-page-container.home-entering .wb-column:nth-child(1) .wb-stack {
+  animation-delay: 0s;
+}
+.home-page-container.home-entering .wb-column:nth-child(2) .wb-stack {
+  animation-delay: 0.05s;
+}
+.home-page-container.home-entering .wb-column:nth-child(3) .wb-stack {
+  animation-delay: 0.1s;
+}
+
+/* ----------------------------------------------------------------------------
+   SETTINGS PAGE DUAL-SLIDE ANIMATIONS
+   Entry: CSS @keyframes in settings.css (settings-nav-enter /
+   settings-content-enter) with translateX(±100%).
+   Exit: class-driven keyframes in settings.css (settings-nav-exit /
+   settings-content-exit), toggled via a template ref class binding in
+   SettingsPage.vue — no document.querySelector, no inline style.
+   ---------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------------
+   BLUR EFFECT PRESERVATION PATTERNS
+   Ensures backdrop-filter works correctly during animations.
+   .background-layer and .main-content are already defined in styles.css
+   with proper z-index and transform:none guarantees.
+   The key rule: the BACKGROUND LAYER must never be inside a transformed
+   ancestor, which is guaranteed by App.vue architecture.
+   backdrop-filter on elements with transform still works in Chromium/Electron
+   as long as the element itself is the blur root (not an ancestor issue).
+   ---------------------------------------------------------------------------- */
+
+/* Child surfaces inherit blur via CSS custom properties */
+[data-panel-effect="blur"] .surface-section {
+  background: var(--surface-section); /* Auto-maps to blur alpha tier */
+}
+
+/* ----------------------------------------------------------------------------
+   REDUCED MOTION ACCESSIBILITY
+   Respects user's prefers-reduced-motion preference
+   ---------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .home-page-container.home-entering .wb-stack,
+  .home-page-container.home-exiting .wb-stack {
+    animation: none !important;
+  }
+
+  /* Settings page animations are handled by settings.css reduced motion rules */
+}
+
+/* ----------------------------------------------------------------------------
+   VIEW TRANSITIONS API OPTIMIZATION
+   Modern browsers can animate between states natively.
+   NOTE: Element-level view-transition-name tags can be added to specific
+   panels (e.g. .settings-nav) when document.startViewTransition() is used.
+   ---------------------------------------------------------------------------- */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}

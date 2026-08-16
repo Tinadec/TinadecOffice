@@ -1,7 +1,7 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-04
-**Last Updated By:** Claude (swapped provider brand icons in `providerTemplates.ts` to official `@lobehub/icons-static-svg` SVGs; added `typescript` devDependency and aligned `ignoreDeprecations` to TS 5.x so `npm run build` works)
+**Last Updated:** 2026-08-07
+**Last Updated By:** (Home 聊天列沉浸式:SurfaceMode `immersive` 栈根透明;发送框/欢迎对话框用 `--surface-input` 令牌跟随全局材质并保持清晰;约束求解器给自适应 center 列加 `MIN_CENTER_WIDTH=320` 下限,空间不足时先折叠右列再折左列,修复窄窗口对话区被压成细条的算法缺陷)
 
 ## OVERVIEW
 Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
@@ -11,16 +11,22 @@ The General settings page owns the Desktop Gateway endpoint. The effective URL i
 ## STRUCTURE
 ```
 apps/desktop/
-├── electron/          # Electron main, preload, Debug Studio window, panel window manager, terminal manager
+├── electron/          # Electron main, preload, Debug Studio window, panel window manager, terminal manager, layout store
 ├── scripts/dev.mjs    # Vite then Electron launcher
 └── src/
     ├── pages/         # hash-router route pages
+    ├── controllers/   # per-page domain controllers (Home/Code/Market) — module singletons
+    ├── vapor/         # Vapor rollout batches + exemption registry
     ├── components/    # feature components (incl. TerminalPanel, TerminalView)
     ├── components/ui/ # shadcn-style Vue primitives + barrel
     ├── debug/         # self-contained Agent Debug Studio feature
     ├── composables/   # shared app composables (incl. useTerminal)
     ├── locales/       # en / zh-CN i18n bundles
     └── api.ts         # renderer DTO mirror of Core/Gateway shapes
+
+apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec/ui'
+└── src/
+    └── engine/        # TinadecUIE — deterministic layout engine (types/reducer/commands/undo/scope/registry/presets/repair/constraints/commandBus/instancePool) + components + cards + persistence
 ```
 
 ## WHERE TO LOOK
@@ -28,7 +34,7 @@ apps/desktop/
 |------|----------|-------|
 | Electron startup / app config | `electron/main.cjs`, `electron/preload.cjs`, `electron/appConfig.cjs` | Hardened renderer plus validated, main-process-owned Gateway URL persistence. |
 | Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/pets/petRuntime.ts`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 registry and transparent, always-on-top Canvas windows. `petRuntime.ts` is the renderer business module: it validates proportional 8-column sheets, maps the canonical nine Petdex state rows and active frame counts, loops with modulo, and calculates source rectangles. Petdex `pet.json` contains identity/path metadata, not animation definitions. Local files, enable state, bounds, and scale live under Electron `userData/pets/`; IPC is sender-scoped. Never call Gateway/Core. |
-| Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. |
+| Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. `main.ts` installs `vaporInteropPlugin` and a global renderer error fallback (`src/lib/rendererErrorFallback.ts`): every uncaught error is logged and, on the first fatal one, the stuck splash is swapped for a pure-DOM recoverable fallback (never a silent blank window). |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; General Gateway connection plus model/providers/agents settings. |
 | Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
@@ -43,6 +49,9 @@ apps/desktop/
 | Unified notifications | `src/composables/useNotifications.ts`, `src/components/NotificationIslandHost.vue`, `src/components/NotificationDetailDialog.vue`, `src/App.vue`, `electron/main.cjs`, `electron/preload.cjs` | Three kinds (`transient`/`status`/`task`) render in separate title-bar island zones; clicking a capsule opens the detail dialog, while hover expands a glass card that also opens the dialog when clicked. Repeated notifications merge with a counter; overflow opens the notification center with live + cleared sections. `status.*` replicates across renderer windows over IPC. System load/connection errors use islands; chat approvals stay contextual. |
 | Detached panel windows | `electron/panelWindow.cjs`, `src/pages/DetachedPanelPage.vue`, `src/components/ContextPanel.vue`, `src/composables/usePanelTabs.ts` | Electron multi-window management: BrowserWindow creation, cursor-polling drag-to-detach (Chrome-style tab tearing), disk-based layout persistence, reattach/focus, and cross-window theme broadcast. Main window is tagged with `_isTinadecMain` so `getMainWindow()` distinguishes it from Debug Studio. Panel layout persisted to `~/.tinadec-panel-layout.json` on move/resize/quit and restored on launch. |
 | Integrated terminal | `electron/terminalManager.cjs`, `src/composables/useTerminal.ts`, `src/components/TerminalPanel.vue`, `src/components/TerminalView.vue`, `src/components/ContextPanel.vue`, `src/components/PanelHome.vue` | Full PTY terminal via `node-pty` (with `child_process.spawn` fallback). Multi-instance tabs, shell profile selector (PowerShell/CMD/Git Bash/WSL/zsh/bash), xterm.js rendering with theme adaptation from CSS variables, keyboard shortcuts (Ctrl+Shift+T new, Ctrl+W close, Ctrl+Tab switch), auto-fit via ResizeObserver, and detachable panel windows. Terminal panel type is `'terminal'` in `usePanelTabs`; multiple instances allowed. Native module rebuild: `npm run rebuild:native` (requires Python + C++ build tools). |
+| TinadecUIE layout engine | `apps/TinadecUI/src/engine/**`, `apps/TinadecUI/src/components/**` (import `@tinadec/ui`), `src/controllers/*.ts` | Deterministic 3-slot (`left/center/right`) layout authority (see `apps/TinadecUI/AGENTS.md`). Engine module (`apps/TinadecUI/src/engine/` — pure TS: `types/commands/reducer/undoStack/scope/registry/presets/repair/constraints/commandBus/instancePool`) owns layout state; Components module (`apps/TinadecUI/src/components/` — `UieShell`/`UieCanvas`/`useUie`/cards) only reads snapshot → geometry → DOM. All mutations go through `commandBus.dispatch({command, source, expectedRevision})`; `ai` source is reserved/rejected. Home renders via `UieShell`; card instances hydrate once by `instanceId`. Geometry applies a snapshot-level `edgeInset` to both window edges (float pages home/settings = 8, app pages market/code/debug = 0) and `BOTTOM_INSET = 8` to the bottom. The constraint solver keeps the adaptive center column at least `MIN_CENTER_WIDTH = 320`; under space pressure it collapses the right rail first, then the left (visual only) so the chat zone never gets crushed. Per-column `SurfaceMode` is `float` (rounded/shadowed material root), `app` (flush connected layout, market/code/debug), or `immersive` (transparent zone — the Home chat column): an immersive stack's root carries no material so the page background shows through, but it keeps `data-panel-effect` so inner objects (composer, welcome dialog, bubbles) inherit the remapped surface tokens and follow the global panel material. Per-page domain controllers (`HomeController`/`CodeController`/`MarketController`) are module singletons that share SSE/WS/data across cards. |
+| TinadecUIE persistence | `electron/layoutStore.cjs`, `apps/TinadecUI/src/engine/persistence/**` | Layouts persist to `userData/workbench-layout.json` (atomic temp+rename, IPC `tinadec:layout-load/save`). Renderer `layerStore` resolves `workspace-page > page > global` per page; auto-save debounced 400 ms and flushed on `beforeunload`/`pagehide` so Ctrl+R never loses the last change. `repairLayout()` never shows a blank window; the hydrate/restore promise has a `.catch` that keeps the built-in preset on failure. Snapshots carry `edgeInset` (8px left/right for float pages home/settings, 0 for app pages market/code/debug); `repairLayout` defaults it by `pageId` so legacy JSON migrates automatically. Legacy `~/.tinadec-panel-layout.json` PanelTypes migrate via `migrate.ts`. |
+| Vapor mode | `src/lib/vue-shim.ts`, `src/vapor/**`, `src/main.ts` | Vue 3.6 RC Vapor per-SFC via `<template vapor>`; root `overrides` pin `vue`/`@vue/compiler-sfc` to `3.6.0-rc.2`. `vue-shim.ts` re-exports runtime-dom + runtime-vapor so vapor SFCs resolve in build and vitest; `main.ts` installs `vaporInteropPlugin`. Rollout batched in `vaporBatch.ts`; exemptions in `VaporExemptions.ts`. `AppSplash.vue` is exempt (not vapor): the root `splash-exit <Transition>` must be classic-around-classic, since a classic Transition wrapping a Vapor SFC exercises the classic↔Vapor interop leave path that crashed on Ctrl+R reload. |
 
 ## CONVENTIONS
 - Use `@/*` for imports from `src/*` when it improves clarity.

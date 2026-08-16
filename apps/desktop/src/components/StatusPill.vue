@@ -6,6 +6,6 @@ defineProps<{
 }>()
 </script>
 
-<template>
+<template vapor>
   <span class="status-pill" :class="toneForStatus(status)">{{ status }}</span>
 </template>

@@ -22,7 +22,8 @@
     "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@tinadec/ui": ["../TinadecUI/src/index.ts"]
     }
   },
   "include": [

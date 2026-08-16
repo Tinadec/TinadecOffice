@@ -6,6 +6,8 @@ import {
   FolderOpen,
   LayoutGrid,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   Store,
@@ -14,6 +16,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import type { ProjectDto, SessionDto } from '../api'
 import BrandLogo from '@/components/BrandLogo.vue'
+import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import { UiButton, UiDropdownMenu } from '@/components/ui'
 
 const { t } = useI18n()
@@ -24,6 +27,7 @@ const props = defineProps<{
   selectedProjectId: string | null
   selectedSessionId: string | null
   busy: boolean
+  collapsed?: boolean
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
 }>()
@@ -35,6 +39,7 @@ const emit = defineEmits<{
   'open-project': []
   'go-settings': []
   'go-market': []
+  'toggle-collapse': []
 }>()
 
 const searchQuery = ref('')
@@ -106,11 +111,11 @@ function openDebugStudio() {
 </script>
 
 <template>
-  <aside class="sidebar" :style="panelStyle" v-bind="panelDataAttrs">
+  <aside class="sidebar" :class="{ 'sidebar-collapsed': collapsed }" :style="panelStyle" v-bind="panelDataAttrs">
     <div class="sidebar-topbar">
       <div class="brand">
-        <BrandLogo :size="14" />
-        <span>Tinadec</span>
+        <BrandLogo :size="14" class="sidebar-icon brand-logo-icon" />
+        <TinadecCalligraphy :size="14" class="sidebar-label brand-calligraphy" />
       </div>
     </div>
 
@@ -120,37 +125,41 @@ function openDebugStudio() {
         size="sm"
         class="sidebar-nav-item w-full justify-start"
         :disabled="busy || projects.length === 0"
+        :title="t('sidebar.newChat')"
         @click="handleNewThread"
       >
-        <MessageSquare :size="16" />
-        <span>{{ t('sidebar.newChat') }}</span>
+        <MessageSquare :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.newChat') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.market')"
         @click="emit('go-market')"
       >
-        <Store :size="16" />
-        <span>{{ t('sidebar.market') }}</span>
+        <Store :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.market') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        :title="t('sidebar.commandCenter')"
         disabled
       >
-        <Terminal :size="16" />
-        <span>{{ t('sidebar.commandCenter') }}</span>
+        <Terminal :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">{{ t('sidebar.commandCenter') }}</span>
       </UiButton>
       <UiButton
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
+        title="Debug Studio"
         @click="openDebugStudio()"
       >
-        <Bug :size="16" />
-        <span>Debug Studio</span>
+        <Bug :size="16" class="sidebar-icon" />
+        <span class="sidebar-label">Debug Studio</span>
       </UiButton>
     </nav>
 
@@ -163,18 +172,19 @@ function openDebugStudio() {
         <div class="project-row">
           <button
             class="project-row-main"
+            :title="project.name"
             @click="handleProjectClick(project.id)"
           >
             <ChevronRight
               :size="14"
-              class="project-chevron"
+              class="project-chevron sidebar-extra"
               :class="{ expanded: isExpanded(project.id) }"
             />
-            <FolderOpen :size="14" class="sidebar-list-item-icon" />
-            <span class="sidebar-list-item-text">{{ project.name }}</span>
+            <FolderOpen :size="14" class="sidebar-list-item-icon sidebar-icon" />
+            <span class="sidebar-list-item-text sidebar-label">{{ project.name }}</span>
           </button>
           <button
-            class="project-row-action"
+            class="project-row-action sidebar-extra"
             :title="t('sidebar.newChat')"
             @click.stop="handleNewSession(project.id)"
           >
@@ -182,7 +192,7 @@ function openDebugStudio() {
           </button>
         </div>
 
-        <div v-if="isExpanded(project.id)" class="project-sessions">
+        <div v-if="isExpanded(project.id)" class="project-sessions sidebar-extra">
           <button
             v-for="session in getProjectSessions(project.id)"
             :key="session.id"
@@ -200,7 +210,7 @@ function openDebugStudio() {
       </div>
 
       <div v-if="filteredProjects.length === 0" class="sidebar-empty">
-        {{ t('sidebar.noResults') }}
+        <span class="sidebar-label">{{ t('sidebar.noResults') }}</span>
       </div>
     </div>
 
@@ -221,7 +231,7 @@ function openDebugStudio() {
     </div>
 
     <div class="sidebar-footer">
-      <div class="sidebar-footer-actions">
+      <div class="sidebar-footer-actions" :class="{ 'sidebar-footer-actions-collapsed': collapsed }">
         <UiButton
           variant="ghost"
           size="icon"
@@ -257,6 +267,15 @@ function openDebugStudio() {
             <span>空间模式</span>
           </button>
         </UiDropdownMenu>
+        <UiButton
+          variant="ghost"
+          size="icon"
+          class="sidebar-footer-action"
+          :title="collapsed ? '展开侧边栏' : '折叠侧边栏'"
+          @click="emit('toggle-collapse')"
+        >
+          <component :is="collapsed ? PanelLeftOpen : PanelLeftClose" :size="16" />
+        </UiButton>
       </div>
     </div>
   </aside>

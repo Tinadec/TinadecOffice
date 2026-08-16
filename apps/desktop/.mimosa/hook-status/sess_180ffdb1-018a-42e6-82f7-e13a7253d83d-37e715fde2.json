@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-08-12T12:14:01.844Z",
+  "sessionId": "sess_180ffdb1-018a-42e6-82f7-e13a7253d83d",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "C:\\git\\agent\\TinadecOffice\\AGENTS.md",
+  "outcome": "inconclusive",
+  "coverage": "partial",
+  "findingCount": 0,
+  "durationMs": 5,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

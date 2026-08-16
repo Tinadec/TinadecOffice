@@ -32,7 +32,7 @@ const props = defineProps<Props>()
 const classes = computed(() => cn(badgeVariants({ variant: props.variant }), props.class))
 </script>
 
-<template>
+<template vapor>
   <div data-slot="badge" :class="classes">
     <slot />
   </div>

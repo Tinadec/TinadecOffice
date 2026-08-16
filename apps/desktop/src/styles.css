@@ -1,5 +1,6 @@
 @import "@fontsource-variable/geist";
 @import "tailwindcss";
+@import "./animations/page-transitions.css";
 
 @theme {
   --color-border: hsl(var(--border));
@@ -169,6 +170,15 @@
   --shadow-elevated: 0 8px 28px rgba(0, 0, 0, 0.42);
   --shadow-focus: 0 0 0 2px rgba(46, 196, 182, 0.3);
 
+  /* Card boundary & subtle elevation */
+  --border-card: rgba(0, 0, 0, 0.08);
+  --border-card-active: rgba(0, 0, 0, 0.12);
+  --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.08),
+                        0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
+                       0 8px 24px rgba(0, 0, 0, 0.07);
+  --bg-immersive: rgba(17, 21, 28, 0.38);
+
   --scrollbar-thumb: rgba(125, 133, 144, 0.22);
   --scrollbar-thumb-hover: rgba(125, 133, 144, 0.4);
 }
@@ -229,6 +239,15 @@
   --shadow-panel: 0 4px 16px rgba(26, 37, 38, 0.07);
   --shadow-elevated: 0 8px 28px rgba(26, 37, 38, 0.12);
   --shadow-focus: 0 0 0 2px rgba(31, 143, 128, 0.18);
+
+  /* Card boundary & subtle elevation */
+  --border-card: rgba(0, 0, 0, 0.08);
+  --border-card-active: rgba(0, 0, 0, 0.12);
+  --shadow-card-subtle: 0 1px 3px rgba(0, 0, 0, 0.06),
+                        0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.10),
+                       0 8px 24px rgba(0, 0, 0, 0.07);
+  --bg-immersive: rgba(246, 248, 250, 0.70);
 
   --scrollbar-thumb: rgba(31, 35, 40, 0.18);
   --scrollbar-thumb-hover: rgba(31, 35, 40, 0.32);
@@ -1907,28 +1926,35 @@ box-shadow: var(--shadow-subtle);
    below, which dynamically calculate based on tab count + panel width. */
 
 /* ===== Smart tab label visibility (dynamic, not fixed breakpoint) ===== */
-/* tab-labels-hidden: Not enough space for any label — icon-only mode */
-.float-panel.tab-labels-hidden .browser-tab-label {
+/* tab-labels-hidden: Not enough space for any label — icon-only mode.
+   Applies to both the legacy .float-panel and the UIE .wb-stack feature panel. */
+.float-panel.tab-labels-hidden .browser-tab-label,
+.wb-stack.tab-labels-hidden .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab {
+.float-panel.tab-labels-hidden .browser-tab,
+.wb-stack.tab-labels-hidden .browser-tab {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
-.float-panel.tab-labels-hidden .browser-tab-home {
+.float-panel.tab-labels-hidden .browser-tab-home,
+.wb-stack.tab-labels-hidden .browser-tab-home {
   max-width: 36px;
 }
 
 /* Hide close/detach buttons in icon-only; show on hover */
 .float-panel.tab-labels-hidden .browser-tab-close,
-.float-panel.tab-labels-hidden .browser-tab-detach {
+.float-panel.tab-labels-hidden .browser-tab-detach,
+.wb-stack.tab-labels-hidden .browser-tab-close,
+.wb-stack.tab-labels-hidden .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close {
+.float-panel.tab-labels-hidden .browser-tab:hover .browser-tab-close,
+.wb-stack.tab-labels-hidden .browser-tab:hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -1937,22 +1963,27 @@ box-shadow: var(--shadow-subtle);
 }
 
 /* tab-labels-active-only: Enough space for the active tab's label only */
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-label {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active) {
+.float-panel.tab-labels-active-only .browser-tab:not(.active),
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) {
   max-width: 36px;
   padding: 5px;
   justify-content: center;
 }
 
 .float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
-.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
+.float-panel.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-close,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active) .browser-tab-detach {
   display: none;
 }
 
-.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
+.float-panel.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close,
+.wb-stack.tab-labels-active-only .browser-tab:not(.active):hover .browser-tab-close {
   display: grid;
   position: absolute;
   top: 2px;
@@ -1962,64 +1993,76 @@ box-shadow: var(--shadow-subtle);
 
 /* ===== Responsive: Ultra-compact mode (panel width < 340px) ===== */
 /* Strategy: Hide secondary actions, keep only essential icons. */
-.float-panel.mode-ultra .browser-tab-add {
+.float-panel.mode-ultra .browser-tab-add,
+.wb-stack.mode-ultra .browser-tab-add {
   display: none;
 }
 
-.float-panel.mode-ultra .browser-tab-bar {
+.float-panel.mode-ultra .browser-tab-bar,
+.wb-stack.mode-ultra .browser-tab-bar {
   padding: 4px;
   gap: 2px;
 }
 
-.float-panel.mode-ultra .browser-tab {
+.float-panel.mode-ultra .browser-tab,
+.wb-stack.mode-ultra .browser-tab {
   max-width: 30px;
   min-width: 28px;
   padding: 5px 4px;
 }
 
-.float-panel.mode-ultra .browser-tab-collapse {
+.float-panel.mode-ultra .browser-tab-collapse,
+.wb-stack.mode-ultra .browser-tab-collapse {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Preview browser toolbar ===== */
 /* Compact: hide secondary nav buttons (forward, home) to save space */
-.float-panel.mode-compact .preview-nav-secondary {
+.float-panel.mode-compact .preview-nav-secondary,
+.wb-stack.mode-compact .preview-nav-secondary {
   display: none;
 }
 
-.float-panel.mode-compact .preview-toolbar {
+.float-panel.mode-compact .preview-toolbar,
+.wb-stack.mode-compact .preview-toolbar {
   gap: 2px;
   padding: 4px 6px;
 }
 
 /* Ultra-compact: further reduce toolbar */
-.float-panel.mode-ultra .preview-nav-btn {
+.float-panel.mode-ultra .preview-nav-btn,
+.wb-stack.mode-ultra .preview-nav-btn {
   width: 24px;
   height: 24px;
 }
 
 /* ===== Responsive: Commit panel ===== */
 /* Compact: stack action buttons vertically */
-.float-panel.mode-compact .commit-actions {
+.float-panel.mode-compact .commit-actions,
+.wb-stack.mode-compact .commit-actions {
   flex-direction: column;
 }
 
-.float-panel.mode-compact .commit-action-btn {
+.float-panel.mode-compact .commit-action-btn,
+.wb-stack.mode-compact .commit-action-btn {
   width: 100%;
 }
 
 /* Compact: reduce file list height */
-.float-panel.mode-compact .commit-file-list {
+.float-panel.mode-compact .commit-file-list,
+.wb-stack.mode-compact .commit-file-list {
   max-height: 160px;
 }
 
 /* ===== Responsive: General panel padding ===== */
-.float-panel.mode-compact .panel {
+.float-panel.mode-compact .panel,
+.wb-stack.mode-compact .panel {
   padding: 10px 8px;
 }
 
-.float-panel.mode-ultra .panel {
+.float-panel.mode-ultra .panel,
+.wb-stack.mode-ultra .panel {
   padding: 8px 6px;
 }
 
@@ -2480,10 +2523,152 @@ box-shadow: var(--shadow-subtle);
   background: var(--surface-hover);
 }
 
+/* ===== Sidebar Collapse Motion & Easing ===== */
+.sidebar-label {
+  display: inline-block;
+  white-space: nowrap;
+  opacity: 1;
+  max-width: 180px;
+  transform: translateX(0);
+  transition:
+    opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 0.28s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.25s cubic-bezier(0.2, 0, 0, 1),
+    margin 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-collapsed .sidebar-label {
+  opacity: 0;
+  max-width: 0;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  transform: translateX(-10px);
+  pointer-events: none;
+}
+
+.sidebar-icon {
+  flex-shrink: 0;
+  transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1), margin 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-extra {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-collapsed .sidebar-extra {
+  opacity: 0;
+  transform: scale(0.8);
+  pointer-events: none;
+  height: 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden;
+}
+
+.sidebar-nav-item {
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-start !important;
+  gap: 10px;
+  width: 100% !important;
+  padding: 7px 10px;
+  border-radius: 6px;
+  transition:
+    padding 0.28s cubic-bezier(0.2, 0, 0, 1),
+    gap 0.28s cubic-bezier(0.2, 0, 0, 1),
+    justify-content 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-collapsed .sidebar-nav-item {
+  justify-content: center !important;
+  padding: 7px 0;
+  gap: 0;
+}
+
+.sidebar-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 12px;
+  height: 40px;
+  background: transparent;
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  transition: padding 0.28s cubic-bezier(0.2, 0, 0, 1), justify-content 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-collapsed .sidebar-topbar {
+  padding: 0;
+  justify-content: center;
+}
+
+.sidebar-collapsed .brand {
+  gap: 0;
+}
+
+.sidebar-collapsed .sidebar-list {
+  padding: 4px 2px;
+  transition: padding 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.project-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: padding 0.28s cubic-bezier(0.2, 0, 0, 1), justify-content 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-collapsed .project-row-main {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.sidebar-collapsed .project-row {
+  padding-right: 0;
+}
+
+.sidebar-collapsed .sidebar-list-item-icon {
+  margin: 0 auto;
+}
+
 .sidebar-footer-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+  transition: flex-direction 0.28s cubic-bezier(0.2, 0, 0, 1), gap 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.sidebar-footer-actions-collapsed {
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 8px 4px;
+  justify-content: center;
 }
 
 .mode-dropdown-menu {
@@ -2568,6 +2753,7 @@ box-shadow: var(--shadow-subtle);
   align-items: center;
   gap: 14px;
   width: 100%;
+  /* Adaptive: follows the conversation zone width, capped for readability. */
   max-width: 820px;
 }
 
@@ -2623,10 +2809,21 @@ display: flex;
 flex-direction: column;
 gap: 0;
 border-radius: 12px;
-background: var(--bg-secondary);
+/* The welcome dialog is an input surface — use --surface-input so it follows
+   the global material but stays clearly readable. */
+background: var(--surface-input);
 box-shadow: var(--shadow-panel);
+/* Adaptive: fills the welcome content, capped for readability — the dialog
+   floats as a material card on the transparent conversation zone. */
 width: 100%;
+max-width: 820px;
+margin: 0 auto;
 overflow: hidden;
+}
+
+/* Frosted-glass welcome dialog under the blur material. */
+[data-panel-effect="blur"] .welcome-dialog {
+  backdrop-filter: var(--material-filter-section, none);
 }
 
 .welcome-dialog-main {
@@ -2706,6 +2903,13 @@ overflow: hidden;
   padding: 6px 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* The welcome composer is a frameless input surface — suppress the global
+   textarea:focus glow (border-color + --shadow-focus halo) on focus. */
+.welcome-dialog-input:focus {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .welcome-dialog-input::placeholder {
@@ -3276,8 +3480,16 @@ transition: left 0.2s ease, right 0.2s ease;
 
 .composer-box {
   border-radius: 10px;
-  background: var(--bg-secondary);
+  /* The composer is an input surface — use --surface-input so it follows the
+     global material but stays clearly readable (denser than --surface-section). */
+  background: var(--surface-input);
   box-shadow: var(--shadow-subtle);
+}
+
+/* Frosted-glass composer under the blur material: backdrop blur on the box
+   itself, reusing the root's --material-filter-section. */
+[data-panel-effect="blur"] .composer-box {
+  backdrop-filter: var(--material-filter-section, none);
 }
 
 .composer-main {
@@ -4640,15 +4852,17 @@ Triggered by the page-level transition on the parent .settings-page. */
 
 
 .chat-active-panel {
-display: grid;
-grid-template-rows: auto 1fr auto;
-flex: 1;
-min-height: 0;
-border-radius: 12px;
-overflow: hidden;
-background: var(--bg-primary);
-border: 1px solid var(--border-muted);
-box-shadow: var(--shadow-panel);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* Immersive conversation zone: transparent so the page background shows
+     through. Inner objects (composer, welcome dialog, bubbles) carry material.
+     NO border/shadow here — the parent stack owns visual boundary. */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .chat-panel-enter-active,
