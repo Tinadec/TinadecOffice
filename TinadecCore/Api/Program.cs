@@ -188,6 +188,7 @@ app.MapStorageEndpoints();
 app.MapDmaeaEndpoints();
 app.MapControlPlaneEndpoints();
 app.MapMemoryReviewEndpoints();
+app.MapEvolutionEndpoints();
 app.MapStubEndpoints();
 
 app.Run();

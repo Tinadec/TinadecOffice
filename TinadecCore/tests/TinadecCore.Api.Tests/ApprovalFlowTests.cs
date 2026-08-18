@@ -164,11 +164,11 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var projectPath = Path.Combine(_root, "idempotent-workspace");
         Directory.CreateDirectory(projectPath);
         var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new { name = "Tool key project", path = projectPath }, Json);
-        Assert.Equal(HttpStatusCode.OK, projectResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
         var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
         var projectId = project.GetProperty("id").GetGuid();
         var sessionResponse = await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = projectId, title = "Tool key session" }, Json);
-        Assert.Equal(HttpStatusCode.OK, sessionResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, sessionResponse.StatusCode);
         var session = await sessionResponse.Content.ReadFromJsonAsync<JsonElement>();
         var sessionId = session.GetProperty("id").GetGuid();
 

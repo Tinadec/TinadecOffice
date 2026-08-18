@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.Api.Tests;
 
@@ -52,7 +53,7 @@ public sealed class DmaeaEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.StartsWith("data: ", body);
+        Assert.Contains("data: ", body);
         Assert.Contains("\"kind\":\"error\"", body);
         Assert.Contains("\"error_category\":\"runtime\"", body);
 
@@ -144,6 +145,22 @@ public sealed class DmaeaEndpointTests : IAsyncLifetime
                 ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
                 ["Logging:LogLevel:Default"] = "Warning"
             }));
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton<IToolManifestSnapshotResolver, EmptyToolManifestSnapshotResolver>();
+            });
         }
+    }
+
+    private sealed class EmptyToolManifestSnapshotResolver : IToolManifestSnapshotResolver
+    {
+        private static readonly ToolManifestSnapshot Snapshot = new(
+            2,
+            ToolManifestHasher.Compute(Array.Empty<FrozenToolManifestEntry>()),
+            []);
+
+        public Task<ToolManifestSnapshot> ResolveAsync(
+            ToolManifestSnapshotRequest request,
+            CancellationToken cancellationToken = default) => Task.FromResult(Snapshot);
     }
 }

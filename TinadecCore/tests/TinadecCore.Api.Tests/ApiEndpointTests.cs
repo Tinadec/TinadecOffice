@@ -1,19 +1,21 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 
 namespace TinadecCore.Api.Tests;
 
-public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly ApiEndpointFactory _factory;
     private static readonly JsonSerializerOptions SnakeCaseJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 
-    public ApiEndpointTests(WebApplicationFactory<Program> factory)
+    public ApiEndpointTests(ApiEndpointFactory factory)
     {
         _factory = factory;
     }
@@ -179,5 +181,30 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         // loop_guard and lifecycle should be "registered" (not "not_configured")
         Assert.Equal("registered", moduleStates["loop_guard"]);
         Assert.Equal("registered", moduleStates["lifecycle"]);
+    }
+}
+
+public sealed class ApiEndpointFactory : WebApplicationFactory<Program>
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-api-tests", Guid.NewGuid().ToString("N"));
+
+    public ApiEndpointFactory() => Directory.CreateDirectory(_root);
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseSetting(WebHostDefaults.EnvironmentKey, "Testing");
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),
+            ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
+            ["Logging:LogLevel:Default"] = "Warning"
+        }));
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

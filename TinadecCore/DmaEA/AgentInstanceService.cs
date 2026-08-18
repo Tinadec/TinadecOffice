@@ -390,9 +390,14 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
     private static RuntimeAgentInstance ToRuntime(AgentInstanceRecord row, AgentInstanceDefinition definition) =>
         new(row.Id, row.RunId, row.ParentInstanceId, row.TaskNodeId, row.Layer, row.Role, row.GenerationDepth, row.Generated, row.Status,
             definition.Capabilities, definition.AllowedTools, definition.AllowedResources, definition.BudgetTokens, row.CreatedAt, row.UpdatedAt);
-
     private static string[] Normalize(IEnumerable<string> values) => values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    private static bool IsSubset(IEnumerable<string> child, IEnumerable<string> parent) => child.All(value => parent.Contains(value, StringComparer.OrdinalIgnoreCase));
+
+    private static bool IsSubset(IEnumerable<string> child, IEnumerable<string> parent)
+    {
+        var parentSet = parent.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (parentSet.Contains("*")) return true;
+        return child.All(parentSet.Contains);
+    }
 
     private sealed record AgentInstanceDefinition(
         string Id,

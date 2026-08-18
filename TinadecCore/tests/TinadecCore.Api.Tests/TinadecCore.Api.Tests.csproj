@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Api\TinadecCore.Api.csproj" />
+    <ProjectReference Include="..\..\..\TinadecTools\TinadecTools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

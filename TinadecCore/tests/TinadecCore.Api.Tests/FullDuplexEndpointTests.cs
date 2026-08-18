@@ -403,9 +403,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = await StreamInvokeAsync(client, sessionId, new { content = "任务A", client_message_id = "a" });
-        var runB = await StreamInvokeAsync(client, sessionId, new { content = "任务B", client_message_id = "b" });
-        Assert.NotEqual(RunIdOf(runA[0]), RunIdOf(runB[0]));
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "a" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "b" });
+        var ackA = await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var ackB = await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.NotEqual(RunIdOf(ackA), RunIdOf(ackB));
 
         var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "任务C", client_message_id = "c" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -413,6 +415,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("ACTIVE_RUN_LIMIT", body.GetProperty("code").GetString());
 
         gate.SetResult();
+        await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        await runB.Completion.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     [Fact]
@@ -428,21 +432,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var factory = CreateFactory(script);
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
-        var observed = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var streaming = Task.Run(async () =>
-        {
-            var chunks = await StreamInvokeAsync(client, sessionId, new { content = "长任务" });
-            observed.SetResult(RunIdOf(chunks[0]));
-            return chunks.Last();
-        });
-        var runId = await observed.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var invoke = StartStreamingInvoke(client, sessionId, new { content = "长任务" });
+        var runId = RunIdOf(await invoke.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
 
         var control = await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "cancel" });
         Assert.Equal(HttpStatusCode.OK, control.StatusCode);
         gate.SetResult();
 
-        var last = await streaming;
+        var chunks = await invoke.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        var last = chunks.Last();
         Assert.Equal("done", KindOf(last));
         Assert.Equal("cancelled", last.GetProperty("finish_reason").GetString());
     }
@@ -466,7 +465,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("done", KindOf(done));
         var runId = RunIdOf(chunks[0]);
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
-        var decisions = orchestration.GetProperty("supervision_findings").EnumerateArray().Select(f => f.GetProperty("decision").GetString()).ToArray();
+        var decisions = orchestration.GetProperty("supervision_findings").EnumerateArray()
+            .Select(f => f.GetProperty("decision").GetString()).Where(d => d is not null).ToArray();
         Assert.Equal(new[] { "revise", "pass" }, decisions);
         Assert.Equal(2, script.WorkerCalls);
     }
@@ -670,7 +670,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal);
             var isSupervisor = instructions?.Contains("监督智能体", StringComparison.Ordinal) == true
                 || prompt.Contains("执行证据", StringComparison.Ordinal);
-            var isMeeting = instructions?.Contains("meeting agent", StringComparison.Ordinal) == true
+            var isMeeting = instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true
                 || prompt.Contains("Execution evidence", StringComparison.Ordinal);
             if (!isPlanner && !isSupervisor && !isMeeting)
             {
@@ -688,7 +688,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 return RecordPlanner(_planner ?? "[]");
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";
-            if (instructions?.Contains("meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
+            if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
                 return _meeting ?? "完成";
             return _worker is { } workerText ? RecordWorker(workerText) : "完成";
         }
@@ -710,7 +710,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            var isMeeting = options?.Instructions?.Contains("meeting agent", StringComparison.Ordinal) ?? false;
+            var isMeeting = options?.Instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) ?? false;
             if (isMeeting)
             {
                 if (BeforeMeeting is not null) await BeforeMeeting.WaitAsync(cancellationToken);

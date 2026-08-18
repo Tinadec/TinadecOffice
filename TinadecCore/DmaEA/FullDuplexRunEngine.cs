@@ -737,7 +737,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 ?? throw new InvalidDataException("Planner instance is missing from the run lineage.");
             worker = await _instances.SpawnAsync(new AgentSpawnRequest(
                 parent.Id,
-                task.Description ?? task.Title,
+                string.IsNullOrWhiteSpace(task.Description) ? task.Title : task.Description,
                 task.SuccessCriteria,
                 ["session_history", "task_context", "reviewed_memory"],
                 "chat",

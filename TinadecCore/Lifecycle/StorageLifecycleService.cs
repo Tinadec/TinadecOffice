@@ -277,16 +277,26 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return runs.OrderByDescending(x => x.CreatedAt).ToList();
     }
 
+    /// <summary>
+    /// Lists active runs whose lease can be recovered. Runs younger than the
+    /// admission grace period are skipped: a submit is still freezing the run
+    /// configuration while the manifest handshake runs, and the recovery scan
+    /// must not execute a run that has not been fully admitted yet.
+    /// </summary>
     public async Task<IReadOnlyList<RunRecord>> ListLeaseEligibleRunsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         var nowUnixMilliseconds = now.ToUnixTimeMilliseconds();
+        var admissionGrace = now.AddSeconds(-AdmissionGracePeriodSeconds);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var runs = await db.Runs.AsNoTracking()
             .Where(x => x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"
+                && x.CreatedAt <= admissionGrace
                 && (x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         return runs.OrderBy(x => x.UpdatedAt).ToList();
     }
+
+    private const int AdmissionGracePeriodSeconds = 30;
 
     /// <summary>
     /// Persists one resolved run configuration as immutable content. Repeating the

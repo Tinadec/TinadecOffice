@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-17
-**Last Updated By:** Codex (documented the Core-owned operation/execution and full-duplex integration boundary; verified that normal Home chat remains the storage-compatible path)
-**Last Verified Commit:** 9997fa1
+**Last Updated:** 2026-08-18
+**Last Updated By:** opencode (verified full-duplex Core runtime and agent-evolution endpoints are implemented Core-side; Desktop Home chat remains the storage-compatible postMessage path — no renderer change)
+**Last Verified Commit:** a307ede
 **Branch:** codex/DmaEA
 
 ## OVERVIEW

@@ -29,6 +29,7 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IHostedSer
 
     private readonly object _stateLock = new();
     private readonly Dictionary<string, ManagedProcess> _processes = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
     private readonly Dictionary<string, SemaphoreSlim> _writeLocks = new(StringComparer.OrdinalIgnoreCase);
     private long _nextCallId;
 
@@ -36,9 +37,42 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IHostedSer
     {
         _logger = logger;
         _executablePath = configuration["TinadecTools:ExecutablePath"];
+        if (string.IsNullOrWhiteSpace(_executablePath))
+        {
+            _executablePath = ProbeDefaultExecutable();
+            if (_executablePath is not null)
+                logger.LogInformation("TinadecTools executable was auto-detected at {Path}", _executablePath);
+        }
         _startupTimeout = TimeSpan.FromSeconds(Double(configuration, "TinadecTools:StartupTimeoutSeconds", 30));
         _defaultTimeout = TimeSpan.FromSeconds(Double(configuration, "TinadecTools:DefaultTimeoutSeconds", 120));
         _defaultWorkspaceRoot = configuration["TinadecTools:DefaultWorkspaceRoot"];
+    }
+
+    /// <summary>
+    /// Locates the TinadecTools apphost when no explicit path is configured: first
+    /// next to the Core host (published or test layout), then inside a repository
+    /// ancestor under TinadecTools/bin/{Debug|Release}/net10.0/.
+    /// </summary>
+    private static string? ProbeDefaultExecutable()
+    {
+        var executableName = OperatingSystem.IsWindows() ? "TinadecTools.exe" : "TinadecTools";
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, executableName) };
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var toolsDirectory = Path.Combine(directory.FullName, "TinadecTools");
+            if (Directory.Exists(toolsDirectory))
+            {
+                foreach (var configuration in new[] { "Debug", "Release" })
+                {
+                    candidates.Add(Path.Combine(toolsDirectory, "bin", configuration, "net10.0", executableName));
+                }
+            }
+            directory = directory.Parent;
+        }
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     public async Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default)
@@ -189,8 +223,8 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IHostedSer
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardInputEncoding = Encoding.UTF8,
+            StandardOutputEncoding = Utf8NoBom,
+            StandardInputEncoding = Utf8NoBom,
             CreateNoWindow = true
         };
 

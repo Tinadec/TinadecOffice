@@ -72,28 +72,70 @@ public static class StubEndpoints
             design_notes = new[] { "No provider templates configured — skeleton mode." }
         }));
 
-        app.MapGet("/api/v1/tool-layer-readiness", () => Results.Ok(new
+        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration configuration, CancellationToken ct) =>
         {
-            status = "warning",
-            generated_at = DateTimeOffset.UtcNow,
-            runtime = "tinadec-core-maf-0.1.0",
-            receipt_id = Guid.NewGuid().ToString("N"),
-            tool_count = 0,
-            ready_tool_count = 0,
-            warning_tool_count = 0,
-            blocked_tool_count = 0,
-            execution_agent_count = 0,
-            ready_agent_count = 0,
-            warning_agent_count = 0,
-            blocked_agent_count = 0,
-            approval_gated_tool_count = 0,
-            human_checkpoint_tool_count = 0,
-            future_tool_count = 0,
-            unresolved_scope_count = 0,
-            tools = Array.Empty<object>(),
-            agent_scopes = Array.Empty<object>(),
-            design_notes = new[] { "No tools registered — skeleton mode." }
-        }));
+            IReadOnlyList<ToolManifestEntryDto> tools = [];
+            string[] notes = [];
+            try
+            {
+                tools = await registry.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                notes = [$"TinadecTools manifest unavailable: {ex.Message}"];
+            }
+            var snapshot = configuration.Current;
+            RuntimeProfileDefinition? profile = null;
+            try { profile = snapshot.Resolve(null, null).Profile; }
+            catch (InvalidOperationException) { }
+            var agents = (profile?.ExecutionAgents ?? [])
+                .Select(id => snapshot.Agents.TryGetValue(id, out var agent) ? (Id: id, Agent: agent) : ((string Id, RuntimeAgentDefinition Agent)?)null)
+                .Where(item => item is not null)
+                .Select(item => item!.Value)
+                .ToArray();
+            var scopes = agents.Select(item => new
+            {
+                id = item.Id,
+                role = item.Agent.Role,
+                allowed_tools = item.Agent.AllowedTools,
+                tool_count = item.Agent.AllowedTools
+                    .Where(value => !string.Equals(value, "*", StringComparison.Ordinal))
+                    .Count(value => tools.Any(tool => string.Equals(tool.Id, value, StringComparison.OrdinalIgnoreCase))),
+                scope_status = item.Agent.AllowedTools.Count == 0 ? "warning" : "ready"
+            }).ToArray();
+            return Results.Ok(new
+            {
+                status = tools.Count == 0 ? "warning" : "ready",
+                generated_at = DateTimeOffset.UtcNow,
+                runtime = "tinadec-core-maf-0.1.0",
+                receipt_id = Guid.NewGuid().ToString("N"),
+                tool_count = tools.Count,
+                ready_tool_count = tools.Count,
+                warning_tool_count = 0,
+                blocked_tool_count = 0,
+                execution_agent_count = scopes.Length,
+                ready_agent_count = scopes.Count(scope => scope.scope_status == "ready"),
+                warning_agent_count = scopes.Count(scope => scope.scope_status == "warning"),
+                blocked_agent_count = 0,
+                approval_gated_tool_count = tools.Count(tool => tool.RequiresApproval),
+                human_checkpoint_tool_count = tools.Count(tool => tool.ConfirmationFields.Count != 0),
+                future_tool_count = 0,
+                unresolved_scope_count = 0,
+                tools = tools.Select(tool => new
+                {
+                    id = tool.Id,
+                    description = tool.Description,
+                    risk = tool.Risk,
+                    mutates_workspace = tool.MutatesWorkspace,
+                    requires_approval = tool.RequiresApproval,
+                    retry_safety = tool.RetrySafety,
+                    confirmation_fields = tool.ConfirmationFields,
+                    status = "ready"
+                }).ToArray(),
+                agent_scopes = scopes,
+                design_notes = notes
+            });
+        });
     }
 
     // ──────────────────────────────────────────────────────────
@@ -201,12 +243,7 @@ public static class StubEndpoints
     {
         // Required by Gateway agent-center BFF
         // Agent routes are mapped by ControlPlaneEndpoints.
-
-        // Agent evolution
-        app.MapGet("/api/v1/agent-evolution/proposals", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/agent-evolution/generate", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/agent-evolution/proposals/{candidateId}/promote", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/agent-evolution/proposals/{candidateId}/reject", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
+        // Agent evolution routes are mapped by EvolutionEndpoints.
     }
 
     // ──────────────────────────────────────────────────────────
