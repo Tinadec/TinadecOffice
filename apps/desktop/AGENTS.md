@@ -1,7 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-07
-**Last Updated By:** (Home 聊天列沉浸式:SurfaceMode `immersive` 栈根透明;发送框/欢迎对话框用 `--surface-input` 令牌跟随全局材质并保持清晰;约束求解器给自适应 center 列加 `MIN_CENTER_WIDTH=320` 下限,空间不足时先折叠右列再折左列,修复窄窗口对话区被压成细条的算法缺陷)
+**Last Updated:** 2026-08-17
+**Last Updated By:** Codex (documented the Core-owned operation/execution and full-duplex integration boundary; verified that normal Home chat remains the storage-compatible path)
+**Last Verified Commit:** 9997fa1
+**Branch:** codex/DmaEA
 
 ## OVERVIEW
 Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
@@ -36,6 +38,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 | Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/pets/petRuntime.ts`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 registry and transparent, always-on-top Canvas windows. `petRuntime.ts` is the renderer business module: it validates proportional 8-column sheets, maps the canonical nine Petdex state rows and active frame counts, loops with modulo, and calculates source rectangles. Petdex `pet.json` contains identity/path metadata, not animation definitions. Local files, enable state, bounds, and scale live under Electron `userData/pets/`; IPC is sender-scoped. Never call Gateway/Core. |
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. `main.ts` installs `vaporInteropPlugin` and a global renderer error fallback (`src/lib/rendererErrorFallback.ts`): every uncaught error is logged and, on the first fatal one, the stuck splash is swapped for a pure-DOM recoverable fallback (never a silent blank window). |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
+| Full-duplex chat integration | `src/controllers/HomeController.ts`, `src/api.ts`, `src/components/ChatPanel.vue` | `api.invokeStream()` is an SSE helper, but the normal Home `handleSend()` currently calls `api.postMessage()` only. Do not claim full-duplex chat, run controls, candidate review, or Core-driven mode selection is already wired. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; General Gateway connection plus model/providers/agents settings. |
 | Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
 | Provider presentation templates | `src/providerTemplates.ts` | Presentation-only metadata (i18n keys, brand colors, placeholders, icons). Brand icons are official `@lobehub/icons-static-svg` SVGs imported via Vite `?raw` (23 drivers); drivers without a lobehub slug (`sglang`, `llamacpp`, `custom`) keep hand-written `currentColor` SVGs. `icon` is an inline `<svg>` string rendered via `v-html` inside `.provider-brand-icon`/`.modal-provider-logo` (24px/32px CSS sizing). || Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
@@ -70,6 +73,10 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 - UI stack: Vue, Tailwind via `@tailwindcss/vite`, lucide-vue, `@lobehub/icons-static-svg` (provider brand icons only; framework-agnostic SVG files, imported `?raw` in `providerTemplates.ts`), shadcn-style primitives.
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
 - Prompt Context UI is presentation and local preview only. The renderer calls Gateway APIs mirrored in `src/api.ts`; Core owns fragment selection, context pack handling, token estimates, and warnings.
+- The canonical dual-agent layers are `operation` and `execution`; `planning` is a Core migration alias, not a Desktop-owned mode. Desktop must render the application/agent modes returned by Core (including `conversation` defaults and `space`'s `agent`-only restriction), rather than hard-coding the six-mode set or interpreting profile policy locally.
+- Normal user chat must move to Core's `invoke-stream` contract only when its full-duplex request/response fields are available through Gateway. Never `POST /messages` and then invoke the same content: the invocation owns idempotent user-message creation. Until that transition, `POST /messages` remains the storage-compatible Home path.
+- A local `AbortController` only stops the renderer's SSE reader; it is not a run cancellation. Pause, resume, cancel, target changes, approval resumption, mode changes, context versions, agent lineage, and memory/agent-candidate review must be requested through Gateway/Core and displayed from their durable projections.
+- Full prompt bodies, long-term-memory writes, agent spawning, tool authorization, approval consumption, and state revisions remain Core responsibilities. Desktop may show progress, candidate evidence, and control affordances but must not synthesize durable state or promote a candidate locally.
 - Gateway URLs must use HTTP or HTTPS and contain no credentials, query, or fragment. Keep all renderer requests on `window.tinadec.gatewayUrl()` / `api.gatewayUrl`; do not add localhost request bypasses.
 - Model Center consumes the Gateway overview and renders five resource groups: Core suppliers, API/local connections, configured-only models, CLI runtimes, and ACP runtimes. Core supplier templates are executable-catalog authority; `providerTemplates.ts` may only supply presentation metadata such as translations, icons, colors, and placeholders.
 - Model lists contain only provider defaults and existing route overrides until Core adds live discovery. Refresh controls and ACP probes must follow Gateway capability flags, while Gateway diagnostics remain visible and retryable without hiding usable partial data.

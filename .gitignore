@@ -24,3 +24,6 @@ config.json
 oc-debug.log
 /.mimosa
 /TinadecCore/Api/data/content/tenants
+/.tmp-dmaea-diagnostic/data/content/tenants
+/.tmp-dmaea-diagnostic/data/tasks
+/.tmp-dmaea-diagnostic

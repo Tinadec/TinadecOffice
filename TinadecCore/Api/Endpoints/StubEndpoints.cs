@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
+using TinadecCore.DmaEA;
 
 namespace TinadecCore.Api.Endpoints;
 
@@ -108,13 +111,60 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapToolStubs(this WebApplication app)
     {
-        app.MapGet("/api/v1/tools", () => Results.Ok(Array.Empty<object>()));
+        app.MapGet("/api/v1/tools", async (IToolRegistry registry, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await registry.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false)); }
+            catch (Exception ex) { return Results.Json(new { code = "TOOL_REGISTRY_UNAVAILABLE", message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        });
 
-        app.MapGet("/api/v1/tools/search", () => Results.Ok(Array.Empty<object>()));
+        app.MapGet("/api/v1/tools/search", async (string? query, string? q, IToolRegistry registry, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await registry.SearchToolsAsync(query ?? q ?? string.Empty, cancellationToken: ct).ConfigureAwait(false)); }
+            catch (Exception ex) { return Results.Json(new { code = "TOOL_REGISTRY_UNAVAILABLE", message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        });
 
         app.MapPost("/api/v1/tools/shell", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Shell tool execution is not implemented in skeleton mode." }, statusCode: 501));
 
-        app.MapPost("/api/v1/runs/{runId}/tools/{toolId}/execute", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Tool execution is not implemented in skeleton mode." }, statusCode: 501));
+        app.MapPost("/api/v1/runs/{runId}/tools/{toolId}/execute", async (string runId, string toolId, ToolDispatchRequestDto? input, IToolDispatcher dispatcher, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out _)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "run_id must be a valid Guid." });
+            if (input is null) return Results.BadRequest(new { code = "INVALID_TOOL_EXECUTION", message = "task_id, agent_instance_id, and params are required." });
+            var result = await dispatcher.PrepareAsync(new ToolDispatchRequestDto
+            {
+                RunId = runId,
+                TaskId = input.TaskId,
+                AgentInstanceId = input.AgentInstanceId,
+                ToolId = toolId,
+                ToolCallKey = input.ToolCallKey,
+                Params = input.Params
+            }, ct).ConfigureAwait(false);
+            var status = result.Status == ToolDispatchStatus.AwaitingApproval ? StatusCodes.Status202Accepted : StatusCodes.Status200OK;
+            return Results.Json(result, statusCode: status);
+        });
+
+        app.MapPost("/api/v1/tool-executions/{id:guid}/recovery-decision", async (Guid id, ToolExecutionRecoveryDecisionRequestDto input, IToolExecutionCoordinator executions, ILifecycleManager lifecycle, IFullDuplexRunEngine engine, CancellationToken ct) =>
+        {
+            try
+            {
+                var result = await executions.ApplyRecoveryDecisionAsync(id, input.Decision, ct).ConfigureAwait(false);
+                if (result.Status == "not_found") return Results.NotFound(new { code = "TOOL_EXECUTION_NOT_FOUND" });
+                if (result.Status is "not_recoverable" or "run_not_active") return Results.Conflict(new { code = result.Status, message = result.Message });
+                var active = result.ReplacementExecution ?? result.Execution;
+                if (active is not null)
+                {
+                    await lifecycle.AppendEventAsync(active.RunId, "tool.execution.recovery_decided", new
+                    {
+                        execution_id = id,
+                        replacement_execution_id = result.ReplacementExecution?.Id,
+                        decision = input.Decision,
+                        approval_id = result.ApprovalId
+                    }, $"Tool recovery decision: {input.Decision}.", result.Status == "failed" ? "warning" : "info", active.TaskId, approvalId: result.ApprovalId, toolId: active.ToolId, cancellationToken: ct).ConfigureAwait(false);
+                    await engine.EnqueueAsync(active.RunId, ct).ConfigureAwait(false);
+                }
+                return Results.Json(result, statusCode: result.Status == ToolDispatchStatus.AwaitingApproval ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_RECOVERY_DECISION", message = ex.Message }); }
+        });
     }
 
     // ──────────────────────────────────────────────────────────

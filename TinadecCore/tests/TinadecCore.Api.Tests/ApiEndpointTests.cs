@@ -45,7 +45,7 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
     }
 
     [Fact]
-    public async Task Manifest_Returns200_WithSnakeCaseAndEightModules()
+    public async Task Manifest_Returns200_WithSnakeCaseAndElevenModules()
     {
         var client = _factory.CreateClient();
 
@@ -79,9 +79,9 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         Assert.True(framework.TryGetProperty("primitives", out var primitives));
         Assert.True(primitives.GetArrayLength() > 0);
 
-        // modules (incremental field — ten modules, including tenancy and VectorStore)
+        // modules (incremental field — eleven modules, including tenancy, VectorStore, and Tools)
         Assert.True(root.TryGetProperty("modules", out var modules));
-        Assert.Equal(10, modules.GetArrayLength());
+        Assert.Equal(11, modules.GetArrayLength());
 
         // design_notes
         Assert.True(root.TryGetProperty("design_notes", out _));
@@ -147,7 +147,7 @@ public sealed class ApiEndpointTests : IClassFixture<WebApplicationFactory<Progr
         // Modules
         Assert.True(root.TryGetProperty("modules", out var modules));
         var moduleList = modules.EnumerateArray().ToList();
-        Assert.Equal(10, moduleList.Count);
+        Assert.Equal(11, moduleList.Count);
 
         // At least some modules should be "not_configured"
         var notConfiguredCount = moduleList.Count(m =>

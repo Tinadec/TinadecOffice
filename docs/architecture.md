@@ -67,6 +67,34 @@ All runtime events use:
 }
 ```
 
+## Canonical Dual-Layer Runtime Contract
+
+The canonical layers are `operation` and `execution`. `planning` is accepted only as a migration input and must be normalized before new Core contracts, persisted versions, events, or UI payloads are produced. The operation layer includes the meeting entry point, context maintenance, capability advice, supervision, and evolution proposals. The execution layer plans task graphs, schedules task-bound workers, invokes Core-governed tools, and returns evidence.
+
+The meeting agent is the only agent allowed to produce a user-facing answer. A run-time child agent is a Core-owned orchestration instance, not a generic tool: every spawn must carry its parent instance, target and success criteria, selected context, model, scoped tools/resources, and budget. A child cannot enlarge inherited authority or receive `direct_user_output`, formal-memory writes, or promotion authority. Workers normally release when their run finishes; a reusable design first becomes an auditable candidate and requires human promotion into an immutable profile version.
+
+Full duplex is coordinated by Core rather than by the lifetime of one HTTP response. A durable run accepts status queries, supplements, goal changes, new tasks, pause, resume, and cancellation while work continues. Shared state uses monotonically increasing `context_revision`; a patch or result based on an obsolete revision cannot overwrite newer constraints and must be rejected, reconciled safely, or trigger re-planning. The intended run states are `understanding`, `executing`, `replanning`, `awaiting_approval`, `paused`, `reviewing`, `completed`, `failed`, and `cancelled`.
+
+Long-term memory and reusable agents follow a candidate-to-promotion path. Session history and summaries may be used automatically; only reviewed, promoted long-term memory is retrievable across sessions. Full content remains in immutable ContentStore, while relational projections and events hold references, hashes, counts, and summaries. Tool approval and memory review are distinct state machines.
+
+## Runtime Configuration Baseline
+
+`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` is the annotated, read-only built-in baseline. It defines mode availability, profile bindings, operation/execution roles, model/tool policy, supervision, context, memory, scheduling, and generation budgets. The defaults are `conversation` with `plan`/`spec`/`ask`/`vibe`/`auto`/`agent` (default `auto`), and `space` with only `agent`, bound to `space.full_duplex`; `im` and `hub` are compatibility aliases.
+
+When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads a TOML snapshot in process. A valid edit replaces the snapshot for future consumers; an invalid edit preserves the previous valid snapshot and records an in-memory diagnostic. The target resolution rule is baseline then workspace override, with the resolved version/hash frozen at run creation. The legacy orchestrator does not resolve this store yet; workspace override application, run binding/freezing, and readiness exposure are not implemented.
+
+## Current Delivery Status (2026-08-17)
+
+| Surface | Present now | Still required for the full-duplex contract |
+|---|---|---|
+| Runtime configuration | Annotated TOML baseline, validation, aliases, in-process valid-only reload, and relational projections for agent instances/candidates/profile overrides. | Workspace override resolution, run-frozen config hash, readiness receipt, and runtime consumption of profiles. |
+| Invocation | `POST /api/v1/sessions/{id}/invoke-stream` persists one user message and runs the legacy request-bound DmaEA flow, returning only a terminal `done` or `error` SSE chunk. | Detached coordinator, streamed `ack`/`delta`/`usage`/`done`/`error` chunks with turn/message/sequence ids, assistant-message persistence, reconnection, and recovery. |
+| Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
+| Spawn, lineage, and promotion | `agent_instances` and `agent_candidates` relations exist as storage projections. | Authorization/budget enforcement, spawn service, lifecycle release, lineage API, candidate review, and immutable promotion workflow. |
+| Context and memory | Session history remains Core-owned; ContentStore and existing control-plane versioning are available. | Context snapshots/patches with `context_revision`, deterministic prompt assembly, reviewed-memory retrieval, and candidate promotion/revocation APIs. |
+| Tools and approvals | TinadecTools remains an approval-aware subprocess prototype; current Core tool dispatch/approval write paths are unavailable. | Core-owned process manager/handshake, canonical registry, exact one-time approval binding, pause/resume, crash/timeout handling, and audit projection. |
+| Gateway and Desktop | Gateway proxies the current invocation endpoint; Desktop has an SSE helper, but the normal Home chat controller still posts to `/messages`. | Thin proxy coverage for new Core APIs plus normal-chat streaming, modes from Core, controls, lineage, approvals, and candidate-review UI. |
+
 ## Run Locally
 
 ```powershell

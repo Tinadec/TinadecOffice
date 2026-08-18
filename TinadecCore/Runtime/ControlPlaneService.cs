@@ -3,11 +3,13 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Models;
 using TinadecCore.Persistence;
 using TinadecCore.Prompts;
+using TinadecCore.Tools;
 
 namespace TinadecCore.Runtime;
 
@@ -20,11 +22,15 @@ public sealed class ControlPlaneService
     private readonly IContentStore _content;
     private readonly ISecretStore _secrets;
     private readonly ITenantContextAccessor _tenant;
+    private readonly IToolApprovalCoordinator _approvals;
+    private readonly ILifecycleManager _runs;
+    private readonly IFullDuplexRunEngine _engine;
 
     public ControlPlaneService(IDbContextFactory<ModelControlDbContext> models, IDbContextFactory<PromptControlDbContext> prompts,
         IDbContextFactory<AgentControlDbContext> agents, IDbContextFactory<LifecycleDbContext> lifecycle,
-        IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant)
-    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; }
+        IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant, IToolApprovalCoordinator approvals,
+        ILifecycleManager runs, IFullDuplexRunEngine engine)
+    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _runs = runs; _engine = engine; }
 
     private TenantContext Tenant => _tenant.Current;
     private static async Task<(string text, ContentReference reference)> PutJsonAsync(IContentStore store, Guid tenant, Guid? workspace, string kind, object value, CancellationToken ct)
@@ -64,7 +70,77 @@ public sealed class ControlPlaneService
     public async Task<IResult> SaveAgent(Guid id, JsonElement input, string? ifMatch, CancellationToken ct)
     { await using var db = await _agents.CreateDbContextAsync(ct); var row = await db.Agents.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct); if (row?.IsBuiltIn == true) return Results.Conflict(new { message = "Built-in agents are read-only; clone them first." }); var now = DateTimeOffset.UtcNow; if (row != null && !Matches(row.Revision, ifMatch)) return Results.StatusCode(412); if (row == null) { row = new AgentProfileRecord { Id = id, TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now }; db.Agents.Add(row); } row.Name = input.TryGetProperty("name", out var n) ? n.GetString() ?? row.Name : row.Name; row.Layer = input.TryGetProperty("layer", out var l) ? l.GetString() ?? row.Layer : row.Layer; row.AgentType = input.TryGetProperty("agent_type", out var t) ? t.GetString() ?? row.AgentType : row.AgentType; row.Enabled = !input.TryGetProperty("enabled", out var e) || e.ValueKind != JsonValueKind.False; var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "agent-profile", input, ct); var version = new AgentProfileVersionRecord { Id = Guid.NewGuid(), AgentId = row.Id, Version = (int)row.Revision + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now }; row.Revision++; row.CurrentVersionId = version.Id; row.UpdatedByPrincipalId = Tenant.PrincipalId; row.UpdatedAt = now; db.Versions.Add(version); await db.SaveChangesAsync(ct); return Results.Ok(new { id = row.Id, name = row.Name, layer = row.Layer, agent_type = row.AgentType, mode = input.TryGetProperty("mode", out var mode) ? mode.GetString() : "", description = input.TryGetProperty("description", out var description) ? description.GetString() : "", model_route_purpose = input.TryGetProperty("model_route_purpose", out var route) ? route.GetString() : "", allowed_tools = input.TryGetProperty("allowed_tools", out var tools) ? tools : JsonSerializer.SerializeToElement(Array.Empty<string>()), capabilities = input.TryGetProperty("capabilities", out var capabilities) ? capabilities : JsonSerializer.SerializeToElement(Array.Empty<string>()), system_prompt = input.TryGetProperty("system_prompt", out var prompt) ? prompt.GetString() : null, enabled = row.Enabled, is_built_in = row.IsBuiltIn, revision = row.Revision, updated_at = row.UpdatedAt }); }
 
-    public async Task<IResult> ListApprovals(string? status, CancellationToken ct) { await using var db = await _lifecycle.CreateDbContextAsync(ct); var q = db.ApprovalRequests.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId); if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status); return Results.Ok(await q.OrderByDescending(x => x.CreatedAt).Select(x => new { id = x.Id, session_id = x.SessionId, kind = x.Kind, tool_id = x.ToolId, summary = x.Summary, status = x.Status, request_hash = x.RequestHash, expires_at = x.ExpiresAt, created_at = x.CreatedAt, updated_at = x.UpdatedAt }).ToListAsync(ct)); }
-    public async Task<IResult> CreateApproval(JsonElement input, CancellationToken ct) { var now = DateTimeOffset.UtcNow; await using var db = await _lifecycle.CreateDbContextAsync(ct); var row = new ApprovalRequestRecord { Id = Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, SessionId = input.TryGetProperty("session_id", out var s) && Guid.TryParse(s.GetString(), out var sid) ? sid : null, Kind = input.TryGetProperty("kind", out var k) ? k.GetString() ?? "legacy" : "legacy", ToolId = input.TryGetProperty("tool_id", out var tool) ? tool.GetString() ?? "" : "", Summary = input.TryGetProperty("summary", out var sm) ? sm.GetString() ?? "" : "", RequestHash = input.TryGetProperty("request_hash", out var h) ? h.GetString() ?? "" : "", Status = "pending", ExpiresAt = now.AddMinutes(30), RequestedByPrincipalId = Tenant.PrincipalId, CreatedAt = now, UpdatedAt = now }; db.ApprovalRequests.Add(row); await db.SaveChangesAsync(ct); return Results.Ok(new { id = row.Id, session_id = row.SessionId, kind = row.Kind, summary = row.Summary, status = row.Status, created_at = row.CreatedAt }); }
-    public async Task<IResult> DecideApproval(Guid id, JsonElement input, CancellationToken ct) { await using var db = await _lifecycle.CreateDbContextAsync(ct); var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct); if (row == null) return Results.NotFound(); if (row.Status != "pending" || row.ExpiresAt <= DateTimeOffset.UtcNow) return Results.Conflict(new { message = "Approval is no longer actionable." }); var decision = input.TryGetProperty("decision", out var d) ? d.GetString() : null; if (decision is not ("approved" or "rejected")) return Results.BadRequest(new { message = "decision must be approved or rejected" }); row.Status = decision; row.UpdatedAt = DateTimeOffset.UtcNow; db.ApprovalDecisions.Add(new ApprovalDecisionRecord { Id = Guid.NewGuid(), ApprovalRequestId = id, Decision = decision, Reason = input.TryGetProperty("reason", out var reason) ? reason.GetString() : null, DecidedByPrincipalId = Tenant.PrincipalId, CreatedAt = row.UpdatedAt }); await db.SaveChangesAsync(ct); return Results.Ok(new { id = row.Id, status = row.Status, decided_at = row.UpdatedAt }); }
+    public async Task<IResult> ListApprovals(string? status, string? sessionId, string? runId, CancellationToken ct)
+    {
+        Guid? session = null;
+        Guid? run = null;
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            if (!Guid.TryParse(sessionId, out var parsedSession)) return Results.BadRequest(new { message = "session_id must be a valid Guid." });
+            session = parsedSession;
+        }
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            if (!Guid.TryParse(runId, out var parsedRun)) return Results.BadRequest(new { message = "run_id must be a valid Guid." });
+            run = parsedRun;
+        }
+        await using var db = await _lifecycle.CreateDbContextAsync(ct);
+        var q = db.ApprovalRequests.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId);
+        if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status);
+        if (session is { } sessionIdValue) q = q.Where(x => x.SessionId == sessionIdValue);
+        if (run is { } runIdValue) q = q.Where(x => x.RunId == runIdValue);
+        var rows = await q.ToListAsync(ct);
+        rows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
+        return Results.Ok(rows.Select(ToResponse));
+    }
+    public async Task<IResult> GetApproval(Guid id, CancellationToken ct)
+    { await using var db = await _lifecycle.CreateDbContextAsync(ct); var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct); return row is null ? Results.NotFound() : Results.Ok(ToResponse(row)); }
+    public async Task<IResult> CreateApproval(ApprovalCreateRequestDto input, CancellationToken ct)
+    {
+        var parametersJson = input.Parameters is { } parameters ? parameters.GetRawText() : "{}";
+        var requestHash = ToolParametersHash.Compute(parametersJson);
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _lifecycle.CreateDbContextAsync(ct);
+        var row = new ApprovalRequestRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Tenant.TenantId,
+            WorkspaceId = Tenant.WorkspaceId,
+            SessionId = Guid.TryParse(input.SessionId, out var sessionId) ? sessionId : null,
+            RunId = Guid.TryParse(input.RunId, out var runId) ? runId : null,
+            TaskId = Guid.TryParse(input.TaskId, out var taskId) ? taskId : null,
+            AgentInstanceId = Guid.TryParse(input.AgentInstanceId, out var agentId) ? agentId : null,
+            Kind = string.IsNullOrWhiteSpace(input.Kind) ? "tool" : input.Kind,
+            ToolId = input.ToolId ?? string.Empty,
+            Risk = "medium",
+            ParametersReference = string.Empty,
+            Summary = input.Summary ?? string.Empty,
+            RequestHash = requestHash,
+            Status = "pending",
+            ExpiresAt = now.AddMinutes(30),
+            RequestedByPrincipalId = Tenant.PrincipalId,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.ApprovalRequests.Add(row);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToResponse(row));
+    }
+    public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
+    {
+        ToolApprovalDecision decision;
+        try { decision = await _approvals.DecideAsync(id, input.Decision, input.Reason, ct); }
+        catch (KeyNotFoundException) { return Results.NotFound(); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
+        if (decision.RunId is { } runId)
+        {
+            await _runs.AppendEventAsync(runId, "approval.decided", new { approval_id = id, execution_id = decision.ExecutionId, task_id = decision.TaskId, decision = decision.Status }, $"Approval {decision.Status}.", decision.Status == "approved" ? "info" : "warning", decision.TaskId, id, cancellationToken: ct);
+            await _engine.EnqueueAsync(runId, ct);
+        }
+        return Results.Ok(new { id = decision.ApprovalId, status = decision.Status, decided_at = decision.DecidedAt });
+    }
+
+    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row) => new()
+    { Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt };
 }

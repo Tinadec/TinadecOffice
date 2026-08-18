@@ -23,8 +23,11 @@
     <!-- Microsoft.Extensions (runtime packages use 10.0.x versioning, separate from AI packages) -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.11" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.8" />
+    <PackageVersion Include="Tomlyn" Version="2.10.1" />
 
     <!-- Database abstraction (EF Core + SQLite default + PostgreSQL optional) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />

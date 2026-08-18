@@ -18,6 +18,8 @@ public sealed class AgentDefinition
 /// <summary>A planned subtask produced by the planning layer.</summary>
 public sealed class PlannedTask
 {
+    [JsonPropertyName("task_key")]
+    public string? TaskKey { get; init; }
     [JsonPropertyName("title")]
     public string Title { get; init; } = string.Empty;
     [JsonPropertyName("description")]
@@ -28,6 +30,8 @@ public sealed class PlannedTask
     public string[] Dependencies { get; init; } = [];
     [JsonPropertyName("required_capabilities")]
     public string[] RequiredCapabilities { get; init; } = [];
+    [JsonPropertyName("required_tools")]
+    public string[] RequiredTools { get; init; } = [];
     [JsonPropertyName("priority")]
     public int Priority { get; init; } = 1;
     [JsonPropertyName("risk")]

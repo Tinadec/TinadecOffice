@@ -9,6 +9,7 @@ using TinadecCore.Models;
 using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
+using TinadecCore.Tools;
 using TinadecCore.VectorStore;
 
 namespace TinadecCore.Runtime;
@@ -37,7 +38,24 @@ public static class TinadecCoreServiceCollectionExtensions
         new MemoryModuleRegistrar().Register(builder);
         new SkillsModuleRegistrar().Register(builder);
         new LoopGuardModuleRegistrar().Register(builder);
+        new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
+
+        // Rebind ToolDispatchOptions from the frozen TOML runtime profile (this factory
+        // registration replaces the defaults the Tools module registered; DI resolves
+        // the last registration for the type).
+        services.AddSingleton(sp =>
+        {
+            var runtime = sp.GetRequiredService<IAgentRuntimeConfiguration>();
+            var policy = runtime.Current.Tools;
+            return new ToolDispatchOptions
+            {
+                MutationRequiresApproval = policy.MutationRequiresApproval,
+                SerializeWorkspaceWrites = policy.SerializeWorkspaceWrites,
+                DefaultTimeoutSeconds = policy.DefaultTimeoutSeconds,
+                WorkerRetryLimit = runtime.Current.Scheduling.WorkerRetryLimit
+            };
+        });
 
         return builder;
     }

@@ -128,6 +128,7 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
 app.MapGet("/api/v1/readiness", async (
     ITinadecCoreBuilder coreBuilder,
     IDatabaseReadiness databaseReadiness,
+    TinadecCore.DmaEA.IAgentRuntimeConfiguration agentRuntime,
     CancellationToken cancellationToken) =>
 {
     var modules = coreBuilder.GetRegisteredModules();
@@ -138,10 +139,12 @@ app.MapGet("/api/v1/readiness", async (
         State = storageProbe.StateName,
         Detail = storageProbe.Detail
     };
+    var runtimeDiagnostic = agentRuntime.Diagnostic;
 
     var hasModuleWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
     var hasStorageWarning = storageProbe.State != DatabaseReadinessState.Ready;
-    var status = hasModuleWarnings || hasStorageWarning ? "warning" : "ready";
+    var hasRuntimeWarning = runtimeDiagnostic.State != "ready";
+    var status = hasModuleWarnings || hasStorageWarning || hasRuntimeWarning ? "warning" : "ready";
 
     var response = new ReadinessResponseDto
     {
@@ -150,6 +153,13 @@ app.MapGet("/api/v1/readiness", async (
         FrameworkName = "Microsoft Agent Framework",
         FrameworkVersion = "1.15.0",
         Storage = storage,
+        AgentRuntime = new ReadinessAgentRuntimeDto
+        {
+            State = runtimeDiagnostic.State,
+            Detail = runtimeDiagnostic.Detail,
+            SourcePath = runtimeDiagnostic.SourcePath,
+            CheckedAt = runtimeDiagnostic.CheckedAt
+        },
         Modules = modules.Select(m => new ReadinessModuleDto
         {
             ModuleId = m.ModuleId,
@@ -177,6 +187,7 @@ app.MapGet("/api/v1/readiness", async (
 app.MapStorageEndpoints();
 app.MapDmaeaEndpoints();
 app.MapControlPlaneEndpoints();
+app.MapMemoryReviewEndpoints();
 app.MapStubEndpoints();
 
 app.Run();

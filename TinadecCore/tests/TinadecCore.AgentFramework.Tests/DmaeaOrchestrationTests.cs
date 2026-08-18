@@ -31,7 +31,7 @@ public sealed class DmaeaOrchestrationTests
     {
         var resolver = new FakeChatResolver(true);
         var client = new StubChatClient("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]");
-        var planner = new PlanningAgent(resolver, chatClientFactory: _ => client);
+        var planner = new PlanningAgent(new FakeFactory(resolver, client));
         var ctx = Context("用户目标");
 
         var tasks = await planner.PlanAsync(ctx, [Planner()], CancellationToken.None);
@@ -47,7 +47,7 @@ public sealed class DmaeaOrchestrationTests
     {
         var resolver = new FakeChatResolver(true);
         var client = new StubChatClient("I will think about it later.");
-        var planner = new PlanningAgent(resolver, chatClientFactory: _ => client);
+        var planner = new PlanningAgent(new FakeFactory(resolver, client));
 
         var tasks = await planner.PlanAsync(Context("用户目标"), [Planner()], CancellationToken.None);
 
@@ -60,7 +60,7 @@ public sealed class DmaeaOrchestrationTests
     public async Task PlanningAgent_ThrowsWhenChatRouteUnavailable()
     {
         var resolver = new FakeChatResolver(false, "Provider API key is not stored.");
-        var planner = new PlanningAgent(resolver, chatClientFactory: _ => new StubChatClient("unused"));
+        var planner = new PlanningAgent(new FakeFactory(resolver, new StubChatClient("unused")));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => planner.PlanAsync(Context("用户目标"), [Planner()], CancellationToken.None));
         Assert.Equal("Provider API key is not stored.", ex.Message);
@@ -75,7 +75,7 @@ public sealed class DmaeaOrchestrationTests
     {
         var resolver = new FakeChatResolver(true);
         var client = new StubChatClient("任务A 完成");
-        var executor = new ExecutionAgent(resolver, chatClientFactory: _ => client);
+        var executor = new ExecutionAgent(new FakeFactory(resolver, client));
         var task = new PlannedTask { Title = "任务A", SuccessCriteria = ["完成"] };
         var nodeId = Guid.NewGuid();
 
@@ -91,7 +91,7 @@ public sealed class DmaeaOrchestrationTests
     public async Task ExecutionAgent_ReturnsFailedResultWithoutThrowingWhenRouteUnavailable()
     {
         var resolver = new FakeChatResolver(false, "No chat model route is configured for this workspace.");
-        var executor = new ExecutionAgent(resolver);
+        var executor = new ExecutionAgent(new FakeFactory(resolver, null));
         var task = new PlannedTask { Title = "任务A" };
 
         var result = await executor.ExecuteAsync(Context("用户目标"), Executor(), task, Guid.NewGuid(), CancellationToken.None);
@@ -215,6 +215,22 @@ public sealed class DmaeaOrchestrationTests
             db.Versions.Add(version);
         }
         await db.SaveChangesAsync();
+    }
+
+    private sealed class FakeFactory : IAgentChatClientFactory
+    {
+        private readonly FakeChatResolver _resolver;
+        private readonly IChatClient? _client;
+        public FakeFactory(FakeChatResolver resolver, IChatClient? client)
+        {
+            _resolver = resolver;
+            _client = client;
+        }
+
+        public Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default)
+            => _resolver.ResolveChatAsync(routePurpose, cancellationToken);
+
+        public IChatClient Create(ChatResolution resolution) => _client ?? new StubChatClient("unused");
     }
 
     private sealed class FakeChatResolver : IChatResolver

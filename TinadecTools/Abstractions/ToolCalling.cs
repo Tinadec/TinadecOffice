@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -67,10 +69,75 @@ internal sealed class ToolCallErrorResponse
     public required string Error { get; set; }
 }
 
+// `#manifest` 协议握手响应：Core 启动/刷新工具清单时调用。
+
+internal sealed class ToolManifest
+{
+    [JsonPropertyName("protocol_version")]
+    public int ProtocolVersion { get; set; } = 2;
+
+    [JsonPropertyName("manifest_hash")]
+    public string ManifestHash { get; set; } = string.Empty;
+
+    [JsonPropertyName("tools")]
+    public List<ToolManifestEntry> Tools { get; set; } = [];
+}
+
+internal sealed class ToolManifestEntry
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("requires_approval")]
+    public bool RequiresApproval { get; set; }
+
+    [JsonPropertyName("input_schema")]
+    public JsonElement InputSchema { get; set; }
+
+    [JsonPropertyName("risk")]
+    public string Risk { get; set; } = "low";
+
+    [JsonPropertyName("mutates_workspace")]
+    public bool MutatesWorkspace { get; set; }
+
+    [JsonPropertyName("retry_safety")]
+    public string RetrySafety { get; set; } = "safe";
+
+    [JsonPropertyName("confirmation_fields")]
+    public List<string> ConfirmationFields { get; set; } = [];
+}
+
+internal static class ToolManifestHash
+{
+    public static string Compute(IReadOnlyList<ToolManifestEntry> tools)
+    {
+        var builder = new StringBuilder();
+        foreach (var tool in tools.OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            builder.Append(tool.Id).Append('\0')
+                .Append(tool.Description).Append('\0')
+                .Append(tool.RequiresApproval).Append('\0')
+                .Append(tool.InputSchema.GetRawText()).Append('\0')
+                .Append(tool.Risk).Append('\0')
+                .Append(tool.MutatesWorkspace).Append('\0')
+                .Append(tool.RetrySafety).Append('\0')
+                .AppendJoin('\u001f', tool.ConfirmationFields).Append('\n');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
+}
+
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(ToolCallRequest<JsonElement>))]
 [JsonSerializable(typeof(ToolCallResponse<JsonElement>))]
 [JsonSerializable(typeof(ToolCallErrorResponse))]
+[JsonSerializable(typeof(ToolManifest))]
+[JsonSerializable(typeof(ToolManifestEntry))]
+[JsonSerializable(typeof(List<ToolManifestEntry>))]
 [JsonSerializable(typeof(string))]
 internal partial class ToolCallJsonContext : JsonSerializerContext { }
 

@@ -21,6 +21,7 @@
     <ProjectReference Include="..\Skills\TinadecCore.Skills.csproj" />
     <ProjectReference Include="..\LoopGuard\TinadecCore.LoopGuard.csproj" />
     <ProjectReference Include="..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\Tools\TinadecCore.Tools.csproj" />
     <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <ProjectReference Include="..\Storage.Migrations.PostgreSql\TinadecCore.Storage.Migrations.PostgreSql.csproj" />
   </ItemGroup>

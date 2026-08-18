@@ -235,7 +235,8 @@ const app = new Elysia()
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body as Record<string, unknown>)
     });
-    set.headers['content-type'] = 'text/event-stream';
+    setStatus(set, response.status);
+    set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
     set.headers['cache-control'] = 'no-cache';
     set.headers['connection'] = 'keep-alive';
     set.headers['x-accel-buffering'] = 'no';
@@ -243,6 +244,26 @@ const app = new Elysia()
   })
   .get('/api/v1/sessions/:sessionId/orchestration', async ({ params, set }) => {
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/orchestration`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  // Run-scoped views are Core projections. Gateway deliberately does not cache,
+  // compose, or derive any of their lifecycle state.
+  .get('/api/v1/runs/:runId/orchestration', async ({ params, set }) => {
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/orchestration`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .get('/api/v1/runs/:runId/agent-lineage', async ({ params, set }) => {
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/agent-lineage`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/runs/:runId/control', async ({ params, body, set }) => {
+    const result = await proxyJson(`/api/v1/runs/${params.runId}/control`, {
+      method: 'POST',
+      body: body as Record<string, unknown>
+    });
     setStatus(set, result.status);
     return result.data;
   })
@@ -267,6 +288,15 @@ const app = new Elysia()
   })
   .get('/api/v1/sessions/:sessionId/context-packs', async ({ params, set }) => {
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/context-packs`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .get('/api/v1/sessions/:sessionId/context-versions', async ({ params, query, set }) => {
+    const search = new URLSearchParams();
+    if (query.run_id) search.set('run_id', String(query.run_id));
+    if (query.limit) search.set('limit', String(query.limit));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/context-versions${suffix}`);
     setStatus(set, result.status);
     return result.data;
   })
@@ -300,6 +330,34 @@ const app = new Elysia()
   })
   .post('/api/v1/approvals/:approvalId/decision', async ({ params, body, set }) => {
     const result = await proxyJson(`/api/v1/approvals/${params.approvalId}/decision`, {
+      method: 'POST',
+      body: body as Record<string, unknown>
+    });
+    setStatus(set, result.status);
+    return result.data;
+  })
+  // --- Memory review (Core-owned candidate and promotion state) ---
+  .get('/api/v1/memory-candidates', async ({ query, set }) => {
+    const search = new URLSearchParams();
+    for (const key of ['status', 'scope', 'kind', 'session_id', 'run_id', 'project_id', 'agent_profile_id', 'limit']) {
+      const value = query[key];
+      if (value !== undefined && value !== '') search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/memory-candidates${suffix}`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/memory-candidates/:candidateId/promote', async ({ params, body, set }) => {
+    const result = await proxyJson(`/api/v1/memory-candidates/${params.candidateId}/promote`, {
+      method: 'POST',
+      body: body as Record<string, unknown>
+    });
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/memory-candidates/:candidateId/reject', async ({ params, body, set }) => {
+    const result = await proxyJson(`/api/v1/memory-candidates/${params.candidateId}/reject`, {
       method: 'POST',
       body: body as Record<string, unknown>
     });
@@ -610,8 +668,16 @@ const app = new Elysia()
     setStatus(set, result.status);
     return result.data;
   })
-  .get('/api/v1/agent-modes', async ({ set }) => {
-    const result = await proxyJson('/api/v1/agent-modes');
+  .get('/api/v1/application-modes', async ({ set }) => {
+    const result = await proxyJson('/api/v1/application-modes');
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .get('/api/v1/agent-modes', async ({ query, set }) => {
+    const search = new URLSearchParams();
+    if (query.application_mode) search.set('application_mode', String(query.application_mode));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/agent-modes${suffix}`);
     setStatus(set, result.status);
     return result.data;
   })
@@ -641,8 +707,30 @@ const app = new Elysia()
     setStatus(set, result.status);
     return result.data;
   })
-  .get('/api/v1/agent-candidates', async ({ set }) => {
-    const result = await proxyJson('/api/v1/agent-candidates');
+  .get('/api/v1/agent-candidates', async ({ query, set }) => {
+    const search = new URLSearchParams();
+    for (const key of ['status', 'run_id', 'project_id', 'parent_candidate_id', 'limit']) {
+      const value = query[key];
+      if (value !== undefined && value !== '') search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/agent-candidates${suffix}`);
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/agent-candidates/:candidateId/promote', async ({ params, body, set }) => {
+    const result = await proxyJson(`/api/v1/agent-candidates/${params.candidateId}/promote`, {
+      method: 'POST',
+      body: body as Record<string, unknown>
+    });
+    setStatus(set, result.status);
+    return result.data;
+  })
+  .post('/api/v1/agent-candidates/:candidateId/reject', async ({ params, body, set }) => {
+    const result = await proxyJson(`/api/v1/agent-candidates/${params.candidateId}/reject`, {
+      method: 'POST',
+      body: body as Record<string, unknown>
+    });
     setStatus(set, result.status);
     return result.data;
   })
@@ -943,10 +1031,13 @@ const app = new Elysia()
     });
     setStatus(set, result.status);
     return result.data;
-  })
-  // --- 启动监听 ---
-  .listen({ port: config.port, hostname: config.hostname });
+  });
 
-console.log(`TinadecGateway listening on http://${config.hostname}:${config.port} (${config.mode} mode)`);
-console.log(`  Core:         ${coreUrl()}`);
-console.log(`  Tool Runtime: ${toolRuntimeUrl()}`);
+export { app };
+
+if (import.meta.main) {
+  app.listen({ port: config.port, hostname: config.hostname });
+  console.log(`TinadecGateway listening on http://${config.hostname}:${config.port} (${config.mode} mode)`);
+  console.log(`  Core:         ${coreUrl()}`);
+  console.log(`  Tool Runtime: ${toolRuntimeUrl()}`);
+}

@@ -22,7 +22,7 @@ Core 是产品的智能体操作系统内核。它负责定义一个任务如何
 Core 的产品职责包括：
 
 - 会话、消息、项目、事件和审批的权威状态。
-- 双层智能体编排模型：planning layer 主动规划与监督，execution layer 被动接收任务并产出证据。
+- 双层智能体编排模型：**运营层**（`operation`）主动理解、协调、维护上下文、监督和提出演进候选；**执行层**（`execution`）在明确任务、权限和预算内产出证据。`planning` 仅是迁移期的兼容输入名；新的 Core 契约、配置和展示统一使用 `operation`。
 - 任务图、任务节点、执行分派、上下文包、监督发现和 step result。
 - 模型 provider、模型 route、agent profile、agent mode、tool descriptor 和权限策略。
 - 审批门、风险模型、trace、debug API 和可审计事件流。
@@ -89,10 +89,31 @@ Desktop 的核心价值不是保存状态，而是降低 Core 和 Tool layer 的
 
 TinadecOffice 的智能体模型分为两层：
 
-- **Planning layer**：主动智能体，负责理解意图、规划任务、分配工具、压缩上下文、监督质量和提出演进建议。
-- **Execution layer**：被动智能体，负责在明确任务节点、权限边界和工具约束下完成具体工作。
+- **运营层（`operation`）**：主动智能体，负责理解意图、会议入口、全局协调、上下文维护、能力建议、监督质量和提出演进候选。
+- **执行层（`execution`）**：任务规划和 worker 在明确任务节点、权限边界和工具约束下完成具体工作并交付证据。
 
-这种分层的意义是让“思考、监督、授权”和“执行、取证、修改”分离。Planning layer 负责提出结构化计划和控制风险；execution layer 负责可审计地完成任务。任何 mutating action 都应能追溯到任务节点、agent assignment、审批记录和工具结果。
+`planning` 是旧数据和旧调用中的兼容别名，不是第三层也不是新的对外层名。读取旧值时可规范化为 `operation`；新 API、事件、配置版本和 UI 只能写出正式的 `operation` 值。
+
+这种分层的意义是让“理解、监督、授权”和“执行、取证、修改”分离。运营层负责提出结构化计划和控制风险；执行层负责可审计地完成任务。任何 mutating action 都应能追溯到任务节点、agent assignment、审批记录和工具结果。
+
+### 会议入口、生成与记忆边界
+
+- **会议智能体是唯一用户入口。** 只有它可以生成用户可见的正式答复；其它智能体只能提交进度、证据、建议、监督结论或安全错误，再由会议智能体汇总。它们不得绕过 Core 调用工具。
+- **运行期 spawn 是 Core 编排能力。** 具有 `agent.spawn` 能力的会议智能体或执行层任务规划智能体，必须带着目标、成功标准、父实例、上下文选择器、模型、工具/资源范围和预算创建子智能体。普通 worker 只能提出 spawn 请求。子实例不得扩大父权限、跨越层级，或取得 `direct_user_output`、正式记忆写入、候选晋升权限；默认在 run 结束时释放，并保留 parent/child lineage 和审计记录。
+- **候选不等于正式资产。** 进化行为只能生成带来源、证据、适用条件、失效条件和置信度的记忆或 agent 候选。候选不参与长期检索，也不自动成为永久 profile；人工评测并晋升后才建立不可变正式版本。拒绝、撤销、替代和使用反馈同样是可审计事实。
+- **会话与长期记忆不同。** 当前会话历史、摘要和已审核的长期记忆可以参与上下文包；完整正文保留在不可变 ContentStore，关系库和事件只保存引用、哈希、计数和摘要。长期记忆审核状态机与工具审批状态机必须分离。
+
+### 全双工运行契约
+
+全双工是应用层语义，而不是要求客户端一直占用一个 HTTP 连接。后台 run 必须独立于 SSE 读取连接持续运行；用户可以在其运行时查询状态、补充约束、调整目标、创建另一项任务、暂停、恢复或取消。会议智能体将这些消息分类后绑定已有 run 或创建新 run。
+
+共享会话状态有单调递增的 `context_revision`。每个上下文补丁和目标调整都带基准版本；过期结果不得覆盖较新的目标或约束，必须被拒绝、合并为安全补丁，或触发受影响节点的重规划。run 需要覆盖 `understanding`、`executing`、`replanning`、`awaiting_approval`、`paused`、`reviewing`、`completed`、`failed`、`cancelled` 等可恢复状态。
+
+### 配置与模式契约
+
+内置、带注释的 TOML 是只读基线；工作区覆盖、人工晋升和不可变版本属于 Core 的关系型控制面。解析优先级是 TOML 基线后叠加工作区版本，且每个 run 必须冻结最终配置版本和内容哈希。有效热重载只影响新 run；无效编辑必须保留上一有效快照，并进入 readiness 诊断。
+
+默认配置规定：`conversation` 开放 `plan`、`spec`、`ask`、`vibe`、`auto`、`agent` 六种 agent mode，默认 `auto`；`space` 仅开放 `agent`，绑定 `space.full_duplex`。`im` 和 `hub` 分别只是 `conversation`、`space` 的兼容别名。默认生成预算为深度 2、每 run 8 个生成实例、4 个并行 worker、每会话 2 个活跃 run；配置可收紧，但子智能体不可突破父级或 run 的上限。
 
 ## 边界规则
 
@@ -124,3 +145,9 @@ TinadecOffice 的智能体模型分为两层：
 ## 一句话产品定位
 
 TinadecOffice 是一个桌面智能体工作台：Core 提供通用 agent harness，Tool layer 提供可执行工具能力，Code 是其中的代码工具套件，Desktop 把编排、工具和风险控制呈现为可操作的 UI。
+
+## 实现状态（2026-08-17）
+
+上述章节定义的是产品契约，不把目标能力当作已交付功能。当前工作树中，`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` 与 `AgentRuntimeConfigurationStore` 已提供带校验的 TOML 基线、`im`/`hub` 别名、`planning` 到 `operation` 的配置层规范化，以及“该 store 被解析后有效快照热重载、无效修改保留旧快照”的进程内基础。`agent_instances`、`agent_candidates` 和 `runtime_profile_overrides` 也已有关系投影。
+
+但现有 `DualLayerAgentOrchestrator` 仍按旧 `planning`/`execution` 资料运行，尚未消费该配置快照或工作区覆盖；run 也还不会冻结最终配置哈希。当前 `invoke-stream` 仍是请求内完成的旧式调用，只发送终态 SSE 块，且尚未持久化会议智能体答复。持久化后台 coordinator、run 控制/恢复、`context_revision` 补丁、动态 spawn 服务、候选审核 API、长期检索注入、Core-owned TinadecTools 进程和精确审批恢复仍待实现。Gateway 和 Desktop 也尚未将普通聊天切换到此全双工契约。

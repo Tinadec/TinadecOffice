@@ -77,16 +77,71 @@ public static class StorageEndpoints
         app.MapGet("/api/v1/events", async (HttpContext context, string? sessionId, string? session_id, long? afterSeq, long? after_seq, StorageLifecycleService lifecycle, CancellationToken ct) =>
         {
             var selected = sessionId ?? session_id;
-            if (selected is not null && !Guid.TryParse(selected, out var parsed)) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
-            var events = await lifecycle.ReplayEventsAsync(selected is null ? null : Guid.Parse(selected), afterSeq ?? after_seq ?? 0, ct).ConfigureAwait(false);
+            Guid? selectedSessionId = null;
+            if (selected is not null)
+            {
+                if (!Guid.TryParse(selected, out var parsed)) { context.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
+                selectedSessionId = parsed;
+            }
+            var cursor = afterSeq ?? after_seq ?? 0;
+            if (context.Request.Headers.TryGetValue("Last-Event-ID", out var lastEventId)
+                && long.TryParse(lastEventId.ToString(), out var headerCursor))
+            {
+                cursor = Math.Max(cursor, headerCursor);
+            }
+            if (cursor < 0)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { code = "INVALID_EVENT_CURSOR" }, ct).ConfigureAwait(false);
+                return;
+            }
             context.Response.StatusCode = StatusCodes.Status200OK;
             context.Response.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-cache";
-            foreach (var item in events)
+            context.Response.Headers["X-Accel-Buffering"] = "no";
+            try
             {
-                await context.Response.WriteAsync($"event: {item.EventType}\ndata: {JsonSerializer.Serialize(item)}\n\n", ct).ConfigureAwait(false);
+                // Event sequences are allocated per run. Keep the long-lived session
+                // feed correct when a new run starts at sequence one by de-duplicating
+                // durable event ids instead of treating a run-local sequence as a
+                // session-wide high-water mark.
+                var observedEventIds = new HashSet<string>(StringComparer.Ordinal);
+                var lastHeartbeat = DateTimeOffset.UtcNow;
+                var initialReplay = true;
+
+                while (!ct.IsCancellationRequested)
+                {
+                    // Read the durable journal on every follow cycle. The requested
+                    // after_seq applies only to the initial replay; later scans emit
+                    // new event ids even if they belong to a new run with sequence 1.
+                    var events = await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false);
+                    var wrote = false;
+                    foreach (var item in events)
+                    {
+                        if (!observedEventIds.Add(item.EventId)) continue;
+                        var sequence = GetEventSequence(item);
+                        if (initialReplay && sequence is not null && sequence.Value <= cursor) continue;
+                        if (sequence is not null) cursor = Math.Max(cursor, sequence.Value);
+                        await WriteEventAsync(context, item, sequence, ct).ConfigureAwait(false);
+                        wrote = true;
+                    }
+
+                    var now = DateTimeOffset.UtcNow;
+                    if (initialReplay || now - lastHeartbeat >= EventHeartbeatInterval)
+                    {
+                        await WriteHeartbeatAsync(context, cursor, ct).ConfigureAwait(false);
+                        lastHeartbeat = now;
+                        wrote = true;
+                    }
+                    initialReplay = false;
+                    if (wrote) await context.Response.Body.FlushAsync(ct).ConfigureAwait(false);
+                    await Task.Delay(EventFollowPollInterval, ct).ConfigureAwait(false);
+                }
             }
-            await context.Response.WriteAsync("event: end\ndata: {}\n\n", ct).ConfigureAwait(false);
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The subscriber disconnected; durable replay remains available on reconnect.
+            }
         });
 
         return app;
@@ -96,5 +151,31 @@ public static class StorageEndpoints
     private static object ToSession(SessionRecord session) => new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
     private static object ToMessage(StoredMessage message) => new { id = message.Id, session_id = message.SessionId, run_id = message.RunId, role = message.Role, content = message.Content, created_at = message.CreatedAt };
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
+
+    private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan EventHeartbeatInterval = TimeSpan.FromSeconds(15);
+    private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+
+    private static async Task WriteEventAsync(HttpContext context, EventEnvelope item, long? sequence, CancellationToken cancellationToken)
+    {
+        if (sequence is not null) await context.Response.WriteAsync($"id: {sequence.Value}\n", cancellationToken).ConfigureAwait(false);
+        await context.Response.WriteAsync($"event: {item.EventType}\ndata: {JsonSerializer.Serialize(item, SseJsonOptions)}\n\n", cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task WriteHeartbeatAsync(HttpContext context, long cursor, CancellationToken cancellationToken) =>
+        context.Response.WriteAsync($"event: heartbeat\ndata: {{\"after_seq\":{cursor}}}\n\n", cancellationToken);
+
+    private static long? GetEventSequence(EventEnvelope item)
+    {
+        if (!item.Payload.TryGetValue("sequence", out var value) || value is null) return null;
+        return value switch
+        {
+            long sequence => sequence,
+            int sequence => sequence,
+            JsonElement { ValueKind: JsonValueKind.Number } number when number.TryGetInt64(out var sequence) => sequence,
+            string text when long.TryParse(text, out var sequence) => sequence,
+            _ => null
+        };
+    }
 
 }

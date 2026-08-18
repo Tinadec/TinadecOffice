@@ -1,5 +1,10 @@
 # GATEWAY KNOWLEDGE
 
+**Last Updated:** 2026-08-17
+**Last Updated By:** Codex (added full-duplex Core runtime proxy contracts)
+**Last Verified Commit:** 9997fa16b9a9b2f59d3aa9f05142b2f847b7c286
+**Branch:** main
+
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。
 
@@ -48,7 +53,7 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 | Model/Agent center BFF | `src/modelAgentCenter.ts` | 无状态聚合视图 |
 | Code tools 规格 | `src/codeTools.ts` | 工具规格定义，审批验证，Tool Runtime 代理执行 |
 | MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
-| 测试 | `src/coreClient.test.ts`, `src/codeTools.test.ts`, `src/modelAgentCenter.test.ts` | Bun test |
+| 测试 | `src/coreClient.test.ts`, `src/codeTools.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
 
 ## CONVENTIONS
 
@@ -77,6 +82,13 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 - Gateway 只代理请求，不实现业务逻辑
 - 所有工具执行请求代理到 Tool Runtime
 - MCP 连接管理由 Tool Runtime 负责
+
+### 全双工运行期代理
+- `POST /api/v1/sessions/{sessionId}/invoke-stream` 原样转发完整 JSON 请求和 Core 的 SSE 状态/主体；Gateway 不解释 `application_mode`、`agent_mode`、`permission_mode`、`target_run_id` 或 `expected_context_revision`。
+- `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 兼容别名的解析属于 Core。
+- Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
+- 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
+- `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
 
 ### 审批流
 1. 人类通过 Desktop 发出命令，请求包中带 `approval=true`

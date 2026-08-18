@@ -19,6 +19,11 @@
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Tomlyn" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Configuration\default-agent-runtime.toml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

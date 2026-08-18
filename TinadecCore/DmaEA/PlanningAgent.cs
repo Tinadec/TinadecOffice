@@ -16,27 +16,25 @@ namespace TinadecCore.DmaEA;
 public sealed class PlanningAgent
 {
     private const string PlanningInstructions =
-        "你是规划层 agent。将用户目标分解为可执行的子任务列表。仅输出 JSON 数组，每个元素必须包含 title、description、success_criteria、dependencies、required_capabilities、priority、risk 字段。不要输出其他文字。";
+        "你是规划层执行规划 agent。将用户目标分解为可执行的有向无环任务列表。仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
 
     private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
 
-    private readonly IChatResolver _chatResolver;
+    private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger? _logger;
-    private readonly Func<ChatResolution, IChatClient>? _chatClientFactory;
 
-    public PlanningAgent(IChatResolver chatResolver, ILogger? logger = null, Func<ChatResolution, IChatClient>? chatClientFactory = null)
+    public PlanningAgent(IAgentChatClientFactory chatClients, ILogger? logger = null)
     {
-        _chatResolver = chatResolver;
+        _chatClients = chatClients;
         _logger = logger;
-        _chatClientFactory = chatClientFactory;
     }
 
     public async Task<PlannedTask[]> PlanAsync(DmaeaRunContext ctx, IReadOnlyList<AgentDefinition> agents, CancellationToken ct)
     {
-        var resolved = await _chatResolver.ResolveChatAsync("chat", ct).ConfigureAwait(false);
+        var resolved = await _chatClients.ResolveChatAsync("chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable) throw new InvalidOperationException(resolved.Error);
 
-        var chatClient = _chatClientFactory is not null ? _chatClientFactory(resolved) : DefaultChatClient(resolved);
+        var chatClient = _chatClients.Create(resolved);
         var options = new ChatOptions { Instructions = PlanningInstructions };
         var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { Name = "planning", ChatOptions = options });
 
