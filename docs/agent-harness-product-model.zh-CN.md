@@ -146,8 +146,10 @@ TinadecOffice 的智能体模型分为两层：
 
 TinadecOffice 是一个桌面智能体工作台：Core 提供通用 agent harness，Tool layer 提供可执行工具能力，Code 是其中的代码工具套件，Desktop 把编排、工具和风险控制呈现为可操作的 UI。
 
-## 实现状态（2026-08-17）
+## 实现状态（2026-08-18）
 
 上述章节定义的是产品契约，不把目标能力当作已交付功能。当前工作树中，`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` 与 `AgentRuntimeConfigurationStore` 已提供带校验的 TOML 基线、`im`/`hub` 别名、`planning` 到 `operation` 的配置层规范化，以及“该 store 被解析后有效快照热重载、无效修改保留旧快照”的进程内基础。`agent_instances`、`agent_candidates` 和 `runtime_profile_overrides` 也已有关系投影。
 
-但现有 `DualLayerAgentOrchestrator` 仍按旧 `planning`/`execution` 资料运行，尚未消费该配置快照或工作区覆盖；run 也还不会冻结最终配置哈希。当前 `invoke-stream` 仍是请求内完成的旧式调用，只发送终态 SSE 块，且尚未持久化会议智能体答复。持久化后台 coordinator、run 控制/恢复、`context_revision` 补丁、动态 spawn 服务、候选审核 API、长期检索注入、Core-owned TinadecTools 进程和精确审批恢复仍待实现。Gateway 和 Desktop 也尚未将普通聊天切换到此全双工契约。
+自 2026-08-18 起全双工契约已实现并被 80/80 Core 测试覆盖：`POST /api/v1/sessions/{id}/invoke-stream` 运行持久化 `FullDuplexRunEngine`，含 client-message-id 幂等准入、`context_revision` 快照与会议上下文补丁、规划→执行→监督→meeting 终态化、带预算的 worker spawn/lineage、持久 SSE（ack/delta/done/error）回放/跟随、run 控制（取消/暂停/恢复）、活跃 run 限流与租约检查点重启恢复；`agent-evolution/proposals` GET/generate/promote/reject 提供候选审核。工具链路端到端打通：Core-owned `TinadecToolsProcessManager` 按工作区根托管真实 manifest-v2 子进程，`ToolManifestSnapshotResolver` 每 run 冻结授权 manifest，`ToolDispatcher` prepare/resume 持久化执行并一次性消费审批，真实 run→审批→恢复→`write_file` E2E 测试证明全链路。`GET /api/v1/tool-layer-readiness` 报告真实 manifest 与执行层 agent scopes。
+
+仍待实现：长期检索注入（晋升/撤销、已审核记忆检索）、工作区 runtime-profile 覆盖与 readiness 诊断、scheduling 与 `tools/shell`（501），以及 Gateway/Desktop 尚未将普通聊天切换到此全双工契约。

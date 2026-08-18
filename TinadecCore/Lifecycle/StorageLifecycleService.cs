@@ -755,6 +755,31 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
+        await EnsureRunTableColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+    }
+
+    // ponytail: SQLite-only additive column alignment for the runtime-owned runs table.
+    // EnsureTablesAsync only creates missing tables, so databases created before the
+    // full-duplex runtime lack the lease/frozen-configuration columns on RunRecord.
+    // PostgreSQL schema stays migration-managed; this helper is SQLite-only.
+    private static async Task EnsureRunTableColumnsAsync(LifecycleDbContext db, CancellationToken cancellationToken)
+    {
+        if (!db.Database.IsSqlite()) return;
+        var existing = (await db.Database
+                .SqlQueryRaw<string>("SELECT name FROM pragma_table_info('runs')")
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entityType = db.Model.FindEntityType(typeof(RunRecord))
+            ?? throw new InvalidOperationException("RunRecord entity type was not found.");
+        foreach (var property in entityType.GetProperties())
+        {
+            var column = property.GetColumnName();
+            if (existing.Contains(column)) continue;
+            var type = property.ClrType == typeof(long) || property.ClrType == typeof(long?)
+                ? "INTEGER NULL"
+                : "TEXT NULL";
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{column}\" {type}", cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<(long Offset, int Length)> AppendLineAsync(Guid runId, byte[] record, CancellationToken cancellationToken)
