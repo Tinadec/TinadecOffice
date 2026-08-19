@@ -27,3 +27,6 @@ oc-debug.log
 /.tmp-dmaea-diagnostic/data/content/tenants
 /.tmp-dmaea-diagnostic/data/tasks
 /.tmp-dmaea-diagnostic
+/apps/desktop/.mimosa
+/.playwright-mcp
+/TinadecCore/Api/data/secrets

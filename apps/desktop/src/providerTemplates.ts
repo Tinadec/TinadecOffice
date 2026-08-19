@@ -1,17 +1,17 @@
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw'
 import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg?raw'
-import googleIcon from '@lobehub/icons-static-svg/icons/google.svg?raw'
+import geminiIcon from '@lobehub/icons-static-svg/icons/gemini.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek.svg?raw'
 import openrouterIcon from '@lobehub/icons-static-svg/icons/openrouter.svg?raw'
 import pollinationsIcon from '@lobehub/icons-static-svg/icons/pollinations.svg?raw'
 import groqIcon from '@lobehub/icons-static-svg/icons/groq.svg?raw'
 import togetherIcon from '@lobehub/icons-static-svg/icons/together.svg?raw'
 import fireworksIcon from '@lobehub/icons-static-svg/icons/fireworks.svg?raw'
-import xaiIcon from '@lobehub/icons-static-svg/icons/xai.svg?raw'
+import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
 import mistralIcon from '@lobehub/icons-static-svg/icons/mistral.svg?raw'
 import cohereIcon from '@lobehub/icons-static-svg/icons/cohere.svg?raw'
 import qwenIcon from '@lobehub/icons-static-svg/icons/qwen.svg?raw'
-import azureIcon from '@lobehub/icons-static-svg/icons/azure.svg?raw'
+import azureaiIcon from '@lobehub/icons-static-svg/icons/azureai.svg?raw'
 import bedrockIcon from '@lobehub/icons-static-svg/icons/bedrock.svg?raw'
 import githubcopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg?raw'
 import ollamaIcon from '@lobehub/icons-static-svg/icons/ollama.svg?raw'
@@ -107,7 +107,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
     brand_color: '#4285f4',
     brand_bg: hexToRgba('#4285f4', 0.12),
-    icon: googleIcon,
+    icon: geminiIcon,
     fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
     placeholders: { base_url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-pro / gemini-2.5-flash', api_key: 'AIza...' }
   },
@@ -212,7 +212,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     capabilities: ['chat', 'streaming', 'tool-calls'],
     brand_color: '#1d9bf0',
     brand_bg: hexToRgba('#1d9bf0', 0.12),
-    icon: xaiIcon,
+    icon: grokIcon,
     fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
     placeholders: { base_url: 'https://api.x.ai/v1', model: 'grok-3 / grok-3-mini', api_key: 'xai-...' }
   },
@@ -272,7 +272,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     capabilities: ['chat', 'streaming', 'tool-calls', 'enterprise'],
     brand_color: '#0078d4',
     brand_bg: hexToRgba('#0078d4', 0.12),
-    icon: azureIcon,
+    icon: azureaiIcon,
     fields: { base_url: true, model: true, api_key: true, binary_path: false, home_path: false, server_url: false, launch_args: false },
     placeholders: { base_url: 'https://YOUR_RESOURCE.openai.azure.com/...', model: 'gpt-5.4-mini', api_key: 'azure-api-key' }
   },

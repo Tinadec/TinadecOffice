@@ -45,7 +45,40 @@ public sealed class ControlPlaneService
     { await using var db = await _models.CreateDbContextAsync(); var version = await db.ProviderVersions.SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId); Dictionary<string, JsonElement>? cfg = null; if (version != null) cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, default));
         JsonElement Value(string key) => cfg != null && cfg.TryGetValue(key, out var v) ? v : default;
         string? String(string key) => Value(key).ValueKind == JsonValueKind.String ? Value(key).GetString() : null;
-        return new { id = row.Id, driver = row.Driver, display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+        string[] Models() => Value("models").ValueKind == JsonValueKind.Array ? Value("models").EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray() : Array.Empty<string>();
+        return new { id = row.Id, driver = row.Driver, display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+
+    public async Task<IResult> RefreshProviderModels(Guid id, CancellationToken ct)
+    {
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var row = await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+        if (row == null) return Results.NotFound();
+        var version = await db.ProviderVersions.SingleOrDefaultAsync(x => x.Id == row.CurrentVersionId, ct);
+        Dictionary<string, JsonElement>? cfg = null;
+        if (version != null) cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, ct));
+        var baseUrl = cfg != null && cfg.TryGetValue("base_url", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+        if (string.IsNullOrWhiteSpace(baseUrl)) return Results.BadRequest(new { code = "MODEL_DISCOVERY_INVALID", message = "Provider has no base_url configured; model discovery requires an OpenAI-compatible endpoint." });
+        string? apiKey = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult() ? await _secrets.GetAsync(row.SecretReference, ct) : null;
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/models");
+            if (!string.IsNullOrEmpty(apiKey)) request.Headers.Authorization = new("Bearer", apiKey);
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return Results.Json(new { code = "MODEL_DISCOVERY_FAILED", message = $"Provider returned HTTP {(int)response.StatusCode} for GET /models.", status = (int)response.StatusCode }, statusCode: 502);
+            var body = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync(ct));
+            if (!body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return Results.Json(new { code = "MODEL_DISCOVERY_RESPONSE_INVALID", message = "Provider /models response is missing a data array." }, statusCode: 502);
+            var models = data.EnumerateArray()
+                .Select(item => item.TryGetProperty("id", out var modelId) && modelId.ValueKind == JsonValueKind.String ? modelId.GetString() : null)
+                .Where(idValue => !string.IsNullOrWhiteSpace(idValue))
+                .Select(idValue => new { id = idValue, display_name = idValue })
+                .ToArray();
+            return Results.Ok(new { models });
+        }
+        catch (OperationCanceledException) { return Results.Json(new { code = "MODEL_DISCOVERY_TIMEOUT", message = "Provider /models request timed out after 10 seconds." }, statusCode: 502); }
+        catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or TaskCanceledException)
+        { return Results.Json(new { code = "MODEL_DISCOVERY_NETWORK", message = ex.Message }, statusCode: 502); }
+    }
 
     public async Task<IResult> SaveProvider(JsonElement input, Guid? id, string? ifMatch, CancellationToken ct)
     { var now = DateTimeOffset.UtcNow; await using var db = await _models.CreateDbContextAsync(ct); var row = id.HasValue ? await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct) : null; if (row != null && !Matches(row.Revision, ifMatch)) return Results.StatusCode(412); if (row?.Id is null) { row = new ModelProviderRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now, Revision = 0 }; db.Providers.Add(row); }

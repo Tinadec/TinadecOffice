@@ -54,14 +54,13 @@ import {
   type AgentRuntimeSelectionKind,
   type CenterDiagnosticDto,
   type ModelCatalogReadinessReceiptDto,
-  type ModelCatalogTemplateReadinessDto,
   type ModelCenterAcpRuntimeDto,
   type ModelCenterOverviewDto,
-  type ModelCenterSupplierDto,
   type ModelProviderReadinessDto,
   type ModelProviderInstanceDto,
   type ModelReadinessReceiptDto,
   type ModelRouteDto,
+  type ModelCenterApiConnectionDto,
   type PromptContextPreviewDto,
   type PromptFragmentDto,
   type SavePromptFragmentInput,
@@ -72,8 +71,10 @@ import {
   type ToolSearchResultDto
 } from '../api'
 import {
+  PROVIDER_CATEGORIES,
   PROVIDER_TEMPLATES,
   findTemplate,
+  type ProviderCategory,
   type ProviderTemplate
 } from '../providerTemplates'
 import {
@@ -85,7 +86,6 @@ import {
   bindingForAgent,
   legacyRouteWarning,
   modelOptionKey,
-  providerTemplateFromSupplier,
   providersFromOverview,
   runtimeSourceSummary,
   type ModelCenterSection
@@ -128,6 +128,7 @@ interface ProviderForm {
   connection_kind: string
   base_url: string
   model: string
+  models: string[]
   api_key: string
   clear_api_key: boolean
   binary_path: string
@@ -421,7 +422,7 @@ const projectTemplates = ref<ProjectTemplateSummary[]>([])
 const selectedProviderId = ref('')
 const selectedAgentId = ref('')
 const configuringAgentId = ref('')
-const modelCenterSection = ref<ModelCenterSection>('suppliers')
+const modelCenterSection = ref<ModelCenterSection>('api')
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
 const agentRuntimeProviderId = ref('')
 const agentRuntimeModelKey = ref('')
@@ -449,6 +450,8 @@ const modelCenterBusy = ref(false)
 const agentRuntimeBusy = ref(false)
 
 const showModal = ref(false)
+const showTemplatePicker = ref(false)
+const templatePickerQuery = ref('')
 const agentViewMode = ref<'topology' | 'list'>('list')
 const promptSelectedFragmentId = ref('')
 const promptFilterScope = ref('all')
@@ -484,6 +487,7 @@ const providerForm = reactive<ProviderForm>({
   connection_kind: 'api-key',
   base_url: 'https://api.openai.com/v1',
   model: 'gpt-5.4-mini',
+  models: [],
   api_key: '',
   clear_api_key: false,
   binary_path: '',
@@ -603,16 +607,31 @@ function clearGatewayRestartBanner() {
 void loadAppConfig()
 
 const modelCenterSections = computed(() => [
-  { key: 'suppliers' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.suppliers.length ?? 0 },
-  { key: 'api' as const, label: t('settings.centerApiConnections'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
+  { key: 'api' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
   { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
   { key: 'cli' as const, label: 'CLI', count: modelCenterOverview.value?.cli_runtimes.length ?? 0 },
   { key: 'acp' as const, label: 'ACP', count: modelCenterOverview.value?.acp_runtimes.length ?? 0 }
 ])
-const supplierTemplates = computed(() => new Map(
-  (modelCenterOverview.value?.suppliers ?? []).map((supplier) => [supplier.driver, providerTemplateFromSupplier(supplier)])
-))
-const currentTemplate = computed(() => supplierTemplates.value.get(providerForm.driver) ?? findTemplate(providerForm.driver))
+const currentTemplate = computed(() => findTemplate(providerForm.driver))
+
+const pickerTemplates = computed(() => PROVIDER_TEMPLATES)
+const filteredPickerTemplates = computed(() => {
+  const query = templatePickerQuery.value.trim().toLocaleLowerCase()
+  return pickerTemplates.value.filter((template) => !query || [
+    t(template.display_name_key),
+    template.driver,
+    template.connection_kind,
+    template.default_model ?? ''
+  ].some((value) => value.toLocaleLowerCase().includes(query)))
+})
+const pickerTemplateGroups = computed(() => {
+  const groups: { category: ProviderCategory; labelKey: string; templates: ProviderTemplate[] }[] = []
+  for (const category of PROVIDER_CATEGORIES) {
+    const templates = filteredPickerTemplates.value.filter((template) => template.category === category.key)
+    if (templates.length > 0) groups.push({ category: category.key, labelKey: category.labelKey, templates })
+  }
+  return groups
+})
 
 const chatRoute = computed(() =>
   routes.value.find((route) => route.purpose === 'planner') ?? routes.value.find((route) => route.purpose === 'chat') ?? null
@@ -633,23 +652,19 @@ const blockedModelRoutes = computed(() =>
 const warningCatalogTemplates = computed(() =>
   (modelCatalogReadiness.value?.templates ?? []).filter((template) => template.status !== 'ready')
 )
-const catalogReadinessByDriver = computed(() => {
-  const map = new Map<string, ModelCatalogTemplateReadinessDto>()
-  for (const template of modelCatalogReadiness.value?.templates ?? []) {
-    map.set(template.driver, template)
-  }
-  return map
-})
 
-const formFields = computed(() => currentTemplate.value?.fields ?? {
-  base_url: true, model: true, api_key: true,
-  binary_path: false, home_path: false, server_url: false, launch_args: false
+const formFields = computed(() => {
+  const fields = currentTemplate.value?.fields ?? {
+    base_url: true, model: true, api_key: true,
+    binary_path: false, home_path: false, server_url: false, launch_args: false
+  }
+  return { ...fields, model: false }
 })
 const formPlaceholders = computed(() => currentTemplate.value?.placeholders ?? {})
 
 const modelCenterRows = computed(() => buildModelCenterRows(
   providersFromOverview(modelCenterOverview.value).filter((provider) => provider.connection_kind !== 'cli'),
-  [...supplierTemplates.value.values()],
+  PROVIDER_TEMPLATES,
   modelReadiness.value,
   (key) => t(key)
 ).filter((row) => row.kind === 'instance'))
@@ -796,6 +811,7 @@ function centerDiagnosticLabel(diagnostic: CenterDiagnosticDto) {
 
 function configuredModelSourceLabel(source: string) {
   if (source === 'provider_default') return t('settings.modelSourceProviderDefault')
+  if (source === 'provider_models') return t('settings.modelSourceProviderModels')
   if (source === 'route_override') return t('settings.modelSourceRouteOverride')
   return source
 }
@@ -820,6 +836,7 @@ function fillForm(provider: ModelProviderInstanceDto) {
   providerForm.connection_kind = provider.connection_kind
   providerForm.base_url = provider.base_url ?? ''
   providerForm.model = provider.model ?? ''
+  providerForm.models = provider.models ?? []
   providerForm.api_key = ''
   providerForm.clear_api_key = false
   providerForm.binary_path = provider.binary_path ?? ''
@@ -834,7 +851,8 @@ function applyTemplateDefaults(template: ProviderTemplate) {
   providerForm.display_name = t(template.display_name_key)
   providerForm.connection_kind = template.connection_kind
   providerForm.base_url = template.default_base_url ?? ''
-  providerForm.model = template.default_model ?? ''
+  providerForm.model = ''
+  providerForm.models = []
   providerForm.binary_path = ''
   providerForm.home_path = ''
   providerForm.server_url = template.fields.server_url ? template.default_base_url ?? '' : ''
@@ -847,11 +865,7 @@ function openAddModal(template?: ProviderTemplate) {
   if (template) {
     applyTemplateDefaults(template)
   } else {
-    applyTemplateDefaults(
-      modelCenterOverview.value?.suppliers[0]
-        ? providerTemplateFromSupplier(modelCenterOverview.value.suppliers[0])
-        : PROVIDER_TEMPLATES[0]
-    )
+    applyTemplateDefaults(PROVIDER_TEMPLATES[0])
   }
   providerForm.api_key = ''
   providerForm.clear_api_key = false
@@ -873,7 +887,7 @@ function toggleProviderDetail(providerId: string) {
 }
 
 function focusModelProviderList(filter: ModelCenterFilter) {
-  modelCenterSection.value = filter === 'available' ? 'suppliers' : 'api'
+  modelCenterSection.value = 'api'
   modelProviderFilter.value = filter
   nextTick(() => {
     modelProviderListRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -882,11 +896,12 @@ function focusModelProviderList(filter: ModelCenterFilter) {
 }
 
 function handleAddProviderClick() {
-  if ((modelCenterOverview.value?.suppliers.length ?? 0) === 0) {
-    openAddModal()
-    return
-  }
-  focusModelProviderList('available')
+  showTemplatePicker.value = true
+}
+
+function pickTemplate(template: ProviderTemplate) {
+  showTemplatePicker.value = false
+  openAddModal(template)
 }
 
 function openModelDiagnostics() {
@@ -970,6 +985,125 @@ async function loadModelCenter() {
     status.error({ key: 'model-center', source: 'models', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadModelCenter } })
   } finally {
     modelCenterLoading.value = false
+  }
+}
+
+const showModelModal = ref(false)
+const modelModalProviderId = ref('')
+const modelModalManual = ref('')
+const modelModalPending = ref<string[]>([])
+const modelModalDiscovered = ref<Array<{ id: string; display_name: string }>>([])
+const modelModalBusy = ref(false)
+const modelModalError = ref('')
+const modelModalFetched = ref(false)
+
+function modelApiProvider(providerId: string) {
+  return modelCenterOverview.value?.api_connections.find((item) => item.id === providerId) ?? null
+}
+
+function modelsForProvider(providerId: string) {
+  return (modelCenterOverview.value?.models ?? []).filter((model) => model.provider_instance_id === providerId)
+}
+
+function openAddModelModal(providerId: string) {
+  modelModalProviderId.value = providerId
+  modelModalManual.value = ''
+  modelModalPending.value = []
+  modelModalDiscovered.value = []
+  modelModalError.value = ''
+  modelModalFetched.value = false
+  showModelModal.value = true
+}
+
+async function fetchDiscoveredModels() {
+  modelModalBusy.value = true
+  modelModalError.value = ''
+  try {
+    const result = await api.refreshProviderModels(modelModalProviderId.value)
+    modelModalDiscovered.value = result.models
+    modelModalFetched.value = true
+  } catch (error) {
+    modelModalError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    modelModalBusy.value = false
+  }
+}
+
+function addPendingModel(id: string) {
+  if (!modelModalPending.value.includes(id)) modelModalPending.value.push(id)
+}
+
+function addManualModel() {
+  const id = modelModalManual.value.trim()
+  if (!id) return
+  addPendingModel(id)
+  modelModalManual.value = ''
+}
+
+async function saveModelModal() {
+  const provider = modelApiProvider(modelModalProviderId.value)
+  if (!provider) return
+  const merged = [...new Set([...(provider.models ?? []), ...modelModalPending.value])]
+  await putProviderModels(provider, merged, merged[0] ?? null)
+  showModelModal.value = false
+}
+
+async function removeModel(providerId: string, modelId: string) {
+  const provider = modelApiProvider(providerId)
+  if (!provider) return
+  if (!await confirm({
+    title: t('settings.removeModel'),
+    message: `${t('settings.confirmRemoveModel')}\n${modelId} (${provider.display_name})`,
+    confirmLabel: t('settings.confirmDelete'),
+    cancelLabel: t('settings.cancel'),
+    destructive: true
+  })) return
+  modelCenterBusy.value = true
+  try {
+    // Clear every source that contributes the model so it stays gone after reload.
+    const routes = await api.listModelRoutes()
+    for (const route of routes) {
+      if (route.model === modelId) {
+        await api.saveModelRoute(route.purpose, route.provider_instance_id, null)
+      }
+    }
+    const merged = (provider.models ?? []).filter((id) => id !== modelId)
+    const nextDefault = provider.model === modelId ? merged[0] ?? null : (provider.model ?? null)
+    await putProviderModels(provider, merged, nextDefault)
+    await loadAgentCenter()
+  } catch (error) {
+    notify.error(error, { title: modelId })
+  } finally {
+    modelCenterBusy.value = false
+  }
+}
+
+async function putProviderModels(
+  provider: ModelCenterApiConnectionDto,
+  models: string[],
+  model: string | null
+) {
+  modelCenterBusy.value = true
+  try {
+    const payload: SaveModelProviderInstanceInput = {
+      id: provider.id,
+      driver: provider.driver,
+      display_name: provider.display_name,
+      connection_kind: provider.connection_kind,
+      base_url: provider.base_url ?? null,
+      model,
+      models,
+      server_url: provider.server_url ?? null,
+      capabilities: provider.capabilities,
+      enabled: provider.enabled
+    }
+    await api.saveModelProvider(provider.id, payload)
+    await loadModelCenter()
+    notify.success(t('settings.refreshModels'))
+  } catch (error) {
+    notify.error(error, { title: provider.display_name })
+  } finally {
+    modelCenterBusy.value = false
   }
 }
 
@@ -1391,7 +1525,8 @@ async function saveProvider() {
       display_name: providerForm.display_name,
       connection_kind: providerForm.connection_kind,
       base_url: formFields.value.base_url ? (providerForm.base_url || null) : null,
-      model: formFields.value.model ? (providerForm.model || null) : null,
+      model: providerForm.id ? (providerForm.model || null) : null,
+      models: providerForm.models,
       api_key: formFields.value.api_key ? (providerForm.api_key || null) : null,
       clear_api_key: providerForm.clear_api_key,
       binary_path: formFields.value.binary_path ? (providerForm.binary_path || null) : null,
@@ -1503,37 +1638,8 @@ function agentPolicyLabel(policy: string) {
   return map[policy] ?? policy
 }
 
-function supplierTransportLabel(kind: string) {
-  const map: Record<string, string> = {
-    http_json: t('settings.transportCloudApi'),
-    local_http: t('settings.transportLocalService'),
-    cli: 'CLI',
-    acp: 'ACP'
-  }
-  return map[kind] ?? kind
-}
-
-function supplierCredentialLabel(kind: string) {
-  const map: Record<string, string> = {
-    api_key: t('settings.apiKey'),
-    'api-key': t('settings.apiKey'),
-    cli: t('settings.localCredential'),
-    none: t('settings.noCredential')
-  }
-  return map[kind] ?? kind
-}
-
-function supplierSummary(supplier: ModelCenterSupplierDto) {
-  const template = findTemplate(supplier.driver)
-  if (template) return t(template.summary_key)
-  if (supplier.transport_kind === 'local_http') return t('settings.supplierLocalSummary')
-  if (supplier.transport_kind === 'cli') return t('settings.supplierCliSummary')
-  if (supplier.transport_kind === 'acp') return t('settings.supplierAcpSummary')
-  return t('settings.supplierCloudSummary')
-}
-
 function providerPresentation(driver: string) {
-  return supplierTemplates.value.get(driver) ?? findTemplate(driver)
+  return findTemplate(driver)
 }
 
 function candidateStatusLabel(status: string) {
@@ -1953,52 +2059,6 @@ import '../settings/settings.css'
           </aside>
 
           <main class="center-resource-stage">
-          <section v-if="modelCenterSection === 'suppliers'" ref="modelProviderListRef" class="center-resource-section">
-            <div class="center-resource-heading">
-              <div>
-                <h3>{{ t('settings.centerSuppliers') }}</h3>
-                <p>{{ t('settings.suppliersHint') }}</p>
-              </div>
-              <UiBadge variant="outline">{{ t('settings.coreCatalog') }}</UiBadge>
-            </div>
-            <div class="center-resource-grid supplier-grid supplier-list">
-              <article v-for="supplier in modelCenterOverview?.suppliers ?? []" :key="supplier.supplier_id" class="center-resource-card">
-                <div class="center-resource-card-head">
-                    <span
-                      class="provider-brand-icon"
-                      :style="{ color: providerPresentation(supplier.driver)?.brand_color, backgroundColor: providerPresentation(supplier.driver)?.brand_bg }"
-                    >
-                      <span v-if="providerPresentation(supplier.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(supplier.driver)?.icon"></span>
-                      <Database v-else :size="16" />
-                    </span>
-                  <div>
-                    <strong>{{ supplier.display_name }}</strong>
-                    <span>{{ supplier.provider_family }} · {{ supplier.driver }}</span>
-                  </div>
-                  <UiBadge v-if="catalogReadinessByDriver.get(supplier.driver)?.status !== 'ready'" :variant="readinessVariant(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown')">
-                    {{ readinessStatusLabel(catalogReadinessByDriver.get(supplier.driver)?.status ?? 'unknown') }}
-                  </UiBadge>
-                </div>
-                <p>{{ supplierSummary(supplier) }}</p>
-                <div class="center-resource-meta">
-                    <span>{{ supplierTransportLabel(supplier.transport_kind) }}</span>
-                    <span>{{ supplierCredentialLabel(supplier.credential_kind) }}</span>
-                  <span v-if="supplier.default_model">{{ supplier.default_model }}</span>
-                </div>
-                <div class="center-resource-actions">
-                  <UiButton variant="ghost" size="sm" @click="openAddModal(providerTemplateFromSupplier(supplier))">
-                    <Plus :size="14" />
-                    {{ t('settings.addProvider') }}
-                  </UiButton>
-                </div>
-              </article>
-            </div>
-            <div v-if="(modelCenterOverview?.suppliers.length ?? 0) === 0" class="center-empty-state">
-              <Server :size="20" />
-              <span>{{ t('settings.noSuppliers') }}</span>
-            </div>
-          </section>
-
           <section v-if="modelCenterSection === 'models'" class="center-resource-section">
             <div class="center-resource-heading">
               <div>
@@ -2007,33 +2067,63 @@ import '../settings/settings.css'
               </div>
               <UiBadge variant="outline">{{ modelCatalogModeLabel(modelCenterOverview?.capabilities.model_catalog_mode) }}</UiBadge>
             </div>
-            <div class="center-resource-list">
-              <article v-for="model in modelCenterOverview?.models ?? []" :key="model.id" class="center-resource-list-row">
+            <div v-for="provider in modelCenterOverview?.api_connections ?? []" :key="provider.id" class="model-provider-group">
+              <div class="center-resource-list-row model-provider-group-head">
                 <div class="center-resource-primary">
-                  <Cpu :size="17" />
+                  <span
+                    class="provider-brand-icon"
+                    :style="{ color: providerPresentation(provider.driver)?.brand_color, backgroundColor: providerPresentation(provider.driver)?.brand_bg }"
+                  >
+                    <span v-if="providerPresentation(provider.driver)?.icon" class="provider-brand-mark" v-html="providerPresentation(provider.driver)?.icon"></span>
+                    <Server v-else :size="16" />
+                  </span>
                   <div>
-                    <strong>{{ model.model_id }}</strong>
-                    <span>{{ model.provider_display_name ?? model.provider_instance_id }}</span>
+                    <strong>{{ provider.display_name }}</strong>
+                    <span>{{ provider.driver }}</span>
                   </div>
                 </div>
-                <div class="center-resource-meta">
-                  <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
-                  <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
-                </div>
-                <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
+                <UiBadge :variant="statusVariant(provider.status)">{{ statusLabel(provider.status) }}</UiBadge>
                 <UiButton
                   variant="outline"
                   size="sm"
                   :disabled="modelCenterBusy || !modelCenterOverview?.capabilities.model_discovery_refresh"
-                  :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.refreshModels') : t('settings.modelDiscoveryUnsupported')"
-                  @click="refreshProviderModels(model.provider_instance_id)"
+                  :title="modelCenterOverview?.capabilities.model_discovery_refresh ? t('settings.addModel') : t('settings.modelDiscoveryUnsupported')"
+                  @click="openAddModelModal(provider.id)"
                 >
-                  <Server :size="14" />
-                  {{ t('settings.refreshModels') }}
+                  <Plus :size="14" />
+                  {{ t('settings.addModel') }}
                 </UiButton>
-              </article>
+              </div>
+              <div class="model-group-models">
+                <div v-for="model in modelsForProvider(provider.id)" :key="model.id" class="center-resource-list-row model-group-model">
+                  <div class="center-resource-primary">
+                    <Cpu :size="15" />
+                    <div>
+                      <strong>{{ model.model_id }}</strong>
+                      <div class="center-resource-meta">
+                        <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
+                        <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
+                  <UiButton
+                    variant="ghost"
+                    size="sm"
+                    :disabled="modelCenterBusy"
+                    :title="t('settings.removeModel')"
+                    @click="removeModel(provider.id, model.model_id)"
+                  >
+                    <Trash2 :size="14" />
+                  </UiButton>
+                </div>
+                <div v-if="modelsForProvider(provider.id).length === 0" class="center-empty-state">
+                  <Cpu :size="20" />
+                  <span>{{ t('settings.noProviderModels') }}</span>
+                </div>
+              </div>
             </div>
-            <div v-if="(modelCenterOverview?.models.length ?? 0) === 0" class="center-empty-state">
+            <div v-if="(modelCenterOverview?.api_connections.length ?? 0) === 0" class="center-empty-state">
               <Cpu :size="20" />
               <span>{{ t('settings.noConfiguredModels') }}</span>
             </div>
@@ -2193,6 +2283,16 @@ import '../settings/settings.css'
                       <UiButton
                         variant="ghost"
                         size="icon"
+                        class="provider-delete-btn"
+                        :disabled="modelCenterBusy"
+                        :title="t('settings.delete')"
+                        @click="deleteProvider(row.provider.id)"
+                      >
+                        <Trash2 :size="14" />
+                      </UiButton>
+                      <UiButton
+                        variant="ghost"
+                        size="icon"
                         :title="selectedProviderDetailId === row.provider.id ? t('settings.collapseDetails') : t('settings.expandDetails')"
                         :aria-expanded="selectedProviderDetailId === row.provider.id"
                         @click="toggleProviderDetail(row.provider.id)"
@@ -2214,6 +2314,10 @@ import '../settings/settings.css'
               <div v-if="filteredModelCenterRows.length === 0" class="model-provider-empty">
                 <Search :size="18" />
                 <span>{{ t('settings.noProviderResults') }}</span>
+                <UiButton variant="outline" size="sm" @click="handleAddProviderClick">
+                  <Plus :size="14" />
+                  {{ t('settings.addProvider') }}
+                </UiButton>
               </div>
             </div>
           </section>
@@ -3676,10 +3780,160 @@ import '../settings/settings.css'
 
           <p class="about-license">&copy; {{ new Date().getFullYear() }} TinadecOffice &middot; GPL-3.0-or-later</p>
         </template>
-        </div>
-        </Transition>
+    </div>
+    </Transition>
+
+    <div v-if="showModelModal" class="model-provider-modal" @click.self="showModelModal = false">
+      <UiCard class="model-provider-modal-content">
+        <template #header>
+          <div class="modal-header-row">
+            <div class="modal-header-left">
+              <span
+                class="modal-provider-logo"
+                :style="{ color: providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.brand_color, backgroundColor: providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.brand_bg }"
+              >
+                <span v-if="providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.icon" class="provider-brand-mark" v-html="providerPresentation(modelApiProvider(modelModalProviderId)?.driver ?? '')?.icon"></span>
+                <Cpu v-else :size="18" />
+              </span>
+              <div class="modal-header-info">
+                <h3>{{ t('settings.addModelTitle') }}</h3>
+                <span class="modal-header-sub">{{ modelApiProvider(modelModalProviderId)?.display_name ?? modelModalProviderId }}</span>
+              </div>
+            </div>
+            <UiButton variant="ghost" size="icon" @click="showModelModal = false">
+              <X :size="16" />
+            </UiButton>
+          </div>
+        </template>
+
+        <template #content>
+          <div class="modal-form-section">
+            <div class="modal-form-section-title">{{ t('settings.fetchModelsFromProvider') }}</div>
+            <div class="model-modal-fetch-row">
+              <UiButton
+                variant="outline"
+                size="sm"
+                :disabled="modelModalBusy"
+                @click="fetchDiscoveredModels"
+              >
+                <Server :size="14" />
+                {{ modelModalBusy ? t('settings.fetchingModels') : (modelModalFetched ? t('settings.refreshModels') : t('settings.fetchModels')) }}
+              </UiButton>
+            </div>
+            <div v-if="modelModalError" class="model-provider-note">
+              <Terminal :size="14" />
+              <span>{{ modelModalError }}</span>
+            </div>
+            <div v-if="modelModalFetched && modelModalDiscovered.length" class="model-discovered-list">
+              <div v-for="item in modelModalDiscovered" :key="item.id" class="model-discovered-row">
+                <strong>{{ item.id }}</strong>
+                <UiButton
+                  variant="outline"
+                  size="sm"
+                  :disabled="modelModalPending.includes(item.id)"
+                  @click="addPendingModel(item.id)"
+                >
+                  {{ modelModalPending.includes(item.id) ? t('settings.modelAdded') : t('settings.addModel') }}
+                </UiButton>
+              </div>
+            </div>
+            <div v-else-if="modelModalFetched" class="center-empty-state">
+              <Cpu :size="20" />
+              <span>{{ t('settings.fetchModelsEmpty') }}</span>
+            </div>
+          </div>
+
+          <div class="modal-form-section">
+            <div class="modal-form-section-title">{{ t('settings.manualModel') }}</div>
+            <div class="model-manual-row">
+              <UiInput v-model="modelModalManual" :placeholder="t('settings.modelNamePlaceholder')" @keydown.enter="addManualModel" />
+              <UiButton variant="outline" :disabled="!modelModalManual.trim()" @click="addManualModel">
+                <Plus :size="14" />
+                {{ t('settings.addModel') }}
+              </UiButton>
+            </div>
+            <div v-if="modelModalPending.length" class="model-pending-list">
+              <span v-for="id in modelModalPending" :key="id" class="provider-cap-tag">{{ id }}</span>
+            </div>
+          </div>
+        </template>
+
+        <template #footer>
+          <div class="modal-actions">
+            <UiButton variant="outline" @click="showModelModal = false">
+              {{ t('settings.cancel') }}
+            </UiButton>
+            <UiButton :disabled="modelModalBusy || !modelModalPending.length" @click="saveModelModal()">
+              <Save :size="14" />
+              <span>{{ t('settings.save') }}</span>
+            </UiButton>
+          </div>
+        </template>
+      </UiCard>
+    </div>
       </div>
     </div>
+
+    <Transition name="modal-fade">
+    <div v-if="showTemplatePicker" class="model-provider-modal" @click.self="showTemplatePicker = false">
+      <UiCard class="model-provider-modal-content template-picker-content">
+        <template #header>
+          <div class="modal-header-row">
+            <div class="modal-header-left">
+              <span class="modal-provider-logo" :style="{ color: '#8b949e', backgroundColor: 'rgba(139,148,158,0.10)' }">
+                <Plus :size="18" />
+              </span>
+              <div class="modal-header-info">
+                <h3>{{ t('settings.addProviderTemplate') }}</h3>
+                <span class="modal-header-sub">{{ t('settings.templatePickerHint') }}</span>
+              </div>
+            </div>
+            <UiButton variant="ghost" size="icon" @click="showTemplatePicker = false">
+              <X :size="16" />
+            </UiButton>
+          </div>
+        </template>
+
+        <template #content>
+          <div class="template-picker-search">
+            <Search :size="15" />
+            <UiInput v-model="templatePickerQuery" :placeholder="t('settings.templateSearchPlaceholder')" />
+          </div>
+
+          <div v-if="pickerTemplateGroups.length === 0" class="template-picker-empty">
+            <Server :size="20" />
+            <span>{{ t('settings.templatePickerEmpty') }}</span>
+          </div>
+
+          <div v-for="group in pickerTemplateGroups" :key="group.category" class="template-picker-group">
+            <div class="template-picker-group-title">{{ t(group.labelKey) }}</div>
+            <div class="template-picker-grid">
+              <button
+                v-for="template in group.templates"
+                :key="template.driver"
+                class="template-picker-card"
+                :style="{ '--template-accent': template.brand_color }"
+                @click="pickTemplate(template)"
+              >
+                <span class="provider-brand-icon" :style="{ color: template.brand_color, backgroundColor: template.brand_bg }">
+                  <span v-if="template.icon" class="provider-brand-mark" v-html="template.icon"></span>
+                  <Database v-else :size="16" />
+                </span>
+                <span class="template-picker-card-body">
+                  <strong :title="t(template.display_name_key)">{{ t(template.display_name_key) }}</strong>
+                  <small :title="template.driver">{{ template.driver }}</small>
+                </span>
+                <span class="template-picker-card-meta">
+                  <span>{{ connectionKindLabel(template.connection_kind) }}</span>
+                  <span v-if="template.default_model" :title="template.default_model">{{ template.default_model }}</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </UiCard>
+    </div>
+    </Transition>
 
     <Transition name="modal-fade">
     <div v-if="showModal" class="model-provider-modal" @click.self="closeModal">

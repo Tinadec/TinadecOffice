@@ -122,7 +122,7 @@ test('model center classifies API, local, CLI, and ACP resources without merging
   assert.ok(overview.acp_runtimes.some((item) => item.runtime_id === 'adapter:adapter_cursor' && item.source === 'adapter'));
   assert.ok(overview.acp_runtimes.some((item) => item.runtime_id === 'legacy_provider:provider_acp_legacy' && item.source === 'legacy_provider'));
   assert.equal(overview.capabilities.model_catalog_mode, 'configured_only');
-  assert.equal(overview.capabilities.model_discovery_refresh, false);
+  assert.equal(overview.capabilities.model_discovery_refresh, true);
   assert.equal(overview.capabilities.agent_runtime_binding_write, false);
   assert.ok(!JSON.stringify(overview).includes('must-not-leak'));
 });
@@ -272,12 +272,6 @@ test('unsupported write handlers return explicit 400 and 501 contracts without c
   });
   assert.equal(unsupported.status, 501);
   assert.equal((unsupported.data as { code: string }).code, 'AGENT_RUNTIME_BINDING_UNSUPPORTED');
-
-  const invalidRefresh = modelDiscoveryRefreshResult('   ');
-  assert.equal(invalidRefresh.status, 400);
-  const unsupportedRefresh = modelDiscoveryRefreshResult('provider_api');
-  assert.equal(unsupportedRefresh.status, 501);
-  assert.equal((unsupportedRefresh.data as { code: string }).code, 'MODEL_DISCOVERY_UNSUPPORTED');
 });
 
 test('overview loaders degrade optional 404/501 responses into diagnostics', async () => {

@@ -12,7 +12,8 @@ import { findTemplate, type ProviderCategory, type ProviderTemplate } from './pr
 
 export type ModelCenterSection = 'suppliers' | 'api' | 'models' | 'cli' | 'acp'
 
-const supplierPresentationAliases = new Map<string, string>([
+export const supplierPresentationAliases = new Map<string, string>([
+  ['openai', 'openai-compatible'],
   ['local-http', 'custom'],
   ['local-http-openai-compatible', 'openai-compatible'],
   ['local-http-ollama', 'ollama']

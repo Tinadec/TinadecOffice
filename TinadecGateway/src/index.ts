@@ -512,8 +512,8 @@ const app = new Elysia()
     setStatus(set, result.status);
     return result.data;
   })
-  .post('/api/v1/model-center/provider-instances/:providerInstanceId/models/refresh', ({ params, set }) => {
-    const result = modelDiscoveryRefreshResult(params.providerInstanceId);
+  .post('/api/v1/model-center/provider-instances/:providerInstanceId/models/refresh', async ({ params, set }) => {
+    const result = await proxyJson(`/api/v1/model-providers/${params.providerInstanceId}/models/refresh`, { method: 'POST' });
     setStatus(set, result.status);
     return result.data;
   })

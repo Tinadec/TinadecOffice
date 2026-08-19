@@ -81,6 +81,7 @@ export interface ModelProviderInstanceDto {
   connection_kind: 'api-key' | 'cli' | 'local-server' | string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   has_api_key: boolean;
   binary_path?: string | null;
   home_path?: string | null;
@@ -100,6 +101,10 @@ export interface ModelRouteDto {
   provider_instance_id: string;
   model?: string | null;
   updated_at: string;
+}
+
+export interface ModelDiscoveryResultDto {
+  models: Array<{ id: string; display_name: string }>;
 }
 
 export interface ModelProviderReadinessDto {
@@ -181,6 +186,7 @@ export interface SaveModelProviderInstanceInput {
   connection_kind: string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   api_key?: string | null;
   clear_api_key?: boolean;
   binary_path?: string | null;
@@ -422,6 +428,7 @@ export interface ModelCenterApiConnectionDto {
   credential_kind: string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   has_api_key: boolean;
   server_url?: string | null;
   capabilities: string[];
@@ -1059,7 +1066,7 @@ export const api = {
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
   getModelCenterOverview: () => request<ModelCenterOverviewDto>('/api/v1/model-center/overview'),
-  refreshProviderModels: (providerInstanceId: string) => request<ModelCenterOverviewDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
+  refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
     method: 'POST'
   }),
   getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),

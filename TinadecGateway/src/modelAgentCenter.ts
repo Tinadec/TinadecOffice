@@ -53,6 +53,7 @@ export interface ApiConnectionResource {
   credential_kind: CredentialKind;
   base_url: string | null;
   model: string | null;
+  models: string[] | null;
   has_api_key: boolean;
   server_url: string | null;
   capabilities: string[];
@@ -73,7 +74,7 @@ export interface ConfiguredModelResource {
   provider_instance_id: string;
   provider_display_name: string | null;
   source: 'configured_only';
-  configuration_sources: Array<'provider_default' | 'route_override'>;
+  configuration_sources: Array<'provider_default' | 'provider_models' | 'route_override'>;
   is_provider_default: boolean;
   route_purposes: string[];
   enabled: boolean;
@@ -242,32 +243,6 @@ export function agentRuntimeBindingWriteResult(agentId: unknown, input: unknown)
   };
 }
 
-export function modelDiscoveryRefreshResult(providerInstanceId: unknown): ProxyResult {
-  const normalizedProviderId = requiredString(providerInstanceId);
-  if (!normalizedProviderId) {
-    return {
-      status: 400,
-      data: {
-        code: 'MODEL_DISCOVERY_REQUEST_INVALID',
-        message: 'Provider instance id must be a non-empty string.'
-      }
-    };
-  }
-
-  return {
-    status: 501,
-    data: {
-      code: 'MODEL_DISCOVERY_UNSUPPORTED',
-      message: 'Core does not yet support live provider model discovery.',
-      provider_instance_id: normalizedProviderId,
-      capabilities: {
-        model_discovery_refresh: false,
-        model_catalog_mode: 'configured_only'
-      }
-    }
-  };
-}
-
 export interface ModelCenterAggregateInput {
   templates: unknown;
   providers: unknown;
@@ -310,6 +285,7 @@ interface CoreProvider {
   connection_kind: string;
   base_url: string | null;
   model: string | null;
+  models: string[] | null;
   has_api_key: boolean;
   binary_path: string | null;
   home_path: string | null;
@@ -639,6 +615,7 @@ function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenter
       credential_kind: credentialKind,
       base_url: provider.base_url,
       model: provider.model,
+      models: provider.models ?? [],
       has_api_key: provider.has_api_key,
       server_url: provider.server_url,
       capabilities: provider.capabilities,
@@ -676,8 +653,8 @@ function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenter
       capabilities: {
         provider_crud: true,
         model_catalog_mode: 'configured_only',
-        model_discovery_refresh: false,
-        live_model_discovery: false,
+        model_discovery_refresh: true,
+        live_model_discovery: true,
         agent_runtime_binding_write: false,
         acp_adapter_read: acpAvailable,
         acp_probe: acpAvailable
@@ -689,7 +666,7 @@ function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenter
 
 function buildConfiguredModels(providers: CoreProvider[], routes: CoreRoute[]): ConfiguredModelResource[] {
   interface MutableModel extends ConfiguredModelResource {
-    configuration_sources: Array<'provider_default' | 'route_override'>;
+    configuration_sources: Array<'provider_default' | 'provider_models' | 'route_override'>;
   }
 
   const providersById = new Map(providers.map((provider) => [provider.id.toLowerCase(), provider]));
@@ -698,7 +675,7 @@ function buildConfiguredModels(providers: CoreProvider[], routes: CoreRoute[]): 
   const add = (
     providerId: string,
     modelId: string,
-    source: 'provider_default' | 'route_override',
+    source: 'provider_default' | 'provider_models' | 'route_override',
     routePurpose?: string
   ) => {
     const key = `${providerId.toLowerCase()}\u0000${modelId}`;
@@ -729,6 +706,9 @@ function buildConfiguredModels(providers: CoreProvider[], routes: CoreRoute[]): 
   for (const provider of providers) {
     if (classifyProvider(provider) !== 'model') continue;
     if (provider.model) add(provider.id, provider.model, 'provider_default');
+    for (const modelId of provider.models ?? []) {
+      if (modelId && modelId !== provider.model) add(provider.id, modelId, 'provider_models');
+    }
   }
 
   for (const route of routes) {
@@ -928,6 +908,7 @@ function toProvider(value: Record<string, unknown>): CoreProvider | null {
     connection_kind: requiredString(value.connection_kind) ?? 'unknown',
     base_url: optionalString(value.base_url),
     model: optionalString(value.model),
+    models: stringArray(value.models),
     has_api_key: value.has_api_key === true,
     binary_path: optionalString(value.binary_path),
     home_path: optionalString(value.home_path),
