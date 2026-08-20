@@ -501,7 +501,6 @@ overflow: hidden;
   margin: 0;
   color: var(--destructive);
   background: color-mix(in srgb, var(--destructive) 8%, var(--surface-raised));
-  box-shadow: inset 3px 0 color-mix(in srgb, var(--destructive) 72%, transparent);
   font-size: 13px;
 }
 
@@ -1495,7 +1494,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color) 72%, transparent);
 }
 
 .tool-discovery-card.risky {
-  box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-danger) 72%, transparent);
+  background: color-mix(in srgb, var(--accent-danger) 6%, var(--surface-raised));
 }
 
 .tool-discovery-title {
@@ -4067,3 +4066,12 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   opacity: 0.55;
   pointer-events: none;
 }
+
+
+
+
+/* Patch: enforce unified material bands for agent center (no decorative directional borders) */
+.center-workbench { background: var(--surface-section) !important; backdrop-filter: var(--material-filter-section, none) !important; }
+.center-resource-rail { background: var(--surface-chrome) !important; border: 0 !important; }
+.center-resource-stage { background: transparent !important; border: 0 !important; }
+.center-inspector { background: var(--surface-raised) !important; backdrop-filter: var(--material-filter-raised, none) !important; border: 0 !important; }

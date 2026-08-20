@@ -1277,6 +1277,22 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Delete breakpoint', tags: ['System'] } })
+    .get('/api/v1/agents/catalog', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/agents/catalog', { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents/catalog'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Agent catalog (dual-layer)', tags: ['Agents'] } })
+  .post('/api/v1/runs/:runId/agents/spawn', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/runs/${(params as {runId:string}).runId}/agents/spawn`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/runs/${(params as {runId:string}).runId}/agents/spawn`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Spawn run agent (temporary/persistent/profile)', tags: ['Agents'] } })
   .ws('/ws/terminal', {
     open(ws) {
       const route = findWsRoute('/ws/terminal');

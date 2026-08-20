@@ -513,9 +513,10 @@ public static class DmaeaEndpoints
         app.MapPost("/api/v1/runs/{runId}/agents/spawn", async (string runId, HttpRequest request, IAgentInstanceService instances, ILifecycleManager lifecycle, IAgentRuntimeConfiguration configuration, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
-            var run = await lifecycle.FindAsync(runGuid, ct).ConfigureAwait(false);
-            if (run is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Run was not found." });
-            if (run.Status is "completed" or "failed" or "cancelled") return Results.Conflict(new { code = "RUN_TERMINAL", message = "Run is already terminal." });
+            RunState run;
+            try { run = await lifecycle.GetRunStateAsync(runGuid.ToString(), ct).ConfigureAwait(false); }
+            catch (KeyNotFoundException) { return Results.NotFound(new { code = "NOT_FOUND", message = "Run was not found." }); }
+            if (run.Status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled) return Results.Conflict(new { code = "RUN_TERMINAL", message = "Run is already terminal." });
             JsonElement body;
             try { body = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct); } catch { return Results.BadRequest(new { code = "INVALID_PAYLOAD", message = "Body must be valid JSON." }); }
             if (!body.TryGetProperty("parent_instance_id", out var pid) || !Guid.TryParse(pid.GetString(), out var parentId)) return Results.BadRequest(new { code = "INVALID_PARENT", message = "parent_instance_id is required." });

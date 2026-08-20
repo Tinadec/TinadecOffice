@@ -1028,6 +1028,10 @@ function extractErrorMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
+export type AgentCatalogItem = { id: string; layer: string; role: string; lifecycle: string; prompt_profile: string; capabilities: string[]; allowed_tools: string[]; context_access: string; direct_user_output: boolean; triggers: string[]; accepts: string[]; emits: string[]; decisions: string[]; memory_write_policy: string };
+export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${base()}/api/v1/agents/catalog`, { headers: headers() }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${base()}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: headers(), body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
 export const api = {
   gatewayUrl,
   health: () => request<Record<string, unknown>>('/api/v1/health'),
