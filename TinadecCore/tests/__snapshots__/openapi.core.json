@@ -506,6 +506,18 @@
         ]
       }
     },
+    "/api/v1/agents/catalog": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/agents/{id}": {
       "put": {
         "parameters": [
@@ -1692,6 +1704,28 @@
     },
     "/api/v1/runs/{runId}/agent-lineage": {
       "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agents/spawn": {
+      "post": {
         "parameters": [
           {
             "in": "path",

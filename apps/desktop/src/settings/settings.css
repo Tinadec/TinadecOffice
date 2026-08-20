@@ -2873,8 +2873,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 }
 
 .center-message > span { flex: 1; }
-.center-message.error { box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-danger) 72%, transparent); }
-.center-message.warning { box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-warning) 72%, transparent); }
+.center-message.error { border: 1px solid color-mix(in srgb, var(--accent-danger) 22%, var(--border-default)); background: color-mix(in srgb, var(--accent-danger) 7%, var(--surface-input)); }
+.center-message.warning { border: 1px solid color-mix(in srgb, var(--accent-warning) 20%, var(--border-default)); background: color-mix(in srgb, var(--accent-warning) 7%, var(--surface-input)); }
 .center-message-content { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
 .center-message-content ul { margin: 0; padding-left: 18px; color: var(--text-muted); font-size: 11px; }
 .center-message-content li { word-break: keep-all; }
@@ -3038,7 +3038,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .runtime-source-current { background: var(--surface-raised); }
 .runtime-binding-warning { background: color-mix(in srgb, var(--accent-warning) 7%, var(--surface-raised)); box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-warning) 68%, transparent); }
-.runtime-binding-readonly { background: color-mix(in srgb, var(--accent-primary) 6%, var(--surface-raised)); box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-primary) 58%, transparent); }
+.runtime-binding-readonly { background: color-mix(in srgb, var(--accent-primary) 6%, var(--surface-raised)); border: 1px solid color-mix(in srgb, var(--accent-primary) 14%, var(--border-default)); }
 .runtime-binding-warning > div,
 .runtime-binding-readonly > div { display: flex; flex-direction: column; gap: 3px; }
 .runtime-binding-warning span,
@@ -3680,7 +3680,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   background: var(--surface-section);
 }
 
-.settings-page .agent-card,
+.settings-page .agent-card { border: 1px solid var(--border-default); }
 .settings-page .agent-topology-node,
 .settings-page .model-readiness-metrics > div,
 .settings-page .provider-readiness-detail,
@@ -3707,7 +3707,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .settings-page .agent-mode-card.active,
 .settings-page .agent-topology-node.selected {
   background: var(--surface-selected);
-  box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-primary) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, var(--border-default));
 }
 
 .settings-page .agent-card-more {
@@ -4070,8 +4070,9 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 
 
-/* Patch: enforce unified material bands for agent center (no decorative directional borders) */
-.center-workbench { background: var(--surface-section) !important; backdrop-filter: var(--material-filter-section, none) !important; }
+/* Unified material bands for agent/model centers — global surface/filter tokens, no per-row backdrop */
+.center-workbench { background: var(--surface-section) !important; backdrop-filter: var(--material-filter-section, none) !important; -webkit-backdrop-filter: var(--material-filter-section, none) !important; }
 .center-resource-rail { background: var(--surface-chrome) !important; border: 0 !important; }
 .center-resource-stage { background: transparent !important; border: 0 !important; }
-.center-inspector { background: var(--surface-raised) !important; backdrop-filter: var(--material-filter-raised, none) !important; border: 0 !important; }
+.center-inspector { background: var(--surface-raised) !important; backdrop-filter: var(--material-filter-raised, none) !important; -webkit-backdrop-filter: var(--material-filter-raised, none) !important; border: 0 !important; }
+.center-workbench, .center-resource-rail, .center-resource-stage, .center-inspector { /* material roots only; rows/cards stay filter-free */ }

@@ -771,8 +771,13 @@ const selectedAgent = computed(() =>
 const configuringAgent = computed(() =>
   agents.value.find((agent) => agent.id === configuringAgentId.value) ?? null
 )
-const planningAgents = computed(() => agents.value.filter((agent) => agent.layer === 'planning'))
-const executionAgents = computed(() => agents.value.filter((agent) => agent.layer === 'execution'))
+function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
+  const v = String(layer ?? '').trim().toLowerCase();
+  if (v === 'planning') return 'operation';
+  return v === 'execution' ? 'execution' : (v as 'operation' | 'execution');
+}
+const planningAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
+const executionAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
 const configuredAgentMode = computed(() => agentModes.value.find((mode) => mode.id === configuringAgent.value?.mode) ?? null)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, availableTools.value))
 // ponytail: agent tool panel filters — reuse manifestTools, no new deps
@@ -3642,7 +3647,7 @@ import '../settings/settings.css'
               <Check v-if="accentColor === color.key" :size="14" class="accent-color-check" />
             </button>
           </div>
-          
+
           <!-- Global Material Effect Section -->
           <h3>{{ t('settings.globalMaterial') }}</h3>
           <p class="accent-color-hint">{{ t('settings.globalMaterialHint') }}</p>
@@ -3658,10 +3663,10 @@ import '../settings/settings.css'
               {{ t('settings.resetPanelStyles') }}
             </UiButton>
           </div>
-          
+
           <!-- Background Settings Section -->
           <h2>{{ t('settings.background') }}</h2>
-          
+
           <!-- Background Type Selection -->
           <h3>{{ t('settings.backgroundType') }}</h3>
           <div class="background-type-options">
@@ -3690,7 +3695,7 @@ import '../settings/settings.css'
               {{ t('settings.bgHtml') }}
             </button>
           </div>
-          
+
           <!-- File/URL Input (for image and video) -->
           <div v-if="backgroundSettings.type !== 'none'" class="background-source-section">
             <h3>{{ t('settings.backgroundSource') }}</h3>
@@ -3718,11 +3723,11 @@ import '../settings/settings.css'
               {{ t('settings.bgHtmlHint') }}
             </p>
           </div>
-          
+
           <!-- Background Parameters -->
           <div v-if="backgroundSettings.type !== 'none'" class="background-params-section">
             <h3>{{ t('settings.backgroundParams') }}</h3>
-            
+
             <!-- Opacity -->
             <div class="param-row">
               <label class="param-label">{{ t('settings.opacity') }}</label>
@@ -3736,7 +3741,7 @@ import '../settings/settings.css'
               />
               <span class="param-value">{{ backgroundSettings.opacity }}%</span>
             </div>
-            
+
             <!-- Blur -->
             <div class="param-row">
               <label class="param-label">{{ t('settings.blur') }}</label>
@@ -3750,7 +3755,7 @@ import '../settings/settings.css'
               />
               <span class="param-value">{{ backgroundSettings.blur }}px</span>
             </div>
-            
+
             <!-- Size -->
             <div v-if="backgroundSettings.type === 'image'" class="param-row">
               <label class="param-label">{{ t('settings.bgSize') }}</label>
@@ -3764,7 +3769,7 @@ import '../settings/settings.css'
                 <option value="auto">{{ t('settings.bgSizeAuto') }}</option>
               </select>
             </div>
-            
+
             <!-- Position (for image) -->
             <div v-if="backgroundSettings.type === 'image'" class="param-row">
               <label class="param-label">{{ t('settings.bgPosition') }}</label>
@@ -3780,7 +3785,7 @@ import '../settings/settings.css'
                 <option value="right">{{ t('settings.bgPositionRight') }}</option>
               </select>
             </div>
-            
+
             <!-- Repeat (for image) -->
             <div v-if="backgroundSettings.type === 'image'" class="param-row">
               <label class="param-label">{{ t('settings.bgRepeat') }}</label>
@@ -3796,20 +3801,20 @@ import '../settings/settings.css'
               </select>
             </div>
           </div>
-          
+
           <!-- Background Preview -->
           <div v-if="backgroundSettings.type !== 'none'" class="background-preview-section">
             <h3>{{ t('settings.preview') }}</h3>
             <BackgroundPreview :settings="backgroundSettings" :height="150" />
           </div>
-          
+
           <!-- Reset Button -->
           <div class="background-actions">
             <UiButton variant="outline" size="sm" @click="resetBackground">
               {{ t('settings.resetBackground') }}
             </UiButton>
           </div>
-          
+
           <!-- Performance Warning -->
           <div v-if="backgroundSettings.type !== 'none'" class="performance-warning">
             <Info :size="14" />
