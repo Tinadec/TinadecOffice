@@ -3974,3 +3974,96 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   flex-wrap: wrap;
   gap: 6px;
 }
+/* ---- Agent config: full tool panel (Phase2) ---- */
+.agent-tool-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 130px 130px;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+.agent-tool-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.agent-tool-search > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.agent-tool-search input {
+  padding-left: 30px;
+}
+.settings-select.compact {
+  height: 34px;
+  font-size: 12px;
+}
+.agent-tool-group {
+  margin-top: 14px;
+}
+.agent-tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.agent-tool-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+}
+.agent-tool-risk.low { color: var(--text-muted); }
+.agent-tool-risk.medium { color: var(--accent-warning, #d29922); }
+.agent-tool-risk.high { color: var(--accent-danger, #f85149); }
+.agent-tool-approval {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-warning) 14%, transparent);
+  color: var(--accent-warning);
+  font-size: 10px;
+  font-weight: 600;
+}
+.agent-tool-id {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.agent-tool-bulk {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.agent-builtin-hint,
+.agent-builtin-save-hint,
+.agent-revision-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.agent-builtin-hint {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-warning) 10%, var(--surface-section));
+  color: var(--text-secondary);
+}
+.agent-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.agent-mode-card.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}

@@ -47,6 +47,24 @@ public sealed record RuntimeAgentDefinition(
     /// optional v1-compatible property; omitted TOML means no autonomous tools.
     /// </summary>
     public IReadOnlyList<string> AllowedTools { get; init; } = [];
+
+    /// <summary>Optional prompt profile for deterministic prompt assembly.</summary>
+    public string PromptProfile { get; init; } = string.Empty;
+
+    /// <summary>Event triggers that activate the agent (logical channels).</summary>
+    public IReadOnlyList<string> Triggers { get; init; } = [];
+
+    /// <summary>Accepted logical messages (validated against the dual-layer bus).</summary>
+    public IReadOnlyList<string> Accepts { get; init; } = [];
+
+    /// <summary>Emitted logical messages.</summary>
+    public IReadOnlyList<string> Emits { get; init; } = [];
+
+    /// <summary>Supervisor decisions when applicable (pass/revise/escalate).</summary>
+    public IReadOnlyList<string> Decisions { get; init; } = [];
+
+    /// <summary>Determines memory write policy for experience curators.</summary>
+    public string MemoryWritePolicy { get; init; } = string.Empty;
 }
 
 public sealed record AgentRuntimeConfigurationSnapshot(
@@ -214,9 +232,16 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
         {
             if (value is not TomlTable agent) continue;
             var layer = NormalizeLayer(Text(agent, "layer"));
-            agents[id] = new RuntimeAgentDefinition(id, layer, Text(agent, "role"), Text(agent, "lifecycle"), Strings(agent, "capabilities"), Boolean(agent, "direct_user_output"), Text(agent, "context_access"))
+            var capabilities = NormalizeCapabilities(Strings(agent, "capabilities"));
+            agents[id] = new RuntimeAgentDefinition(id, layer, Text(agent, "role"), Text(agent, "lifecycle"), capabilities, Boolean(agent, "direct_user_output"), Text(agent, "context_access"))
             {
-                AllowedTools = Strings(agent, "allowed_tools")
+                AllowedTools = Strings(agent, "allowed_tools"),
+                PromptProfile = Text(agent, "prompt_profile"),
+                Triggers = Strings(agent, "triggers"),
+                Accepts = Strings(agent, "accepts"),
+                Emits = Strings(agent, "emits"),
+                Decisions = Strings(agent, "decisions"),
+                MemoryWritePolicy = Text(agent, "memory_write_policy")
             };
         }
 
@@ -254,6 +279,29 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
         if (!agents.TryGetValue("meeting", out var meeting) || meeting.Layer != "operation" || !meeting.DirectUserOutput) throw new InvalidDataException("The operation-layer meeting agent must be the direct user entry.");
         if (agents.Values.Any(a => a.Id != "meeting" && a.DirectUserOutput)) throw new InvalidDataException("Only the meeting agent may set direct_user_output=true.");
         if (agents.Values.Any(a => a.Layer is not ("operation" or "execution"))) throw new InvalidDataException("Agent layers must be operation or execution.");
+        // Dual-layer invariant: execution specialists are execution workers, never a third layer.
+        // Creation granularity is explicit: temporary/persistent/profile. Legacy agent.spawn is
+        // normalized to agent.create_temporary for compatibility.
+        var allowedCreation = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "agent.create_temporary", "agent.create_persistent", "agent.create_profile" };
+        foreach (var agent in agents.Values)
+        {
+            if (agent.Capabilities.Any(c => string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) || string.Equals(c, "agent.create_profile", StringComparison.OrdinalIgnoreCase)) && agent.Layer != "operation")
+            {
+                // task_planner historically carries execution-layer temporary creation; profile creation must remain operation-only.
+                if (agent.Capabilities.Any(c => string.Equals(c, "agent.create_profile", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("Only operation-layer agents may carry agent.create_profile.");
+            }
+            if (agent.Capabilities.Any(c => !string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) && !allowedCreation.Contains(c) && c.StartsWith("agent.create", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException($"Agent '{agent.Id}' has an unknown agent creation capability.");
+        }
+        // Profiles must reference known agents and respect layer boundaries.
+        foreach (var profile in profiles.Values)
+        {
+            foreach (var id in profile.OperationAgents)
+                if (!agents.ContainsKey(id)) throw new InvalidDataException($"Profile '{profile.Id}' references unknown operation agent '{id}'.");
+            foreach (var id in profile.ExecutionAgents)
+                if (!agents.ContainsKey(id)) throw new InvalidDataException($"Profile '{profile.Id}' references unknown execution agent '{id}'.");
+        }
     }
 
     private static TomlTable Table(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : throw new InvalidDataException($"Missing TOML table '{key}'.");
@@ -261,4 +309,14 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
     private static int Integer(TomlTable table, string key, int fallback) => table.TryGetValue(key, out var value) ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
     private static bool Boolean(TomlTable table, string key) => table.TryGetValue(key, out var value) && Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);
     private static string[] Strings(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlArray array ? array.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToArray() : [];
+    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string> caps)
+    {
+        var list = new List<string>(caps.Count);
+        foreach (var c in caps)
+        {
+            if (string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase)) list.Add("agent.create_temporary");
+            else list.Add(c);
+        }
+        return list.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 }

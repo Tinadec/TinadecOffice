@@ -115,9 +115,13 @@ direct_answer_allowed = false
 layer = "operation"
 role = "session_coordinator"
 lifecycle = "session"
-capabilities = ["user.respond", "task.dispatch", "agent.spawn"]
+capabilities = ["user.respond", "task.dispatch", "agent.create_temporary", "agent.create_persistent", "agent.create_profile"]
 direct_user_output = true
 context_access = "manage"
+prompt_profile = "space.full_duplex.meeting"
+accepts = ["user.message", "user.control", "task.accepted", "task.progress", "task.completed", "task.failed", "supervision.completed"]
+emits = ["user.response", "task.dispatched", "task.replan_requested", "supervision.requested"]
+triggers = ["user.message", "task.event", "supervision.completed"]
 
 [agents.context_compressor]
 layer = "operation"
@@ -126,6 +130,9 @@ lifecycle = "session_background"
 capabilities = ["context.read", "context.patch"]
 direct_user_output = false
 context_access = "patch"
+prompt_profile = "space.full_duplex.context_compressor"
+triggers = ["context_threshold", "task_milestone", "task_closed"]
+emits = ["context.compacted"]
 
 [agents.skill_recommender]
 layer = "operation"
@@ -134,6 +141,9 @@ lifecycle = "on_demand"
 capabilities = ["tool.search", "agent.propose"]
 direct_user_output = false
 context_access = "read"
+prompt_profile = "space.full_duplex.skill_recommender"
+triggers = ["task_created", "task_replanning", "capability_missing"]
+emits = ["capability.recommended"]
 
 [agents.supervisor]
 layer = "operation"
@@ -142,22 +152,69 @@ lifecycle = "task"
 capabilities = ["supervision.review"]
 direct_user_output = false
 context_access = "read"
+prompt_profile = "space.full_duplex.supervisor"
+triggers = ["risk_detected", "artifact_ready", "before_final_output"]
+emits = ["supervision.completed"]
 
 [agents.evolution]
 layer = "operation"
 role = "experience_curator"
 lifecycle = "post_task_background"
-capabilities = ["memory.candidate", "agent.candidate"]
+capabilities = ["memory.candidate", "agent.candidate", "agent.create_persistent"]
 direct_user_output = false
 context_access = "read"
+prompt_profile = "space.full_duplex.evolution"
+triggers = ["task_closed", "user_feedback_received"]
+emits = ["memory.candidate_created", "agent.candidate_created"]
 
 [agents.task_planner]
 layer = "execution"
 role = "execution_coordinator"
 lifecycle = "task"
-capabilities = ["task.plan", "task.replan", "agent.spawn"]
+capabilities = ["task.plan", "task.replan", "agent.create_temporary"]
 # The planner may delegate any tool declared by the trusted v2 manifest. Each
 # generated worker is still narrowed to its task's required tool ids.
 allowed_tools = ["*"]
 direct_user_output = false
 context_access = "read_patch"
+prompt_profile = "space.full_duplex.task_planner"
+accepts = ["task.dispatched", "task.replan_requested", "task.pause_requested", "task.resume_requested", "task.cancel_requested"]
+emits = ["task.accepted", "task.progress", "task.partial_result", "task.completed", "task.failed", "worker.dispatched"]
+
+# Built-in execution specialists. They remain execution-layer workers; the task planner
+# selects and orchestrates them per subtask. Only the coordinator may spawn.
+[agents.search]
+layer = "execution"
+role = "search_specialist"
+lifecycle = "on_demand"
+capabilities = ["tool.search", "tool.browser"]
+direct_user_output = false
+context_access = "read"
+allowed_tools = ["browser.search", "browser.fetch", "mcp_search", "mcp_invoke"]
+prompt_profile = "space.full_duplex.search"
+accepts = ["worker.dispatched"]
+emits = ["worker.progress", "worker.completed", "worker.failed"]
+
+[agents.programming]
+layer = "execution"
+role = "programming_specialist"
+lifecycle = "on_demand"
+capabilities = ["tool.code", "tool.file"]
+direct_user_output = false
+context_access = "read_patch"
+allowed_tools = ["write_file", "read_file", "shell.execute", "mcp_invoke"]
+prompt_profile = "space.full_duplex.programming"
+accepts = ["worker.dispatched"]
+emits = ["worker.progress", "worker.completed", "worker.failed"]
+
+[agents.testing]
+layer = "execution"
+role = "testing_specialist"
+lifecycle = "on_demand"
+capabilities = ["tool.test", "tool.code"]
+direct_user_output = false
+context_access = "read"
+allowed_tools = ["shell.execute", "read_file", "mcp_invoke"]
+prompt_profile = "space.full_duplex.testing"
+accepts = ["worker.dispatched"]
+emits = ["worker.progress", "worker.completed", "worker.failed"]

@@ -602,6 +602,7 @@ export interface AgentProfileDto {
   system_prompt?: string | null;
   enabled: boolean;
   is_built_in: boolean;
+  revision?: number | null;
   updated_at: string | null;
 }
 
@@ -1232,21 +1233,32 @@ export const api = {
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
-  saveAgent: (agentId: string, agent: {
-    name: string;
-    layer: string;
-    agent_type: string;
-    mode: string;
-    description: string;
-    model_route_purpose: string;
-    allowed_tools?: string[];
-    capabilities?: string[];
-    system_prompt?: string | null;
-    enabled: boolean;
-  }) => request<AgentProfileDto>(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(agent)
-  }),
+  saveAgent: (
+    agentId: string,
+    agent: {
+      name: string;
+      layer: string;
+      agent_type: string;
+      mode: string;
+      description: string;
+      model_route_purpose: string;
+      allowed_tools?: string[];
+      capabilities?: string[];
+      system_prompt?: string | null;
+      enabled: boolean;
+    },
+    opts?: { revision?: number | null; ifMatch?: string | null }
+  ) => {
+    const headers: Record<string, string> = {};
+    const rev = opts?.revision ?? opts?.ifMatch;
+    if (rev !== undefined && rev !== null && String(rev).length > 0) headers['if-match'] = String(rev);
+    return request<AgentProfileDto>(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(agent)
+    });
+  },
+  // ponytail: legacy mode endpoint is 501 — route through saveAgent instead
   updateAgentMode: (agentId: string, mode: string) => request<AgentProfileDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/mode`, {
     method: 'PUT',
     body: JSON.stringify({ mode })

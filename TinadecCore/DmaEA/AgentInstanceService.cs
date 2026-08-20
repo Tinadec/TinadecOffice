@@ -35,6 +35,13 @@ public sealed record RuntimeAgentSeed(
     Guid? ProfileId = null,
     Guid? TaskId = null);
 
+public enum AgentCreationIntent
+{
+    Temporary = 0,
+    PersistentCandidate = 1,
+    PersistentProfile = 2
+}
+
 public sealed record AgentSpawnRequest(
     Guid ParentInstanceId,
     string Goal,
@@ -46,7 +53,8 @@ public sealed record AgentSpawnRequest(
     int BudgetTokens,
     Guid? TaskId = null,
     string Role = "worker",
-    AgentSpawnLimits? Limits = null);
+    AgentSpawnLimits? Limits = null,
+    AgentCreationIntent Intent = AgentCreationIntent.Temporary);
 
 /// <summary>
 /// Run-frozen limits for generated agents. The durable engine supplies these values
@@ -136,8 +144,15 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
             ?? throw new KeyNotFoundException("Parent agent instance was not found.");
         if (parent.Status is not ("created" or "running")) throw new InvalidOperationException("Parent agent instance is not active.");
         var parentDefinition = await ReadDefinitionAsync(parent, cancellationToken).ConfigureAwait(false);
-        if (!parentDefinition.Capabilities.Contains("agent.spawn", StringComparer.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Parent instance is not allowed to create agents.");
+        var intent = request.Intent;
+        var requiredCapability = intent switch
+        {
+            AgentCreationIntent.PersistentProfile => "agent.create_profile",
+            AgentCreationIntent.PersistentCandidate => "agent.create_persistent",
+            _ => "agent.create_temporary"
+        };
+        if (!HasCapability(parentDefinition.Capabilities, requiredCapability))
+            throw new UnauthorizedAccessException($"Parent instance is not allowed to perform '{requiredCapability}'.");
         // Legacy callers have no frozen run configuration yet. Full-duplex callers
         // always pass the values frozen at admission.
         var limits = request.Limits ?? new AgentSpawnLimits(
@@ -146,8 +161,15 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
             _configuration.Current.Spawn.MaxParallelWorkers);
         if (parent.GenerationDepth >= limits.MaxDepth)
             throw new InvalidOperationException("Agent spawn depth limit has been reached.");
-        if (parent.Layer != "execution")
+        var isPersistent = intent is AgentCreationIntent.PersistentCandidate or AgentCreationIntent.PersistentProfile;
+        if (intent == AgentCreationIntent.PersistentProfile && parent.Layer != "operation")
+            throw new UnauthorizedAccessException("Only operation-layer agents may create persistent profiles.");
+        if (!isPersistent && parent.Layer != "execution")
             throw new UnauthorizedAccessException("Only execution coordinators may create generated worker instances.");
+        if (isPersistent && parent.Generated)
+            throw new UnauthorizedAccessException("Generated workers cannot directly create persistent agents or profiles.");
+        if (intent == AgentCreationIntent.PersistentCandidate && !HasCapability(parentDefinition.Capabilities, "agent.create_persistent") && !HasCapability(parentDefinition.Capabilities, "agent.candidate"))
+            throw new UnauthorizedAccessException("Parent instance is not allowed to create persistent candidates.");
         var generatedCount = await db.Instances.CountAsync(x => x.RunId == parent.RunId && x.Generated, cancellationToken).ConfigureAwait(false);
         if (generatedCount >= limits.MaxAgentsPerRun)
             throw new InvalidOperationException("Agent spawn budget for this run has been reached.");
@@ -160,6 +182,36 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var activeChildren = await db.Instances.CountAsync(x => x.RunId == parent.RunId && x.Generated && (x.Status == "created" || x.Status == "running"), cancellationToken).ConfigureAwait(false);
         if (activeChildren >= limits.MaxParallelWorkers)
             throw new InvalidOperationException("Concurrent generated-worker limit has been reached.");
+
+        if (intent is AgentCreationIntent.PersistentCandidate or AgentCreationIntent.PersistentProfile)
+        {
+            var candidate = await CreateCandidateAsync(new AgentCandidateProposal(
+                parent.RunId,
+                parent.Id,
+                string.IsNullOrWhiteSpace(request.Role) ? "generated.worker" : request.Role.Trim(),
+                intent == AgentCreationIntent.PersistentProfile ? parent.Layer : "execution",
+                string.IsNullOrWhiteSpace(request.Role) ? "worker" : request.Role.Trim(),
+                0.5,
+                new { goal = request.Goal.Trim(), successCriteria = Normalize(request.SuccessCriteria), contextSelectors = Normalize(request.ContextSelectors), allowedTools = tools, allowedResources = resources, intent = intent.ToString().ToLowerInvariant() }), cancellationToken).ConfigureAwait(false);
+            if (intent == AgentCreationIntent.PersistentProfile)
+            {
+                candidate = await DecideCandidateAsync(candidate.Id, "promoted", "Persistent profile requested by authorized parent.", cancellationToken).ConfigureAwait(false);
+            }
+            var tempDefinition = new AgentInstanceDefinition(
+                candidate.Name, candidate.Layer, candidate.AgentType, parentDefinition.ModelRoutePurpose, [], tools, resources, Math.Clamp(request.BudgetTokens, 0, parentDefinition.BudgetTokens),
+                DirectUserOutput: false, FormalMemoryWrite: false, request.Goal.Trim(), Normalize(request.SuccessCriteria), Normalize(request.ContextSelectors));
+            var tempStored = await PutDefinitionAsync(scope.TenantId, scope.WorkspaceId, tempDefinition, cancellationToken).ConfigureAwait(false);
+            var tempRow = new AgentInstanceRecord
+            {
+                Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, SessionId = parent.SessionId, RunId = parent.RunId,
+                TaskNodeId = request.TaskId ?? parent.TaskNodeId, ParentInstanceId = parent.Id, CreatedByProfileId = parent.ProfileId,
+                Layer = candidate.Layer, Role = tempDefinition.Role, GenerationDepth = parent.GenerationDepth + 1, Generated = false, Status = "created",
+                DefinitionReference = tempStored.Value, DefinitionHash = tempStored.Sha256, DefinitionLength = tempStored.Length, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.Instances.Add(tempRow);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return ToRuntime(tempRow, tempDefinition);
+        }
 
         var definition = new AgentInstanceDefinition(
             "generated.worker", "execution", string.IsNullOrWhiteSpace(request.Role) ? "worker" : request.Role.Trim(),
@@ -390,6 +442,8 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
     private static RuntimeAgentInstance ToRuntime(AgentInstanceRecord row, AgentInstanceDefinition definition) =>
         new(row.Id, row.RunId, row.ParentInstanceId, row.TaskNodeId, row.Layer, row.Role, row.GenerationDepth, row.Generated, row.Status,
             definition.Capabilities, definition.AllowedTools, definition.AllowedResources, definition.BudgetTokens, row.CreatedAt, row.UpdatedAt);
+    private static bool HasCapability(IEnumerable<string> caps, string required) =>
+        caps.Any(c => string.Equals(c, required, StringComparison.OrdinalIgnoreCase) || string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) && required == "agent.create_temporary");
     private static string[] Normalize(IEnumerable<string> values) => values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     private static bool IsSubset(IEnumerable<string> child, IEnumerable<string> parent)

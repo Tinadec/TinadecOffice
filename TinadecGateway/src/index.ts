@@ -83,10 +83,13 @@ function isOriginAllowed(origin: string): boolean {
 
 function forwardHeaders(request: Request): Record<string, string> {
   const requestId = ensureRequestId(request.headers.get('x-request-id') ?? request.headers.get('X-Request-Id'));
-  return {
+  const headers: Record<string, string> = {
     'x-request-id': requestId,
     'x-tinadec-principal': PRINCIPAL_VALUE,
   };
+  const ifMatch = request.headers.get('if-match') ?? request.headers.get('If-Match');
+  if (ifMatch) headers['if-match'] = ifMatch;
+  return headers;
 }
 
 function setProxyResponseHeaders(set: { headers: Record<string, string | number> }, requestId: string) {

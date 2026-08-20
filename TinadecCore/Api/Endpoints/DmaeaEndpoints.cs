@@ -479,8 +479,66 @@ public static class DmaeaEndpoints
                 max_parallel_executors = snapshot.Spawn.MaxParallelWorkers,
                 worktree_isolation = false,
                 approval_required = true,
-                budget_policy = "bounded"
+                budget_policy = "bounded",
+                runtime_profile_id = mode.Bindings.TryGetValue(id, out var profileId) ? profileId : null,
+                operation_agents = mode.Bindings.TryGetValue(id, out var pid) && snapshot.Profiles.TryGetValue(pid, out var profile) ? profile.OperationAgents : (IReadOnlyList<string>)Array.Empty<string>(),
+                execution_agents = mode.Bindings.TryGetValue(id, out var pid2) && snapshot.Profiles.TryGetValue(pid2, out var profile2) ? profile2.ExecutionAgents : (IReadOnlyList<string>)Array.Empty<string>(),
+                activation_policy = mode.Bindings.TryGetValue(id, out var pid3) && snapshot.Profiles.TryGetValue(pid3, out var profile3) ? profile3.ActivationPolicy : null
             }));
+        });
+
+        // Read-only catalog of built-in runtime agents (dual-layer composition). Remains thin: policy stays in Core.
+        app.MapGet("/api/v1/agents/catalog", (IAgentRuntimeConfiguration configuration) =>
+        {
+            var snapshot = configuration.Current;
+            return Results.Ok(snapshot.Agents.Values.Select(a => new
+            {
+                id = a.Id,
+                layer = a.Layer,
+                role = a.Role,
+                lifecycle = a.Lifecycle,
+                prompt_profile = a.PromptProfile,
+                capabilities = a.Capabilities,
+                allowed_tools = a.AllowedTools,
+                context_access = a.ContextAccess,
+                direct_user_output = a.DirectUserOutput,
+                triggers = a.Triggers,
+                accepts = a.Accepts,
+                emits = a.Emits,
+                decisions = a.Decisions,
+                memory_write_policy = a.MemoryWritePolicy
+            }));
+        });
+
+        app.MapPost("/api/v1/runs/{runId}/agents/spawn", async (string runId, HttpRequest request, IAgentInstanceService instances, ILifecycleManager lifecycle, IAgentRuntimeConfiguration configuration, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
+            var run = await lifecycle.FindAsync(runGuid, ct).ConfigureAwait(false);
+            if (run is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Run was not found." });
+            if (run.Status is "completed" or "failed" or "cancelled") return Results.Conflict(new { code = "RUN_TERMINAL", message = "Run is already terminal." });
+            JsonElement body;
+            try { body = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct); } catch { return Results.BadRequest(new { code = "INVALID_PAYLOAD", message = "Body must be valid JSON." }); }
+            if (!body.TryGetProperty("parent_instance_id", out var pid) || !Guid.TryParse(pid.GetString(), out var parentId)) return Results.BadRequest(new { code = "INVALID_PARENT", message = "parent_instance_id is required." });
+            if (!body.TryGetProperty("goal", out var goal) || string.IsNullOrWhiteSpace(goal.GetString())) return Results.BadRequest(new { code = "INVALID_GOAL", message = "goal is required." });
+            var intentRaw = body.TryGetProperty("intent", out var intentEl) ? intentEl.GetString()?.Trim().ToLowerInvariant() : "temporary";
+            var intent = intentRaw switch { "persistent_candidate" or "persistent" => AgentCreationIntent.PersistentCandidate, "persistent_profile" or "profile" => AgentCreationIntent.PersistentProfile, _ => AgentCreationIntent.Temporary };
+            var role = body.TryGetProperty("role", out var roleEl) ? roleEl.GetString() ?? "worker" : "worker";
+            var tools = body.TryGetProperty("allowed_tools", out var toolsEl) && toolsEl.ValueKind == JsonValueKind.Array ? toolsEl.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : Array.Empty<string>();
+            var resources = body.TryGetProperty("allowed_resources", out var resEl) && resEl.ValueKind == JsonValueKind.Array ? resEl.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : Array.Empty<string>();
+            var success = body.TryGetProperty("success_criteria", out var scEl) && scEl.ValueKind == JsonValueKind.Array ? scEl.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : Array.Empty<string>();
+            var selectors = body.TryGetProperty("context_selectors", out var csEl) && csEl.ValueKind == JsonValueKind.Array ? csEl.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : Array.Empty<string>();
+            var modelPurpose = body.TryGetProperty("model_route_purpose", out var mpEl) ? mpEl.GetString() : null;
+            var budget = body.TryGetProperty("budget_tokens", out var bEl) && bEl.TryGetInt32(out var bv) ? bv : 0;
+            try
+            {
+                var limits = new AgentSpawnLimits(configuration.Current.Spawn.MaxDepth, configuration.Current.Spawn.MaxAgentsPerRun, configuration.Current.Spawn.MaxParallelWorkers);
+                var created = await instances.SpawnAsync(new AgentSpawnRequest(parentId, goal.GetString()!, success, selectors, modelPurpose, tools, resources, budget, null, role, limits, intent), ct);
+                return Results.Created($"/api/v1/runs/{runId}/agent-lineage/{created.Id}", new { id = created.Id, run_id = created.RunId, intent = intentRaw, layer = created.Layer, role = created.Role, generated = created.Generated, status = created.Status });
+            }
+            catch (UnauthorizedAccessException ex) { return Results.Json(new { code = "FORBIDDEN_SPAWN", message = ex.Message }, statusCode: 403); }
+            catch (InvalidOperationException ex) { return Results.Json(new { code = "SPAWN_LIMIT", message = ex.Message }, statusCode: 409); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { code = "NOT_FOUND", message = ex.Message }); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SPAWN", message = ex.Message }); }
         });
 
         return app;

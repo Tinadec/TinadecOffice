@@ -441,7 +441,12 @@ const agentEditTools = ref<string[]>([])
 const agentEditCapabilities = ref<string[]>([])
 const agentEditSystemPrompt = ref('')
 const agentEditDescription = ref('')
+const agentEditRevision = ref<number | null>(null)
 const agentNewCapability = ref('')
+const agentToolQuery = ref('')
+const agentToolSourceFilter = ref('all')
+const agentToolRiskFilter = ref('all')
+const agentCloneBusy = ref(false)
 const selectedProviderDetailId = ref('')
 const modelProviderFilter = ref<ModelCenterFilter>('all')
 const modelProviderQuery = ref('')
@@ -770,6 +775,32 @@ const planningAgents = computed(() => agents.value.filter((agent) => agent.layer
 const executionAgents = computed(() => agents.value.filter((agent) => agent.layer === 'execution'))
 const configuredAgentMode = computed(() => agentModes.value.find((mode) => mode.id === configuringAgent.value?.mode) ?? null)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, availableTools.value))
+// ponytail: agent tool panel filters — reuse manifestTools, no new deps
+const filteredAgentTools = computed(() => {
+  const q = agentToolQuery.value.trim().toLowerCase()
+  return manifestToolList.value.filter((tool) => {
+    if (agentToolSourceFilter.value !== 'all' && tool.source !== agentToolSourceFilter.value) return false
+    if (agentToolRiskFilter.value !== 'all' && tool.risk !== agentToolRiskFilter.value) return false
+    if (!q) return true
+    return [tool.id, tool.display_name, tool.domain, tool.source, tool.risk].some((v) => v?.toLowerCase().includes(q))
+  })
+})
+const groupedAgentTools = computed(() => {
+  const groups = new Map<string, typeof manifestToolList.value>()
+  for (const tool of filteredAgentTools.value) {
+    const key = tool.source || 'unknown'
+    const list = groups.get(key) ?? []
+    list.push(tool)
+    groups.set(key, list)
+  }
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+})
+const agentToolSelectionSummary = computed(() => {
+  const total = manifestToolList.value.length
+  const selected = agentEditTools.value.length
+  const approval = manifestToolList.value.filter((t) => t.requires_approval && agentEditTools.value.includes(t.id)).length
+  return { total, selected, approval }
+})
 const manifestProviders = computed(() => sortedToolProviders(harnessManifest.value))
 const manifestAgentLayers = computed(() => sortedAgentLayers(harnessManifest.value))
 const manifestRiskPolicies = computed(() => sortedRiskPolicies(harnessManifest.value))
@@ -1397,20 +1428,46 @@ async function generatePromptPreview() {
   }
 }
 
+function agentSaveErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error)
+  if (msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')) return t('settings.agentConflict')
+  if (msg.includes('409') || msg.toLowerCase().includes('built-in')) return t('settings.agentBuiltInConflict')
+  return msg
+}
+
 async function updateAgentMode(agent: AgentProfileDto, mode: string) {
+  if (agent.is_built_in) {
+    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
+    return
+  }
   busy.value = true
   try {
-    await api.updateAgentMode(agent.id, mode)
+    await api.saveAgent(agent.id, {
+      name: agent.name,
+      layer: agent.layer,
+      agent_type: agent.agent_type,
+      mode,
+      description: agent.description,
+      model_route_purpose: agent.model_route_purpose,
+      allowed_tools: agent.allowed_tools,
+      capabilities: agent.capabilities,
+      system_prompt: agent.system_prompt,
+      enabled: agent.enabled
+    }, { revision: agent.revision ?? null })
     await loadAgentCenter()
     notify.success(agent.name)
   } catch (error) {
-    notify.error(error, { title: agent.name })
+    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
     busy.value = false
   }
 }
 
 async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
+  if (agent.is_built_in) {
+    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
+    return
+  }
   busy.value = true
   try {
     await api.saveAgent(agent.id, {
@@ -1424,19 +1481,53 @@ async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
       capabilities: agent.capabilities,
       system_prompt: agent.system_prompt,
       enabled
-    })
+    }, { revision: agent.revision ?? null })
     await loadAgentCenter()
     notify.success(agent.name)
   } catch (error) {
-    notify.error(error, { title: agent.name })
+    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
     busy.value = false
+  }
+}
+
+async function cloneAgentProfile() {
+  const agent = configuringAgent.value
+  if (!agent) return
+  agentCloneBusy.value = true
+  try {
+    const newId = crypto.randomUUID()
+    const newName = `${agent.name} (copy)`
+    await api.saveAgent(newId, {
+      name: newName,
+      layer: agent.layer,
+      agent_type: agent.agent_type,
+      mode: agent.mode,
+      description: agentEditDescription.value || agent.description,
+      model_route_purpose: agent.model_route_purpose,
+      allowed_tools: agentEditTools.value,
+      capabilities: agentEditCapabilities.value,
+      system_prompt: agentEditSystemPrompt.value || agent.system_prompt || null,
+      enabled: true
+    })
+    await loadAgentCenter()
+    const cloned = agents.value.find((a) => a.id === newId) ?? agents.value.find((a) => a.name === newName)
+    if (cloned) openAgentConfig(cloned)
+    notify.success(newName)
+  } catch (error) {
+    notify.error(error, { title: t('settings.cloneAgent') })
+  } finally {
+    agentCloneBusy.value = false
   }
 }
 
 async function saveAgentProfile() {
   const agent = configuringAgent.value
   if (!agent) return
+  if (agent.is_built_in) {
+    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
+    return
+  }
   busy.value = true
   try {
     await api.saveAgent(agent.id, {
@@ -1450,7 +1541,7 @@ async function saveAgentProfile() {
       capabilities: agentEditCapabilities.value,
       system_prompt: agentEditSystemPrompt.value || null,
       enabled: agent.enabled
-    })
+    }, { revision: agentEditRevision.value ?? agent.revision ?? null })
     await loadAgentCenter()
     // Re-sync edit state from the saved agent
     const updated = agents.value.find((a) => a.id === configuringAgentId.value)
@@ -1459,10 +1550,11 @@ async function saveAgentProfile() {
       agentEditCapabilities.value = [...updated.capabilities]
       agentEditSystemPrompt.value = updated.system_prompt ?? ''
       agentEditDescription.value = updated.description
+      agentEditRevision.value = updated.revision ?? null
     }
     notify.success(agent.name)
   } catch (error) {
-    notify.error(error, { title: agent.name })
+    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
     busy.value = false
   }
@@ -1499,7 +1591,11 @@ function openAgentConfig(agent: AgentProfileDto) {
   agentEditCapabilities.value = [...(agent.capabilities ?? [])]
   agentEditSystemPrompt.value = agent.system_prompt ?? ''
   agentEditDescription.value = agent.description ?? ''
+  agentEditRevision.value = agent.revision ?? null
   agentNewCapability.value = ''
+  agentToolQuery.value = ''
+  agentToolSourceFilter.value = 'all'
+  agentToolRiskFilter.value = 'all'
   const binding = bindingForAgent(agentCenterOverview.value, agent.id)
   agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
   agentRuntimeProviderId.value = binding?.provider_instance_id ?? runtimeProviders.value[0]?.provider_instance_id ?? ''
@@ -2659,28 +2755,31 @@ import '../settings/settings.css'
                 </UiButton>
               </div>
 
-              <!-- 启用开关 -->
+              <!-- 启用开关 — 内置只读 -->
               <div class="agent-config-switch">
                 <div>
                   <strong>{{ t('settings.agentEnabled') }}</strong>
                   <span>{{ configuringAgent.is_built_in ? t('settings.builtInAgent') : configuringAgent.id }}</span>
+                  <small v-if="configuringAgent.is_built_in" class="agent-builtin-label">{{ t('settings.builtInCloneHint') }}</small>
                 </div>
                 <UiSwitch
                   :model-value="configuringAgent.enabled"
-                  :disabled="busy"
+                  :disabled="busy || configuringAgent.is_built_in"
                   @update:model-value="setAgentEnabled(configuringAgent, $event)"
                 />
               </div>
 
-              <!-- 运行模式 -->
+              <!-- 运行模式 — 统一走 PUT /agents -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">{{ t('settings.agentModeTitle') }}</div>
+                <p v-if="configuringAgent.is_built_in" class="agent-config-hint">{{ t('settings.builtInCloneHint') }}</p>
                 <div class="agent-mode-grid">
                   <button
                     v-for="mode in agentModes"
                     :key="mode.id"
                     class="agent-mode-card"
-                    :class="{ active: configuringAgent.mode === mode.id }"
+                    :class="{ active: configuringAgent.mode === mode.id, disabled: configuringAgent.is_built_in }"
+                    :disabled="configuringAgent.is_built_in"
                     @click="updateAgentMode(configuringAgent, mode.id)"
                   >
                     <strong>{{ agentModeLabel(mode.id) }}</strong>
@@ -2840,24 +2939,63 @@ import '../settings/settings.css'
                 </div>
               </div>
 
-              <!-- 工具绑定 -->
+              <!-- 工具绑定 — 完整面板（分组/风险/审批） -->
               <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentTools') }}</div>
+                <div class="agent-config-section-title">
+                  {{ t('settings.agentTools') }}
+                  <UiBadge variant="outline">{{ agentToolSelectionSummary.selected }}/{{ agentToolSelectionSummary.total }}</UiBadge>
+                  <UiBadge v-if="agentToolSelectionSummary.approval > 0" variant="secondary">{{ t('settings.approvalRequired') }} {{ agentToolSelectionSummary.approval }}</UiBadge>
+                </div>
                 <p class="agent-config-hint">{{ t('settings.agentToolsHint') }}</p>
-                <div class="agent-tool-grid">
-                  <button
-                    v-for="tool in availableTools"
-                    :key="tool.id"
-                    class="agent-tool-chip"
-                    :class="{
-                      active: agentEditTools.includes(tool.id),
-                      risky: tool.requires_approval
-                    }"
-                    @click="toggleAgentTool(tool.id)"
-                  >
-                    <span class="agent-tool-name">{{ tool.display_name }}</span>
-                    <span class="agent-tool-risk">{{ tool.risk }}</span>
-                  </button>
+                <div class="agent-tool-toolbar">
+                  <div class="agent-tool-search">
+                    <Search :size="14" />
+                    <UiInput v-model="agentToolQuery" :placeholder="t('settings.toolSearchPlaceholder')" />
+                  </div>
+                  <select v-model="agentToolSourceFilter" class="settings-select compact">
+                    <option value="all">{{ t('settings.allSources') }}</option>
+                    <option v-for="src in toolSourceOptions" :key="src" :value="src">{{ src }}</option>
+                  </select>
+                  <select v-model="agentToolRiskFilter" class="settings-select compact">
+                    <option value="all">{{ t('settings.allRisks') }}</option>
+                    <option v-for="risk in toolRiskOptions" :key="risk" :value="risk">{{ risk }}</option>
+                  </select>
+                </div>
+                <div v-if="configuringAgent.is_built_in" class="agent-builtin-hint">
+                  <Info :size="14" />
+                  <span>{{ t('settings.builtInCloneHint') }}</span>
+                </div>
+                <div v-for="[source, tools] in groupedAgentTools" :key="source" class="agent-tool-group">
+                  <div class="agent-tool-group-head">
+                    <strong>{{ source }}</strong>
+                    <UiBadge variant="outline">{{ tools.length }}</UiBadge>
+                  </div>
+                  <div class="agent-tool-grid">
+                    <button
+                      v-for="tool in tools"
+                      :key="tool.id"
+                      class="agent-tool-chip"
+                      :class="{
+                        active: agentEditTools.includes(tool.id),
+                        risky: tool.requires_approval
+                      }"
+                      :disabled="configuringAgent.is_built_in"
+                      :title="tool.display_name + ' · ' + tool.risk + (tool.requires_approval ? ' · ' + t('settings.approvalRequired') : '')"
+                      @click="toggleAgentTool(tool.id)"
+                    >
+                      <span class="agent-tool-name">{{ tool.display_name }}</span>
+                      <span class="agent-tool-meta">
+                        <span class="agent-tool-risk" :class="tool.risk">{{ tool.risk }}</span>
+                        <span v-if="tool.requires_approval" class="agent-tool-approval">⚑ {{ t('settings.approvalRequired') }}</span>
+                      </span>
+                      <span class="agent-tool-id">{{ tool.id }}</span>
+                    </button>
+                  </div>
+                </div>
+                <p v-if="groupedAgentTools.length === 0" class="quiet">{{ t('settings.noTools') }}</p>
+                <div class="agent-tool-bulk">
+                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.filter(t => !t.requires_approval).map(t => t.id)">{{ t('settings.selectReadOnlyTools') }}</UiButton>
+                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = []">{{ t('settings.clearSelection') }}</UiButton>
                 </div>
               </div>
 
@@ -2894,12 +3032,18 @@ import '../settings/settings.css'
                 </div>
               </div>
 
-              <!-- 保存按钮 -->
+              <!-- 保存按钮 — 克隆后编辑 -->
               <div class="agent-save-bar">
-                <UiButton :disabled="busy" @click="saveAgentProfile">
+                <UiButton v-if="configuringAgent.is_built_in" :disabled="agentCloneBusy" @click="cloneAgentProfile">
+                  <Plus :size="14" />
+                  <span>{{ t('settings.cloneAgent') }}</span>
+                </UiButton>
+                <UiButton v-else :disabled="busy" @click="saveAgentProfile">
                   <Save :size="14" />
                   <span>{{ t('settings.saveAgent') }}</span>
                 </UiButton>
+                <span v-if="!configuringAgent.is_built_in && agentEditRevision !== null" class="agent-revision-hint">rev {{ agentEditRevision }}</span>
+                <span v-if="configuringAgent.is_built_in" class="agent-builtin-save-hint">{{ t('settings.builtInCloneHint') }}</span>
               </div>
             </div>
             <div v-else class="center-empty-state inspector-empty">
