@@ -64,7 +64,7 @@ public sealed class SupervisionAgent
 
         try
         {
-            var chatClient = _chatClients.Create(resolution);
+            var chatClient = await _chatClients.CreateAsync(resolution, ct).ConfigureAwait(false);
             var taskLines = string.Join("\n", tasks.Select((task, index) => $"{index}. {task.Title} | criteria: {string.Join("; ", task.SuccessCriteria)}"));
             var evidenceLines = string.Join("\n", results.Select(result => $"task {result.TaskNodeId}: [{result.Status}] {result.Summary}"));
             var prompt = $"用户目标:\n{userGoal}\n\n任务列表:\n{taskLines}\n\n执行证据 (第 {revisionRound} 轮修正后):\n{evidenceLines}";

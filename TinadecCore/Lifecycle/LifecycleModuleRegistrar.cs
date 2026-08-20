@@ -63,7 +63,7 @@ internal sealed class LifecycleManager : ILifecycleManager
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        _fallbackRuns[runId] = new RunState { RunId = runId, SessionId = sessionId, Status = RunStatus.Running, StartedAt = DateTimeOffset.UtcNow };
+        _fallbackRuns[runId] = new RunState { RunId = runId, SessionId = sessionId, Status = RunStatus.Planning, StartedAt = DateTimeOffset.UtcNow };
         return runId;
     }
 
@@ -251,11 +251,11 @@ internal sealed class LifecycleManager : ILifecycleManager
         var storage = TryStorage();
         if (storage is null || !Guid.TryParse(runId, out var id))
         {
-            return _fallbackRuns.TryGetValue(runId, out var fallback) ? fallback : new RunState { RunId = runId, Status = RunStatus.Pending };
+            return _fallbackRuns.TryGetValue(runId, out var fallback) ? fallback : new RunState { RunId = runId, Status = RunStatus.Planning };
         }
         var run = await storage.FindRunAsync(id, cancellationToken).ConfigureAwait(false);
         return run is null
-            ? new RunState { RunId = runId, Status = RunStatus.Pending }
+            ? new RunState { RunId = runId, Status = RunStatus.Planning }
             : ToRunState(run);
     }
 
@@ -302,7 +302,7 @@ internal sealed class LifecycleManager : ILifecycleManager
         SessionId = run.SessionId.ToString(),
         TriggerMessageId = run.TriggerMessageId.ToString(),
         TurnId = run.TurnId?.ToString(),
-        Status = Enum.TryParse<RunStatus>(run.Status, true, out var status) ? status : RunStatus.Pending,
+        Status = Enum.TryParse<RunStatus>(run.Status, true, out var status) ? status : RunStatus.Planning,
         ContextRevision = run.ContextRevision,
         ConfigurationVersion = run.ConfigurationVersion,
         ConfigurationHash = run.ConfigurationHash,

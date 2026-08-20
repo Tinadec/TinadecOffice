@@ -1,7 +1,7 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-17
-**Last Updated By:** Codex (added full-duplex Core runtime proxy contracts)
+**Last Updated:** 2026-08-21
+**Last Updated By:** opencode (added POST /api/v1/model-providers/cli/connect proxy; tests 37/37 green)
 **Last Verified Commit:** 9997fa16b9a9b2f59d3aa9f05142b2f847b7c286
 **Branch:** main
 
@@ -87,6 +87,7 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` 原样转发完整 JSON 请求和 Core 的 SSE 状态/主体；Gateway 不解释 `application_mode`、`agent_mode`、`permission_mode`、`target_run_id` 或 `expected_context_revision`。
 - `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 兼容别名的解析属于 Core。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
+- `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
 - 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
 

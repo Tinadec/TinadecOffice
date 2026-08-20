@@ -78,7 +78,7 @@ public sealed class ExecutionAgent
                 .ToList();
         }
 
-        var response = await _chatClients.Create(resolved)
+        var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(BuildConversation(ctx.UserGoal, history), options, ct)
             .ConfigureAwait(false);
         var messages = response.Messages.Count != 0

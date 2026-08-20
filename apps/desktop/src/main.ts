@@ -1,5 +1,8 @@
 import { createApp } from 'vue'
-import { vaporInteropPlugin } from 'vue'
+import { createPinia } from 'pinia'
+import * as Vue from 'vue'
+// ponytail: vue 3.5 has no vaporInteropPlugin; 3.6-rc does — tolerate either
+const vaporInteropPlugin = (Vue as unknown as Record<string, unknown>).vaporInteropPlugin as Parameters<ReturnType<typeof createApp>['use']>[0] | undefined
 import App from './App.vue'
 import router from './router'
 import i18n from './i18n'
@@ -16,11 +19,13 @@ import '@/../../TinadecUI/src/components/uie-card-fill.css'
 installPreviewShimIfNeeded()
 
 const app = createApp(App)
+const pinia = createPinia()
 
 // Vapor SFCs (via `<template vapor>`) render through the Vapor renderer; the
 // interop plugin lets them live inside the classic vdom tree (e.g. Ui primitives
 // used by splash/notifications) while the rest of the app stays classic.
-app.use(vaporInteropPlugin)
+app.use(pinia)
+if (vaporInteropPlugin) app.use(vaporInteropPlugin)
 
 app.use(router)
 app.use(i18n)

@@ -617,7 +617,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 ? new ChatResolution { IsAvailable = true, BaseUrl = "http://localhost", Model = "fake", ApiKey = "x", ModelId = "openai/fake" }
                 : new ChatResolution { IsAvailable = false, Error = "Provider API key is not stored." });
 
-        public IChatClient Create(ChatResolution resolution) => client;
+        public Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default)
+            => Task.FromResult<IChatClient>(client);
     }
 
     /// <summary>

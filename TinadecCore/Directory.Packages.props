@@ -17,6 +17,9 @@
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.0" />
 
+    <!-- Anthropic Messages protocol client (community SDK; MessagesEndpoint implements IChatClient) -->
+    <PackageVersion Include="Anthropic.SDK" Version="5.10.0" />
+
     <!-- ASP.NET Core -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
 

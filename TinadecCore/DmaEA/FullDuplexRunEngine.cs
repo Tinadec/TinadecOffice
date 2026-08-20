@@ -1016,7 +1016,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
-        await _lifecycle.SetRunStatusAsync(run.RunId, "finalizing", cancellationToken: cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(checkpoint.MeetingResponse))
         {
             var context = await BuildContextAsync(run, configuration, "meeting", checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
@@ -1181,7 +1180,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var evidence = string.Join("\n", checkpoint.Tasks.Select(item => $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
         var instructions = assembly.Instructions + "\n\nYou are the meeting agent, the only user-facing agent. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}";
-        var agent = new ChatClientAgent(_chatClients.Create(resolution), new ChatClientAgentOptions
+        var agent = new ChatClientAgent(await _chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false), new ChatClientAgentOptions
         {
             Name = "meeting",
             ChatOptions = new ChatOptions { Instructions = instructions }

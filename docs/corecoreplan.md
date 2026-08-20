@@ -114,5 +114,13 @@ MAF 是技术底座，DmaEA等模块 是建立在其上的 Tinadec 双层多智�
 
 - “可裁剪”指程序集与显式注册级裁剪，本轮不要求 IL trimming 或 NativeAOT。
 - 允许正式版和 RC 包，但不允许 preview、alpha 或跟随 `main`。
-- 本轮不实现 SQLite schema、真实 provider 调用、向量存储、完整双层运行流或工具执行。
 - Core 始终是状态、审批、路由、事件和审计权威；MAF session/checkpoint 仅是执行运行时状态。
+
+## 阶段一垂直闭环落地（2026-08-20，Core 95/Gateway 36/Desktop 262 green）
+
+- Core 内部 OpenAPI 事实源 `/openapi/core.json`（`Microsoft.AspNetCore.OpenApi 10.0.11` pin），全局 `snake_case` + RFC9457 `ProblemDetails`（`code` + `trace_id`），10 态 `planning→understanding→executing→replanning→awaiting_approval→paused→reviewing→completed/failed/cancelled`（`planning` 可写初态，`StateTransition.fs` 同步，`finalizing` 已移除）。
+- `RunStatus` 枚举、F# 状态机、`LifecycleDbContext` 默认值、`StorageLifecycleService` 状态表、`FullDuplexRunEngine` 均对齐 10 态；`ConfigureHttpJsonOptions SnakeCaseLower` + `AddProblemDetails` + `UseExceptionHandler` 映射 `invalid_request/context_conflict/model_not_configured/run_not_found/forbidden/conflict`。
+- `GET /runs/{id}/orchestration` 透出 `run:{mode_id,agent_profile_id,config_version,config_hash,context_revision}` + `frozen:{baseline_hash,application_mode,agent_mode,permission_mode,config_hash,tool_manifest_hash}`；多协议全阻塞 `openai-chat/openai-responses/anthropic-messages`（`Anthropic.SDK 5.10.0`，缺任一 route/key → `run.failed` 不伪成功）。
+- Gateway 外部 OpenAPI `/docs`（`@elysiajs/swagger@1.3.1`）+ `src/mappers/*` 12 显式 `CoreDto→ExternalDto` + `headers.ts` 统一 `X-Request-Id/X-Tinadec-Principal:dev@local` + `proxySseWithCursor`（`Last-Event-ID/?cursor→after_seq`，8 kinds `ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update`，`id=seq`）。
+- Desktop `src/generated/client.ts` typed fetch + `src/transport/` WS 占位 + `useRunStream`（`run_id+seq` 去重/heartbeat/指数退避）+ Pinia `project/session/run/workbench` + `WorkbenchPage.vue`（任务图 `pending/ready/running/completed/failed/blocked`、agent/worker、监督、上下文版本、`cancel/pause/resume`）。
+- 测试：`TinadecCore 95`（Architecture 10 + AgentFramework 32 + Api 53）、Gateway 36、Desktop 262（vitest 253 + electron 9）；`vite build ✓`，`bun build` 通过。

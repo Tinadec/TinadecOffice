@@ -26,6 +26,8 @@ export type ConnectionKind = 'api-key' | 'cli' | 'local-server' | 'public-api'
 
 export type ProviderCategory = 'cloud-api' | 'local-server' | 'agent-cli' | 'custom'
 
+export type ChatProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages'
+
 export interface ProviderTemplate {
   driver: string
   display_name_key: string
@@ -35,6 +37,10 @@ export interface ProviderTemplate {
   default_base_url: string | null
   default_model: string | null
   capabilities: string[]
+  /** Default wire protocol for HTTP templates; omitted means 'openai-chat'. */
+  protocol?: ChatProtocol
+  /** Protocols the user may choose from; omitted means only the default protocol. */
+  protocols?: ChatProtocol[]
   brand_color: string
   brand_bg: string
   icon: string
@@ -75,6 +81,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     default_base_url: 'https://api.openai.com/v1',
     default_model: 'gpt-5.4-mini',
     capabilities: ['chat', 'streaming', 'tool-calls'],
+    protocols: ['openai-chat', 'openai-responses'],
     brand_color: '#10a37f',
     brand_bg: hexToRgba('#10a37f', 0.12),
     icon: openaiIcon,
@@ -90,6 +97,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     default_base_url: 'https://api.anthropic.com/v1',
     default_model: 'claude-sonnet-4-6',
     capabilities: ['chat', 'streaming', 'reasoning', 'tool-calls'],
+    protocol: 'anthropic-messages',
     brand_color: '#d97706',
     brand_bg: hexToRgba('#d97706', 0.12),
     icon: anthropicIcon,
@@ -460,6 +468,18 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 
 export function findTemplate(driver: string): ProviderTemplate | undefined {
   return PROVIDER_TEMPLATES.find((t) => t.driver === driver)
+}
+
+/** Default wire protocol of an HTTP template; CLI templates have no protocol. */
+export function templateProtocol(template: ProviderTemplate): ChatProtocol | null {
+  if (template.connection_kind === 'cli') return null
+  return template.protocol ?? 'openai-chat'
+}
+
+/** Protocols the user may select for a template; empty for CLI templates. */
+export function templateProtocols(template: ProviderTemplate): ChatProtocol[] {
+  if (template.connection_kind === 'cli') return []
+  return template.protocols ?? [template.protocol ?? 'openai-chat']
 }
 
 export const PROVIDER_CATEGORIES: { key: ProviderCategory; labelKey: string }[] = [

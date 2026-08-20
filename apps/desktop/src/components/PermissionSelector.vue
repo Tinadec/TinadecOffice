@@ -40,11 +40,32 @@ function updateDropdownPosition() {
   const trigger = triggerRef.value
   if (!trigger) return
   const rect = trigger.getBoundingClientRect()
-  dropdownStyle.value = {
-    position: 'fixed',
-    top: `${rect.bottom + 6}px`,
-    left: `${rect.left}px`,
-    minWidth: '180px',
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const ddWidth = 180
+  const estH = 220
+  const spaceBelow = vh - rect.bottom
+  const spaceAbove = rect.top
+  const flip = spaceBelow < estH && spaceAbove > spaceBelow
+  const left = Math.max(8, Math.min(rect.left, vw - ddWidth - 8))
+  if (flip) {
+    dropdownStyle.value = {
+      position: 'fixed',
+      bottom: `${vh - rect.top + 6}px`,
+      left: `${left}px`,
+      minWidth: '180px',
+      maxHeight: `${Math.min(280, spaceAbove - 12)}px`,
+      overflowY: 'auto',
+    }
+  } else {
+    dropdownStyle.value = {
+      position: 'fixed',
+      top: `${rect.bottom + 6}px`,
+      left: `${left}px`,
+      minWidth: '180px',
+      maxHeight: `${Math.min(280, spaceBelow - 12)}px`,
+      overflowY: 'auto',
+    }
   }
 }
 

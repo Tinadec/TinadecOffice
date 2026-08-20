@@ -260,6 +260,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         public Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default)
             => Task.FromResult(new ChatResolution { IsAvailable = true, BaseUrl = "http://localhost", Model = "fake", ApiKey = "x", ModelId = "openai/fake" });
 
-        public IChatClient Create(ChatResolution resolution) => client;
+        public Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default)
+            => Task.FromResult<IChatClient>(client);
     }
 }

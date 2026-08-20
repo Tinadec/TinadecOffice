@@ -143,7 +143,7 @@ public sealed class AgentFrameworkSmokeTests
         Assert.False(string.IsNullOrEmpty(runId));
 
         var state = await lifecycle.GetRunStateAsync(runId);
-        Assert.Equal(RunStatus.Running, state.Status);
+        Assert.Equal(RunStatus.Planning, state.Status);
 
         await lifecycle.CompleteRunAsync(runId);
         var completedState = await lifecycle.GetRunStateAsync(runId);

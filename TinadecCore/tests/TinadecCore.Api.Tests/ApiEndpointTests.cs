@@ -182,6 +182,36 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         Assert.Equal("registered", moduleStates["loop_guard"]);
         Assert.Equal("registered", moduleStates["lifecycle"]);
     }
+
+    [Fact]
+    public async Task ModelProviderTemplates_ReturnsThreeProtocolTemplates()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/v1/model-provider-templates");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(content);
+
+        var templates = doc.RootElement.EnumerateArray().ToList();
+        Assert.Equal(3, templates.Count);
+
+        var byProtocol = templates.ToDictionary(t => t.GetProperty("protocol").GetString() ?? "");
+        Assert.Contains("openai-chat", byProtocol.Keys);
+        Assert.Contains("openai-responses", byProtocol.Keys);
+        Assert.Contains("anthropic-messages", byProtocol.Keys);
+
+        var anthropic = byProtocol["anthropic-messages"];
+        Assert.Equal("anthropic", anthropic.GetProperty("driver").GetString());
+        Assert.Equal("https://api.anthropic.com/v1", anthropic.GetProperty("default_base_url").GetString());
+
+        foreach (var template in templates)
+        {
+            Assert.True(template.TryGetProperty("provider_family", out _));
+            Assert.True(template.TryGetProperty("capabilities", out _));
+        }
+    }
 }
 
 public sealed class ApiEndpointFactory : WebApplicationFactory<Program>

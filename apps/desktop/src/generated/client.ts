@@ -1,0 +1,111 @@
+/**
+ * Minimal typed fetch wrapper aligned to Gateway external DTO (snake_case).
+ * Placeholder for openapi-typescript + openapi-fetch generation.
+ * When Gateway is live, replace with:
+ *   npx openapi-typescript http://127.0.0.1:48730/docs/json -o src/generated/schema.d.ts
+ * and an openapi-fetch client over that schema. This file keeps the checked-in
+ * src/generated/ contract and avoids adding a build-time network dependency.
+ * drift: npm run generate:client && git diff --exit-code
+ */
+// ponytail: hand-written minimal wrapper; swap to openapi-fetch when external OpenAPI is live
+// drift: npm run generate:client && git diff --exit-code
+export type RunStatus =
+  | 'planning'
+  | 'understanding'
+  | 'executing'
+  | 'replanning'
+  | 'awaiting_approval'
+  | 'paused'
+  | 'reviewing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+export const RUN_STATUSES: readonly RunStatus[] = [
+  'planning','understanding','executing','replanning','awaiting_approval','paused','reviewing','completed','failed','cancelled',
+] as const
+
+export type SseKind = 'ack'|'delta'|'done'|'error'|'heartbeat'|'task_node_update'|'supervision_update'|'context_version_update'
+export const SSE_KINDS: ReadonlySet<string> = new Set(['ack','delta','done','error','heartbeat','task_node_update','supervision_update','context_version_update'])
+
+export interface SseChunk {
+  run_id: string
+  turn_id: string | null
+  message_id: string | null
+  seq: number
+  kind: SseKind | string
+  occurred_at: string
+  payload: Record<string, unknown>
+}
+
+export interface InvokeStreamRequest {
+  content: string
+  client_message_id: string
+  application_mode: string
+  agent_mode: string
+  permission_mode: string
+  target_run_id?: string | null
+  expected_context_revision?: number | null
+}
+
+export interface ProjectDto { id: string; name: string; path: string; created_at: string }
+export interface SessionDto { id: string; project_id: string; title: string; status: string; created_at: string; updated_at: string }
+export interface MessageDto { id: string; session_id: string; role: string; content: string; created_at: string }
+export interface RunDto { id: string; session_id: string; trigger_message_id: string | null; status: RunStatus | string; summary: string | null; task_revision?: number | null; created_at: string | null; updated_at: string | null }
+export interface TaskNodeDto { id: string; graph_id: string | null; run_id: string; session_id: string; title: string; description: string; status: string; priority: number; risk: string; success_criteria: string[]; dependencies: string[]; required_capabilities: string[]; created_at: string | null; updated_at: string | null }
+export interface SupervisionFindingDto { id: string; run_id: string; session_id: string; severity: string; category: string; summary: string; recommendation: string; status: string; created_at: string }
+export interface ContextVersionDto { id: string; session_id: string; run_id: string | null; revision: number; kind: string; status: string; base_revision: number | null; created_at: string | null }
+export interface OrchestrationSnapshotDto {
+  run: RunDto | null
+  graph: { id: string; title: string } | null
+  nodes: TaskNodeDto[]
+  assignments: Array<{ id: string; run_id: string; task_node_id: string; agent_id: string; agent_name: string; agent_layer: string; status: string }>
+  step_results: unknown[]
+  context_packs: unknown[]
+  supervision_findings: SupervisionFindingDto[]
+  agent_instances?: unknown[]
+}
+
+function gatewayUrl(): string {
+  const w = window as unknown as { tinadec?: { gatewayUrl?: () => string } }
+  return w.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+}
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = `${gatewayUrl()}${path}`
+  let res: Response
+  try {
+    res = await fetch(url, { ...init, headers: { accept: 'application/json', ...(init?.body ? { 'content-type': 'application/json' } : {}), ...(init?.headers ?? {}) } })
+  } catch (e) {
+    throw new Error(`Cannot connect to backend (${gatewayUrl()}): ${e instanceof Error ? e.message : String(e)}`)
+  }
+  const text = await res.text()
+  let data: unknown = null
+  if (text) { try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON: ${text.slice(0,200)}`) } }
+  if (!res.ok) {
+    const rec = data as Record<string, unknown> | null
+    const msg = rec?.message ?? (rec?.error as Record<string, unknown> | null)?.message ?? res.statusText
+    throw new Error(typeof msg === 'string' && msg ? msg : String(msg ?? res.statusText))
+  }
+  return data as T
+}
+
+export const generatedApi = {
+  gatewayUrl,
+  listProjects: () => req<ProjectDto[]>('/api/v1/projects'),
+  createProject: (name: string, path: string) => req<ProjectDto>('/api/v1/projects', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  listSessions: (projectId?: string) => req<SessionDto[]>(`/api/v1/sessions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  createSession: (projectId: string, title?: string) => req<SessionDto>('/api/v1/sessions', { method: 'POST', body: JSON.stringify({ project_id: projectId, title }) }),
+  listMessages: (sessionId: string) => req<MessageDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`),
+  listRuns: (sessionId: string) => req<RunDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/runs`),
+  getOrchestration: (sessionId: string) => req<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`),
+  getRunOrchestration: (runId: string) => req<OrchestrationSnapshotDto>(`/api/v1/runs/${encodeURIComponent(runId)}/orchestration`),
+  listTaskNodes: (sessionId: string) => req<TaskNodeDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/task-nodes`),
+  listSupervisionFindings: (sessionId: string) => req<SupervisionFindingDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/supervision-findings`),
+  listContextVersions: (sessionId: string, runId?: string) => {
+    const p = new URLSearchParams(); if (runId) p.set('run_id', runId)
+    const s = p.toString() ? `?${p.toString()}` : ''
+    return req<ContextVersionDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/context-versions${s}`)
+  },
+  controlRun: (runId: string, body: Record<string, unknown>) => req<unknown>(`/api/v1/runs/${encodeURIComponent(runId)}/control`, { method: 'POST', body: JSON.stringify(body) }),
+  health: () => req<Record<string, unknown>>('/api/v1/health'),
+}

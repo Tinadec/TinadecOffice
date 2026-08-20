@@ -52,6 +52,7 @@ export interface ModelSettingsDto {
 export interface ModelProviderTemplateDto {
   provider_family: string;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: 'api-key' | 'cli' | 'local-server' | string;
   credential_kind: string;
@@ -77,6 +78,7 @@ export interface ProviderCapabilityDto {
 export interface ModelProviderInstanceDto {
   id: string;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: 'api-key' | 'cli' | 'local-server' | string;
   base_url?: string | null;
@@ -182,6 +184,7 @@ export interface ModelCatalogReadinessReceiptDto {
 export interface SaveModelProviderInstanceInput {
   id?: string | null;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: string;
   base_url?: string | null;
@@ -474,6 +477,29 @@ export interface ModelCenterCliRuntimeDto {
   status_message: string;
   route_purposes: string[];
   readiness?: Record<string, unknown> | null;
+}
+
+export interface CliDiscoveryCandidateDto {
+  driver: string;
+  display_name: string;
+  binary_path: string | null;
+  home_path?: string | null;
+  server_url?: string | null;
+  launch_args?: string | null;
+  status: 'found' | 'missing' | 'configured';
+}
+
+export interface ConnectCliRuntimeInput {
+  driver: string
+  binary_path: string
+  display_name?: string
+  home_path?: string | null
+  server_url?: string | null
+  launch_args?: string | null
+}
+
+export interface CliDiscoveryResultDto {
+  cli_runtimes: CliDiscoveryCandidateDto[];
 }
 
 export interface ModelCenterAcpRuntimeDto {
@@ -1066,6 +1092,11 @@ export const api = {
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
   getModelCenterOverview: () => request<ModelCenterOverviewDto>('/api/v1/model-center/overview'),
+  discoverCliRuntimes: () => request<CliDiscoveryResultDto>('/api/v1/model-providers/cli/discover'),
+  connectCliRuntime: (input: ConnectCliRuntimeInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers/cli/connect', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  }),
   refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
     method: 'POST'
   }),
@@ -1261,57 +1292,79 @@ export const api = {
     body: JSON.stringify({ version_a: versionA, version_b: versionB })
   }),
 
-  // --- Streaming Invoke (SSE) ---
-  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
-    const controller = new AbortController();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    (async () => {
+  // --- Streaming Invoke (SSE) — external contract: 5 required + 2 optional, 8 kinds, fixed fields ---
+  // Canonical DTO lives in src/generated/client.ts (openapi-typescript target); this file remains compat alias only.
+  invokeStreamWithAdmission: (
+    sessionId: string,
+    body: { content: string; client_message_id: string; application_mode: string; agent_mode: string; permission_mode: string; target_run_id?: string | null; expected_context_revision?: number | null },
+    onChunk: (chunk: { run_id: string; turn_id: string | null; message_id: string | null; seq: number; kind: string; occurred_at: string; payload: Record<string, unknown> }) => void,
+    onError?: (error: Error) => void,
+  ): AbortController => {
+    const controller = new AbortController()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    ;(async () => {
       try {
         const response = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/invoke-stream`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-          body: JSON.stringify({ content }),
-          signal: controller.signal
-        });
-
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
         if (!response.ok) {
-          const text = await response.text();
-          throw new Error(extractErrorMessage(text.length > 0 ? JSON.parse(text) : null, response.statusText));
+          const text = await response.text()
+          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
+          throw new Error(extractErrorMessage(parsed, response.statusText) || text || `HTTP ${response.status}`)
         }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body for streaming');
-
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error('No response body for streaming')
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const json = line.slice(6).trim();
-              if (json) {
-                try {
-                  onChunk(JSON.parse(json));
-                } catch {
-                  // Skip malformed JSON
-                }
-              }
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let idx: number
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, idx); buffer = buffer.slice(idx + 2)
+            if (!block.trim() || block.startsWith(':')) continue
+            let id: string | null = null, ev: string | null = null, data = ''
+            for (const line of block.split('\n')) {
+              if (line.startsWith('id:')) id = line.slice(3).trim()
+              else if (line.startsWith('event:')) ev = line.slice(7).trim()
+              else if (line.startsWith('data:')) data += line.slice(5).trim()
             }
+            if (!data) continue
+            try {
+              const obj = JSON.parse(data) as Record<string, unknown>
+              const chunk = {
+                run_id: String((obj.run_id as string) ?? ''),
+                turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
+                message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
+                seq: Number((obj.seq as number) ?? id ?? 0),
+                kind: String((obj.kind as string) ?? ev ?? 'delta'),
+                occurred_at: (obj.occurred_at as string) ?? (obj.occurredAt as string) ?? new Date().toISOString(),
+                payload: (obj.payload as Record<string, unknown>) ?? obj,
+              }
+              if (chunk.kind === 'heartbeat') continue
+              onChunk(chunk as never)
+            } catch {}
           }
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        onError?.(err instanceof Error ? err : new Error(String(err)));
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        onError?.(err instanceof Error ? err : new Error(String(err)))
       }
-    })();
-
-    return controller;
+    })()
+    return controller
+  },
+  // compat: old single-arg signature delegates to admission variant
+  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
+    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return (api as unknown as { invokeStreamWithAdmission: typeof api.invokeStreamWithAdmission }).invokeStreamWithAdmission(
+      sessionId,
+      { content, client_message_id: clientMessageId, application_mode: 'conversation', agent_mode: 'auto', permission_mode: 'default' },
+      onChunk as unknown as never,
+      onError,
+    )
   },
 
   connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {

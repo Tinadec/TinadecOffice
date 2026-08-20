@@ -153,7 +153,7 @@ public sealed record RunState
     public string SessionId { get; init; } = string.Empty;
     public string? TriggerMessageId { get; init; }
     public string? TurnId { get; init; }
-    public RunStatus Status { get; init; } = RunStatus.Pending;
+    public RunStatus Status { get; init; } = RunStatus.Planning;
     public long ContextRevision { get; init; }
     public long ConfigurationVersion { get; init; }
     public string ConfigurationHash { get; init; } = string.Empty;
@@ -206,16 +206,14 @@ public sealed record ToolExecutionCompletion(
 
 public enum RunStatus
 {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
+    Planning,
     Understanding,
     Executing,
     Replanning,
     AwaitingApproval,
     Paused,
     Reviewing,
-    Finalizing
+    Completed,
+    Failed,
+    Cancelled
 }

@@ -16,6 +16,8 @@ import { basenameFromPath } from '@/format'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
+// generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
+import type { SseChunk } from '@/generated/client'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -186,6 +188,53 @@ async function createSession(projectId: string) {
   })
 }
 
+// invoke-stream: 5 required + 2 optional, ack optimistic → delta incremental → done persisted
+// explicit states: model_not_configured / disconnected / permission_denied / recovering
+const streamingText = ref<Map<string, string>>(new Map())
+const invokeError = ref<string | null>(null)
+const lastCursor = ref<number | null>(null)
+const seenInvoke = new Set<string>()
+
+function handleInvokeChunk(chunk: SseChunk) {
+  const key = `${chunk.run_id}:${chunk.seq}`
+  if (seenInvoke.has(key)) return
+  seenInvoke.add(key)
+  lastCursor.value = chunk.seq
+  if (chunk.kind === 'heartbeat') return
+  if (chunk.kind === 'ack') {
+    // optimistic: keep busy until done/error
+    return
+  }
+  if (chunk.kind === 'delta') {
+    const d = String((chunk.payload.delta as string) ?? '')
+    if (!d) return
+    const cur = streamingText.value.get(chunk.run_id) ?? ''
+    const next = new Map(streamingText.value)
+    next.set(chunk.run_id, cur + d)
+    streamingText.value = next
+    return
+  }
+  if (chunk.kind === 'done') {
+    // done will be followed by persisted assistant message via polling
+    streamingText.value = new Map()
+    return
+  }
+  if (chunk.kind === 'error') {
+    const cat = String((chunk.payload.error_category as string) ?? (chunk.payload as Record<string, unknown>).code ?? '')
+    const safe = String((chunk.payload.safe_error_message as string) ?? (chunk.payload as Record<string, unknown>).message ?? cat)
+    if (cat === 'model_not_configured') invokeError.value = '模型未配置：请在设置中配置模型后再试'
+    else if (cat === 'permission_denied' || cat === 'forbidden') invokeError.value = '权限不足'
+    else if (cat === 'recovering' || cat === 'recovering_state') invokeError.value = '恢复中，请稍后重试'
+    else invokeError.value = safe || '调用失败'
+    if (!navigator.onLine) invokeError.value = '连接已断开'
+    return
+  }
+  // task_node_update / supervision_update / context_version_update -> trigger orchestration refresh
+  if (chunk.kind === 'task_node_update' || chunk.kind === 'supervision_update' || chunk.kind === 'context_version_update') {
+    void loadMessagesAndApprovals()
+  }
+}
+
 async function handleSend(content: string) {
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
@@ -199,10 +248,36 @@ async function handleSend(content: string) {
     if (!sessionId) {
       throw new Error('Open a project before sending a message.')
     }
+    const snapshotContent = content
     draft.value = ''
-    await api.postMessage(sessionId, content)
+    invokeError.value = null
+    // true admission via invoke-stream (idempotent by client_message_id)
+    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    try {
+      // optimistic pending user message
+      messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
+      await api.invokeStreamWithAdmission(sessionId, {
+        content: snapshotContent,
+        client_message_id: clientMessageId,
+        application_mode: 'conversation',
+        agent_mode: currentMode.value,
+        permission_mode: currentPermission.value,
+      }, handleInvokeChunk, (err) => {
+        const msg = err.message ?? String(err)
+        if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置：请在设置中配置模型后再试'
+        else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
+        else if (msg.includes('recovering') || msg.includes('409')) invokeError.value = '恢复中，请稍后重试'
+        else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '连接已断开'
+        else invokeError.value = msg
+      })
+    } catch {
+      // invokeStreamWithAdmission already mapped invokeError; fallback to polling compat if SSE not available
+      if (!invokeError.value) {
+        await api.postMessage(sessionId, snapshotContent)
+      }
+    }
     if (pendingSessionId.value === sessionId) {
-      const title = generateTitle(content)
+      const title = generateTitle(snapshotContent)
       try {
         await api.updateSessionTitle(sessionId, title)
         const idx = sessions.value.findIndex((s) => s.id === sessionId)
@@ -308,6 +383,9 @@ export const homeController = {
   agentStatesMap,
   agentProgressEvents,
   agentLabel,
+  streamingText,
+  invokeError,
+  lastCursor,
   // Methods
   start,
   openProject,

@@ -15,6 +15,7 @@ const templates = [
   {
     provider_family: 'openai-compatible',
     driver: 'openai-compatible',
+    protocol: 'openai-chat',
     display_name: 'OpenAI Compatible',
     connection_kind: 'http',
     credential_kind: 'api_key',
@@ -44,6 +45,7 @@ const providers = [
   provider({
     id: 'provider_api',
     driver: 'openai-compatible',
+    protocol: 'openai-chat',
     display_name: 'Primary API',
     connection_kind: 'http',
     model: 'model-default',
@@ -113,10 +115,14 @@ test('model center classifies API, local, CLI, and ACP resources without merging
   assert.equal(overview.suppliers.length, 2);
   assert.equal(overview.suppliers[0].transport_kind, 'http');
   assert.equal(overview.suppliers[0].credential_kind, 'api_key');
+  assert.equal(overview.suppliers[0].protocol, 'openai-chat');
   assert.equal(overview.suppliers[1].transport_kind, 'cli');
+  assert.equal(overview.suppliers[1].protocol, null);
   assert.equal(overview.api_connections.length, 2);
+  assert.equal(overview.api_connections.find((item) => item.id === 'provider_api')?.protocol, 'openai-chat');
   assert.equal(overview.api_connections.find((item) => item.id === 'provider_local_unknown')?.transport_kind, 'local_http');
   assert.equal(overview.api_connections.find((item) => item.id === 'provider_local_unknown')?.credential_kind, 'none');
+  assert.equal(overview.api_connections.find((item) => item.id === 'provider_local_unknown')?.protocol, null);
   assert.deepEqual(overview.cli_runtimes.map((item) => item.id), ['provider_cli']);
   assert.deepEqual(overview.acp_runtimes.map((item) => item.source).sort(), ['adapter', 'legacy_provider']);
   assert.ok(overview.acp_runtimes.some((item) => item.runtime_id === 'adapter:adapter_cursor' && item.source === 'adapter'));

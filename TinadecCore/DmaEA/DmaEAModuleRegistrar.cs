@@ -23,7 +23,9 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IAgentRuntimeConfiguration>(sp => sp.GetRequiredService<AgentRuntimeConfigurationStore>());
         builder.Services.AddSingleton<IAgentRuntimeConfigurationResolver, AgentRuntimeConfigurationResolver>();
         builder.Services.AddSingleton<IRuntimeContextSettings, RuntimeContextSettingsAdapter>();
-        builder.Services.AddSingleton<IAgentChatClientFactory, OpenAiAgentChatClientFactory>();
+        builder.Services.AddSingleton<IAgentChatClientFactory, AgentChatClientFactory>();
+        builder.Services.AddSingleton<CliRuntime.CliProcessManager>();
+        builder.Services.AddSingleton<CliRuntime.ICliProcessManager>(sp => sp.GetRequiredService<CliRuntime.CliProcessManager>());
         builder.Services.AddSingleton<AgentInstanceService>();
         builder.Services.AddSingleton<IAgentInstanceService>(sp => sp.GetRequiredService<AgentInstanceService>());
         builder.Services.AddSingleton<IAgentToolAuthorization>(sp => sp.GetRequiredService<AgentInstanceService>());
@@ -101,7 +103,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
         try
         {
             var agents = await LoadAgentsAsync(cancellationToken).ConfigureAwait(false);
-            var planning = agents.FirstOrDefault(a => a.Layer == "planning" && a.Enabled);
+            var planning = agents.FirstOrDefault(a => a.Layer is "planning" or "operation" && a.Enabled);
             var executionAgents = agents.Where(a => a.Layer == "execution" && a.Enabled).ToList();
             PlannedTask[] tasks;
             if (planning is null)

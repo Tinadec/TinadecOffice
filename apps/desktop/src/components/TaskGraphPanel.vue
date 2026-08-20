@@ -46,15 +46,20 @@ function nodeAssignments(node: TaskNodeDto) {
 function statusIcon(status: string) {
   const s = status.toLowerCase()
   if (s === 'done' || s === 'completed') return CircleCheck
-  if (s === 'running' || s === 'in_progress' || s === 'in-progress') return CircleDot
+  if (s === 'running' || s === 'in_progress' || s === 'in-progress' || s === 'executing') return CircleDot
   if (s === 'failed' || s === 'error' || s === 'cancelled') return CircleX
+  if (s === 'blocked') return CircleX
+  if (s === 'ready') return CircleDot
   return Circle
 }
 
 function statusClass(status: string): string {
   const s = status.toLowerCase()
   if (s === 'done' || s === 'completed') return 'done'
-  if (s === 'running' || s === 'in_progress' || s === 'in-progress') return 'running'
+  if (s === 'running' || s === 'in_progress' || s === 'in-progress' || s === 'executing') return 'running'
+  if (s === 'ready') return 'ready'
+  if (s === 'blocked') return 'blocked'
+  if (s === 'pending') return 'pending'
   if (s === 'failed' || s === 'error' || s === 'cancelled') return 'failed'
   return 'pending'
 }

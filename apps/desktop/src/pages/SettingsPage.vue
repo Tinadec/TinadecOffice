@@ -53,6 +53,7 @@ import {
   type AgentRuntimeBindingInput,
   type AgentRuntimeSelectionKind,
   type CenterDiagnosticDto,
+  type CliDiscoveryCandidateDto,
   type ModelCatalogReadinessReceiptDto,
   type ModelCenterAcpRuntimeDto,
   type ModelCenterOverviewDto,
@@ -74,6 +75,9 @@ import {
   PROVIDER_CATEGORIES,
   PROVIDER_TEMPLATES,
   findTemplate,
+  templateProtocol,
+  templateProtocols,
+  type ChatProtocol,
   type ProviderCategory,
   type ProviderTemplate
 } from '../providerTemplates'
@@ -126,6 +130,7 @@ interface ProviderForm {
   driver: string
   display_name: string
   connection_kind: string
+  protocol: string
   base_url: string
   model: string
   models: string[]
@@ -485,6 +490,7 @@ const providerForm = reactive<ProviderForm>({
   driver: 'openai-compatible',
   display_name: 'OpenAI Compatible',
   connection_kind: 'api-key',
+  protocol: 'openai-chat',
   base_url: 'https://api.openai.com/v1',
   model: 'gpt-5.4-mini',
   models: [],
@@ -661,6 +667,14 @@ const formFields = computed(() => {
   return { ...fields, model: false }
 })
 const formPlaceholders = computed(() => currentTemplate.value?.placeholders ?? {})
+const formProtocolOptions = computed<ChatProtocol[]>(() =>
+  currentTemplate.value ? templateProtocols(currentTemplate.value) : []
+)
+const protocolLabelKeys: Record<ChatProtocol, string> = {
+  'openai-chat': 'settings.protocolOpenaiChat',
+  'openai-responses': 'settings.protocolOpenaiResponses',
+  'anthropic-messages': 'settings.protocolAnthropicMessages'
+}
 
 const modelCenterRows = computed(() => buildModelCenterRows(
   providersFromOverview(modelCenterOverview.value).filter((provider) => provider.connection_kind !== 'cli'),
@@ -834,6 +848,7 @@ function fillForm(provider: ModelProviderInstanceDto) {
   providerForm.driver = provider.driver
   providerForm.display_name = provider.display_name
   providerForm.connection_kind = provider.connection_kind
+  providerForm.protocol = provider.protocol ?? templateProtocol(findTemplate(provider.driver) ?? PROVIDER_TEMPLATES[0]) ?? 'openai-chat'
   providerForm.base_url = provider.base_url ?? ''
   providerForm.model = provider.model ?? ''
   providerForm.models = provider.models ?? []
@@ -850,6 +865,7 @@ function applyTemplateDefaults(template: ProviderTemplate) {
   providerForm.driver = template.driver
   providerForm.display_name = t(template.display_name_key)
   providerForm.connection_kind = template.connection_kind
+  providerForm.protocol = templateProtocol(template) ?? ''
   providerForm.base_url = template.default_base_url ?? ''
   providerForm.model = ''
   providerForm.models = []
@@ -1131,6 +1147,44 @@ async function probeAcpRuntime(runtime: ModelCenterAcpRuntimeDto) {
     notify.error(error, { title: t('settings.acpProbeFailed') })
   } finally {
     modelCenterBusy.value = false
+  }
+}
+
+const cliDiscoveryCandidates = ref<CliDiscoveryCandidateDto[]>([])
+const cliDiscoveryLoading = ref(false)
+const cliDiscoveryLoaded = ref(false)
+
+async function discoverCliRuntimes() {
+  cliDiscoveryLoading.value = true
+  try {
+    const res = await api.discoverCliRuntimes()
+    cliDiscoveryCandidates.value = res.cli_runtimes ?? []
+    cliDiscoveryLoaded.value = true
+  } catch (error) {
+    notify.error(error, { title: t('settings.cliDiscoveryError') })
+  } finally {
+    cliDiscoveryLoading.value = false
+  }
+}
+
+async function connectDiscoveredCli(candidate: CliDiscoveryCandidateDto) {
+  if (!candidate.binary_path) return
+  cliDiscoveryLoading.value = true
+  try {
+    const created = await api.connectCliRuntime({
+      driver: candidate.driver,
+      binary_path: candidate.binary_path,
+      display_name: candidate.display_name || undefined,
+      home_path: candidate.home_path ?? null,
+      server_url: candidate.server_url ?? null,
+      launch_args: candidate.launch_args ?? null,
+    })
+    await loadModelCenter()
+    notify.success(created.display_name)
+  } catch (error) {
+    notify.error(error, { title: candidate.display_name })
+  } finally {
+    cliDiscoveryLoading.value = false
   }
 }
 
@@ -1524,6 +1578,7 @@ async function saveProvider() {
       driver: providerForm.driver,
       display_name: providerForm.display_name,
       connection_kind: providerForm.connection_kind,
+      protocol: providerForm.protocol || null,
       base_url: formFields.value.base_url ? (providerForm.base_url || null) : null,
       model: providerForm.id ? (providerForm.model || null) : null,
       models: providerForm.models,
@@ -2135,7 +2190,67 @@ import '../settings/settings.css'
                 <h3>CLI</h3>
                 <p>{{ t('settings.cliRuntimeHint') }}</p>
               </div>
+              <UiButton
+                variant="outline"
+                size="sm"
+                :disabled="cliDiscoveryLoading"
+                @click="discoverCliRuntimes"
+              >
+                <RefreshCw :size="14" :class="{ 'animate-spin': cliDiscoveryLoading }" />
+                {{ cliDiscoveryLoading ? t('settings.discoveringCli') : t('settings.discoverCli') }}
+              </UiButton>
             </div>
+
+            <!-- Discovery Candidates Panel -->
+            <div v-if="cliDiscoveryLoaded" class="cli-discovery-panel">
+              <div class="cli-discovery-header">
+                <strong>{{ t('settings.cliDiscoveryTitle') }}</strong>
+                <p>{{ t('settings.cliDiscoveryHint') }}</p>
+              </div>
+              <div v-if="cliDiscoveryCandidates.length === 0" class="cli-discovery-empty">
+                {{ t('settings.cliDiscoveryEmpty') }}
+              </div>
+              <div v-else class="cli-discovery-grid">
+                <div
+                  v-for="candidate in cliDiscoveryCandidates"
+                  :key="candidate.driver"
+                  class="cli-discovery-card"
+                  :class="{ 'is-found': candidate.status === 'found', 'is-configured': candidate.status === 'configured', 'is-missing': candidate.status === 'missing' }"
+                >
+                  <div class="cli-discovery-info">
+                    <div class="cli-discovery-name-row">
+                      <Terminal :size="15" />
+                      <strong>{{ candidate.display_name }}</strong>
+                      <span class="cli-discovery-driver">{{ candidate.driver }}</span>
+                    </div>
+                    <code v-if="candidate.binary_path" class="cli-discovery-path" :title="candidate.binary_path">
+                      {{ candidate.binary_path }}
+                    </code>
+                    <span v-else-if="candidate.status === 'missing'" class="cli-discovery-status-text muted">
+                      {{ t('settings.notDetected') }}
+                    </span>
+                  </div>
+                  <div class="cli-discovery-action">
+                    <UiBadge v-if="candidate.status === 'configured'" variant="secondary">
+                      {{ t('settings.alreadyConnected') }}
+                    </UiBadge>
+                    <UiButton
+                      v-else-if="candidate.status === 'found'"
+                      variant="default"
+                      size="sm"
+                      @click="connectDiscoveredCli(candidate)"
+                    >
+                      <Plus :size="13" />
+                      {{ t('settings.quickConnect') }}
+                    </UiButton>
+                    <UiBadge v-else variant="outline" class="muted-badge">
+                      {{ t('settings.notDetected') }}
+                    </UiBadge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="center-resource-list">
               <article v-for="runtime in modelCenterOverview?.cli_runtimes ?? []" :key="runtime.runtime_id" class="center-resource-list-row">
                 <div class="center-resource-primary">
@@ -2150,15 +2265,28 @@ import '../settings/settings.css'
                   <code>{{ runtime.home_path || t('settings.workspaceNotConfigured') }}</code>
                 </div>
                 <UiBadge :variant="statusVariant(runtime.status)">{{ statusLabel(runtime.status) }}</UiBadge>
-                <UiButton
-                  v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
-                  variant="outline"
-                  size="sm"
-                  @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
-                >
-                  <Settings2 :size="14" />
-                  {{ t('settings.editConfig') }}
-                </UiButton>
+                <div class="center-resource-actions">
+                  <UiButton
+                    v-if="providers.find(provider => provider.id === runtime.provider_instance_id)"
+                    variant="outline"
+                    size="sm"
+                    @click="openEditModal(providers.find(provider => provider.id === runtime.provider_instance_id)!)"
+                  >
+                    <Settings2 :size="14" />
+                    {{ t('settings.editConfig') }}
+                  </UiButton>
+                  <UiButton
+                    v-if="runtime.provider_instance_id"
+                    variant="ghost"
+                    size="icon"
+                    class="provider-delete-btn"
+                    :disabled="modelCenterBusy"
+                    :title="t('settings.delete')"
+                    @click="deleteProvider(runtime.provider_instance_id)"
+                  >
+                    <Trash2 :size="14" />
+                  </UiButton>
+                </div>
               </article>
             </div>
             <div v-if="(modelCenterOverview?.cli_runtimes.length ?? 0) === 0" class="center-empty-state">
@@ -3970,7 +4098,7 @@ import '../settings/settings.css'
             </div>
           </div>
 
-          <div v-if="formFields.base_url || formFields.model" class="modal-form-section">
+          <div v-if="formFields.base_url || formFields.model || formProtocolOptions.length > 0" class="modal-form-section">
             <div class="modal-form-section-title">{{ t('settings.connectionParams') }}</div>
             <div class="model-form-grid">
               <div v-if="formFields.base_url" class="settings-field">
@@ -3980,6 +4108,14 @@ import '../settings/settings.css'
               <div v-if="formFields.model" class="settings-field">
                 <UiLabel>{{ t('settings.modelLabel') }}</UiLabel>
                 <UiInput v-model="providerForm.model" :placeholder="formPlaceholders.model" />
+              </div>
+              <div v-if="formProtocolOptions.length > 0" class="settings-field">
+                <UiLabel>{{ t('settings.protocol') }}</UiLabel>
+                <select v-model="providerForm.protocol" class="settings-select">
+                  <option v-for="option in formProtocolOptions" :key="option" :value="option">
+                    {{ t(protocolLabelKeys[option]) }}
+                  </option>
+                </select>
               </div>
             </div>
           </div>

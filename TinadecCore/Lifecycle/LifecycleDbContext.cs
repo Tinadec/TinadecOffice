@@ -140,7 +140,7 @@ public sealed class RunRecord
     public Guid SessionId { get; set; }
     public Guid TriggerMessageId { get; set; }
     public Guid? TurnId { get; set; }
-    public string Status { get; set; } = "pending";
+    public string Status { get; set; } = "planning";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

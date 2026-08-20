@@ -29,6 +29,16 @@ const router = createRouter({
       component: () => import('./pages/CodePage.vue'),
     },
     {
+      path: '/workbench',
+      name: 'workbench',
+      component: () => import('./pages/WorkbenchPage.vue'),
+    },
+    {
+      path: '/library',
+      name: 'library',
+      component: () => import('./pages/LibraryPage.vue'),
+    },
+    {
       path: '/panel',
       name: 'detached-panel',
       component: () => import('./pages/DetachedPanelPage.vue'),

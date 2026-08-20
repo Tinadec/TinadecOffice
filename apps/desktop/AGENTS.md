@@ -1,7 +1,7 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-18
-**Last Updated By:** opencode (verified full-duplex Core runtime and agent-evolution endpoints are implemented Core-side; Desktop Home chat remains the storage-compatible postMessage path — no renderer change)
+**Last Updated:** 2026-08-21
+**Last Updated By:** opencode (CLI quick-connect calls the connect endpoint directly; stale nested Vue 3.5.41 node_modules removed; vitest 239/253)
 **Last Verified Commit:** a307ede
 **Branch:** codex/DmaEA
 
@@ -41,6 +41,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 | Full-duplex chat integration | `src/controllers/HomeController.ts`, `src/api.ts`, `src/components/ChatPanel.vue` | `api.invokeStream()` is an SSE helper, but the normal Home `handleSend()` currently calls `api.postMessage()` only. Do not claim full-duplex chat, run controls, candidate review, or Core-driven mode selection is already wired. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; General Gateway connection plus model/providers/agents settings. |
 | Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
+| CLI quick-connect | `src/api.ts` (`connectCliRuntime`), `src/pages/SettingsPage.vue` (`connectDiscoveredCli`) | Discovery candidates render from `GET .../cli/discover`; the quick-connect button POSTs `connect` directly (Core spawns/reuses the CLI service and persists an enabled provider), then refreshes the model center. Manual provider editing still runs through the provider form/modal. |
 | Provider presentation templates | `src/providerTemplates.ts` | Presentation-only metadata (i18n keys, brand colors, placeholders, icons). Brand icons are official `@lobehub/icons-static-svg` SVGs imported via Vite `?raw` (23 drivers); drivers without a lobehub slug (`sglang`, `llamacpp`, `custom`) keep hand-written `currentColor` SVGs. `icon` is an inline `<svg>` string rendered via `v-html` inside `.provider-brand-icon`/`.modal-provider-logo` (24px/32px CSS sizing). || Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
 | Tool layer catalog/search | `src/pages/SettingsPage.vue`, `src/toolCatalog.ts`, `src/api.ts` | Settings presents Code-suite tools, Codex primitives, supported runtimes, Core manifest registry governance/design notes, and Core-owned tool search results. |
 | Tool execution visibility | `src/pages/HomePage.vue`, `src/components/ContextPanel.vue`, `src/components/OrchestrationTab.vue`, `src/api.ts` | Right rail presents Core-owned tool execution timeline state, provider layer, duration, checkpoint summary, and step-result evidence. |
@@ -106,6 +107,7 @@ The dev server exposes a live Vue introspection server via `vite-plugin-vue-mcp`
 - **Tools**: `get-component-tree` (live hierarchy), `get-component-state` (`componentName`), `edit-component-state` (`componentName`, `path`, `value`, `valueType`), `highlight-component` (`componentName`), `get-router-info` (registered routes), `get-pinia-tree` / `get-pinia-state` (`storeName`). Note this app currently has **no Pinia store layer** — Pinia tools only matter if one is introduced.
 - **Prerequisites**: dev server running (`npm run dev:desktop`) AND the app loaded in the Electron window (or a browser against the dev server) AND Claude Code connected to `vue-mcp` (root `.mcp.json`, SSE `http://localhost:5173/__mcp/sse`). Tools return empty/stale results if the app page is not open.
 - **Fallback**: if the `vue-mcp` MCP server is not connected, read the source under `src/` instead — never report "no components" as a fact when you simply lack a live connection.
+- **UI automation (chrome-devtools / electron)**: `scripts/dev.mjs` launches dev Electron with `--remote-debugging-port=9222`; `electron-mcp-server` (root `.mcp.json`/`opencode.jsonc`) auto-attaches there for window info, screenshots, UI interaction, eval, and logs. `chrome-devtools-mcp` can attach to that CDP endpoint too (`--browser-url http://127.0.0.1:9222`) or drive the plain Vite renderer at 5173 in Chrome for renderer-only checks.
 
 ## COMMANDS
 ```bash

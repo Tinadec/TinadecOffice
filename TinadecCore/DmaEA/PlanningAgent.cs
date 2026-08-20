@@ -1,9 +1,7 @@
-using System.ClientModel;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using OpenAI;
 using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.DmaEA;
@@ -34,7 +32,7 @@ public sealed class PlanningAgent
         var resolved = await _chatClients.ResolveChatAsync("chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable) throw new InvalidOperationException(resolved.Error);
 
-        var chatClient = _chatClients.Create(resolved);
+        var chatClient = await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false);
         var options = new ChatOptions { Instructions = PlanningInstructions };
         var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { Name = "planning", ChatOptions = options });
 
@@ -59,9 +57,7 @@ public sealed class PlanningAgent
 
     /// <summary>Default real chat client factory: OpenAI-compatible endpoint from the resolution.</summary>
     internal static IChatClient DefaultChatClient(ChatResolution resolved)
-        => new OpenAIClient(new ApiKeyCredential(resolved.ApiKey!), new OpenAIClientOptions { Endpoint = new Uri(resolved.BaseUrl!) })
-            .GetChatClient(resolved.Model!)
-            .AsIChatClient();
+        => AgentChatClientFactory.CreateOpenAiChatClient(resolved);
 
     private static PlannedTask[] TryParseTasks(string? text)
     {

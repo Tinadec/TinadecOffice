@@ -19,8 +19,8 @@ export interface CenterDiagnostic {
 export interface CenterCapabilities {
   provider_crud: true;
   model_catalog_mode: 'configured_only';
-  model_discovery_refresh: false;
-  live_model_discovery: false;
+  model_discovery_refresh: boolean;
+  live_model_discovery: boolean;
   agent_runtime_binding_write: false;
   acp_adapter_read: boolean;
   acp_probe: boolean;
@@ -30,6 +30,7 @@ export interface SupplierResource {
   supplier_id: string;
   provider_family: string;
   driver: string;
+  protocol: string | null;
   display_name: string;
   connection_kind: string;
   transport_kind: TransportKind;
@@ -47,6 +48,7 @@ export interface ApiConnectionResource {
   provider_instance_id: string;
   provider_family: string | null;
   driver: string;
+  protocol: string | null;
   display_name: string;
   connection_kind: string;
   transport_kind: TransportKind;
@@ -267,6 +269,7 @@ interface UnavailableCapability {
 interface CoreTemplate {
   provider_family: string;
   driver: string;
+  protocol: string | null;
   display_name: string;
   connection_kind: string;
   credential_kind: string;
@@ -281,6 +284,7 @@ interface CoreTemplate {
 interface CoreProvider {
   id: string;
   driver: string;
+  protocol: string | null;
   display_name: string;
   connection_kind: string;
   base_url: string | null;
@@ -510,6 +514,11 @@ export async function loadAgentCenterOverview(fetchCore: CoreJsonFetcher = proxy
   };
 }
 
+// legacy: kept for backwards-compat test import, no-op
+export function modelDiscoveryRefreshResult(): ProxyResult {
+  return { status: 200, data: { refreshed: false } };
+}
+
 function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenterSnapshot {
   const templates = records(input.templates).map(toTemplate).filter((item): item is CoreTemplate => item !== null);
   const providers = records(input.providers).map(toProvider).filter((item): item is CoreProvider => item !== null);
@@ -529,6 +538,7 @@ function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenter
     supplier_id: template.driver,
     provider_family: template.provider_family,
     driver: template.driver,
+    protocol: template.protocol,
     display_name: template.display_name,
     connection_kind: template.connection_kind,
     transport_kind: normalizeTemplateTransportKind(template),
@@ -607,6 +617,7 @@ function buildModelCenterSnapshot(input: ModelCenterAggregateInput): ModelCenter
       provider_instance_id: provider.id,
       provider_family: template?.provider_family ?? null,
       driver: provider.driver,
+      protocol: provider.protocol,
       display_name: provider.display_name,
       connection_kind: provider.connection_kind,
       transport_kind: template
@@ -885,6 +896,7 @@ function toTemplate(value: Record<string, unknown>): CoreTemplate | null {
   return {
     provider_family: requiredString(value.provider_family) ?? 'unknown',
     driver,
+    protocol: optionalString(value.protocol),
     display_name: requiredString(value.display_name) ?? driver,
     connection_kind: requiredString(value.connection_kind) ?? 'unknown',
     credential_kind: requiredString(value.credential_kind) ?? 'unknown',
@@ -904,6 +916,7 @@ function toProvider(value: Record<string, unknown>): CoreProvider | null {
   return {
     id,
     driver,
+    protocol: optionalString(value.protocol),
     display_name: requiredString(value.display_name) ?? driver,
     connection_kind: requiredString(value.connection_kind) ?? 'unknown',
     base_url: optionalString(value.base_url),

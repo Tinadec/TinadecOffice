@@ -2577,6 +2577,116 @@ transition: opacity 0.2s ease-out, transform 0.2s ease-out;
 .section-fade-leave-active {
 transition: opacity 0.15s ease-in, transform 0.15s ease-in;
 }
+
+/* CLI Discovery */
+.cli-discovery-panel {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--surface-section);
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.15));
+}
+
+.cli-discovery-header {
+  margin-bottom: 12px;
+}
+
+.cli-discovery-header strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.cli-discovery-header p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cli-discovery-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.cli-discovery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.cli-discovery-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.cli-discovery-card.is-found {
+  border-color: color-mix(in srgb, var(--accent-success, #3fb950) 40%, transparent);
+}
+
+.cli-discovery-card.is-missing {
+  opacity: 0.65;
+}
+
+.cli-discovery-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cli-discovery-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.cli-discovery-driver {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cli-discovery-path {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.cli-discovery-status-text {
+  font-size: 11px;
+}
+
+.cli-discovery-status-text.muted {
+  color: var(--text-muted);
+}
+
+.cli-discovery-action {
+  flex-shrink: 0;
+}
+
+.muted-badge {
+  opacity: 0.6;
+}
+
+.center-resource-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .section-fade-enter-from {
 opacity: 0;
 transform: translateX(12px);

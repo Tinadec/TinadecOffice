@@ -60,10 +60,10 @@
 
 1. ✅ 固化双层术语、TOML schema、事件与 HTTP 契约。
 2. ✅ 完成 Core 存储迁移、配置解析/热重载、消息/上下文/agent/memory 状态模型。
-3. ✅ 完成全双工 coordinator、真实流式模型、动态 agent 创建、监督与恢复状态机（Core 测试 80/80 全绿）。
+3. ✅ 完成全双工 coordinator、真实流式模型、动态 agent 创建、监督与恢复状态机（Core 测试 95/95 全绿：Architecture 10 + AgentFramework 32 + Api 53；10 态 planning 可写初态，snake_case + ProblemDetails，内部 OpenAPI /openapi/core.json，多协议全阻塞 openai-chat/openai-responses/anthropic-messages）。
 4. ✅ 完成 TinadecTools 子进程适配、工具注册、审批暂停/恢复和审计（真实进程 + run→审批→write_file E2E）。
 5. 🚧 完成记忆/智能体候选生成、评测、人工晋升和检索注入（候选生成/审核 API 已实现；晋升持久化与长期检索注入待做）。
-6. ⬜ 将 Gateway 收缩为薄代理并完成 Desktop 对话、控制、审阅和可视化接入。
+6. ✅ 阶段一垂直闭环：Core 10 态/内部 OpenAPI/Gateway 外部 OpenAPI + 12 mappers + headers/cursor SSE/Desktop 生成客户端 + Pinia/transport/useRunStream/WorkbenchPage（Core 95/Gateway 36/Desktop 262 green；详见 docs/corecoreplan.md）。
 
 ## 验收与测试
 

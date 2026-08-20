@@ -67,7 +67,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             TurnId = options?.TurnId, ContextRevision = options?.ContextRevision ?? 0, ConfigurationVersion = options?.ConfigurationVersion ?? 0,
             ConfigurationHash = options?.ConfigurationHash ?? string.Empty, ApplicationMode = options?.ApplicationMode ?? "conversation",
             AgentMode = options?.AgentMode ?? "auto", PermissionMode = options?.PermissionMode ?? "default",
-            RuntimeProfileId = options?.RuntimeProfileId ?? "conversation.auto", Status = options is null ? "running" : "understanding", CreatedAt = now, UpdatedAt = now
+            RuntimeProfileId = options?.RuntimeProfileId ?? "conversation.auto", Status = options is null ? "planning" : "planning", CreatedAt = now, UpdatedAt = now
         };
         db.Runs.Add(run);
         db.RunStreamCursors.Add(new RunStreamCursorRecord { RunId = run.Id, NextSequence = 0, UpdatedAt = now });
@@ -288,12 +288,13 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var nowUnixMilliseconds = now.ToUnixTimeMilliseconds();
         var admissionGrace = now.AddSeconds(-AdmissionGracePeriodSeconds);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // ponytail: EF Core SQLite cannot translate DateTimeOffset comparisons, so the admission-grace
+        // filter runs in memory; a stored unix-ms column would keep it in SQL when the runs table grows.
         var runs = await db.Runs.AsNoTracking()
             .Where(x => x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"
-                && x.CreatedAt <= admissionGrace
                 && (x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        return runs.OrderBy(x => x.UpdatedAt).ToList();
+        return runs.Where(x => x.CreatedAt <= admissionGrace).OrderBy(x => x.UpdatedAt).ToList();
     }
 
     private const int AdmissionGracePeriodSeconds = 30;
@@ -990,7 +991,7 @@ public static class RunStatusMachine
 {
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
-        "pending", "running", "understanding", "executing", "replanning", "awaiting_approval", "paused", "reviewing", "finalizing", "completed", "failed", "cancelled"
+        "planning", "understanding", "executing", "replanning", "awaiting_approval", "paused", "reviewing", "completed", "failed", "cancelled"
     };
 
     public static bool IsKnown(string status) => Known.Contains(status);
@@ -1003,14 +1004,14 @@ public static class RunStatusMachine
         {
             "cancelled" => true,
             "failed" => true,
-            "paused" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "reviewing" or "finalizing",
-            "understanding" => from is "pending" or "running",
-            "executing" => from is "understanding" or "replanning" or "paused" or "awaiting_approval" or "reviewing" or "running",
+            "planning" => from is "planning",
+            "understanding" => from is "planning",
+            "executing" => from is "planning" or "understanding" or "replanning" or "paused" or "awaiting_approval" or "reviewing",
             "replanning" => from is "understanding" or "executing" or "awaiting_approval" or "reviewing",
             "awaiting_approval" => from is "understanding" or "executing" or "replanning",
             "reviewing" => from is "executing",
-            "finalizing" => from is "executing" or "reviewing" or "replanning" or "running",
-            "completed" => from is "executing" or "reviewing" or "finalizing" or "running",
+            "paused" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "reviewing",
+            "completed" => from is "executing" or "reviewing",
             _ => false
         };
     }

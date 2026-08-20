@@ -67,8 +67,8 @@ async function main() {
   console.log("[dev] Vite is ready, starting Electron...");
 
   const electronProcess = isWindows
-    ? spawn("npx electron .", [], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }))
-    : spawn("npx", ["electron", "."], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }));
+    ? spawn("npx electron . --remote-debugging-port=9222", [], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }))
+    : spawn("npx", ["electron", ".", "--remote-debugging-port=9222"], createSpawnOpts({ VITE_DEV_SERVER_URL: "http://127.0.0.1:5173" }));
 
   electronProcess.stdout.on("data", (data) => {
     process.stdout.write(`[electron] ${data}`);

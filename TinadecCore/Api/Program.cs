@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Api.Endpoints;
@@ -9,12 +10,30 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure snake_case JSON serialization for all HTTP responses.
+// Global snake_case JSON + validation ProblemDetails (RFC 9457 shape).
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
     options.SerializerOptions.DefaultIgnoreCondition =
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+});
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var detail = string.Join("; ", context.ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage));
+        var problem = new ProblemDetails
+        {
+            Type = "https://tinadec.dev/errors/invalid_request",
+            Title = "invalid_request",
+            Detail = string.IsNullOrWhiteSpace(detail) ? "Request validation failed." : detail,
+            Status = StatusCodes.Status400BadRequest,
+            Instance = context.HttpContext.Request.Path
+        };
+        problem.Extensions["code"] = "invalid_request";
+        problem.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
+        return new BadRequestObjectResult(problem) { ContentTypes = { "application/problem+json" } };
+    };
 });
 
 // Shared database abstraction (SQLite default; PostgreSQL optional) before business modules.
@@ -24,7 +43,61 @@ builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environmen
 builder.Services.AddTinadecCore();
 builder.Services.AddScoped<ControlPlaneService>();
 
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = context =>
+    {
+        context.ProblemDetails.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
+    };
+});
+builder.Services.AddOpenApi();
+
 var app = builder.Build();
+
+// RFC 9457 + snake_case ProblemDetails with trace_id/code extension.
+// Must be registered before endpoint mapping so it wraps all handlers.
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var feature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+        var exception = feature?.Error;
+        // Map exception types to required code set:
+        // invalid_request, context_conflict, model_not_configured, run_not_found, forbidden, conflict
+        var (status, code, detail) = exception switch
+        {
+            TinadecCore.DmaEA.RunAdmissionException rae when rae.Code == "CONTEXT_REVISION_CONFLICT" => (StatusCodes.Status409Conflict, "context_conflict", rae.Message),
+            TinadecCore.DmaEA.RunAdmissionException rae => (StatusCodes.Status409Conflict, "conflict", rae.Message),
+            UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "forbidden", exception.Message),
+            ArgumentException => (StatusCodes.Status400BadRequest, "invalid_request", exception.Message),
+            KeyNotFoundException => (StatusCodes.Status404NotFound, "run_not_found", exception.Message),
+            InvalidOperationException ioe when ioe.Message.Contains("model", StringComparison.OrdinalIgnoreCase) || ioe.Message.Contains("Provider", StringComparison.OrdinalIgnoreCase) => (StatusCodes.Status400BadRequest, "model_not_configured", ioe.Message),
+            InvalidOperationException => (StatusCodes.Status409Conflict, "conflict", exception.Message),
+            _ => (StatusCodes.Status500InternalServerError, "internal_error", "An unexpected error occurred.")
+        };
+        var problem = new ProblemDetails
+        {
+            Type = $"https://tinadec.dev/errors/{code}",
+            Title = code,
+            Detail = detail,
+            Status = status,
+            Instance = context.Request.Path
+        };
+        problem.Extensions["code"] = code;
+        problem.Extensions["trace_id"] = context.TraceIdentifier;
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsJsonAsync(problem, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+    });
+});
+app.UseStatusCodePages();
+
+// Core-internal OpenAPI is the source of truth; Gateway generates its own external OpenAPI.
+app.MapOpenApi("/openapi/core.json").WithOpenApi(operation =>
+{
+    operation.Summary = "TinadecCore internal OpenAPI";
+    return operation;
+});
 
 // SQLite migrates at local startup. PostgreSQL only does so when explicitly configured.
 using (var scope = app.Services.CreateScope())
@@ -56,6 +129,11 @@ app.MapGet("/api/v1/health", () =>
         Version = "0.1.0",
         Time = DateTimeOffset.UtcNow
     });
+}).WithOpenApi(operation =>
+{
+    operation.Summary = "Health probe";
+    operation.Description = "Legacy-compatible health probe.";
+    return operation;
 });
 
 // ============================================================
@@ -82,8 +160,8 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
         [
             new AgentLayerManifestDto
             {
-                Layer = "planning",
-                Role = "Planning layer: proactive planning and supervision",
+                Layer = "operation",
+                Role = "Operation layer: intent understanding, coordination, supervision",
                 AgentCount = 0,
                 EnabledAgentCount = 0,
                 MaxParallelExecutors = 1,
@@ -120,6 +198,10 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
     };
 
     return Results.Ok(manifest);
+}).WithOpenApi(operation =>
+{
+    operation.Summary = "Harness manifest";
+    return operation;
 });
 
 // ============================================================
@@ -177,6 +259,10 @@ app.MapGet("/api/v1/readiness", async (
     };
 
     return Results.Ok(response);
+}).WithOpenApi(operation =>
+{
+    operation.Summary = "Readiness probe";
+    return operation;
 });
 
 // ============================================================
@@ -190,6 +276,8 @@ app.MapControlPlaneEndpoints();
 app.MapMemoryReviewEndpoints();
 app.MapEvolutionEndpoints();
 app.MapStubEndpoints();
+
+
 
 app.Run();
 

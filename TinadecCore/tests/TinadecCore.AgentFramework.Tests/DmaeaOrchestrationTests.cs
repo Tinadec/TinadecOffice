@@ -141,7 +141,7 @@ public sealed class DmaeaOrchestrationTests
 
             var run = await lifecycle.FindRunAsync(Guid.Parse(result.RunId));
             Assert.NotNull(run);
-            Assert.Equal("running", run.Status);
+            Assert.Equal("planning", run.Status);
         }
         finally
         {
@@ -230,7 +230,8 @@ public sealed class DmaeaOrchestrationTests
         public Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default)
             => _resolver.ResolveChatAsync(routePurpose, cancellationToken);
 
-        public IChatClient Create(ChatResolution resolution) => _client ?? new StubChatClient("unused");
+        public Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default)
+            => Task.FromResult<IChatClient>(_client ?? new StubChatClient("unused"));
     }
 
     private sealed class FakeChatResolver : IChatResolver

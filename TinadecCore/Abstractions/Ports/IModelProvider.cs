@@ -56,5 +56,67 @@ public sealed class ChatResolution
     public string? Model { get; init; }
     public string? ApiKey { get; init; }
     public string? ModelId { get; init; }
+    /// <summary>Wire protocol the resolved provider speaks; one of <see cref="ChatProtocols"/>.</summary>
+    public string? Protocol { get; init; }
+    /// <summary>Local HTTP endpoint of a CLI runtime (opencode serve); null for HTTP API providers.</summary>
+    public string? ServerUrl { get; init; }
+    /// <summary>Bearer token issued by an ACP CLI on startup, when the agent prints one.</summary>
+    public string? Token { get; init; }
+    /// <summary>Absolute path to the CLI executable for <see cref="Acp"/> / <see cref="OpencodeServe"/> protocols.</summary>
+    public string? BinaryPath { get; init; }
+    /// <summary>CLI launch arguments (e.g. <c>serve --port 4096</c>, <c>--acp-port 0</c>).</summary>
+    public string? LaunchArgs { get; init; }
+    public string? HomePath { get; init; }
     public string? Error { get; init; }
+}
+
+/// <summary>
+/// Canonical chat wire-protocol identifiers carried by <see cref="ChatResolution.Protocol"/>
+/// and stored in provider configuration JSON (<c>protocol</c> key).
+/// </summary>
+public static class ChatProtocols
+{
+    /// <summary>OpenAI-compatible <c>/chat/completions</c> protocol (default).</summary>
+    public const string OpenAiChat = "openai-chat";
+
+    /// <summary>OpenAI Responses API protocol.</summary>
+    public const string OpenAiResponses = "openai-responses";
+
+    /// <summary>Anthropic Messages API protocol (<c>/v1/messages</c>).</summary>
+    public const string AnthropicMessages = "anthropic-messages";
+
+    /// <summary>
+    /// Agent Client Protocol (ACP): the client hosts a CLI subprocess (claude/codex/cursor-agent)
+    /// that exposes a JSON-RPC 2.0 + SSE server on a local port; chat runs through that process.
+    /// </summary>
+    public const string Acp = "acp";
+
+    /// <summary>
+    /// opencode <c>serve</c> protocol: an HTTP/SSE session surface on <c>http://127.0.0.1:&lt;port&gt;</c>
+    /// (POST /session, POST /session/{id}/message, GET /session/{id}/event).
+    /// </summary>
+    public const string OpencodeServe = "opencode-serve";
+
+    /// <summary>
+    /// Normalizes a stored protocol value; blank or unknown values fall back to
+    /// <see cref="OpenAiChat"/> so legacy configurations keep working.
+    /// </summary>
+    public static string Normalize(string? protocol) => protocol?.Trim().ToLowerInvariant() switch
+    {
+        OpenAiResponses => OpenAiResponses,
+        AnthropicMessages => AnthropicMessages,
+        Acp => Acp,
+        OpencodeServe => OpencodeServe,
+        _ => OpenAiChat
+    };
+
+    /// <summary>Infers the protocol from a provider driver name when no explicit protocol is configured.</summary>
+    public static string InferFromDriver(string? driver) => driver?.Trim().ToLowerInvariant() switch
+    {
+        "anthropic" or "claude" => AnthropicMessages,
+        "openai-responses" => OpenAiResponses,
+        "claude-cli" or "codex-cli" or "cursor-acp" => Acp,
+        "opencode" => OpencodeServe,
+        _ => OpenAiChat
+    };
 }

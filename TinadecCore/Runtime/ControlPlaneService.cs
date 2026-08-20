@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -5,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
+using TinadecCore.DmaEA.CliRuntime;
 using TinadecCore.Lifecycle;
 using TinadecCore.Models;
 using TinadecCore.Persistence;
@@ -25,12 +28,13 @@ public sealed class ControlPlaneService
     private readonly IToolApprovalCoordinator _approvals;
     private readonly ILifecycleManager _runs;
     private readonly IFullDuplexRunEngine _engine;
+    private readonly ICliProcessManager _cli;
 
     public ControlPlaneService(IDbContextFactory<ModelControlDbContext> models, IDbContextFactory<PromptControlDbContext> prompts,
         IDbContextFactory<AgentControlDbContext> agents, IDbContextFactory<LifecycleDbContext> lifecycle,
         IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant, IToolApprovalCoordinator approvals,
-        ILifecycleManager runs, IFullDuplexRunEngine engine)
-    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _runs = runs; _engine = engine; }
+        ILifecycleManager runs, IFullDuplexRunEngine engine, ICliProcessManager cli)
+    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _runs = runs; _engine = engine; _cli = cli; }
 
     private TenantContext Tenant => _tenant.Current;
     private static async Task<(string text, ContentReference reference)> PutJsonAsync(IContentStore store, Guid tenant, Guid? workspace, string kind, object value, CancellationToken ct)
@@ -46,7 +50,7 @@ public sealed class ControlPlaneService
         JsonElement Value(string key) => cfg != null && cfg.TryGetValue(key, out var v) ? v : default;
         string? String(string key) => Value(key).ValueKind == JsonValueKind.String ? Value(key).GetString() : null;
         string[] Models() => Value("models").ValueKind == JsonValueKind.Array ? Value("models").EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray() : Array.Empty<string>();
-        return new { id = row.Id, driver = row.Driver, display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
+        return new { id = row.Id, driver = row.Driver, protocol = ChatProtocols.Normalize(String("protocol") ?? ChatProtocols.InferFromDriver(row.Driver)), display_name = row.DisplayName, connection_kind = row.ConnectionKind, base_url = String("base_url"), model = String("model"), models = Models(), has_api_key = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult(), binary_path = String("binary_path"), home_path = String("home_path"), server_url = String("server_url"), launch_args = String("launch_args"), capabilities = cfg != null && cfg.TryGetValue("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : Array.Empty<string>(), enabled = row.Enabled, status = row.Enabled ? "configured" : "disabled", status_message = "Persisted configuration", revision = row.Revision, scope = row.Scope, created_at = row.CreatedAt, updated_at = row.UpdatedAt }; }
 
     public async Task<IResult> RefreshProviderModels(Guid id, CancellationToken ct)
     {
@@ -57,13 +61,19 @@ public sealed class ControlPlaneService
         Dictionary<string, JsonElement>? cfg = null;
         if (version != null) cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, ct));
         var baseUrl = cfg != null && cfg.TryGetValue("base_url", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
-        if (string.IsNullOrWhiteSpace(baseUrl)) return Results.BadRequest(new { code = "MODEL_DISCOVERY_INVALID", message = "Provider has no base_url configured; model discovery requires an OpenAI-compatible endpoint." });
+        if (string.IsNullOrWhiteSpace(baseUrl)) return Results.BadRequest(new { code = "MODEL_DISCOVERY_INVALID", message = "Provider has no base_url configured; model discovery requires an HTTP model endpoint." });
+        var protocol = ChatProtocols.Normalize(cfg != null && cfg.TryGetValue("protocol", out var proto) && proto.ValueKind == JsonValueKind.String ? proto.GetString() : ChatProtocols.InferFromDriver(row.Driver));
         string? apiKey = row.SecretReference != null && _secrets.ExistsAsync(row.SecretReference).GetAwaiter().GetResult() ? await _secrets.GetAsync(row.SecretReference, ct) : null;
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/models");
-            if (!string.IsNullOrEmpty(apiKey)) request.Headers.Authorization = new("Bearer", apiKey);
+            if (protocol == ChatProtocols.AnthropicMessages)
+            {
+                if (!string.IsNullOrEmpty(apiKey)) request.Headers.Add("x-api-key", apiKey);
+                request.Headers.Add("anthropic-version", "2023-06-01");
+            }
+            else if (!string.IsNullOrEmpty(apiKey)) request.Headers.Authorization = new("Bearer", apiKey);
             using var response = await client.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return Results.Json(new { code = "MODEL_DISCOVERY_FAILED", message = $"Provider returned HTTP {(int)response.StatusCode} for GET /models.", status = (int)response.StatusCode }, statusCode: 502);
             var body = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync(ct));
@@ -78,6 +88,173 @@ public sealed class ControlPlaneService
         catch (OperationCanceledException) { return Results.Json(new { code = "MODEL_DISCOVERY_TIMEOUT", message = "Provider /models request timed out after 10 seconds." }, statusCode: 502); }
         catch (Exception ex) when (ex is HttpRequestException or System.Net.Sockets.SocketException or TaskCanceledException)
         { return Results.Json(new { code = "MODEL_DISCOVERY_NETWORK", message = ex.Message }, statusCode: 502); }
+    }
+
+    private sealed record KnownCli(string Driver, string DisplayName, string Executable, string? HomePath, string? ServerUrl, string? LaunchArgs);
+
+    // Well-known model CLIs the workbench can host. Discovery probes default install locations so
+    // users can connect a local CLI runtime without manually typing a path.
+    private static readonly KnownCli[] KnownClis =
+    [
+        new("claude-cli", "Claude Code", "claude", "~/.claude", null, null),
+        new("codex-cli", "Codex CLI", "codex", "~/.codex", null, null),
+        new("cursor-acp", "Cursor ACP", "cursor-agent", null, null, "--acp-port 0"),
+        new("opencode", "OpenCode", "opencode", null, "http://127.0.0.1:4096", "serve --port 4096")
+    ];
+
+    public async Task<IResult> DiscoverCliRuntimes(CancellationToken ct, IEnumerable<string>? searchPaths = null)
+    {
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var configured = (await db.Providers
+            .Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null)
+            .Select(x => x.Driver).ToListAsync(ct)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var resolved = searchPaths ?? (IEnumerable<string>?)null;
+        var candidates = KnownClis.Select(cli =>
+        {
+            var existing = configured.Contains(cli.Driver);
+            var path = existing ? null : ResolveCliExecutable(cli.Executable, resolved);
+            var verified = path != null && VerifyCliExecutable(path);
+            return new
+            {
+                driver = cli.Driver,
+                display_name = cli.DisplayName,
+                binary_path = verified ? path : null,
+                home_path = existing || verified ? cli.HomePath : null,
+                server_url = existing || verified ? cli.ServerUrl : null,
+                launch_args = existing || verified ? cli.LaunchArgs : null,
+                status = existing ? "configured" : verified ? "found" : "missing"
+            };
+        }).ToList();
+        return Results.Ok(new { cli_runtimes = candidates });
+    }
+
+    /// <summary>
+    /// Starts (or reuses) a discovered CLI runtime and persists it as an enabled provider.
+    /// ACP CLIs are spawned with a free <c>--acp-port</c>; opencode is spawned with
+    /// <c>serve --port</c>. The saved provider carries the reachable <c>server_url</c> and
+    /// effective launch args so later runs can respawn it after a restart. Routes are not
+    /// touched — binding the provider to the chat route stays a manual model-center action.
+    /// </summary>
+    public async Task<IResult> ConnectCliRuntime(JsonElement input, CancellationToken ct)
+    {
+        string? Get(string key) => input.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        var driver = Get("driver");
+        var binaryPath = Get("binary_path");
+        if (string.IsNullOrWhiteSpace(driver)) return Results.BadRequest(new { code = "CLI_CONNECT_INVALID", message = "driver is required." });
+        if (string.IsNullOrWhiteSpace(binaryPath)) return Results.BadRequest(new { code = "CLI_CONNECT_INVALID", message = "binary_path is required." });
+        if (!File.Exists(binaryPath)) return Results.BadRequest(new { code = "CLI_CONNECT_INVALID", message = $"binary_path does not exist: {binaryPath}" });
+        var protocol = ChatProtocols.Normalize(Get("protocol") ?? ChatProtocols.InferFromDriver(driver));
+        if (protocol is not (ChatProtocols.Acp or ChatProtocols.OpencodeServe)) return Results.BadRequest(new { code = "CLI_CONNECT_INVALID", message = $"driver '{driver}' is not a CLI runtime (protocol {protocol})." });
+
+        CliRuntimeEndpoint endpoint;
+        try
+        {
+            endpoint = await _cli.EnsureRunningAsync(new CliRuntimeConfig(driver, binaryPath, Get("launch_args"), Get("server_url"), Get("home_path")), ct);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException)
+        {
+            return Results.Json(new { code = "CLI_CONNECT_FAILED", message = ex.Message }, statusCode: 502);
+        }
+
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var existing = await db.Providers.SingleOrDefaultAsync(x => x.Driver == driver && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+        var port = new Uri(endpoint.ServerUrl).Port;
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            driver,
+            display_name = Get("display_name") ?? driver,
+            connection_kind = "cli",
+            protocol,
+            binary_path = binaryPath,
+            home_path = Get("home_path"),
+            server_url = endpoint.ServerUrl,
+            launch_args = Get("launch_args") ?? (protocol == ChatProtocols.OpencodeServe ? $"serve --port {port}" : $"--acp-port {port}"),
+            enabled = true
+        });
+        return await SaveProvider(payload, existing?.Id, null, ct);
+    }
+
+    private static string? ResolveCliExecutable(string name, IEnumerable<string>? searchPaths)
+    {
+        var paths = searchPaths ?? DefaultSearchPaths();
+        foreach (var directory in paths)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) continue;
+            var candidate = Path.Combine(directory, name);
+            if (File.Exists(candidate)) return candidate;
+            if (OperatingSystem.IsWindows())
+            {
+                foreach (var extension in new[] { ".exe", ".cmd", ".bat" })
+                {
+                    var withExtension = candidate + extension;
+                    if (File.Exists(withExtension)) return withExtension;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Probes that the discovered binary actually runs: <c>--version</c> must exit 0 within
+    /// 3 seconds. <c>.cmd</c>/<c>.bat</c> npm shims are launched through cmd.exe.
+    /// </summary>
+    private static bool VerifyCliExecutable(string path)
+    {
+        try
+        {
+            var fileName = path;
+            var arguments = "--version";
+            if (path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+            {
+                fileName = "cmd.exe";
+                arguments = $"/c \"{path}\" --version";
+            }
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo(fileName, arguments)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            if (!process.Start()) return false;
+            if (!process.WaitForExit(3000))
+            {
+                process.Kill(entireProcessTree: true);
+                return false;
+            }
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException)
+        {
+            return false;
+        }
+    }
+
+    private static IEnumerable<string> DefaultSearchPaths()
+    {
+        var paths = new List<string>();
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(path)) paths.AddRange(path.Split(Path.PathSeparator));
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            paths.Add(Path.Combine(home, ".local", "bin"));
+            paths.Add(Path.Combine(home, ".npm-global", "bin"));
+        }
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (!string.IsNullOrWhiteSpace(appData)) paths.Add(Path.Combine(appData, "npm"));
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrWhiteSpace(localAppData))
+        {
+            paths.Add(localAppData);
+            paths.Add(Path.Combine(localAppData, "Programs"));
+            paths.Add(Path.Combine(localAppData, "Microsoft", "WinGet", "Links"));
+        }
+        return paths.Distinct().ToList();
     }
 
     public async Task<IResult> SaveProvider(JsonElement input, Guid? id, string? ifMatch, CancellationToken ct)

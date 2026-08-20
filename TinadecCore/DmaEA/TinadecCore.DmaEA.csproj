@@ -18,12 +18,18 @@
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Anthropic.SDK" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Tomlyn" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="Configuration\default-agent-runtime.toml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+    <InternalsVisibleTo Include="TinadecCore.AgentFramework.Tests" />
   </ItemGroup>
 
 </Project>

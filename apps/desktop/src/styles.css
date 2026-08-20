@@ -301,10 +301,17 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow: hidden;
+  max-width: 100vw;
+}
+
 body {
   margin: 0;
-  min-width: 1120px;
+  min-width: 0;
   min-height: 720px;
+  overflow: hidden;
+  max-width: 100vw;
   /* Each page provides its own background via .shell or .settings-page. */
   background: transparent;
   color: var(--text-primary);

@@ -275,11 +275,17 @@ public static class DmaeaEndpoints
             }
         });
 
-        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, CancellationToken ct) =>
+        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
             var run = await lifecycle.FindRunAsync(runGuid, ct);
             if (run is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Run was not found." });
+            var frozen = await manager.GetFrozenRunConfigurationAsync(runGuid.ToString(), ct);
+            FrozenRunConfigurationV1? parsedFrozen = null;
+            if (frozen is not null)
+            {
+                try { parsedFrozen = System.Text.Json.JsonSerializer.Deserialize<FrozenRunConfigurationV1>(frozen.Content); } catch { }
+            }
             var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
             var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e => new
             {
@@ -346,11 +352,31 @@ public static class DmaeaEndpoints
                     application_mode = run.ApplicationMode,
                     agent_mode = run.AgentMode,
                     runtime_profile_id = run.RuntimeProfileId,
-                    context_revision = run.ContextRevision,
+                    mode_id = parsedFrozen?.ApplicationMode ?? run.ApplicationMode,
+                    agent_profile_id = parsedFrozen?.RuntimeProfileId ?? run.RuntimeProfileId,
                     config_version = run.ConfigurationVersion,
+                    config_hash = run.FrozenConfigurationHash ?? run.ConfigurationHash,
+                    context_revision = run.ContextRevision,
                     summary = run.Summary ?? "",
                     created_at = run.CreatedAt,
                     updated_at = run.UpdatedAt
+                },
+                frozen = parsedFrozen is null ? null : new
+                {
+                    schema_version = parsedFrozen.SchemaVersion,
+                    baseline_hash = parsedFrozen.BaselineHash,
+                    baseline_version = parsedFrozen.BaselineVersion,
+                    application_mode = parsedFrozen.ApplicationMode,
+                    agent_mode = parsedFrozen.AgentMode,
+                    runtime_profile_id = parsedFrozen.RuntimeProfileId,
+                    mode_id = parsedFrozen.ApplicationMode,
+                    agent_profile_id = parsedFrozen.RuntimeProfileId,
+                    permission_mode = parsedFrozen.PermissionMode,
+                    config_version = parsedFrozen.BaselineVersion,
+                    config_hash = parsedFrozen.ContentHash,
+                    tool_manifest_hash = parsedFrozen.ToolManifestHash,
+                    tool_manifest_protocol_version = parsedFrozen.ToolManifestProtocolVersion,
+                    bindings = parsedFrozen.Bindings
                 },
                 graph = (object?)null,
                 nodes,
