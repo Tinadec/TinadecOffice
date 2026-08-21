@@ -83,17 +83,20 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
 {
     private readonly IAgentRuntimeConfiguration _baseline;
     private readonly IDbContextFactory<AgentControlDbContext> _agents;
+    private readonly IFormalModeResolver _formal;
     private readonly IContentStore _content;
     private readonly ISessionLocator _sessions;
 
     public AgentRuntimeConfigurationResolver(
         IAgentRuntimeConfiguration baseline,
         IDbContextFactory<AgentControlDbContext> agents,
+        IFormalModeResolver formal,
         IContentStore content,
         ISessionLocator sessions)
     {
         _baseline = baseline;
         _agents = agents;
+        _formal = formal;
         _content = content;
         _sessions = sessions;
     }
@@ -115,14 +118,34 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             ? new EffectivePolicy(snapshot.Spawn, snapshot.Scheduling, snapshot.Supervision, snapshot.Context, snapshot.Memory, snapshot.Tools, profile)
             : await ApplyOverrideAsync(snapshot, profile, overrideRow, cancellationToken).ConfigureAwait(false);
 
-        var operation = ResolveAgents(snapshot, effective.Profile.OperationAgents, "operation");
-        var execution = ResolveAgents(snapshot, effective.Profile.ExecutionAgents, "execution");
+        // Roster: prefer the published relational agent mode when the session has one.
+        // The TOML baseline remains the source for policy budgets; the agent roster
+        // (who runs, their layer/role/capabilities/tools) comes from the relational
+        // AgentConfiguration mode that the agent-center UI actually edits.
+        IReadOnlyList<RuntimeAgentDefinition> operation;
+        IReadOnlyList<RuntimeAgentDefinition> execution;
+        string runtimeProfileId;
         var bindings = new List<RunConfigurationBinding>
         {
             // The TOML baseline itself has no relational version. A deterministic id
             // makes it visible to lifecycle audit without inventing a mutable record.
             new("agent_runtime_baseline", DeterministicGuid(snapshot.ContentHash), DeterministicGuid(snapshot.ContentHash + ":" + snapshot.Version), snapshot.ContentHash)
         };
+        if (session.ModeVersionId is { } modeVersionId)
+        {
+            var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
+            operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
+            execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
+            runtimeProfileId = relational.RuntimeProfileId;
+            bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.ModeVersionId, DeterministicGuid(relational.ModeVersionId + ":" + relational.VersionNumber), relational.TopologyHash ?? ""));
+        }
+        else
+        {
+            operation = ResolveAgents(snapshot, effective.Profile.OperationAgents, "operation");
+            execution = ResolveAgents(snapshot, effective.Profile.ExecutionAgents, "execution");
+            runtimeProfileId = effective.Profile.Id;
+        }
         FrozenRuntimeOverride? frozenOverride = null;
         if (overrideRow is not null)
         {
@@ -136,7 +159,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             snapshot.Version,
             app,
             mode,
-            effective.Profile.Id,
+            runtimeProfileId,
             NormalizePermissionMode(permissionMode),
             effective.Spawn,
             effective.Scheduling,
@@ -211,6 +234,19 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         }
         return result;
     }
+
+    private static RuntimeAgentDefinition ToRuntimeAgentDefinition(RuntimeAgentRosterEntry e) => new(
+        e.Id,
+        e.Layer,
+        e.Role,
+        e.Lifecycle,
+        e.Capabilities,
+        e.DirectUserOutput,
+        e.ContextAccess)
+    {
+        AllowedTools = e.AllowedTools,
+        PromptProfile = e.PromptProfile
+    };
 
     private static SpawnPolicy ReadSpawn(JsonElement root, SpawnPolicy fallback) => new(
         Positive(root, "spawn", "max_depth", fallback.MaxDepth, 0, 16),

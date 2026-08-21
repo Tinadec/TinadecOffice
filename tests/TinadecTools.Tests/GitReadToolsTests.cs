@@ -112,15 +112,15 @@ public sealed class GitReadToolsTests
     {
         var dir = System.IO.Path.Combine(FileToolRuntime.WorkspaceRoot, ".tinadec-tools-tests", $"{prefix}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        RunProcess(dir, "git", "init", "--bare", dir);
+        RunGit(dir, "init", "--bare", dir);
         return dir;
     }
 
-    private static void RunProcess(string working, string fileName, params string[] args)
+    private static void RunGit(string working, params string[] args)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = "git",
             WorkingDirectory = working,
             UseShellExecute = false,
             RedirectStandardError = true,
@@ -130,7 +130,7 @@ public sealed class GitReadToolsTests
         using var p = System.Diagnostics.Process.Start(psi)!;
         var stderr = p.StandardError.ReadToEnd();
         p.WaitForExit();
-        if (p.ExitCode != 0) throw new InvalidOperationException($"{fileName} {string.Join(' ', args)} failed: {stderr}");
+        if (p.ExitCode != 0) throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
     }
 
     private static string Normalize(string? path) =>

@@ -104,6 +104,10 @@ internal sealed class WindowsSandboxBackend : ISandboxBackend
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
         psi.CreateNoWindow = true;
+        // The runner derives its workspace root from its own CWD. Keep that
+        // root identical to the ACL scope so the second validation cannot be
+        // redirected by the serialized request.
+        psi.WorkingDirectory = WorkspacePathResolver.WorkspaceRoot;
         psi.StandardInputEncoding = System.Text.Encoding.UTF8;
         psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
         psi.UserName = SandboxAccountManager.AccountName;

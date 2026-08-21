@@ -1,9 +1,9 @@
 # GATEWAY KNOWLEDGE
 
 **Last Updated:** 2026-08-21
-**Last Updated By:** opencode (added POST /api/v1/model-providers/cli/connect proxy; tests 37/37 green)
-**Last Verified Commit:** 9997fa16b9a9b2f59d3aa9f05142b2f847b7c286
-**Branch:** main
+**Last Updated By:** Codex (closed Mimosa open-high Gateway/Tools execution paths)
+**Last Verified Commit:** 1a32062
+**Branch:** DmaEA/MVP
 
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。
@@ -92,17 +92,16 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
 
 ### 审批流
-1. 人类通过 Desktop 发出命令，请求包中带 `approval=true`
-2. Gateway 检查命令风险等级（`approval.ts`）
-3. 低/中风险命令：直接透传到 Tool Runtime
-4. 高风险命令：返回 `449 CONFIRMATION_REQUIRED`，Desktop UI 显示弹窗警告
-5. 用户确认后，请求带 `confirmation=true` 重新提交
-6. Gateway 验证后透传到 Tool Runtime
-7. Agent 请求不带 `approval=true`，按 Core 审批门流程处理
+1. Core 是 approval 状态、会话归属和命令参数 hash 的权威；Gateway 不信任客户端 `approved`、`source` 或客户端工具 ID。
+2. `/api/v1/runs/{runId}/tools/{toolId}/execute` 是首选的 Core-owned 工具执行路径。
+3. 保留的 `/api/v1/tool-runtime/tools/{toolId}/execute` legacy URL 只接受 `toolId=command_run`，强制 `session_id`、`approval_id`、结构化命令参数，并在转发前读取单条 Core approval，校验 approved、`kind=tool`、工具、会话/run、过期/消费状态和参数 hash。
+4. 通过审批后 Gateway 注入规范化的 `tool_id=command_run` 和 `approved=true`，只转发 Core/租户上下文头及规范化 `params`；任意其他工具 ID、裸命令、跨会话/跨上下文审批均在 Gateway 阻断。
+5. TinadecTools `command_run` 仍允许任意获批 executable，但 Windows 沙箱在宿主入口和 runner 子进程边界重复校验 executable、ArgumentList 参数、工作目录、超时和环境变量，并以沙箱账户 ACL、Job Object 和工作区权限执行。
 
 ### Code Tool 规格
 - `/api/v1/code/tools` 发布工具规格（snake_case DTO），Gateway 仅提供 BFF 组合
-- `/api/v1/code/tools/:toolId/execute` 先验证 Core 审批状态，再经审批拦截器，最后代理到 Tool Runtime
+- `/api/v1/code/tools/:toolId/execute` 是兼容 Code Tool 代理；需审批的工具先验证 Core 状态，再代理到 Tool Runtime。
+- `/api/v1/tool-runtime/tools/:toolId/execute` 是保留的终端兼容 URL，但只允许经过 Core 审批且参数 hash 匹配的 `command_run`；不得把它当作通用 Tool Runtime passthrough。
 - `executeCodeToolViaRuntime()` 是唯一的执行入口，通过 `toolRuntimeClient.ts` 代理
 
 ### Model/Agent Center

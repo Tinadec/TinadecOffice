@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ArrowUp, Plus, Image, FileText, Settings } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { UiButton, UiDropdownMenu, UiInput, UiLabel } from '@/components/ui'
+import { UiButton } from '@/components/ui'
 import PermissionSelector from './PermissionSelector.vue'
 import type { PermissionLevel } from '@/types/mode'
-import { api, type AgentModeTopologyDto } from '@/api'
+import { homeController } from '@/controllers/HomeController'
+import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -18,6 +19,8 @@ const props = defineProps<{
   permission: PermissionLevel
   sessionId?: string | null
   runs?: Array<{ id: string; status: string }>
+  modeVersionId?: string | null
+  meetingModel?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -29,44 +32,15 @@ const emit = defineEmits<{
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const plusTriggerRef = ref<HTMLElement | null>(null)
 const showPlusMenu = ref(false)
-const showInsertDialog = ref(false)
-const targetRunIdDraft = ref('')
+const plusMenuStyle = ref<Record<string, string>>({})
+const showAskMenu = ref(false)
 
-// mode_version selection (published modes)
-const modes = ref<AgentModeTopologyDto[]>([])
-const modeVersionId = ref<string | null>(null)
-const meetingModel = ref<string>('')
-
-// dispatch preference for Enter: parallel | queued | ask (default parallel)
-const ENTER_PREF_KEY = 'tinadec.enter_pref'
-type EnterPref = 'parallel' | 'queued' | 'ask'
-const enterPref = ref<EnterPref>((localStorage.getItem(ENTER_PREF_KEY) as EnterPref) || 'parallel')
-function setEnterPref(v: EnterPref) { enterPref.value = v; localStorage.setItem(ENTER_PREF_KEY, v) }
-
-// runs for insert picker
-const runOptions = ref<Array<{ id: string; status: string }>>([])
-
-async function loadModes() {
-  try {
-    const list = await api.listAgentModeTopologies()
-    modes.value = Array.isArray(list) ? list as AgentModeTopologyDto[] : []
-    // pick first published or first as default
-    if (!modeVersionId.value && modes.value[0]) modeVersionId.value = modes.value[0].id
-  } catch { /* gateway may be offline */ }
-}
-
-async function loadRuns() {
-  if (!props.sessionId) return
-  try {
-    const list = await api.listRuns(props.sessionId)
-    runOptions.value = (Array.isArray(list) ? list : []).map((r) => ({ id: (r as { id: string }).id, status: String((r as { status: string }).status ?? '') }))
-    if (props.runs?.length) runOptions.value = props.runs
-  } catch { /* ignore */ }
-}
-
-onMounted(() => { loadModes(); loadRuns() })
-watch(() => props.sessionId, loadRuns)
+const queued = homeController.queuedMessages
+const activeRuns = homeController.activeRuns
+const steeringId = ref<string | null>(null)
+const steerTarget = ref('')
 
 function autoResize() {
   const el = textareaRef.value
@@ -75,135 +49,178 @@ function autoResize() {
   el.style.height = Math.min(el.scrollHeight, 200) + 'px'
 }
 
-function dispatchSubmit(mode: 'parallel' | 'queued' | 'insert') {
-  if (mode === 'insert' && !targetRunIdDraft.value.trim()) {
-    showInsertDialog.value = true
+function resetTextareaHeight() {
+  const el = textareaRef.value
+  if (!el) return
+  el.style.height = 'auto'
+}
+
+function updatePlusMenuPosition() {
+  const trigger = plusTriggerRef.value
+  if (!trigger) return
+  const rect = trigger.getBoundingClientRect()
+  plusMenuStyle.value = {
+    position: 'fixed',
+    bottom: `${window.innerHeight - rect.top + 6}px`,
+    left: `${rect.left}px`,
+    minWidth: `${Math.max(rect.width, 130)}px`,
+  }
+}
+
+async function togglePlusMenu() {
+  showPlusMenu.value = !showPlusMenu.value
+  if (showPlusMenu.value) {
+    await nextTick()
+    updatePlusMenuPosition()
+  }
+}
+
+function handleClickOutside(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (!target.closest('.welcome-dialog-plus-wrapper') && !target.closest('.plus-dropdown-portal')) {
+    showPlusMenu.value = false
+  }
+  if (!target.closest('.composer-send-wrapper')) {
+    showAskMenu.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('click', handleClickOutside))
+onUnmounted(() => document.removeEventListener('click', handleClickOutside))
+
+function submit(pref?: DispatchPref) {
+  const content = props.modelValue.trim()
+  if (!content) return
+  const p = pref ?? getDispatchPref()
+  if (p === 'ask') {
+    showAskMenu.value = !showAskMenu.value
     return
   }
+  showAskMenu.value = false
+  resetTextareaHeight()
   emit('submit', {
-    dispatch_mode: mode,
-    target_run_id: mode === 'insert' ? targetRunIdDraft.value.trim() : null,
-    mode_version_id: modeVersionId.value,
-    meeting_model: meetingModel.value.trim() || null,
+    dispatch_mode: p,
+    target_run_id: null,
+    mode_version_id: props.modeVersionId ?? null,
+    meeting_model: props.meetingModel?.trim() ? props.meetingModel.trim() : null,
   })
-  showInsertDialog.value = false
 }
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
-    if (enterPref.value === 'ask') {
-      // ask: default to parallel but user must pick via buttons; we fallback to parallel for Enter
-      dispatchSubmit('parallel')
-      return
-    }
-    dispatchSubmit(enterPref.value === 'queued' ? 'queued' : 'parallel')
+    submit()
   }
 }
 
-function goToAgentSettings() {
-  router.push('/agent-center')
+function startSteer(id: string) {
+  const list = activeRuns.value
+  if (list.length === 1) {
+    void homeController.steerQueued(id, list[0].id)
+    return
+  }
+  steeringId.value = id
+  steerTarget.value = ''
+}
+
+function confirmSteer(id: string) {
+  if (!steerTarget.value) return
+  void homeController.steerQueued(id, steerTarget.value)
+  steeringId.value = null
 }
 </script>
 
 <template>
   <div class="composer">
-    <div class="composer-box">
-      <div class="composer-main">
-        <div class="composer-plus-wrapper">
-          <UiDropdownMenu v-model:open="showPlusMenu" placement="top" class="plus-dropdown-menu">
-            <template #trigger>
-              <UiButton variant="ghost" size="icon" class="composer-plus">
-                <Plus :size="14" />
-              </UiButton>
+    <div class="composer-box welcome-dialog">
+      <!-- queued cards sit inside dialog top when items are queued -->
+      <div v-if="queued.length" class="composer-queued">
+        <div v-for="item in queued" :key="item.id" class="queued-card">
+          <div class="queued-content">{{ item.content }}</div>
+          <div class="queued-actions">
+            <template v-if="steeringId === item.id">
+              <select v-model="steerTarget" class="composer-select-input queued-run-select">
+                <option value="" disabled>选择目标 run</option>
+                <option v-for="r in activeRuns" :key="r.id" :value="r.id">{{ r.id.slice(0,8) }} · {{ r.status }}</option>
+              </select>
+              <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">确认引导</button>
             </template>
-            <button class="plus-menu-item" @click="emit('add-image'); showPlusMenu = false">
-              <Image :size="12" />
-              <span>{{ t('chat.addImage') }}</span>
-            </button>
-            <button class="plus-menu-item" @click="emit('add-file'); showPlusMenu = false">
-              <FileText :size="12" />
-              <span>{{ t('chat.addFile') }}</span>
-            </button>
-          </UiDropdownMenu>
+            <template v-else>
+              <button class="queued-action" @click="startSteer(item.id)">引导</button>
+              <button class="queued-action" @click="homeController.promoteQueued(item.id)">并列</button>
+              <button class="queued-action" @click="homeController.editQueued(item.id)">编辑</button>
+              <button class="queued-action" @click="homeController.dismissQueued(item.id)">×</button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-dialog-main">
+        <div class="welcome-dialog-plus-wrapper">
+          <button
+            ref="plusTriggerRef"
+            class="welcome-dialog-plus"
+            @click="togglePlusMenu"
+          >
+            <Plus :size="15" />
+          </button>
+          <Teleport to="body">
+            <div
+              v-if="showPlusMenu"
+              class="plus-dropdown-portal"
+              :style="plusMenuStyle"
+            >
+              <button class="plus-menu-item" @click="emit('add-image'); showPlusMenu = false">
+                <Image :size="12" />
+                <span>{{ t('chat.addImage') }}</span>
+              </button>
+              <button class="plus-menu-item" @click="emit('add-file'); showPlusMenu = false">
+                <FileText :size="12" />
+                <span>{{ t('chat.addFile') }}</span>
+              </button>
+            </div>
+          </Teleport>
         </div>
 
         <textarea
           ref="textareaRef"
           :value="modelValue"
-          class="composer-input"
-          :placeholder="t('chat.placeholder')"
+          class="welcome-dialog-input"
+          :placeholder="t('chat.whatToDo')"
           rows="1"
           @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value); autoResize()"
           @keydown="handleKeydown"
         />
 
-        <UiButton
-          variant="ghost"
-          size="icon"
-          class="composer-send"
-          :disabled="busy || !modelValue.trim()"
-          @click="dispatchSubmit(enterPref === 'queued' ? 'queued' : 'parallel')"
-        >
-          <ArrowUp :size="14" />
-        </UiButton>
-      </div>
-
-      <!-- new selectors -->
-      <div class="composer-selects">
-        <div class="composer-select">
-          <UiLabel class="composer-label">模式版本</UiLabel>
-          <select v-model="modeVersionId" class="composer-select-input">
-            <option :value="null">跟随默认</option>
-            <option v-for="m in modes" :key="m.id" :value="m.id">{{ m.display_name }} {{ m.status === 'published' ? '· 默认' : '' }}</option>
-          </select>
-        </div>
-        <div class="composer-select">
-          <UiLabel class="composer-label">会议模型</UiLabel>
-          <UiInput v-model="meetingModel" placeholder="可选" class="composer-model-input" />
-        </div>
-        <div class="composer-select">
-          <UiLabel class="composer-label">回车</UiLabel>
-          <select :value="enterPref" class="composer-select-input" @change="setEnterPref(($event.target as HTMLSelectElement).value as EnterPref)">
-            <option value="parallel">并行</option>
-            <option value="queued">排队</option>
-            <option value="ask">询问</option>
-          </select>
+        <div class="composer-send-wrapper">
+          <UiButton
+            variant="ghost"
+            size="icon"
+            class="welcome-dialog-send"
+            :disabled="!modelValue.trim()"
+            @click="submit()"
+          >
+            <ArrowUp :size="15" />
+          </UiButton>
+          <div v-if="showAskMenu" class="ask-menu">
+            <button class="ask-menu-item" @click="submit('queued')">排队发送</button>
+            <button class="ask-menu-item" @click="submit('parallel')">并列发送</button>
+          </div>
         </div>
       </div>
 
-      <div class="composer-toolbar">
-        <div class="composer-toolbar-left">
-          <!-- ponytail: ModeSelector removed — mode_version controls routing -->
+      <div class="welcome-dialog-toolbar">
+        <div class="toolbar-left">
           <PermissionSelector
             :model-value="permission"
             @update:model-value="emit('update:permission', $event)"
           />
-          <div class="dispatch-actions">
-            <UiButton size="xs" :variant="enterPref==='parallel' ? 'default' : 'outline'" :disabled="busy" @click="dispatchSubmit('parallel')">并行</UiButton>
-            <UiButton size="xs" :variant="enterPref==='queued' ? 'default' : 'outline'" :disabled="busy" @click="dispatchSubmit('queued')">排队</UiButton>
-            <UiButton size="xs" variant="outline" :disabled="busy" @click="showInsertDialog = true">插入</UiButton>
-          </div>
         </div>
-        <div class="composer-toolbar-right">
-          <button class="composer-agent-config" @click="goToAgentSettings">
+        <div class="toolbar-right">
+          <button class="toolbar-agent-config" @click="router.push('/settings')">
             <Settings :size="11" />
             <span>{{ t('chat.agentConfig') }}</span>
           </button>
-        </div>
-      </div>
-
-      <!-- insert picker dialog -->
-      <div v-if="showInsertDialog" class="insert-dialog">
-        <div class="insert-dialog-head"><strong>插入目标 Run</strong> <UiButton size="xs" variant="ghost" @click="showInsertDialog=false">×</UiButton></div>
-        <select v-model="targetRunIdDraft" class="composer-select-input" style="width:100%">
-          <option value="">选择目标 run</option>
-          <option v-for="r in runOptions" :key="r.id" :value="r.id">{{ r.id.slice(0,8) }} · {{ r.status }}</option>
-        </select>
-        <UiInput v-model="targetRunIdDraft" placeholder="或手动输入 run_id" />
-        <div class="dispatch-actions" style="margin-top:8px">
-          <UiButton size="sm" :disabled="!targetRunIdDraft.trim()" @click="dispatchSubmit('insert')">确认插入</UiButton>
-          <UiButton size="sm" variant="outline" @click="showInsertDialog=false">取消</UiButton>
         </div>
       </div>
     </div>
@@ -211,12 +228,102 @@ function goToAgentSettings() {
 </template>
 
 <style scoped>
-.composer-selects { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-.composer-select { display:flex; align-items:center; gap:6px; }
-.composer-label { font-size:11px; color:var(--text-muted); white-space:nowrap; }
-.composer-select-input { height:28px; border:1px solid var(--border-muted); border-radius:6px; padding:0 8px; font-size:12px; background:var(--surface-raised); min-width:140px; }
-.composer-model-input { height:28px; width:140px; font-size:12px; }
-.dispatch-actions { display:flex; gap:6px; align-items:center; }
-.insert-dialog { margin-top:8px; border:1px solid var(--border-muted); border-radius:8px; padding:10px; background:var(--surface-raised); display:grid; gap:8px; }
-.insert-dialog-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; }
+.composer-queued {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+.composer-select-input {
+  height: 26px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--surface-raised);
+  min-width: 140px;
+}
+.composer-send-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.ask-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-section);
+  padding: 4px;
+  box-shadow: var(--shadow-panel);
+}
+.ask-menu-item {
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.ask-menu-item:hover {
+  background: var(--bg-hover);
+}
+.queued-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  padding: 6px 8px;
+}
+.queued-content {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.queued-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.queued-action {
+  border: none;
+  background: none;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.queued-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.queued-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.queued-run-select {
+  min-width: 150px;
+  height: 24px;
+}
 </style>
+

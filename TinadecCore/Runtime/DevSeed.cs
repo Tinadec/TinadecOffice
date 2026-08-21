@@ -152,25 +152,29 @@ public static class DevSeed
             if (!hasFormal)
             {
                 var now2 = DateTimeOffset.UtcNow;
-                var meeting = new AgentConfiguration.AgentDefinitionRecord
+
+                // Formal space.full_duplex agent set (see docs/双层智能体架构.md + docs/全双工智能体配置文档.md).
+                // Operation: meeting (only user entry), context_compressor, skill_recommender, supervisor, evolution.
+                // Execution: task_planner (coordinator) + worker pool specializations.
+                var meeting = NewAgent("meeting", "会议智能体", "operation", "session_coordinator", "[\"user.respond\",\"task.dispatch\",\"agent.create_temporary\",\"agent.create_persistent\",\"agent.create_profile\"]", "[\"*\"]");
+                var contextCompressor = NewAgent("context_compressor", "上下文压缩智能体", "operation", "context_maintenance", "[\"context.read\",\"context.patch\"]", "[\"*\"]");
+                var skillRecommender = NewAgent("skill_recommender", "技能推荐智能体", "operation", "capability_advisor", "[\"tool.search\",\"agent.propose\"]", "[\"*\"]");
+                var supervisor = NewAgent("supervisor", "监督智能体", "operation", "quality_controller", "[\"supervision.review\"]", "[\"*\"]");
+                var evolution = NewAgent("evolution", "进化智能体", "operation", "experience_curator", "[\"memory.candidate\",\"agent.candidate\",\"agent.create_persistent\"]", "[\"*\"]");
+                var taskPlanner = NewAgent("task_planner", "任务规划智能体", "execution", "execution_coordinator", "[\"task.plan\",\"task.replan\",\"agent.create_temporary\"]", "[\"*\"]");
+                var codeWorker = NewAgent("worker.code", "代码执行智能体", "execution", "task_executor", "[\"tool.code\",\"tool.file\"]", "[\"write_file\",\"read_file\",\"shell.execute\",\"mcp_invoke\"]");
+                var documentWorker = NewAgent("worker.document", "文档生成智能体", "execution", "task_executor", "[\"tool.document\"]", "[\"write_file\",\"read_file\"]");
+                var dataWorker = NewAgent("worker.data", "数据处理智能体", "execution", "task_executor", "[\"tool.data\"]", "[\"read_file\",\"shell.execute\"]");
+                var browserWorker = NewAgent("worker.browser", "浏览器检索智能体", "execution", "task_executor", "[\"tool.search\",\"tool.browser\"]", "[\"browser.search\",\"browser.fetch\",\"mcp_search\",\"mcp_invoke\"]");
+                var fileWorker = NewAgent("worker.file", "文件操作智能体", "execution", "task_executor", "[\"tool.file\"]", "[\"write_file\",\"read_file\"]");
+                var generalWorker = NewAgent("worker.general", "通用执行智能体", "execution", "task_executor", "[\"task.execute\"]", "[\"*\"]");
+                var agents = new[] { meeting, contextCompressor, skillRecommender, supervisor, evolution, taskPlanner, codeWorker, documentWorker, dataWorker, browserWorker, fileWorker, generalWorker };
+                cfgDb.AgentDefinitions.AddRange(agents);
+                foreach (var a in agents)
                 {
-                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "meeting", DisplayName = "Meeting (baseline)", Layer = "operation", Role = "session_coordinator",
-                    CapabilitiesJson = "[\"user.respond\",\"task.dispatch\"]", ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = "[\"*\"]",
-                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
-                };
-                var executor = new AgentConfiguration.AgentDefinitionRecord
-                {
-                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "executor-baseline", DisplayName = "Executor (baseline)", Layer = "execution", Role = "task_executor",
-                    CapabilitiesJson = "[\"task.execute\"]", ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = "[\"*\"]",
-                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
-                };
-                cfgDb.AgentDefinitions.AddRange(meeting, executor);
-                var mSnap = JsonSerializer.Serialize(new { id = meeting.Id, slug = meeting.Slug, display_name = meeting.DisplayName, layer = meeting.Layer });
-                var eSnap = JsonSerializer.Serialize(new { id = executor.Id, slug = executor.Slug, display_name = executor.DisplayName, layer = executor.Layer });
-                cfgDb.AgentVersions.AddRange(
-                    new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = meeting.Id, Version = 1, Layer = meeting.Layer, Role = meeting.Role, SnapshotJson = mSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(mSnap))).ToLowerInvariant(), ContentLength = mSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId },
-                    new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = executor.Id, Version = 1, Layer = executor.Layer, Role = executor.Role, SnapshotJson = eSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(eSnap))).ToLowerInvariant(), ContentLength = eSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId }
-                );
+                    var snap = JsonSerializer.Serialize(new { id = a.Id, slug = a.Slug, display_name = a.DisplayName, layer = a.Layer, role = a.Role, model_strategy = new { kind = "inherit" } });
+                    cfgDb.AgentVersions.Add(new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = a.Id, Version = 1, Layer = a.Layer, Role = a.Role, SnapshotJson = snap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(snap))).ToLowerInvariant(), ContentLength = snap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
+                }
                 var pipeline = new AgentConfiguration.PromptPipelineRecord
                 {
                     Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "baseline-prompt", DisplayName = "Baseline Prompt", GraphJson = "{\"nodes\":[{\"id\":\"template\",\"type\":\"template\"},{\"id\":\"assemble\",\"type\":\"assemble\"}],\"edges\":[{\"source\":\"template\",\"target\":\"assemble\"}]}",
@@ -181,18 +185,26 @@ public static class DevSeed
                 cfgDb.PromptVersions.Add(new AgentConfiguration.PromptVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, PromptPipelineId = pipeline.Id, Version = 1, GraphJson = pSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(pSnap))).ToLowerInvariant(), ContentLength = pSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
                 var mode = new AgentConfiguration.AgentModeRecord
                 {
-                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "default-mode", DisplayName = "Default Mode (baseline)", Description = "Baseline operation+execution mode",
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "default-mode", DisplayName = "Default Mode (baseline)", Description = "space.full_duplex baseline",
                     Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
                 };
                 cfgDb.AgentModes.Add(mode);
-                cfgDb.ModeNodes.AddRange(
-                    new AgentConfiguration.ModeNodeRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, ModeId = mode.Id, NodeKey = "meeting-1", AgentDefinitionId = meeting.Id, Layer = "operation", Label = "Meeting", Status = "published", Revision = 1, CreatedAt = now2, UpdatedAt = now2 },
-                    new AgentConfiguration.ModeNodeRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, ModeId = mode.Id, NodeKey = "executor-1", AgentDefinitionId = executor.Id, Layer = "execution", Label = "Executor", Status = "published", Revision = 1, CreatedAt = now2, UpdatedAt = now2 }
-                );
-                var modeSnap = JsonSerializer.Serialize(new { mode_id = mode.Id, nodes = new[] { new { key = "meeting-1", agent = meeting.Id, layer = "operation" }, new { key = "executor-1", agent = executor.Id, layer = "execution" } } });
+                var opNodes = new[] { meeting, contextCompressor, skillRecommender, supervisor, evolution };
+                var exNodes = new[] { taskPlanner, codeWorker, documentWorker, dataWorker, browserWorker, fileWorker, generalWorker };
+                var allNodes = opNodes.Select((a, i) => (NodeKey: $"meeting-{i + 1}", Agent: a)).Concat(exNodes.Select((a, i) => (NodeKey: $"executor-{i + 1}", Agent: a))).ToArray();
+                foreach (var (key, a) in allNodes)
+                    cfgDb.ModeNodes.Add(new AgentConfiguration.ModeNodeRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, ModeId = mode.Id, NodeKey = key, AgentDefinitionId = a.Id, Layer = a.Layer, Label = a.DisplayName, Status = "published", Revision = 1, CreatedAt = now2, UpdatedAt = now2 });
+                var modeSnap = JsonSerializer.Serialize(new { mode_id = mode.Id, nodes = allNodes.Select(n => new { key = n.NodeKey, agent = n.Agent.Id, layer = n.Agent.Layer }) });
                 cfgDb.ModeVersions.Add(new AgentConfiguration.ModeVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentModeId = mode.Id, Version = 1, SnapshotJson = modeSnap, TopologyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(modeSnap))).ToLowerInvariant(), Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
                 cfgDb.WorkspaceDefaults.Add(new AgentConfiguration.WorkspaceDefaultsRecord { TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, DefaultAgentDefinitionId = meeting.Id, DefaultAgentModeId = mode.Id, DefaultPromptPipelineId = pipeline.Id, Status = "active", Revision = 1, CreatedAt = now2, UpdatedAt = now2 });
                 await cfgDb.SaveChangesAsync(ct);
+
+                AgentConfiguration.AgentDefinitionRecord NewAgent(string slug, string display, string layer, string role, string caps, string tools) => new()
+                {
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = slug, DisplayName = display, Layer = layer, Role = role,
+                    CapabilitiesJson = caps, ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = tools,
+                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
+                };
             }
         }
     }

@@ -62,7 +62,9 @@ internal static class SandboxEnvironment
 
     internal static bool IsEnvironmentVariableNameValid(string name)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return name.IndexOf('=') < 0 && name.IndexOf('\0') < 0;
+        return !string.IsNullOrWhiteSpace(name)
+            && name.IndexOf('=') < 0
+            && name.IndexOf('\0') < 0
+            && !name.Any(char.IsWhiteSpace);
     }
 }

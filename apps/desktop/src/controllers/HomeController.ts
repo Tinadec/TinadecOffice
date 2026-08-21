@@ -13,6 +13,7 @@ import {
   type ToolExecutionTimelineItemDto,
 } from '@/api'
 import { basenameFromPath } from '@/format'
+import { getDispatchPref } from '@/lib/dispatchPref'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
@@ -54,8 +55,10 @@ const rightRailWidth = ref(420)
 const currentMode = ref<AgentMode>('auto')
 const currentPermission = ref<PermissionLevel>('default')
 const runs = ref<Array<{ id: string; status: string }>>([])
+const queuedMessages = ref<Array<{ id: string; content: string }>>([])
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
+const activeRuns = computed(() => runs.value.filter((r) => ['running', 'ready', 'pending', 'queued'].includes(r.status)))
 const currentSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
 const recentEvents = computed(() => events.value.slice(-8).reverse())
 
@@ -78,6 +81,10 @@ function generateTitle(content: string): string {
   const firstLine = trimmed.split('\n')[0]
   if (firstLine.length <= 50) return firstLine
   return firstLine.substring(0, 47) + '...'
+}
+
+function newId(): string {
+  return (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 async function run(label: string, action: () => Promise<void>) {
@@ -256,8 +263,8 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     const snapshotContent = content
     draft.value = ''
     invokeError.value = null
-    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const dispatchMode: DispatchMode = (opts?.dispatch_mode as DispatchMode) ?? (localStorage.getItem('tinadec.enter_pref') as DispatchMode) ?? 'parallel'
+    const clientMessageId = newId()
+    const dispatchMode: DispatchMode = (opts?.dispatch_mode as DispatchMode) ?? getDispatchPref()
     const modeVersionId = opts?.mode_version_id ?? null
     const targetRunId = opts?.target_run_id ?? null
     const meetingModel = opts?.meeting_model ?? null
@@ -265,7 +272,7 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     try {
       messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
       // new interaction path (snake_case)
-      await api.createInteraction(sessionId, {
+      const resp = await api.createInteraction(sessionId, {
         content: snapshotContent,
         client_message_id: clientMessageId,
         mode_version_id: modeVersionId,
@@ -273,6 +280,7 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         target_run_id: targetRunId,
         meeting_model: meetingModel,
       })
+      if (!resp.run_id && resp.status === 'queued') queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent }]
       // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -313,6 +321,55 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     }
     await loadMessagesAndApprovals()
   })
+}
+
+function dismissQueued(id: string) {
+  queuedMessages.value = queuedMessages.value.filter((item) => item.id !== id)
+}
+
+function editQueued(id: string) {
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  draft.value = item.content
+  dismissQueued(id)
+}
+
+async function steerQueued(id: string, targetRunId: string) {
+  if (!selectedSessionId.value) return
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  let sent = false
+  await run('steer message', async () => {
+    await api.createInteraction(selectedSessionId.value!, {
+      content: item.content,
+      client_message_id: newId(),
+      mode_version_id: null,
+      dispatch_mode: 'insert',
+      target_run_id: targetRunId,
+      meeting_model: null,
+    })
+    sent = true
+  })
+  if (sent) dismissQueued(id)
+}
+
+async function promoteQueued(id: string) {
+  if (!selectedSessionId.value) return
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  let sent = false
+  await run('promote message', async () => {
+    await api.createInteraction(selectedSessionId.value!, {
+      content: item.content,
+      client_message_id: newId(),
+      mode_version_id: null,
+      dispatch_mode: 'parallel',
+      target_run_id: null,
+      meeting_model: null,
+    })
+    sent = true
+  })
+  if (sent) dismissQueued(id)
 }
 
 async function requestShellApproval() {
@@ -361,6 +418,7 @@ watch(selectedProjectId, () => {
 watch(selectedSessionId, () => {
   void loadMessagesAndApprovals()
   reconnectEvents()
+  queuedMessages.value = []
 })
 
 /** Start the controller's data pipeline (idempotent). */
@@ -414,6 +472,12 @@ export const homeController = {
   openProject,
   createSession,
   runs,
+  queuedMessages,
+  activeRuns,
+  dismissQueued,
+  editQueued,
+  steerQueued,
+  promoteQueued,
   sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => {
     const content = draft.value.trim()
     if (!content) return

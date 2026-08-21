@@ -9,6 +9,7 @@
  */
 
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { proxyToolRuntimeJson } from './toolRuntimeClient.js';
 
 export interface CodeToolExecuteRequest {
@@ -50,10 +51,30 @@ export interface CodeToolSpecDto {
 export interface ApprovalSnapshot {
   id: string;
   session_id?: string | null;
+  run_id?: string | null;
+  tool_id?: string | null;
   kind?: string | null;
   status?: string | null;
+  request_hash?: string | null;
+  consumed_at?: string | null;
+  consumed_by_execution_id?: string | null;
+  expires_at?: string | null;
+  /** Legacy-only fields retained for the Code Tool approval helper contract. */
   command?: string | null;
   cwd?: string | null;
+}
+
+export interface NormalizedCommandRun {
+  session_id: string;
+  approval_id: string;
+  run_id?: string;
+  params: Record<string, unknown>;
+}
+
+export interface CommandRunValidationFailure {
+  status: number;
+  code: string;
+  detail: string;
 }
 
 interface CodeToolSpec {
@@ -433,6 +454,96 @@ export function codeToolApprovalUnavailableBlock(toolId: string, request: CodeTo
 }
 
 /**
+ * Normalizes the legacy Tool Runtime envelope. The public route is deliberately
+ * narrower than the generic Code Tool route: only an approved command_run can
+ * reach the child process, and the child receives params rather than arbitrary
+ * client fields.
+ */
+export function normalizeCommandRunRequest(body: unknown):
+  | { value: NormalizedCommandRun }
+  | { error: CommandRunValidationFailure } {
+  if (!isRecord(body)) return invalidCommand('invalid_request', 'A JSON object is required.');
+  if (body.tool_id !== undefined && body.tool_id !== 'command_run') return invalidCommand('tool_not_allowed', 'Only command_run may be selected on this route.');
+
+  const sessionId = nonEmptyString(body.session_id);
+  if (!sessionId) return invalidCommand('session_required', 'session_id is required.');
+  const approvalId = nonEmptyString(body.approval_id);
+  if (!approvalId) return invalidCommand('approval_required', 'approval_id is required.');
+  if (body.arguments !== undefined && body.params !== undefined) return invalidCommand('ambiguous_command_parameters', 'Provide command parameters in arguments or params, not both.');
+  const rawParameters = body.arguments ?? body.params;
+  if (!isRecord(rawParameters)) return invalidCommand('command_parameters_required', 'arguments or params must be a structured command parameter object.');
+
+  const input = rawParameters;
+  const executable = nonEmptyString(input.executable);
+  if (!executable || executable.includes('\0')) return invalidCommand('invalid_executable', 'arguments.executable must be a non-empty executable name without NUL.');
+
+  if (!Array.isArray(input.arguments) || input.arguments.some((item) => typeof item !== 'string' || item.includes('\0'))) {
+    return invalidCommand('invalid_arguments', 'arguments.arguments must be an array of strings without NUL.');
+  }
+
+  const cwd = nonEmptyString(body.cwd) ?? nonEmptyString(input.working_directory);
+  if (!cwd) return invalidCommand('cwd_required', 'cwd or arguments.working_directory is required.');
+  if (body.cwd !== undefined && typeof body.cwd !== 'string') return invalidCommand('invalid_cwd', 'cwd must be a string.');
+  if (input.working_directory !== undefined && typeof input.working_directory !== 'string') return invalidCommand('invalid_cwd', 'arguments.working_directory must be a string.');
+  if (nonEmptyString(body.cwd) && nonEmptyString(input.working_directory) && normalizeCommandPath(body.cwd as string) !== normalizeCommandPath(input.working_directory as string)) {
+    return invalidCommand('cwd_mismatch', 'cwd and arguments.working_directory must identify the same directory.');
+  }
+
+  const timeout = input.timeout_ms;
+  if (timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1 || timeout > 1_800_000)) return invalidCommand('invalid_timeout', 'arguments.timeout_ms must be an integer from 1 through 1800000.');
+  if (input.stdin !== undefined && typeof input.stdin !== 'string') return invalidCommand('invalid_stdin', 'arguments.stdin must be a string when supplied.');
+  if (input.persist_grants === true) return invalidCommand('persistent_grants_forbidden', 'Persistent sandbox grants are not accepted by this route.');
+  if (input.persist_grants !== undefined && input.persist_grants !== false) return invalidCommand('invalid_persist_grants', 'arguments.persist_grants must be false when supplied.');
+
+  const params: Record<string, unknown> = {
+    executable,
+    arguments: [...(input.arguments as string[])],
+    working_directory: cwd,
+  };
+  if (timeout !== undefined) params.timeout_ms = timeout;
+  if (input.persist_grants === false) params.persist_grants = false;
+  for (const key of ['stdin', 'additional_read_paths', 'additional_write_paths', 'environment_variable_names']) {
+    if (input[key] !== undefined) {
+      const value = input[key];
+      if (key === 'stdin') params[key] = value;
+      else if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.length === 0 || item.includes('\0') || (key === 'environment_variable_names' && !isEnvironmentVariableName(item)))) {
+        return invalidCommand('invalid_command_parameter', `arguments.${key} must be an array of non-empty strings without NUL.`);
+      } else {
+        params[key] = [...value as string[]];
+      }
+    }
+  }
+
+  const runId = body.run_id === undefined ? undefined : nonEmptyString(body.run_id);
+  if (body.run_id !== undefined && !runId) return invalidCommand('invalid_run_id', 'run_id must be a non-empty string when supplied.');
+  return { value: { session_id: sessionId, approval_id: approvalId, run_id: runId, params } };
+}
+
+export function validateCommandRunApproval(
+  request: NormalizedCommandRun,
+  approval: ApprovalSnapshot | null,
+  now = Date.now(),
+): CommandRunValidationFailure | null {
+  if (!approval) return { status: 404, code: 'approval_not_found', detail: 'Core approval was not found.' };
+  if (approval.status !== 'approved') return { status: 403, code: 'approval_not_approved', detail: 'Core approval is not approved.' };
+  if (approval.kind !== 'tool') return { status: 403, code: 'approval_wrong_kind', detail: 'The approval kind cannot authorize command_run.' };
+  if (approval.tool_id !== 'command_run') return { status: 403, code: 'approval_wrong_tool', detail: 'The approval is not for command_run.' };
+  if (approval.session_id !== request.session_id) return { status: 403, code: 'approval_session_mismatch', detail: 'The approval belongs to a different session.' };
+  if (approval.run_id && approval.run_id !== request.run_id) return { status: 403, code: 'approval_run_mismatch', detail: 'The approval belongs to a different run.' };
+  if (approval.consumed_at || approval.consumed_by_execution_id) return { status: 409, code: 'approval_consumed', detail: 'Core approval has already been consumed.' };
+  if (!approval.request_hash || approval.request_hash !== commandParametersHash(request.params)) return { status: 403, code: 'approval_context_mismatch', detail: 'The approved command parameters do not match this request.' };
+  if (approval.expires_at) {
+    const expiresAt = Date.parse(approval.expires_at);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) return { status: 403, code: 'approval_expired', detail: 'Core approval has expired.' };
+  }
+  return null;
+}
+
+export function commandParametersHash(parameters: Record<string, unknown>): string {
+  return createHash('sha256').update(canonicalJson(parameters), 'utf8').digest('hex');
+}
+
+/**
  * 通过 Tool Runtime 执行 Code 工具。
  * Gateway 不直接执行任何工具，所有执行请求都代理到 Tool Runtime。
  */
@@ -465,6 +576,32 @@ export async function executeCodeToolViaRuntime(
 
 function normalizePath(p: string): string {
   return path.resolve(p).toLowerCase();
+}
+
+function normalizeCommandPath(value: string): string {
+  return value.trim().replace(/[\\/]+$/g, '').replaceAll('/', '\\').toLowerCase();
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isEnvironmentVariableName(value: string): boolean {
+  return value.trim().length > 0 && !/[=\0\s]/.test(value);
+}
+
+function invalidCommand(code: string, detail: string): { error: CommandRunValidationFailure } {
+  return { error: { status: 400, code, detail } };
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
 }
 
 function extractActionFromApprovalCommand(command: string): string | null {

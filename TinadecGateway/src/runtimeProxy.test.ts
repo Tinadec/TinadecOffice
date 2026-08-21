@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { app } from './index.js';
+import { commandParametersHash } from './codeTools.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -8,7 +9,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('full-duplex runtime routes preserve Core paths, query names, and command bodies', async () => {
+test('full-duplex runtime routes preserve Core paths, query names, and command bodies', { concurrency: false }, async () => {
   const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requests.push({
@@ -71,7 +72,7 @@ test('full-duplex runtime routes preserve Core paths, query names, and command b
   assert.deepEqual(JSON.parse(requests[9]!.body ?? ''), { reason: 'insufficient evidence' });
 });
 
-test('invoke-stream preserves the full-duplex request envelope and Core SSE response', async () => {
+test('invoke-stream preserves the full-duplex request envelope and Core SSE response', { concurrency: false }, async () => {
   let forwarded: { url: string; method: string; body: string | undefined } | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     forwarded = {
@@ -107,5 +108,174 @@ test('invoke-stream preserves the full-duplex request envelope and Core SSE resp
     url: 'http://127.0.0.1:48731/api/v1/sessions/session-1/invoke-stream',
     method: 'POST',
     body: JSON.stringify(envelope)
+  });
+});
+
+function commandEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    session_id: 'session-1',
+    approval_id: 'approval-1',
+    cwd: 'C:/workspace',
+    arguments: {
+      executable: 'git',
+      arguments: ['status', '--porcelain', 'value with spaces', 'quote"value', 'semi;colon', 'amp&value'],
+      working_directory: 'C:/workspace',
+      timeout_ms: 1000,
+    },
+    ...overrides,
+  };
+}
+
+test('legacy tool runtime rejects arbitrary tool ids before contacting runtime', { concurrency: false }, async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response('{}', { status: 500 });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/write_file/execute', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(commandEnvelope()),
+  }));
+
+  assert.equal(response.status, 404);
+  assert.equal(calls, 0);
+});
+
+test('legacy command_run requires structured session, approval, and command parameters', { concurrency: false }, async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response('{}', { status: 500 });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session_id: 'session-1', approval_id: 'approval-1', command: 'git status', approved: true }),
+  }));
+
+  assert.equal(response.status, 400);
+  assert.equal(calls, 0);
+});
+
+test('legacy command_run accepts the Tool Runtime params envelope and still normalizes it', { concurrency: false }, async () => {
+  const envelope = commandEnvelope();
+  const { arguments: commandParameters, ...withoutArguments } = envelope;
+  const body = { ...withoutArguments, params: commandParameters };
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(input), init });
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({
+        id: 'approval-1', session_id: 'session-1', kind: 'tool', tool_id: 'command_run', status: 'approved',
+        request_hash: commandParametersHash(commandParameters),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.parse(String(requests[1]!.init?.body)).params.executable, 'git');
+});
+
+test('legacy command_run blocks wrong-session and mismatched command approvals', { concurrency: false }, async () => {
+  const envelope = commandEnvelope();
+  let calls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    calls += 1;
+    assert.match(String(input), /\/api\/v1\/approvals\/approval-1$/);
+    return new Response(JSON.stringify({
+      id: 'approval-1',
+      session_id: 'other-session',
+      kind: 'tool',
+      tool_id: 'command_run',
+      status: 'approved',
+      request_hash: commandParametersHash(envelope.arguments),
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(envelope),
+  }));
+
+  assert.equal(response.status, 403);
+  assert.equal(calls, 1);
+});
+
+test('legacy command_run blocks an approval whose command context hash differs', { concurrency: false }, async () => {
+  const envelope = commandEnvelope();
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      id: 'approval-1', session_id: 'session-1', kind: 'tool', tool_id: 'command_run', status: 'approved',
+      request_hash: commandParametersHash({ ...envelope.arguments, arguments: ['different-command'] }),
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
+  }));
+
+  assert.equal(response.status, 403);
+  assert.equal(calls, 1);
+});
+
+test('legacy command_run forwards only normalized approved parameters and context headers', { concurrency: false }, async () => {
+  const envelope = commandEnvelope({ tool_id: 'command_run', approved: false, source: 'client', ignored: 'field' });
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(input), init });
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({
+        id: 'approval-1',
+        session_id: 'session-1',
+        kind: 'tool',
+        tool_id: 'command_run',
+        status: 'approved',
+        request_hash: commandParametersHash(envelope.arguments),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 202, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-request-id': 'request-1',
+      'x-tenant-id': 'tenant-1',
+      'x-user-id': 'user-1',
+    },
+    body: JSON.stringify(envelope),
+  }));
+
+  assert.equal(response.status, 202);
+  assert.equal(requests.length, 2);
+  assert.match(requests[0]!.url, /\/api\/v1\/approvals\/approval-1$/);
+  assert.equal(requests[0]!.init?.headers?.['x-request-id'], 'request-1');
+  assert.equal(requests[0]!.init?.headers?.['x-tenant-id'], 'tenant-1');
+  assert.equal(requests[1]!.url, 'http://127.0.0.1:48732/api/v1/tools/command_run/execute');
+  assert.equal(requests[1]!.init?.headers?.['x-user-id'], 'user-1');
+  assert.deepEqual(JSON.parse(String(requests[1]!.init?.body)), {
+    tool_id: 'command_run',
+    session_id: 'session-1',
+    approval_id: 'approval-1',
+    approved: true,
+    params: {
+      executable: 'git',
+      arguments: ['status', '--porcelain', 'value with spaces', 'quote"value', 'semi;colon', 'amp&value'],
+      working_directory: 'C:/workspace',
+      timeout_ms: 1000,
+    },
   });
 });

@@ -50,12 +50,21 @@ internal static class WindowsSandboxRunner
     private static SandboxRunnerResponse ExecuteRunnerCommand(string json)
     {
         var request = System.Text.Json.JsonSerializer.Deserialize(
-            json, SandboxJsonContext.Default.SandboxRunnerRequest)!;
+            json, SandboxJsonContext.Default.SandboxRunnerRequest)
+            ?? throw new InvalidDataException("Sandbox runner request was empty.");
 
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
+            SandboxRequestValidator.Validate(
+                request.Executable,
+                request.Arguments,
+                request.WorkingDirectory,
+                request.TimeoutMs,
+                request.Environment);
+            if (request.Environment is null)
+                throw new InvalidDataException("Sandbox runner environment is required.");
             var response = RunSandboxedProcess(request);
             response.DurationMs = stopwatch.ElapsedMilliseconds;
             return response;
@@ -73,6 +82,15 @@ internal static class WindowsSandboxRunner
 
     private static SandboxRunnerResponse RunSandboxedProcess(SandboxRunnerRequest request)
     {
+        SandboxRequestValidator.Validate(
+            request.Executable,
+            request.Arguments,
+            request.WorkingDirectory,
+            request.TimeoutMs,
+            request.Environment);
+        if (request.Environment is null)
+            throw new InvalidDataException("Sandbox runner environment is required.");
+
         var psi = new ProcessStartInfo
         {
             FileName = request.Executable,
@@ -87,12 +105,9 @@ internal static class WindowsSandboxRunner
         foreach (var arg in request.Arguments)
             psi.ArgumentList.Add(arg);
 
-        if (request.Environment is not null)
-        {
-            psi.Environment.Clear();
-            foreach (var kv in request.Environment)
-                psi.Environment[kv.Key] = kv.Value;
-        }
+        psi.Environment.Clear();
+        foreach (var kv in request.Environment)
+            psi.Environment[kv.Key] = kv.Value;
 
         using var job = new JobObjectManager();
 
@@ -173,5 +188,4 @@ internal static class WindowsSandboxRunner
     private sealed record CapturedText(string Text, bool Truncated);
 
     private const int MaxStreamChars = 65_536;
-    private const int MaxTimeoutMs = 1_800_000;
 }

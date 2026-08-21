@@ -10,7 +10,9 @@ import { coreUrl, proxyJson, proxySse } from './coreClient.js';
 import { proxyToolRuntimeJson, toolRuntimeUrl } from './toolRuntimeClient.js';
 import {
   authenticate,
+  buildForwardHeaders,
   isPublicPath,
+  type AuthContext,
 } from './auth.js';
 import {
   codeToolApprovalBlockFor,
@@ -19,6 +21,8 @@ import {
   executeCodeToolViaRuntime,
   listCodeToolIds,
   listCodeToolSpecs,
+  normalizeCommandRunRequest,
+  validateCommandRunApproval,
   type ApprovalSnapshot,
   type CodeToolExecuteRequest,
 } from './codeTools.js';
@@ -40,6 +44,7 @@ import { validateInvokeStreamBody, toCoreInvokeStreamBody } from './mappers/invo
 import { mapCoreErrorToExternal, toProblemDetails } from './mappers/errorMapper.js';
 
 const config = getConfig();
+const requestAuthContexts = new WeakMap<Request, AuthContext>();
 
 function setStatus(set: { status?: number | string }, status: number) {
   set.status = status;
@@ -79,13 +84,17 @@ function isOriginAllowed(origin: string): boolean {
 
 function forwardHeaders(request: Request): Record<string, string> {
   const requestId = ensureRequestId(request.headers.get('x-request-id') ?? request.headers.get('X-Request-Id'));
-  const headers: Record<string, string> = {
+  const existing: Record<string, string> = {
     'x-request-id': requestId,
     'x-tinadec-principal': PRINCIPAL_VALUE,
   };
   const ifMatch = request.headers.get('if-match') ?? request.headers.get('If-Match');
-  if (ifMatch) headers['if-match'] = ifMatch;
-  return headers;
+  if (ifMatch) existing['if-match'] = ifMatch;
+  for (const name of ['x-tenant-id', 'x-user-id']) {
+    const value = request.headers.get(name);
+    if (value) existing[name] = value;
+  }
+  return buildForwardHeaders(requestAuthContexts.get(request), existing);
 }
 
 function setProxyResponseHeaders(set: { headers: Record<string, string | number> }, requestId: string) {
@@ -171,6 +180,7 @@ const app = new Elysia()
       set.headers['content-type'] = 'application/problem+json';
       return toProblemDetails(401, authResult.error?.code ?? 'forbidden', authResult.error?.message ?? 'Authentication failed.', path);
     }
+    if (authResult.context) requestAuthContexts.set(request, authResult.context);
   })
   .use(mcpRoutes)
   .get('/api/v1/health', async ({ set, request }) => {
@@ -1640,15 +1650,50 @@ const app = new Elysia()
   }, { detail: { summary: 'Tool runtime tools (legacy)', tags: ['System'] } })
   .post('/api/v1/tool-runtime/tools/:toolId/execute', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
+    if (params.toolId !== 'command_run') {
+      setStatus(set, 404);
+      set.headers['content-type'] = 'application/problem+json';
+      return toProblemDetails(404, 'tool_not_found', 'Only command_run is available through this legacy route.', `/api/v1/tool-runtime/tools/${params.toolId}/execute`);
+    }
+
+    const normalized = normalizeCommandRunRequest(body);
+    if ('error' in normalized) {
+      setStatus(set, normalized.error.status);
+      set.headers['content-type'] = 'application/problem+json';
+      return toProblemDetails(normalized.error.status, normalized.error.code, normalized.error.detail, '/api/v1/tool-runtime/tools/command_run/execute');
+    }
+
+    const approval = await proxyJson(`/api/v1/approvals/${encodeURIComponent(normalized.value.approval_id)}`, { headers });
+    if (approval.status < 200 || approval.status >= 300 || !approval.data || typeof approval.data !== 'object') {
+      const failure = approval.status >= 400 && approval.status < 500
+        ? validateCommandRunApproval(normalized.value, null)
+        : { status: 502, code: 'approval_unavailable', detail: 'Core approval could not be verified.' };
+      setStatus(set, failure?.status ?? 502);
+      set.headers['content-type'] = 'application/problem+json';
+      return toProblemDetails(failure?.status ?? 502, failure?.code ?? 'approval_unavailable', failure?.detail ?? 'Core approval could not be verified.', '/api/v1/tool-runtime/tools/command_run/execute');
+    }
+    const approvalFailure = validateCommandRunApproval(normalized.value, approval.data as ApprovalSnapshot);
+    if (approvalFailure) {
+      setStatus(set, approvalFailure.status);
+      set.headers['content-type'] = 'application/problem+json';
+      return toProblemDetails(approvalFailure.status, approvalFailure.code, approvalFailure.detail, '/api/v1/tool-runtime/tools/command_run/execute');
+    }
+
+    const result = await proxyToolRuntimeJson('/api/v1/tools/command_run/execute', {
       method: 'POST',
-      body: body as Record<string, unknown>,
+      body: {
+        tool_id: 'command_run',
+        session_id: normalized.value.session_id,
+        approval_id: normalized.value.approval_id,
+        approved: true,
+        params: normalized.value.params,
+      },
       headers: headers as never,
     });
     setStatus(set, result.status);
     set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
     return result.data;
-  }, { detail: { summary: 'Tool runtime execute (legacy, no Gateway approval)', tags: ['System'] } });
+  }, { detail: { summary: 'Execute approved command_run (legacy)', tags: ['System'], description: 'Legacy terminal URL retained for compatibility. Only Core-approved command_run requests are accepted.' } });
 
 export { app };
 

@@ -54,6 +54,13 @@ public static class InteractionsEndpoints
             try { (resolvedMeetingModel, modelSelectionLog) = await ResolveMeetingModelAsync(modeVersionId.Value, meetingModel, cfgFactory, req.HttpContext.RequestServices, ct).ConfigureAwait(false); } catch (Exception ex) { modelSelectionLog = ex.Message; }
         }
 
+        // Persist the chosen mode_version onto the session so the run engine's roster resolver
+        // reads the same relational mode the center edits — not a per-call event hint.
+        if (modeVersionId.HasValue)
+        {
+            try { await sessions.UpdateSessionModeAsync(sessionId, modeVersionId.Value, resolvedMeetingModel, null, ct).ConfigureAwait(false); } catch { }
+        }
+
         // dispatch to existing full-duplex engine via coordinator
         // For insert: enqueue steering patch on target run (with context_revision conflict detection)
         if (dispatchMode == "insert" && targetRunId.HasValue)

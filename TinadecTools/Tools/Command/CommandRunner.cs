@@ -83,21 +83,23 @@ public static class CommandRunner
         CommandRunParams args,
         CancellationToken cancellationToken)
     {
-        var workingDir = args.WorkingDirectory
-            ?? TinadecTools.Tools.FileRW.WorkspacePathResolver.WorkspaceRoot;
-
-        var requestedPermissions = CommandSandboxRuntime.BuildPermissions(
-            args.AdditionalReadPaths,
-            args.AdditionalWritePaths,
-            args.EnvironmentVariableNames);
-
-        if (args.PersistGrants)
-            SandboxPolicyStore.MergeAndPersist(requestedPermissions);
-
-        var permissions = CommandSandboxRuntime.MergeWithPolicy(requestedPermissions);
-
         try
         {
+            var workingDir = args.WorkingDirectory
+                ?? TinadecTools.Tools.FileRW.WorkspacePathResolver.WorkspaceRoot;
+
+            SandboxRequestValidator.Validate(args.Executable, args.Arguments, workingDir, args.TimeoutMs);
+
+            var requestedPermissions = CommandSandboxRuntime.BuildPermissions(
+                args.AdditionalReadPaths,
+                args.AdditionalWritePaths,
+                args.EnvironmentVariableNames);
+
+            if (args.PersistGrants)
+                SandboxPolicyStore.MergeAndPersist(requestedPermissions);
+
+            var permissions = CommandSandboxRuntime.MergeWithPolicy(requestedPermissions);
+
             var result = await CommandSandboxRuntime.ExecuteSandboxedAsync(
                 args.Executable,
                 args.Arguments,

@@ -80,8 +80,44 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
             .Select(value => value.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        // The formal agent ∩ mode effective-tool set is authoritative over the raw roster
+        // union when the session has a mode_version: a specialist's tool that the manifest
+        // does not declare (or the mode does not grant) must not enter the freeze and must
+        // not fail admission for a sibling agent that never needed it.
+        HashSet<string>? formalEffective = null;
+        try
+        {
+            var formal = _services?.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
+            if (formal is not null)
+                formalEffective = await formal.GetEffectiveToolsForSessionAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+        }
+        catch { }
+
         var byId = manifest.Tools.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
-        var unknown = requested.FirstOrDefault(value => !byId.ContainsKey(value));
+        var available = manifest.Tools.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Effective set to validate/freeze. When a formal mode governs the session, the agent ∩ mode
+        // grant is authoritative and is trimmed to the tools the actual manifest offers — a
+        // specialist's tool the manifest does not declare (e.g. browser.fetch on a code-only
+        // manifest) is dropped, never an admission failure for a sibling that did not need it.
+        string[] validated;
+        if (formalEffective is null)
+        {
+            // Legacy TOML path: a genuinely-requested but missing tool is a config error.
+            validated = requested;
+        }
+        else if (formalEffective.Contains("*") || formalEffective.Count == 0)
+        {
+            // Wildcard/empty grant: the manifest's own offering is authoritative; drop anything absent.
+            validated = requested.Where(available.Contains).ToArray();
+        }
+        else
+        {
+            validated = formalEffective.Where(available.Contains).ToArray();
+        }
+
+        var unknown = validated.FirstOrDefault(value => !byId.ContainsKey(value));
         if (unknown is not null)
         {
             throw new ToolManifestSnapshotException(
@@ -91,17 +127,7 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
 
         var baseAuthorized = request.AllowAllTools
             ? manifest.Tools
-            : manifest.Tools.Where(item => requested.Contains(item.Id, StringComparer.OrdinalIgnoreCase)).ToList();
-
-        // ponytail: intersect with formal agent ∩ mode effective tools at freeze time if session has mode_version
-        HashSet<string>? formalEffective = null;
-        try
-        {
-            var formal = _services?.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
-            if (formal is not null)
-                formalEffective = await formal.GetEffectiveToolsForSessionAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
-        }
-        catch { }
+            : manifest.Tools.Where(item => validated.Contains(item.Id, StringComparer.OrdinalIgnoreCase)).ToList();
 
         IReadOnlyList<ToolManifestEntryDto> authorized;
         if (formalEffective is null) authorized = baseAuthorized;

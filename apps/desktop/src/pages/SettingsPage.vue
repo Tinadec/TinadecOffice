@@ -69,7 +69,8 @@ import {
   type HarnessManifestDto,
   type ToolLayerReadinessReceiptDto,
   type ToolDescriptorDto,
-  type ToolSearchResultDto
+  type ToolSearchResultDto,
+  type AgentModeTopologyDto
 } from '../api'
 import {
   PROVIDER_CATEGORIES,
@@ -116,6 +117,15 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  getDispatchPref,
+  setDispatchPref,
+  getModeVersionPref,
+  setModeVersionPref,
+  getMeetingModelPref,
+  setMeetingModelPref,
+  type DispatchPref
+} from '@/lib/dispatchPref'
 
 type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
@@ -231,6 +241,40 @@ const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: '
 const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
+const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
+const modeVersionDraft = ref<string | null>(getModeVersionPref())
+const meetingModelDraft = ref<string>(getMeetingModelPref())
+const generalTopologies = ref<AgentModeTopologyDto[]>([])
+const generalTopologiesLoading = ref(false)
+
+async function loadGeneralTopologies() {
+  generalTopologiesLoading.value = true
+  try {
+    const list = await api.listAgentModeTopologies()
+    generalTopologies.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
+  } catch {
+    /* ignore offline */
+  } finally {
+    generalTopologiesLoading.value = false
+  }
+}
+
+function onEnterPrefChange(e: Event) {
+  const v = (e.target as HTMLSelectElement).value as DispatchPref
+  enterPrefDraft.value = v
+  setDispatchPref(v)
+}
+
+function onModeVersionChange(e: Event) {
+  const v = (e.target as HTMLSelectElement).value || null
+  modeVersionDraft.value = v
+  setModeVersionPref(v)
+}
+
+function onMeetingModelChange(v: string) {
+  meetingModelDraft.value = v
+  setMeetingModelPref(v)
+}
 const PET_CATALOG_PAGE_SIZE = 48
 const petCatalog = ref<PetdexCatalogPet[]>([])
 const downloadedPets = ref<DownloadedPet[]>([])
@@ -327,6 +371,7 @@ async function loadPets(force = false) {
 
 function selectSettingsSection(section: SettingsSection) {
   activeSection.value = section
+  if (section === 'general' && generalTopologies.value.length === 0) void loadGeneralTopologies()
   if (section === 'pets' && petCatalog.value.length === 0) void loadPets()
 }
 
@@ -616,6 +661,7 @@ function clearGatewayRestartBanner() {
 }
 
 void loadAppConfig()
+void loadGeneralTopologies()
 
 const modelCenterSections = computed(() => [
   { key: 'api' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
@@ -1942,6 +1988,60 @@ import '../settings/settings.css'
                 <Save :size="14" />
                 {{ t('settings.save') }}
               </UiButton>
+            </div>
+          </section>
+
+          <section class="general-settings-group" aria-labelledby="dispatch-settings-title">
+            <div class="general-settings-group-heading">
+              <div>
+                <h3 id="dispatch-settings-title">{{ t('settings.dispatchBehavior') }}</h3>
+                <p>{{ t('settings.dispatchBehaviorHint') }}</p>
+              </div>
+            </div>
+
+            <div class="gateway-config-field">
+              <UiLabel for="mode-version-pref">{{ t('settings.defaultModeTopology') }}</UiLabel>
+              <select
+                id="mode-version-pref"
+                class="settings-select"
+                :value="modeVersionDraft ?? ''"
+                :disabled="generalTopologiesLoading && generalTopologies.length === 0"
+                @change="onModeVersionChange"
+              >
+                <option value="">{{ t('settings.defaultModeTopologyFollow') }}</option>
+                <option v-for="m in generalTopologies" :key="m.id" :value="m.id">
+                  {{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}
+                </option>
+              </select>
+              <div class="gateway-config-meta">
+                <span>{{ t('settings.defaultModeTopologyHint') }}</span>
+              </div>
+            </div>
+
+            <div class="gateway-config-field">
+              <UiLabel for="meeting-model-pref">{{ t('settings.defaultMeetingModel') }}</UiLabel>
+              <UiInput
+                id="meeting-model-pref"
+                :model-value="meetingModelDraft"
+                :placeholder="t('settings.defaultMeetingModelPlaceholder')"
+                class="settings-input"
+                @update:model-value="onMeetingModelChange"
+              />
+              <div class="gateway-config-meta">
+                <span>{{ t('settings.defaultMeetingModelHint') }}</span>
+              </div>
+            </div>
+
+            <div class="gateway-config-field">
+              <UiLabel for="enter-pref">{{ t('settings.enterKeyBehavior') }}</UiLabel>
+              <select id="enter-pref" class="settings-select" :value="enterPrefDraft" @change="onEnterPrefChange">
+                <option value="queued">{{ t('settings.enterQueued') }}</option>
+                <option value="parallel">{{ t('settings.enterParallel') }}</option>
+                <option value="ask">{{ t('settings.enterAsk') }}</option>
+              </select>
+              <div class="gateway-config-meta">
+                <span>{{ t('settings.enterKeyBehaviorMeta') }}</span>
+              </div>
             </div>
           </section>
         </template>

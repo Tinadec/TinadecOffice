@@ -1,9 +1,9 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-21
-**Last Updated By:** opencode (CLI quick-connect calls the connect endpoint directly; stale nested Vue 3.5.41 node_modules removed; vitest 239/253)
+**Last Updated:** 2026-08-22
+**Last Updated By:** opencode (Composer 排队模型：默认 queued + 发送框上方排队卡片（引导/并列/编辑/取消）+ 回车偏好移至设置→常规 `src/lib/dispatchPref.ts`；vitest 与改动前基线一致)
 **Last Verified Commit:** a307ede
-**Branch:** codex/DmaEA
+**Branch:** DmaEA/MVP
 
 ## OVERVIEW
 Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
@@ -38,7 +38,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 | Local pet system | `electron/petStore.cjs`, `electron/petWindow.cjs`, `src/pets/petRuntime.ts`, `src/pages/DesktopPetPage.vue`, `src/pages/SettingsPage.vue` | Desktop-only Petdex v2 registry and transparent, always-on-top Canvas windows. `petRuntime.ts` is the renderer business module: it validates proportional 8-column sheets, maps the canonical nine Petdex state rows and active frame counts, loops with modulo, and calculates source rectangles. Petdex `pet.json` contains identity/path metadata, not animation definitions. Local files, enable state, bounds, and scale live under Electron `userData/pets/`; IPC is sender-scoped. Never call Gateway/Core. |
 | Renderer bootstrap | `src/main.ts`, `src/App.vue`, `src/router.ts` | App is `RouterView`; routes lazy-load pages. `main.ts` installs `vaporInteropPlugin` and a global renderer error fallback (`src/lib/rendererErrorFallback.ts`): every uncaught error is logged and, on the first fatal one, the stuck splash is swapped for a pure-DOM recoverable fallback (never a silent blank window). |
 | Main shell | `src/pages/HomePage.vue`, `src/components/*` | Chat, approvals, events, context, task graph. |
-| Full-duplex chat integration | `src/controllers/HomeController.ts`, `src/api.ts`, `src/components/ChatPanel.vue` | `api.invokeStream()` is an SSE helper, but the normal Home `handleSend()` currently calls `api.postMessage()` only. Do not claim full-duplex chat, run controls, candidate review, or Core-driven mode selection is already wired. |
+| Full-duplex chat integration | `src/controllers/HomeController.ts`, `src/api.ts`, `src/components/ChatPanel.vue` | Home `handleSend()` goes through `api.createInteraction()` (POST `/interactions`, snake_case) with legacy `invoke-stream`/`postMessage` fallbacks. Composer dispatch model (Codex-style): sends default to `queued`; when Core returns the transient `status:'queued' && !run_id` (session at active-run limit) the message becomes a local queued card above the composer (`HomeController.queuedMessages`) with 引导（insert+target_run_id）/并列（parallel）/编辑/取消 actions — nothing auto-runs it, cards are per-session and cleared on session switch. Enter/send-key default lives in Settings→General via `src/lib/dispatchPref.ts` (`tinadec.enter_pref`: `queued`(default)/`parallel`/`ask`; `ask` opens a small popover above the send button). The composer send button is NOT disabled while busy. Do not claim run controls, candidate review, or Core-driven mode selection is already wired. |
 | Settings | `src/pages/SettingsPage.vue` | Large hotspot; General Gateway connection plus model/providers/agents settings. |
 | Runtime center view adapter | `src/runtimeCenterView.ts` | Converts Gateway center DTOs into provider forms, topology labels, and runtime-source presentation without persisting binding state. |
 | CLI quick-connect | `src/api.ts` (`connectCliRuntime`), `src/pages/SettingsPage.vue` (`connectDiscoveredCli`) | Discovery candidates render from `GET .../cli/discover`; the quick-connect button POSTs `connect` directly (Core spawns/reuses the CLI service and persists an enabled provider), then refreshes the model center. Manual provider editing still runs through the provider form/modal. |
@@ -75,6 +75,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 - Tests are colocated `src/**/*.test.ts`; command is `vitest run`.
 - Prompt Context UI is presentation and local preview only. The renderer calls Gateway APIs mirrored in `src/api.ts`; Core owns fragment selection, context pack handling, token estimates, and warnings.
 - The canonical dual-agent layers are `operation` and `execution`; `planning` is a Core migration alias, not a Desktop-owned mode. Desktop must render the application/agent modes returned by Core (including `conversation` defaults and `space`'s `agent`-only restriction), rather than hard-coding the six-mode set or interpreting profile policy locally.
+- Composer dispatch affordances stay out of the send box: no persistent 并行/排队/插入 buttons. Dispatch intent is expressed after sending (queued card actions) or in Settings→General (`dispatchPref.ts` is the single owner of the `tinadec.enter_pref` key — never read/write it elsewhere).
 - Normal user chat must move to Core's `invoke-stream` contract only when its full-duplex request/response fields are available through Gateway. Never `POST /messages` and then invoke the same content: the invocation owns idempotent user-message creation. Until that transition, `POST /messages` remains the storage-compatible Home path.
 - A local `AbortController` only stops the renderer's SSE reader; it is not a run cancellation. Pause, resume, cancel, target changes, approval resumption, mode changes, context versions, agent lineage, and memory/agent-candidate review must be requested through Gateway/Core and displayed from their durable projections.
 - Full prompt bodies, long-term-memory writes, agent spawning, tool authorization, approval consumption, and state revisions remain Core responsibilities. Desktop may show progress, candidate evidence, and control affordances but must not synthesize durable state or promote a candidate locally.

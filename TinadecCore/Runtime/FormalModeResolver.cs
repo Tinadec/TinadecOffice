@@ -227,4 +227,86 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         catch { }
         return set;
     }
+
+    public async Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        try
+        {
+            var sess = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
+            if (sess?.ModeVersionId is not { } modeVersionId) return null;
+            await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == modeVersionId, ct).ConfigureAwait(false);
+            if (mv is null) return null;
+
+            var nodes = await cfg.ModeNodes.AsNoTracking()
+                .Where(x => x.ModeId == mv.AgentModeId && x.Status != "archived")
+                .ToListAsync(ct).ConfigureAwait(false);
+            if (nodes.Count == 0 && !string.IsNullOrWhiteSpace(mv.SnapshotJson))
+            {
+                // snapshot fallback — tolerate both PascalCase and snake_case published snapshots
+                try
+                {
+                    using var doc = JsonDocument.Parse(mv.SnapshotJson);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("nodes", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var n in arr.EnumerateArray())
+                        {
+                            Guid aid = Guid.Empty;
+                            if (n.TryGetProperty("AgentDefinitionId", out var a) && Guid.TryParse(a.GetString(), out var g)) aid = g;
+                            else if (n.TryGetProperty("agentDefinitionId", out var a2) && Guid.TryParse(a2.GetString(), out var g2)) aid = g2;
+                            if (aid != Guid.Empty) nodes.Add(new ModeNodeRecord { AgentDefinitionId = aid, Layer = n.TryGetProperty("Layer", out var l) ? l.GetString() ?? "operation" : n.TryGetProperty("layer", out var ll) ? ll.GetString() ?? "operation" : "operation", ConfigJson = n.TryGetProperty("ConfigJson", out var cj) ? cj.GetRawText() : n.TryGetProperty("configJson", out var cj2) ? cj2.GetRawText() : null });
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            var operation = new List<RuntimeAgentRosterEntry>();
+            var execution = new List<RuntimeAgentRosterEntry>();
+            foreach (var node in nodes)
+            {
+                var agent = await cfg.AgentDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == node.AgentDefinitionId, ct).ConfigureAwait(false);
+                if (agent is null || agent.Status == "archived") continue;
+                var layer = string.IsNullOrWhiteSpace(node.Layer) ? agent.Layer : node.Layer;
+                var entry = new RuntimeAgentRosterEntry(
+                    agent.Slug,
+                    layer,
+                    agent.Role,
+                    "persistent",
+                    ParseCapabilities(agent.CapabilitiesJson),
+                    DirectUserOutput: string.Equals(agent.Role, "session_coordinator", StringComparison.OrdinalIgnoreCase),
+                    ContextAccess: "workspace",
+                    ParseTools(agent.ToolScopeJson).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+                    agent.Slug);
+                if (string.Equals(layer, "operation", StringComparison.Ordinal)) operation.Add(entry);
+                else if (string.Equals(layer, "execution", StringComparison.Ordinal)) execution.Add(entry);
+            }
+            if (operation.Count == 0)
+                throw new InvalidDataException($"Published agent mode '{mv.AgentModeId}' has no operation-layer agent.");
+
+            return new FormalModeRoster(operation, execution, mv.Id, mv.Version, mv.TopologyHash ?? mv.SnapshotJson, $"mode:{mv.AgentModeId}:{mv.Version}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ResolveRosterAsync failed for {SessionId}", sessionId);
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<string> ParseCapabilities(string? json)
+    {
+        var list = new List<string>();
+        if (string.IsNullOrWhiteSpace(json)) return list;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Array)
+                foreach (var el in root.EnumerateArray())
+                    if (el.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(el.GetString())) list.Add(el.GetString()!.Trim());
+        }
+        catch { }
+        return list;
+    }
 }

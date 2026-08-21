@@ -18,4 +18,39 @@ public interface IFormalModeResolver
     /// Returns null for inherit or when no formal mode, meaning caller should fallback to default resolver.
     /// </summary>
     Task<ChatResolution?> TryResolveFormalChatAsync(Guid sessionId, string layer, Guid runId, Guid turnId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the runnable agent roster for the session's published relational mode version.
+    /// Returns null when the session has no mode_version_id or the mode cannot be resolved, in which case
+    /// the caller should fall back to the TOML baseline roster.
+    /// </summary>
+    Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// A frozen roster derived from a published relational AgentConfiguration mode version.
+/// <c>RuntimeProfileId</c> is deterministic per mode version so an idempotent admission retry
+/// yields the same value (used for run-mode matching).
+/// </summary>
+public sealed record FormalModeRoster(
+    IReadOnlyList<RuntimeAgentRosterEntry> Operation,
+    IReadOnlyList<RuntimeAgentRosterEntry> Execution,
+    Guid ModeVersionId,
+    int VersionNumber,
+    string? TopologyHash,
+    string RuntimeProfileId);
+
+/// <summary>
+/// One runnable agent entry resolved from a relational <c>AgentDefinitionRecord</c> referenced by a mode node.
+/// <c>Id</c> is the agent slug so the runtime can look it up by the string it already uses.
+/// </summary>
+public sealed record RuntimeAgentRosterEntry(
+    string Id,
+    string Layer,
+    string Role,
+    string Lifecycle,
+    IReadOnlyList<string> Capabilities,
+    bool DirectUserOutput,
+    string ContextAccess,
+    IReadOnlyList<string> AllowedTools,
+    string PromptProfile);

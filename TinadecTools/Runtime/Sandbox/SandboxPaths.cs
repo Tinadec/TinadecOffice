@@ -18,12 +18,10 @@ internal static class SandboxPaths
     internal static string ValidateWorkingDirectory(string workingDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
-        var full = Path.GetFullPath(workingDirectory, WorkspacePathResolver.WorkspaceRoot);
+        var full = WorkspacePathResolver.ResolveDirectory(workingDirectory);
         full = Path.TrimEndingDirectorySeparator(full);
         if (!IsWithinWorkspace(full))
             throw new UnauthorizedAccessException("working_directory must be inside the workspace root.");
-        if (!Directory.Exists(full))
-            throw new DirectoryNotFoundException($"Directory does not exist: {full}");
         return full;
     }
 

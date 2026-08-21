@@ -2888,6 +2888,7 @@
     },
     "/api/v1/tool-runtime/tools/{toolId}/execute": {
       "post": {
+        "description": "Legacy terminal URL retained for compatibility. Only Core-approved command_run requests are accepted.",
         "operationId": "postApiV1Tool-runtimeToolsByToolIdExecute",
         "parameters": [
           {
@@ -2902,7 +2903,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Tool runtime execute (legacy, no Gateway approval)",
+        "summary": "Execute approved command_run (legacy)",
         "tags": [
           "System"
         ]
