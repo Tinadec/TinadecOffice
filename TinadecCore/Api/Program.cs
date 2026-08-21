@@ -272,6 +272,8 @@ app.MapGet("/api/v1/readiness", async (
 // ============================================================
 app.MapStorageEndpoints();
 app.MapDmaeaEndpoints();
+app.MapAgentConfigurationEndpoints();
+app.MapInteractionsEndpoints();
 app.MapControlPlaneEndpoints();
 app.MapMemoryReviewEndpoints();
 app.MapEvolutionEndpoints();

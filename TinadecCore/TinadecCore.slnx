@@ -5,6 +5,7 @@
     <Project Path="Persistence/TinadecCore.Persistence.csproj" />
     <Project Path="VectorStore/TinadecCore.VectorStore.csproj" />
     <Project Path="Tenancy/TinadecCore.Tenancy.csproj" />
+    <Project Path="AgentConfiguration/TinadecCore.AgentConfiguration.csproj" />
     <Project Path="Storage.Migrations.Sqlite/TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <Project Path="Storage.Migrations.PostgreSql/TinadecCore.Storage.Migrations.PostgreSql.csproj" />
     <Project Path="Strategies/TinadecCore.Strategies.fsproj" />

@@ -144,5 +144,56 @@ public static class DevSeed
             }
             await agentsDb.SaveChangesAsync(ct);
         }
+
+        // Formal isolated configuration baseline (new spec): meeting + execution + prompt + mode
+        await using (var cfgDb = await services.GetRequiredService<IDbContextFactory<AgentConfiguration.AgentConfigurationDbContext>>().CreateDbContextAsync(ct))
+        {
+            var hasFormal = await cfgDb.AgentDefinitions.AsNoTracking().AnyAsync(a => a.TenantId == tenant.TenantId && a.WorkspaceId == tenant.WorkspaceId, ct);
+            if (!hasFormal)
+            {
+                var now2 = DateTimeOffset.UtcNow;
+                var meeting = new AgentConfiguration.AgentDefinitionRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "meeting", DisplayName = "Meeting (baseline)", Layer = "operation", Role = "session_coordinator",
+                    CapabilitiesJson = "[\"user.respond\",\"task.dispatch\"]", ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = "[\"*\"]",
+                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
+                };
+                var executor = new AgentConfiguration.AgentDefinitionRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "executor-baseline", DisplayName = "Executor (baseline)", Layer = "execution", Role = "task_executor",
+                    CapabilitiesJson = "[\"task.execute\"]", ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = "[\"*\"]",
+                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
+                };
+                cfgDb.AgentDefinitions.AddRange(meeting, executor);
+                var mSnap = JsonSerializer.Serialize(new { id = meeting.Id, slug = meeting.Slug, display_name = meeting.DisplayName, layer = meeting.Layer });
+                var eSnap = JsonSerializer.Serialize(new { id = executor.Id, slug = executor.Slug, display_name = executor.DisplayName, layer = executor.Layer });
+                cfgDb.AgentVersions.AddRange(
+                    new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = meeting.Id, Version = 1, Layer = meeting.Layer, Role = meeting.Role, SnapshotJson = mSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(mSnap))).ToLowerInvariant(), ContentLength = mSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId },
+                    new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = executor.Id, Version = 1, Layer = executor.Layer, Role = executor.Role, SnapshotJson = eSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(eSnap))).ToLowerInvariant(), ContentLength = eSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId }
+                );
+                var pipeline = new AgentConfiguration.PromptPipelineRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "baseline-prompt", DisplayName = "Baseline Prompt", GraphJson = "{\"nodes\":[{\"id\":\"template\",\"type\":\"template\"},{\"id\":\"assemble\",\"type\":\"assemble\"}],\"edges\":[{\"source\":\"template\",\"target\":\"assemble\"}]}",
+                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
+                };
+                cfgDb.PromptPipelines.Add(pipeline);
+                var pSnap = pipeline.GraphJson;
+                cfgDb.PromptVersions.Add(new AgentConfiguration.PromptVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, PromptPipelineId = pipeline.Id, Version = 1, GraphJson = pSnap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(pSnap))).ToLowerInvariant(), ContentLength = pSnap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
+                var mode = new AgentConfiguration.AgentModeRecord
+                {
+                    Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = "default-mode", DisplayName = "Default Mode (baseline)", Description = "Baseline operation+execution mode",
+                    Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
+                };
+                cfgDb.AgentModes.Add(mode);
+                cfgDb.ModeNodes.AddRange(
+                    new AgentConfiguration.ModeNodeRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, ModeId = mode.Id, NodeKey = "meeting-1", AgentDefinitionId = meeting.Id, Layer = "operation", Label = "Meeting", Status = "published", Revision = 1, CreatedAt = now2, UpdatedAt = now2 },
+                    new AgentConfiguration.ModeNodeRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, ModeId = mode.Id, NodeKey = "executor-1", AgentDefinitionId = executor.Id, Layer = "execution", Label = "Executor", Status = "published", Revision = 1, CreatedAt = now2, UpdatedAt = now2 }
+                );
+                var modeSnap = JsonSerializer.Serialize(new { mode_id = mode.Id, nodes = new[] { new { key = "meeting-1", agent = meeting.Id, layer = "operation" }, new { key = "executor-1", agent = executor.Id, layer = "execution" } } });
+                cfgDb.ModeVersions.Add(new AgentConfiguration.ModeVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentModeId = mode.Id, Version = 1, SnapshotJson = modeSnap, TopologyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(modeSnap))).ToLowerInvariant(), Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
+                cfgDb.WorkspaceDefaults.Add(new AgentConfiguration.WorkspaceDefaultsRecord { TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, DefaultAgentDefinitionId = meeting.Id, DefaultAgentModeId = mode.Id, DefaultPromptPipelineId = pipeline.Id, Status = "active", Revision = 1, CreatedAt = now2, UpdatedAt = now2 });
+                await cfgDb.SaveChangesAsync(ct);
+            }
+        }
     }
 }

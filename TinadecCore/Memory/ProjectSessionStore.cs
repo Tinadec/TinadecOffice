@@ -108,6 +108,20 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         return session;
     }
 
+    public async Task<SessionRecord?> UpdateSessionModeAsync(Guid sessionId, Guid? modeVersionId, string? meetingModel, string? meetingProviderId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
+        if (session is null) return null;
+        if (modeVersionId.HasValue) session.ModeVersionId = modeVersionId;
+        if (meetingModel is not null) session.MeetingModel = string.IsNullOrWhiteSpace(meetingModel) ? null : meetingModel.Trim();
+        if (meetingProviderId is not null) session.MeetingProviderId = string.IsNullOrWhiteSpace(meetingProviderId) ? null : meetingProviderId.Trim();
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return session;
+    }
+
     public async Task<IReadOnlyList<StoredMessage>> ListMessagesAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         await EnsureSessionExistsAsync(sessionId, cancellationToken).ConfigureAwait(false);
@@ -451,7 +465,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
         return await db.Sessions.AsNoTracking().Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived)
-            .Select(x => new SessionReference(x.Id, x.ProjectId, x.TenantId, x.WorkspaceId)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            .Select(x => new SessionReference(x.Id, x.ProjectId, x.TenantId, x.WorkspaceId, x.ModeVersionId, x.MeetingModel, x.MeetingProviderId)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ProjectReference?> FindProjectAsync(Guid projectId, CancellationToken cancellationToken = default)
@@ -469,6 +483,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
+        await EnsureSessionColumnsAsync(db, cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
         var legacyProjects = await db.Projects.Where(x => x.TenantId == Guid.Empty && x.WorkspaceId == Guid.Empty).ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var project in legacyProjects) { project.TenantId = scope.TenantId; project.WorkspaceId = scope.WorkspaceId; }
@@ -483,6 +498,26 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
             foreach (var legacy in history.Messages.OrderBy(x => x.CreatedAt))
                 await AddMessageAsync(sessionId, legacy.Content, legacy.Role, legacy.RunId, legacy.TurnId, legacy.ClientMessageId, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task EnsureSessionColumnsAsync(MemoryDbContext db, CancellationToken ct)
+    {
+        // ponytail: idempotent for both providers; SQLite lacks IF NOT EXISTS before 3.35 so use pragma, PostgreSQL uses IF NOT EXISTS
+        if (db.Database.IsSqlite())
+        {
+            var cols = (await db.Database.SqlQueryRaw<string>("SELECT name FROM pragma_table_info('sessions')").ToListAsync(ct).ConfigureAwait(false)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!cols.Contains("mode_version_id"))
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"mode_version_id\" TEXT NULL", ct).ConfigureAwait(false);
+            if (!cols.Contains("meeting_model"))
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"meeting_model\" TEXT NULL", ct).ConfigureAwait(false);
+            if (!cols.Contains("meeting_provider_id"))
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN \"meeting_provider_id\" TEXT NULL", ct).ConfigureAwait(false);
+            return;
+        }
+        // PostgreSQL (and any other) – IF NOT EXISTS is idempotent; swallow provider-specific syntax errors for unknown providers
+        try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"mode_version_id\" uuid NULL", ct).ConfigureAwait(false); } catch { }
+        try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"meeting_model\" TEXT NULL", ct).ConfigureAwait(false); } catch { }
+        try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"sessions\" ADD COLUMN IF NOT EXISTS \"meeting_provider_id\" TEXT NULL", ct).ConfigureAwait(false); } catch { }
     }
 
     private async Task EnsureSessionExistsAsync(Guid sessionId, CancellationToken cancellationToken)

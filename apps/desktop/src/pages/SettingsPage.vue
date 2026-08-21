@@ -3080,7 +3080,7 @@ import '../settings/settings.css'
           <AgentEvolutionPanel />
         </template>
 
-        <template v-if="activeSection === 'promptContext'">
+        <template v-if="false">
           <div class="model-center-heading">
             <div>
               <h2>Prompt Context</h2>
@@ -3255,7 +3255,7 @@ import '../settings/settings.css'
                   <h3>Preview</h3>
                   <p>Final local system prompt</p>
                 </div>
-                <UiBadge v-if="promptPreview" variant="outline">{{ promptPreview.estimated_tokens }} tokens</UiBadge>
+                <UiBadge v-if="promptPreview" variant="outline">{{ promptPreview!.estimated_tokens }} tokens</UiBadge>
               </div>
 
               <div class="model-form-grid">
@@ -3301,18 +3301,18 @@ import '../settings/settings.css'
 
               <template v-if="promptPreview">
                 <div class="model-capability-row">
-                  <span v-for="fragment in promptPreview.fragments" :key="fragment.id">{{ fragment.key }}</span>
+                  <span v-for="fragment in promptPreview!.fragments" :key="fragment.id">{{ fragment.key }}</span>
                 </div>
-                <div v-if="promptPreview.context_pack_ids.length > 0" class="model-capability-row">
-                  <span v-for="contextPackId in promptPreview.context_pack_ids" :key="contextPackId">{{ contextPackId }}</span>
+                <div v-if="promptPreview!.context_pack_ids.length > 0" class="model-capability-row">
+                  <span v-for="contextPackId in promptPreview!.context_pack_ids" :key="contextPackId">{{ contextPackId }}</span>
                 </div>
-                <div v-if="promptPreview.warnings.length > 0" class="provider-status-note">
+                <div v-if="promptPreview!.warnings.length > 0" class="provider-status-note">
                   <ShieldCheck :size="14" />
-                  <span>{{ promptPreview.warnings.join(' ') }}</span>
+                  <span>{{ promptPreview!.warnings.join(' ') }}</span>
                 </div>
                 <div class="settings-field">
                   <textarea
-                    :value="promptPreview.system_prompt"
+                    :value="promptPreview!.system_prompt"
                     class="settings-textarea prompt-editor"
                     rows="14"
                     readonly
@@ -3323,7 +3323,7 @@ import '../settings/settings.css'
           </UiCard>
         </template>
 
-        <template v-if="activeSection === 'promptEngineering'">
+        <template v-if="false">
           <PromptEngineeringPanel />
         </template>
 

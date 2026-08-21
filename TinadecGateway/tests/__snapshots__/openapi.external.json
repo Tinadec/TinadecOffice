@@ -99,19 +99,6 @@
         ]
       }
     },
-    "/api/v1/agent-center/overview": {
-      "get": {
-        "description": "Read-only legacy binding preview – no Core write, same OpenAPI as model center",
-        "operationId": "getApiV1Agent-centerOverview",
-        "responses": {
-          "200": {}
-        },
-        "summary": "Agent center overview (BFF)",
-        "tags": [
-          "AgentCenter"
-        ]
-      }
-    },
     "/api/v1/agent-evolution/generate": {
       "post": {
         "operationId": "postApiV1Agent-evolutionGenerate",
@@ -190,6 +177,168 @@
         "tags": [
           "AgentCenter"
         ]
+      },
+      "post": {
+        "operationId": "postApiV1Agent-modes",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}": {
+      "get": {
+        "operationId": "getApiV1Agent-modesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/archive": {
+      "post": {
+        "operationId": "postApiV1Agent-modesByIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/draft": {
+      "put": {
+        "operationId": "putApiV1Agent-modesByIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent mode draft (nodes/edges/layout in body)",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/publish": {
+      "post": {
+        "operationId": "postApiV1Agent-modesByIdPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions": {
+      "get": {
+        "operationId": "getApiV1Agent-modesByIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent mode versions",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1Agent-modesByIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent mode version",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-runtime-instances": {
+      "get": {
+        "operationId": "getApiV1Agent-runtime-instances",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent runtime instances",
+        "tags": [
+          "Agents"
+        ]
       }
     },
     "/api/v1/agents": {
@@ -200,11 +349,53 @@
         },
         "summary": "List agents",
         "tags": [
-          "AgentCenter"
+          "Agents"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Agents",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/catalog": {
+      "get": {
+        "operationId": "getApiV1AgentsCatalog",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Agent catalog (dual-layer)",
+        "tags": [
+          "Agents"
         ]
       }
     },
     "/api/v1/agents/{agentId}": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent",
+        "tags": [
+          "Agents"
+        ]
+      },
       "put": {
         "operationId": "putApiV1AgentsByAgentId",
         "parameters": [
@@ -223,6 +414,50 @@
         "summary": "Update agent",
         "tags": [
           "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/archive": {
+      "post": {
+        "operationId": "postApiV1AgentsByAgentIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/draft": {
+      "put": {
+        "operationId": "putApiV1AgentsByAgentIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent draft",
+        "tags": [
+          "Agents"
         ]
       }
     },
@@ -248,9 +483,9 @@
         ]
       }
     },
-    "/api/v1/agents/{agentId}/runtime-binding": {
-      "put": {
-        "operationId": "putApiV1AgentsByAgentIdRuntime-binding",
+    "/api/v1/agents/{agentId}/publish": {
+      "post": {
+        "operationId": "postApiV1AgentsByAgentIdPublish",
         "parameters": [
           {
             "in": "path",
@@ -264,9 +499,61 @@
         "responses": {
           "200": {}
         },
-        "summary": "Agent runtime binding (501 – Core not yet)",
+        "summary": "Publish agent",
         "tags": [
-          "AgentCenter"
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/versions": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent versions",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent version",
+        "tags": [
+          "Agents"
         ]
       }
     },
@@ -1085,19 +1372,6 @@
         ]
       }
     },
-    "/api/v1/model-center/overview": {
-      "get": {
-        "description": "Aggregates Core supplier/api_connections/models/cli_runtimes/acp_runtimes with multi-protocol (openai-chat/openai-responses/anthropic-messages) – secret-stripped, same OpenAPI",
-        "operationId": "getApiV1Model-centerOverview",
-        "responses": {
-          "200": {}
-        },
-        "summary": "Model center overview (BFF)",
-        "tags": [
-          "ModelCenter"
-        ]
-      }
-    },
     "/api/v1/model-center/provider-instances/{providerInstanceId}/models/refresh": {
       "post": {
         "operationId": "postApiV1Model-centerProvider-instancesByProviderInstanceIdModelsRefresh",
@@ -1610,6 +1884,168 @@
         ]
       }
     },
+    "/api/v1/prompt-pipelines": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelines",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt pipelines",
+        "tags": [
+          "PromptPipelines"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Prompt-pipelines",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/archive": {
+      "post": {
+        "operationId": "postApiV1Prompt-pipelinesByIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/draft": {
+      "put": {
+        "operationId": "putApiV1Prompt-pipelinesByIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update prompt pipeline draft",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/publish": {
+      "post": {
+        "operationId": "postApiV1Prompt-pipelinesByIdPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesByIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt pipeline versions",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesByIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get prompt pipeline version",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
     "/api/v1/readiness": {
       "get": {
         "operationId": "getApiV1Readiness",
@@ -1641,6 +2077,28 @@
         "summary": "Run agent lineage",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agents/spawn": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdAgentsSpawn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Spawn run agent (temporary/persistent/profile)",
+        "tags": [
+          "Agents"
         ]
       }
     },
@@ -2001,6 +2459,119 @@
         "summary": "Session context versions",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create session interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractionsByInteractionIdCancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Cancel interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractionsByInteractionIdReassign",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reassign interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/stream": {
+      "get": {
+        "description": "Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update",
+        "operationId": "getApiV1SessionsBySessionIdInteractionsByInteractionIdStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Stream interaction SSE",
+        "tags": [
+          "Interactions"
         ]
       }
     },
@@ -2395,6 +2966,15 @@
     },
     {
       "name": "AgentCenter"
+    },
+    {
+      "name": "Agents"
+    },
+    {
+      "name": "Interactions"
+    },
+    {
+      "name": "PromptPipelines"
     },
     {
       "name": "Tools"

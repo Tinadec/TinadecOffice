@@ -34,6 +34,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private readonly IPromptAssembler _promptAssembler;
     private readonly IAgentChatClientFactory _chatClients;
     private readonly IServiceProvider _services;
+    private readonly IFormalModeResolver? _formalResolver;
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
     {
@@ -52,7 +53,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IPromptAssembler promptAssembler,
         IAgentChatClientFactory chatClients,
         IServiceProvider services,
-        ILogger<FullDuplexRunEngine> logger)
+        ILogger<FullDuplexRunEngine> logger,
+        IFormalModeResolver? formalResolver = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -61,6 +63,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _promptAssembler = promptAssembler;
         _chatClients = chatClients;
         _services = services;
+        _formalResolver = formalResolver ?? services.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
         _logger = logger;
     }
 
@@ -755,6 +758,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 layer = worker.Layer,
                 role = worker.Role
             }, cancellationToken, task.TaskId).ConfigureAwait(false);
+            try { await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(checkpoint.TurnId, "ephemeral_agent", null, IdempotencyKey: $"run:{runId}:ephemeral:{worker.Id}"), cancellationToken).ConfigureAwait(false); } catch { }
         }
 
         if (task.WorkerAgentId != worker.Id)
@@ -788,7 +792,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             AllowedTools = worker.AllowedTools,
             Enabled = true
         };
-        return await new ExecutionAgent(_chatClients, _logger).GetNextTurnAsync(
+        var formal = _formalResolver is not null ? await _formalResolver.TryResolveFormalChatAsync(checkpoint.SessionId, "execution", checkpoint.RunId, checkpoint.TurnId, cancellationToken).ConfigureAwait(false) : null;
+        var factory = formal is not null ? new FixedChatFactory(formal, _chatClients) : _chatClients;
+        return await new ExecutionAgent(factory, _logger).GetNextTurnAsync(
             CreateRunContext(run, checkpoint),
             agent,
             ToPlannedTask(task),
@@ -796,6 +802,15 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             tools,
             assembly.Instructions,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed class FixedChatFactory : IAgentChatClientFactory
+    {
+        private readonly ChatResolution _fixed;
+        private readonly IAgentChatClientFactory _inner;
+        public FixedChatFactory(ChatResolution f, IAgentChatClientFactory inner) { _fixed = f; _inner = inner; }
+        public Task<ChatResolution> ResolveChatAsync(string? routePurpose = null, CancellationToken cancellationToken = default) => Task.FromResult(_fixed);
+        public Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default) => _inner.CreateAsync(resolution, cancellationToken);
     }
 
     private async Task ApplyTaskResultAsync(
@@ -1171,7 +1186,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private async Task<string> GenerateMeetingResponseAsync(FullDuplexCheckpointV1 checkpoint, ContextPack context, CancellationToken cancellationToken)
     {
-        var resolution = await _chatClients.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        var formal = _formalResolver is not null ? await _formalResolver.TryResolveFormalChatAsync(checkpoint.SessionId, "operation", checkpoint.RunId, checkpoint.TurnId, cancellationToken).ConfigureAwait(false) : null;
+        var resolution = formal ?? await _chatClients.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await _promptAssembler.AssembleAsync("meeting", context, cancellationToken).ConfigureAwait(false);
         var escalation = checkpoint.SupervisionDecision == "escalate"

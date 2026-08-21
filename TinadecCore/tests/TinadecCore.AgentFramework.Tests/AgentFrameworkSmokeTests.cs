@@ -40,7 +40,7 @@ public sealed class AgentFrameworkSmokeTests
         var builder = services.AddTinadecCore();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(11, modules.Count);
+        Assert.Equal(12, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
@@ -54,6 +54,7 @@ public sealed class AgentFrameworkSmokeTests
         Assert.Contains("lifecycle", moduleIds);
         Assert.Contains("tenancy", moduleIds);
         Assert.Contains("vector_store", moduleIds);
+        Assert.Contains("agent_configuration", moduleIds);
     }
 
     [Fact]

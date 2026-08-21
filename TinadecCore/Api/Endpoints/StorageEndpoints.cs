@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Contracts.Events;
 using TinadecCore.Lifecycle;
@@ -24,31 +26,67 @@ public static class StorageEndpoints
             catch (InvalidOperationException ex) { return Results.Conflict(new { code = "DUPLICATE_PROJECT_ROOT", message = ex.Message }); }
         });
 
-        app.MapGet("/api/v1/sessions", async (string? projectId, string? project_id, ProjectSessionStore store, CancellationToken ct) =>
+        app.MapGet("/api/v1/sessions", async (string? projectId, string? project_id, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
         {
             var selected = projectId ?? project_id;
             if (selected is not null && !Guid.TryParse(selected, out var parsed)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
-            return Results.Ok((await store.ListSessionsAsync(selected is null ? null : Guid.Parse(selected), ct).ConfigureAwait(false)).Select(ToSession));
+            var sessions = await store.ListSessionsAsync(selected is null ? null : Guid.Parse(selected), ct).ConfigureAwait(false);
+            var enriched = new List<object>(sessions.Count);
+            foreach (var s in sessions) enriched.Add(await ToSessionEnrichedAsync(s, cfgFactory, ct).ConfigureAwait(false));
+            return Results.Ok(enriched);
         });
 
-        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, CancellationToken ct) =>
+        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
         {
             if (!Guid.TryParse(request.ProjectId, out var projectId)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
             try
             {
                 var session = await store.CreateSessionAsync(projectId, request.Title, ct).ConfigureAwait(false);
-                return Results.Created($"/api/v1/sessions/{session.Id}", ToSession(session));
+                if (request.ModeVersionId.HasValue || !string.IsNullOrWhiteSpace(request.MeetingModel))
+                {
+                    session = await store.UpdateSessionModeAsync(session.Id, request.ModeVersionId, request.MeetingModel, request.MeetingProviderId, ct).ConfigureAwait(false) ?? session;
+                }
+                else
+                {
+                    // default to workspace default mode if any
+                    try
+                    {
+                        await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                        var wsDefault = await cfg.WorkspaceDefaults.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false);
+                        if (wsDefault?.DefaultAgentModeId is { } mid)
+                        {
+                            var latest = await cfg.ModeVersions.Where(x => x.AgentModeId == mid).OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                            if (latest.HasValue) session = await store.UpdateSessionModeAsync(session.Id, latest, null, null, ct).ConfigureAwait(false) ?? session;
+                        }
+                    }
+                    catch { }
+                }
+                return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "PROJECT_NOT_FOUND" }); }
         });
 
-        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, CancellationToken ct) =>
+        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             try
             {
-                var session = await store.UpdateTitleAsync(id, request.Title, ct).ConfigureAwait(false);
-                return session is null ? Results.NotFound(new { code = "SESSION_NOT_FOUND" }) : Results.Ok(ToSession(session));
+                SessionRecord? session = null;
+                if (!string.IsNullOrWhiteSpace(request.Title))
+                    session = await store.UpdateTitleAsync(id, request.Title!, ct).ConfigureAwait(false);
+                if (request.ModeVersionId.HasValue || request.MeetingModel is not null || request.MeetingProviderId is not null)
+                {
+                    session = await store.UpdateSessionModeAsync(id, request.ModeVersionId, request.MeetingModel, request.MeetingProviderId, ct).ConfigureAwait(false) ?? session;
+                    if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
+                }
+                else if (session is null)
+                {
+                    // no mode fields, just title was empty? fallback to fetch
+                    var all = await store.ListSessionsAsync(null, ct).ConfigureAwait(false);
+                    session = all.FirstOrDefault(x => x.Id == id);
+                    if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
+                }
+                return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SESSION", message = ex.Message }); }
         });
@@ -148,7 +186,28 @@ public static class StorageEndpoints
     }
 
     private static object ToProject(ProjectRecord project) => new { id = project.Id, name = project.Name, path = project.RootPath, kind = project.Kind, created_at = project.CreatedAt, updated_at = project.UpdatedAt, archived = project.Archived };
-    private static object ToSession(SessionRecord session) => new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
+    private static object ToSession(SessionRecord session) => new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, mode_version_id = session.ModeVersionId, meeting_model = session.MeetingModel, meeting_provider_id = session.MeetingProviderId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
+
+    private static async Task<object> ToSessionEnrichedAsync(SessionRecord session, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct)
+    {
+        bool hasUpdate = false;
+        Guid? latestModeVersionId = null;
+        try
+        {
+            await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var wsDefault = await cfg.WorkspaceDefaults.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false);
+            if (wsDefault?.DefaultAgentModeId is { } mid)
+            {
+                latestModeVersionId = await cfg.ModeVersions.Where(x => x.AgentModeId == mid).OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                if (latestModeVersionId.HasValue && session.ModeVersionId.HasValue)
+                    hasUpdate = latestModeVersionId.Value != session.ModeVersionId.Value;
+                else if (latestModeVersionId.HasValue && !session.ModeVersionId.HasValue)
+                    hasUpdate = true;
+            }
+        }
+        catch { }
+        return new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, mode_version_id = session.ModeVersionId, meeting_model = session.MeetingModel, meeting_provider_id = session.MeetingProviderId, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
+    }
     private static object ToMessage(StoredMessage message) => new { id = message.Id, session_id = message.SessionId, run_id = message.RunId, role = message.Role, content = message.Content, created_at = message.CreatedAt };
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 

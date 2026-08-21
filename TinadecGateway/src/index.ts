@@ -25,12 +25,8 @@ import {
 import { mcpRoutes } from './mcp/mcpRoutes.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
 import { proxyStream, setStreamHeaders } from './streaming.js';
-import {
-  agentRuntimeBindingWriteResult,
-  loadAgentCenterOverview,
-  loadModelCenterOverview,
-} from './modelAgentCenter.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
+import { validateInteractionBody } from './mappers/interactionsMapper.js';
 import { mapProjects } from './mappers/projectMapper.js';
 import { mapSessions } from './mappers/sessionMapper.js';
 import { mapMessages } from './mappers/messageMapper.js';
@@ -118,7 +114,7 @@ const app = new Elysia()
     documentation: {
       info: { title: 'Tinadec Gateway External API', version: '0.2.0', description: 'Thin proxy BFF to Core – all snake_case, RFC9457 ProblemDetails, full-duplex SSE' },
       tags: [
-        { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Tools' }, { name: 'System' }
+        { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Agents' }, { name: 'Interactions' }, { name: 'PromptPipelines' }, { name: 'Tools' }, { name: 'System' }
       ]
     }
   }))
@@ -711,14 +707,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Preview prompt context', tags: ['System'] } })
-  .get('/api/v1/model-center/overview', async ({ set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await loadModelCenterOverview(async (path, opts) => proxyJson(path, { ...opts, headers }));
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/model-center/overview'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Model center overview (BFF)', tags: ['ModelCenter'], description: 'Aggregates Core supplier/api_connections/models/cli_runtimes/acp_runtimes with multi-protocol (openai-chat/openai-responses/anthropic-messages) – secret-stripped, same OpenAPI' } })
   .post('/api/v1/model-center/provider-instances/:providerInstanceId/models/refresh', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/model-providers/${params.providerInstanceId}/models/refresh`, { method: 'POST', headers });
@@ -956,14 +944,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Probe ACP adapter', tags: ['System'] } })
-  .get('/api/v1/agent-center/overview', async ({ set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await loadAgentCenterOverview(async (path, opts) => proxyJson(path, { ...opts, headers }));
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agent-center/overview'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Agent center overview (BFF)', tags: ['AgentCenter'], description: 'Read-only legacy binding preview – no Core write, same OpenAPI as model center' } })
   .get('/api/v1/application-modes', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/application-modes', { headers });
@@ -986,12 +966,13 @@ const app = new Elysia()
   }, { detail: { summary: 'List agent modes for application mode', tags: ['AgentCenter'] } })
   .get('/api/v1/agents', async ({ set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/agents', { headers });
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agents${search}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List agents', tags: ['AgentCenter'] } })
+  }, { detail: { summary: 'List agents', tags: ['Agents'] } })
   .put('/api/v1/agents/:agentId', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/agents/${params.agentId}`, { method: 'PUT', body: body as Record<string, unknown>, headers });
@@ -1000,11 +981,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update agent', tags: ['AgentCenter'] } })
-  .put('/api/v1/agents/:agentId/runtime-binding', ({ params, body, set }) => {
-    const result = agentRuntimeBindingWriteResult(params.agentId, body);
-    setStatus(set, result.status);
-    return result.data;
-  }, { detail: { summary: 'Agent runtime binding (501 – Core not yet)', tags: ['AgentCenter'] } })
   .put('/api/v1/agents/:agentId/mode', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/agents/${params.agentId}/mode`, { method: 'PUT', body: body as Record<string, unknown>, headers });
@@ -1013,6 +989,266 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update agent mode (501)', tags: ['AgentCenter'] } })
+  // --- Thin proxy: agents CRUD + draft/publish/archive/versions (snake_case passthrough) ---
+  .post('/api/v1/agents', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/agents', { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Create agent', tags: ['Agents'] } })
+  .get('/api/v1/agents/:agentId', async ({ params, set, request }) => {
+    if ((params as Record<string,string>).agentId === 'catalog') {
+      const headers = forwardHeaders(request);
+      const result = await proxyJson('/api/v1/agents/catalog', { headers });
+      setStatus(set, result.status);
+      if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents/catalog'); }
+      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+      return result.data;
+    }
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get agent', tags: ['Agents'] } })
+  .put('/api/v1/agents/:agentId/draft', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/draft`, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/draft`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Update agent draft', tags: ['Agents'] } })
+  .post('/api/v1/agents/:agentId/publish', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/publish`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/publish`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Publish agent', tags: ['Agents'] } })
+  .post('/api/v1/agents/:agentId/archive', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/archive`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/archive`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Archive agent', tags: ['Agents'] } })
+  .get('/api/v1/agents/:agentId/versions', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/versions${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/versions`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List agent versions', tags: ['Agents'] } })
+  .get('/api/v1/agents/:agentId/versions/:versionId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/versions/${params.versionId}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/versions/${params.versionId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get agent version', tags: ['Agents'] } })
+  // --- agent-modes thin proxy ---
+  .post('/api/v1/agent-modes', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/agent-modes', { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agent-modes'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Create agent mode', tags: ['AgentCenter'] } })
+  .get('/api/v1/agent-modes/:id', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get agent mode', tags: ['AgentCenter'] } })
+  .put('/api/v1/agent-modes/:id/draft', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}/draft`, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/draft`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Update agent mode draft (nodes/edges/layout in body)', tags: ['AgentCenter'] } })
+  .post('/api/v1/agent-modes/:id/publish', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}/publish`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/publish`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Publish agent mode', tags: ['AgentCenter'] } })
+  .post('/api/v1/agent-modes/:id/archive', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}/archive`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/archive`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Archive agent mode', tags: ['AgentCenter'] } })
+  .get('/api/v1/agent-modes/:id/versions', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}/versions${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/versions`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List agent mode versions', tags: ['AgentCenter'] } })
+  .get('/api/v1/agent-modes/:id/versions/:versionId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agent-modes/${params.id}/versions/${params.versionId}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agent-modes/${params.id}/versions/${params.versionId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get agent mode version', tags: ['AgentCenter'] } })
+  // --- prompt-pipelines thin proxy ---
+  .get('/api/v1/prompt-pipelines', async ({ query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/prompt-pipelines${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/prompt-pipelines'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List prompt pipelines', tags: ['PromptPipelines'] } })
+  .post('/api/v1/prompt-pipelines', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/prompt-pipelines', { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/prompt-pipelines'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Create prompt pipeline', tags: ['PromptPipelines'] } })
+  .get('/api/v1/prompt-pipelines/:id', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get prompt pipeline', tags: ['PromptPipelines'] } })
+  .put('/api/v1/prompt-pipelines/:id/draft', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}/draft`, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}/draft`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Update prompt pipeline draft', tags: ['PromptPipelines'] } })
+  .post('/api/v1/prompt-pipelines/:id/publish', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}/publish`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}/publish`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Publish prompt pipeline', tags: ['PromptPipelines'] } })
+  .post('/api/v1/prompt-pipelines/:id/archive', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}/archive`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}/archive`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Archive prompt pipeline', tags: ['PromptPipelines'] } })
+  .get('/api/v1/prompt-pipelines/:id/versions', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}/versions${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}/versions`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List prompt pipeline versions', tags: ['PromptPipelines'] } })
+  .get('/api/v1/prompt-pipelines/:id/versions/:versionId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/prompt-pipelines/${params.id}/versions/${params.versionId}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/prompt-pipelines/${params.id}/versions/${params.versionId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Get prompt pipeline version', tags: ['PromptPipelines'] } })
+  .get('/api/v1/agent-runtime-instances', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const result = await proxyJson(`/api/v1/agent-runtime-instances${search}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agent-runtime-instances'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List agent runtime instances', tags: ['Agents'] } })
+  // --- interactions thin proxy (dispatch_mode queued|insert|parallel, insert requires target_run_id) ---
+  .post('/api/v1/sessions/:sessionId/interactions', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const validation = validateInteractionBody(body);
+    if (!validation.ok) {
+      setStatus(set, 400);
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+      const rid = (headers as Record<string,string>)['x-request-id'];
+      return toProblemDetails(400, 'invalid_request', validation.errors.join('; '), `/api/v1/sessions/${params.sessionId}/interactions`, rid);
+    }
+    const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/interactions`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/interactions`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Create session interaction', tags: ['Interactions'] } })
+  .post('/api/v1/sessions/:sessionId/interactions/:interactionId/reassign', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/reassign`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/reassign`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Reassign interaction', tags: ['Interactions'] } })
+  .post('/api/v1/sessions/:sessionId/interactions/:interactionId/cancel', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/cancel`, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/cancel`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Cancel interaction', tags: ['Interactions'] } })
+  .get('/api/v1/sessions/:sessionId/interactions/:interactionId/stream', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URL(request.url).search;
+    const cursor = request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID') ?? new URL(request.url).searchParams.get('cursor') ?? new URL(request.url).searchParams.get('after_seq');
+    const corePath = `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/stream${search}`;
+    const responseHeaders: Record<string,string> = { ...headers } as Record<string,string>;
+    if (cursor) responseHeaders['last-event-id'] = String(cursor);
+    const response = await proxySse(corePath, { headers: responseHeaders });
+    if (response.status >= 400) {
+      const text = await response.text();
+      let data: unknown = null; try { data = JSON.parse(text); } catch { data = { message: text }; }
+      setStatus(set, response.status);
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+      return mapCoreErrorToExternal(response.status, data, `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/stream`);
+    }
+    setStatus(set, response.status);
+    set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
+    set.headers['cache-control'] = 'no-cache';
+    set.headers['connection'] = 'keep-alive';
+    set.headers['x-accel-buffering'] = 'no';
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return response.body;
+  }, { detail: { summary: 'Stream interaction SSE', tags: ['Interactions'], description: 'Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update' } })
   .get('/api/v1/agent-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();

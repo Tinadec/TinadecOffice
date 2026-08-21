@@ -454,38 +454,9 @@ public static class DmaeaEndpoints
                 allowed_agent_modes = m.AllowedAgentModes
             })));
 
-        app.MapGet("/api/v1/agent-modes", (string? application_mode, IAgentRuntimeConfiguration configuration) =>
-        {
-            var snapshot = configuration.Current;
-            var appId = AgentRuntimeConfigurationSnapshot.NormalizeApplicationMode(application_mode);
-            if (!snapshot.ApplicationModes.TryGetValue(appId, out var mode))
-                return Results.BadRequest(new { code = "UNKNOWN_APPLICATION_MODE", message = $"Application mode '{appId}' is not configured." });
-            return Results.Ok(mode.AllowedAgentModes.Select(id => new
-            {
-                id,
-                display_name = id switch
-                {
-                    "plan" => "Plan",
-                    "spec" => "Spec",
-                    "ask" => "Ask",
-                    "vibe" => "Vibe",
-                    "auto" => "Auto",
-                    "agent" => "Agent",
-                    _ => id
-                },
-                summary = $"Agent mode '{id}' in application mode '{appId}'",
-                application_mode = appId,
-                is_default = string.Equals(id, mode.DefaultAgentMode, StringComparison.OrdinalIgnoreCase),
-                max_parallel_executors = snapshot.Spawn.MaxParallelWorkers,
-                worktree_isolation = false,
-                approval_required = true,
-                budget_policy = "bounded",
-                runtime_profile_id = mode.Bindings.TryGetValue(id, out var profileId) ? profileId : null,
-                operation_agents = mode.Bindings.TryGetValue(id, out var pid) && snapshot.Profiles.TryGetValue(pid, out var profile) ? profile.OperationAgents : (IReadOnlyList<string>)Array.Empty<string>(),
-                execution_agents = mode.Bindings.TryGetValue(id, out var pid2) && snapshot.Profiles.TryGetValue(pid2, out var profile2) ? profile2.ExecutionAgents : (IReadOnlyList<string>)Array.Empty<string>(),
-                activation_policy = mode.Bindings.TryGetValue(id, out var pid3) && snapshot.Profiles.TryGetValue(pid3, out var profile3) ? profile3.ActivationPolicy : null
-            }));
-        });
+        // Agent-modes TOML catalog is now owned by AgentConfigurationEndpoints (which also handles formal modes).
+        // Keep a thin alias for application_mode filtered view to avoid breaking existing Desktop callers.
+        // This handler is no longer registered to avoid ambiguous match; logic moved to AgentConfigurationEndpoints.ListModes.
 
         // Read-only catalog of built-in runtime agents (dual-layer composition). Remains thin: policy stays in Core.
         app.MapGet("/api/v1/agents/catalog", (IAgentRuntimeConfiguration configuration) =>

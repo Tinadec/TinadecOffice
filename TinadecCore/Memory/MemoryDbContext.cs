@@ -55,6 +55,9 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Mode).HasColumnName("mode");
             entity.Property(x => x.Summary).HasColumnName("summary");
             entity.Property(x => x.HistoryRevision).HasColumnName("history_revision");
+            entity.Property(x => x.ModeVersionId).HasColumnName("mode_version_id");
+            entity.Property(x => x.MeetingModel).HasColumnName("meeting_model");
+            entity.Property(x => x.MeetingProviderId).HasColumnName("meeting_provider_id");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             entity.Property(x => x.Archived).HasColumnName("archived");
@@ -62,6 +65,8 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Mode).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096);
+            entity.Property(x => x.MeetingModel).HasMaxLength(256);
+            entity.Property(x => x.MeetingProviderId).HasMaxLength(256);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProjectId, x.Archived, x.UpdatedAt });
         });
 
@@ -141,6 +146,9 @@ public sealed class SessionRecord
     public string Mode { get; set; } = "default";
     public string? Summary { get; set; }
     public long HistoryRevision { get; set; }
+    public Guid? ModeVersionId { get; set; }
+    public string? MeetingModel { get; set; }
+    public string? MeetingProviderId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public bool Archived { get; set; }

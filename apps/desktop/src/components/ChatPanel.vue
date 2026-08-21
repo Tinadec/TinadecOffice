@@ -28,13 +28,15 @@ const props = defineProps<{
   agentLabel?: string | null
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
+  // new: pass runs for insert picker
+  runsForComposer?: Array<{ id: string; status: string }>
 }>()
 
 const emit = defineEmits<{
   'update:draft': [value: string]
   'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
-  'send': []
+  'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
   'welcome-send': [content: string]
   'create-project': []
   'select-project': [id: string]
@@ -98,10 +100,11 @@ function handleReject(approvalId: string) {
             :model-value="draft"
             :mode="mode"
             :permission="permission"
+            :session-id="currentSession?.id ?? null"
+            :runs="runsForComposer"
             @update:model-value="emit('update:draft', $event)"
-            @update:mode="emit('update:mode', $event)"
             @update:permission="emit('update:permission', $event)"
-            @submit="emit('send')"
+            @submit="emit('send', $event as never)"
           />
         </div>
       </template>

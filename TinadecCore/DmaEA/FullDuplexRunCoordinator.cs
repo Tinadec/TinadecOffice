@@ -381,8 +381,11 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         var resultRevision = patch.AppliedRevision ?? patch.CurrentRevision;
         await _conversations.CompleteTurnAsync(turn.Id, targetRunId, null, resultRevision,
             applied ? "completed" : "stale", cancellationToken).ConfigureAwait(false);
-        await CompleteInteractionStreamAsync(targetRunId, turn.Id, userMessage.Id,
-            applied ? "context_applied" : "stale_context", cancellationToken).ConfigureAwait(false);
+        // ack → steering/context_conflict → done so FollowAsync yields ack first and still delivers the extension before terminal
+        await _lifecycle.AppendRunStreamAsync(targetRunId.ToString(), new DurableRunStreamAppend(turn.Id, "ack", userMessage.Id, IdempotencyKey: $"run:{targetRunId}:turn:{turn.Id}:interaction:ack"), cancellationToken).ConfigureAwait(false);
+        if (applied) { try { await _lifecycle.AppendRunStreamAsync(targetRunId.ToString(), new DurableRunStreamAppend(turn.Id, "steering", null, IdempotencyKey: $"run:{targetRunId}:steering:{turn.Id}"), cancellationToken).ConfigureAwait(false); } catch { } }
+        else { try { await _lifecycle.AppendRunStreamAsync(targetRunId.ToString(), new DurableRunStreamAppend(turn.Id, "context_conflict", null, IdempotencyKey: $"run:{targetRunId}:conflict:{turn.Id}"), cancellationToken).ConfigureAwait(false); } catch { } }
+        await _lifecycle.AppendRunStreamAsync(targetRunId.ToString(), new DurableRunStreamAppend(turn.Id, "done", FinishReason: applied ? "context_applied" : "stale_context", IdempotencyKey: $"run:{targetRunId}:turn:{turn.Id}:interaction:done"), cancellationToken).ConfigureAwait(false);
         return ToTargetSubmission(target, turn, userMessage, resultRevision);
     }
 

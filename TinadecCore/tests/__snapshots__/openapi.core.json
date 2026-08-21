@@ -90,6 +90,25 @@
       },
       "CreateSessionRequest": {
         "properties": {
+          "meeting_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "meeting_provider_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "project_id": {
             "type": "string"
           },
@@ -225,8 +244,30 @@
       },
       "UpdateSessionRequest": {
         "properties": {
+          "meeting_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "meeting_provider_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "title": {
-            "type": "string"
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -362,6 +403,52 @@
         ]
       }
     },
+    "/api/v1/agent-candidates/{id}/promote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{id}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
     "/api/v1/agent-evolution/generate": {
       "post": {
         "responses": {
@@ -475,11 +562,35 @@
     },
     "/api/v1/agent-modes": {
       "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}": {
+      "get": {
         "parameters": [
           {
-            "in": "query",
-            "name": "application_mode",
+            "in": "path",
+            "name": "id",
+            "required": true,
             "schema": {
+              "format": "uuid",
               "type": "string"
             }
           }
@@ -490,7 +601,143 @@
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-runtime-instances": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
         ]
       }
     },
@@ -503,6 +750,16 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
         ]
       }
     },
@@ -519,6 +776,27 @@
       }
     },
     "/api/v1/agents/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
       "put": {
         "parameters": [
           {
@@ -541,6 +819,52 @@
         ]
       }
     },
+    "/api/v1/agents/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
     "/api/v1/agents/{id}/mode": {
       "put": {
         "responses": {
@@ -550,6 +874,84 @@
         },
         "tags": [
           "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
         ]
       }
     },
@@ -1690,6 +2092,175 @@
         ]
       }
     },
+    "/api/v1/prompt-pipelines": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
     "/api/v1/readiness": {
       "get": {
         "responses": {
@@ -2034,6 +2605,114 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/interactions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/invoke-stream": {
       "post": {
         "parameters": [
@@ -2324,6 +3003,12 @@
   "tags": [
     {
       "name": "TinadecCore.Api"
+    },
+    {
+      "name": "AgentConfigurationEndpoints"
+    },
+    {
+      "name": "InteractionsEndpoints"
     }
   ]
 }

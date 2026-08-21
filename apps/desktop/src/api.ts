@@ -629,6 +629,132 @@ export interface AgentCandidateDto {
   created_at: string;
 }
 
+// ── New config objects (snake_case, If-Match via etag/revision) ──
+export interface AgentDefinitionDto {
+  id: string;
+  name: string;
+  layer: 'operation' | 'execution' | string;
+  agent_type: string;
+  description: string;
+  model_route_purpose?: string | null;
+  allowed_tools: string[];
+  capabilities: string[];
+  system_prompt?: string | null;
+  enabled: boolean;
+  is_built_in?: boolean;
+  status?: string;
+  revision?: number | null;
+  etag?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AgentVersionDto {
+  id: string;
+  agent_id: string;
+  version: number;
+  content?: Record<string, unknown> | null;
+  change_summary?: string | null;
+  is_active?: boolean;
+  created_at: string;
+}
+
+export interface AgentModeNodeDto {
+  id: string;
+  agent_id: string;
+  lane: 'operation' | 'execution';
+  position: { x: number; y: number };
+  label?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+export interface AgentModeEdgeDto {
+  id: string;
+  source: string;
+  target: string;
+  label?: string | null;
+}
+
+export interface AgentModeTopologyDto {
+  id: string;
+  display_name: string;
+  summary?: string | null;
+  nodes: AgentModeNodeDto[];
+  edges: AgentModeEdgeDto[];
+  canvas_layout?: Record<string, unknown> | null;
+  status?: string;
+  revision?: number | null;
+  etag?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ModeVersionDto {
+  id: string;
+  mode_id: string;
+  version: number;
+  nodes?: AgentModeNodeDto[] | null;
+  edges?: AgentModeEdgeDto[] | null;
+  canvas_layout?: Record<string, unknown> | null;
+  created_at: string;
+  is_active?: boolean;
+}
+
+export interface PromptPipelineDto {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  key?: string | null;
+  description?: string | null;
+  scope?: string | null;
+  status?: string;
+  version?: number | null;
+  revision?: number | null;
+  etag?: string | null;
+  nodes?: unknown[] | null;
+  edges?: unknown[] | null;
+  canvas_layout?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PromptPipelineVersionDto {
+  id: string;
+  pipeline_id: string;
+  version: number;
+  content?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AgentRuntimeInstanceDto {
+  id: string;
+  run_id: string;
+  session_id?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  status: string;
+  lane?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SessionInteractionDto {
+  id: string;
+  session_id: string;
+  run_id?: string | null;
+  content: string;
+  client_message_id: string;
+  mode_version_id?: string | null;
+  dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
+  target_run_id?: string | null;
+  meeting_model?: string | null;
+  status: string;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export type DispatchMode = 'queued' | 'insert' | 'parallel';
+
 export interface AgentEvolutionProposalDto {
   id: string;
   generated_by_agent_id: string;
@@ -1029,8 +1155,8 @@ function extractErrorMessage(data: unknown, fallback: string): string {
 }
 
 export type AgentCatalogItem = { id: string; layer: string; role: string; lifecycle: string; prompt_profile: string; capabilities: string[]; allowed_tools: string[]; context_access: string; direct_user_output: boolean; triggers: string[]; accepts: string[]; emits: string[]; decisions: string[]; memory_write_policy: string };
-export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${base()}/api/v1/agents/catalog`, { headers: headers() }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
-export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${base()}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: headers(), body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${gatewayUrl}/api/v1/agents/catalog`, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${gatewayUrl}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
 export const api = {
   gatewayUrl,
@@ -1163,13 +1289,52 @@ export const api = {
   connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
+  /** @deprecated legacy center overview — use new 5-tab endpoints */
   getAgentCenterOverview: () => request<AgentCenterOverviewDto>('/api/v1/agent-center/overview'),
+  /** @deprecated legacy binding — mode_version controls routing now */
   saveAgentRuntimeBinding: (agentId: string, binding: AgentRuntimeBindingInput) => request<AgentRuntimeBindingDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/runtime-binding`, {
     method: 'PUT',
     body: JSON.stringify(binding)
   }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
   listAgents: () => request<AgentProfileDto[]>('/api/v1/agents'),
+  // ── New 5-tab config objects (snake_case, If-Match via etag) ──
+  listAgentDefinitions: () => request<AgentDefinitionDto[]>('/api/v1/agents'),
+  createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
+  updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listAgentVersions: (id: string) => request<AgentVersionDto[]>(`/api/v1/agents/${encodeURIComponent(id)}/versions`),
+  getAgentVersion: (id: string, versionId: string) => request<AgentVersionDto>(`/api/v1/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`),
+  // agent-modes topology
+  listAgentModeTopologies: () => request<AgentModeTopologyDto[]>('/api/v1/agent-modes'),
+  createAgentModeDraft: (body: Partial<AgentModeTopologyDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
+  getAgentModeTopology: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}`),
+  updateAgentModeDraft: (id: string, body: { nodes: AgentModeNodeDto[]; edges: AgentModeEdgeDto[]; canvas_layout?: Record<string, unknown> | null }, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  archiveAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listAgentModeVersions: (id: string) => request<ModeVersionDto[]>(`/api/v1/agent-modes/${encodeURIComponent(id)}/versions`),
+  // prompt pipelines
+  listPromptPipelines: () => request<PromptPipelineDto[]>('/api/v1/prompt-pipelines'),
+  createPromptPipelineDraft: (body: Partial<PromptPipelineDto>) => request<PromptPipelineDto>('/api/v1/prompt-pipelines', { method: 'POST', body: JSON.stringify(body) }),
+  getPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}`),
+  updatePromptPipelineDraft: (id: string, body: Partial<PromptPipelineDto>, etag?: string | null) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  archivePromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listPromptPipelineVersions: (id: string) => request<PromptPipelineVersionDto[]>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/versions`),
+  // candidates
+  listCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
+  promoteCandidate: (candidateId: string, body: { target_mode_draft_id: string }) => request<AgentDefinitionDto>(`/api/v1/agent-candidates/${encodeURIComponent(candidateId)}/promote`, { method: 'POST', body: JSON.stringify(body) }),
+  rejectCandidate: (candidateId: string, reason?: string) => request<{ status: string }>(`/api/v1/agent-candidates/${encodeURIComponent(candidateId)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  // runtime instances
+  listRuntimeInstances: (runId?: string) => {
+    const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+    return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
+  },
+  // interactions (queued/insert/parallel)
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
+  cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
   searchTools: (params: { query?: string; domain?: string; source?: string; risk?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();

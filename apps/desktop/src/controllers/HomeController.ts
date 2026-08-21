@@ -17,6 +17,7 @@ import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
+import type { DispatchMode } from '@/api'
 import type { SseChunk } from '@/generated/client'
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ const rightRailCollapsed = ref(false)
 const rightRailWidth = ref(420)
 const currentMode = ref<AgentMode>('auto')
 const currentPermission = ref<PermissionLevel>('default')
+const runs = ref<Array<{ id: string; status: string }>>([])
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
 const currentSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
@@ -146,18 +148,21 @@ async function loadMessagesAndApprovals() {
     approvals.value = []
     orchestration.value = null
     toolExecutions.value = []
+    runs.value = []
     return
   }
-  const [messageList, approvalList, orchestrationSnapshot, toolTimeline] = await Promise.all([
+  const [messageList, approvalList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
     api.listMessages(selectedSessionId.value),
     api.listApprovals(selectedSessionId.value),
     api.getOrchestrationSnapshot(selectedSessionId.value),
     api.listToolExecutions(selectedSessionId.value, { limit: 12 }),
+    api.listRuns(selectedSessionId.value).catch(() => [] as unknown[]),
   ])
   messages.value = messageList
   approvals.value = approvalList
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
+  runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String((r as Record<string, unknown>).id), status: String((r as Record<string, unknown>).status ?? '') }))
 }
 
 async function openProject() {
@@ -235,7 +240,7 @@ function handleInvokeChunk(chunk: SseChunk) {
   }
 }
 
-async function handleSend(content: string) {
+async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
     if (!sessionId && selectedProjectId.value) {
@@ -251,29 +256,47 @@ async function handleSend(content: string) {
     const snapshotContent = content
     draft.value = ''
     invokeError.value = null
-    // true admission via invoke-stream (idempotent by client_message_id)
     const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const dispatchMode: DispatchMode = (opts?.dispatch_mode as DispatchMode) ?? (localStorage.getItem('tinadec.enter_pref') as DispatchMode) ?? 'parallel'
+    const modeVersionId = opts?.mode_version_id ?? null
+    const targetRunId = opts?.target_run_id ?? null
+    const meetingModel = opts?.meeting_model ?? null
+    if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
     try {
-      // optimistic pending user message
       messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
-      await api.invokeStreamWithAdmission(sessionId, {
+      // new interaction path (snake_case)
+      await api.createInteraction(sessionId, {
         content: snapshotContent,
         client_message_id: clientMessageId,
-        application_mode: 'conversation',
-        agent_mode: currentMode.value,
-        permission_mode: currentPermission.value,
-      }, handleInvokeChunk, (err) => {
-        const msg = err.message ?? String(err)
+        mode_version_id: modeVersionId,
+        dispatch_mode: dispatchMode,
+        target_run_id: targetRunId,
+        meeting_model: meetingModel,
+      })
+      // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('404') || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) {
+        // fallback to legacy invoke-stream if interactions not yet deployed
+        try {
+          await api.invokeStreamWithAdmission(sessionId, {
+            content: snapshotContent,
+            client_message_id: clientMessageId,
+            application_mode: 'conversation',
+            agent_mode: currentMode.value,
+            permission_mode: currentPermission.value,
+          }, handleInvokeChunk, (e) => { invokeError.value = e.message })
+          if (invokeError.value) throw new Error(invokeError.value)
+        } catch {
+          if (!invokeError.value) await api.postMessage(sessionId, snapshotContent)
+        }
+      } else {
         if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置：请在设置中配置模型后再试'
         else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
         else if (msg.includes('recovering') || msg.includes('409')) invokeError.value = '恢复中，请稍后重试'
         else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '连接已断开'
         else invokeError.value = msg
-      })
-    } catch {
-      // invokeStreamWithAdmission already mapped invokeError; fallback to polling compat if SSE not available
-      if (!invokeError.value) {
-        await api.postMessage(sessionId, snapshotContent)
+        throw err
       }
     }
     if (pendingSessionId.value === sessionId) {
@@ -390,12 +413,13 @@ export const homeController = {
   start,
   openProject,
   createSession,
-  sendMessage: async () => {
+  runs,
+  sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => {
     const content = draft.value.trim()
     if (!content) return
-    await handleSend(content)
+    await handleSend(content, opts)
   },
-  handleWelcomeSend: (content: string) => handleSend(content),
+  handleWelcomeSend: (content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => handleSend(content, opts),
   requestShellApproval,
   decideApproval,
   recordApproval,

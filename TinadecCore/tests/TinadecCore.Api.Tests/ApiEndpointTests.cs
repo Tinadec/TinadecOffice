@@ -81,9 +81,9 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         Assert.True(framework.TryGetProperty("primitives", out var primitives));
         Assert.True(primitives.GetArrayLength() > 0);
 
-        // modules (incremental field — eleven modules, including tenancy, VectorStore, and Tools)
+        // modules (incremental field — twelve modules, including agent_configuration, tenancy, VectorStore, and Tools)
         Assert.True(root.TryGetProperty("modules", out var modules));
-        Assert.Equal(11, modules.GetArrayLength());
+        Assert.Equal(12, modules.GetArrayLength());
 
         // design_notes
         Assert.True(root.TryGetProperty("design_notes", out _));
@@ -149,7 +149,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         // Modules
         Assert.True(root.TryGetProperty("modules", out var modules));
         var moduleList = modules.EnumerateArray().ToList();
-        Assert.Equal(11, moduleList.Count);
+        Assert.Equal(12, moduleList.Count);
 
         // At least some modules should be "not_configured"
         var notConfiguredCount = moduleList.Count(m =>

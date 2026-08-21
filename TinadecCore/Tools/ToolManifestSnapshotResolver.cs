@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -13,11 +14,13 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
 {
     private readonly ISessionLocator _sessions;
     private readonly IToolProcessManager _processes;
+    private readonly IServiceProvider? _services;
 
-    public ToolManifestSnapshotResolver(ISessionLocator sessions, IToolProcessManager processes)
+    public ToolManifestSnapshotResolver(ISessionLocator sessions, IToolProcessManager processes, IServiceProvider? services = null)
     {
         _sessions = sessions;
         _processes = processes;
+        _services = services;
     }
 
     public async Task<ToolManifestSnapshot> ResolveAsync(
@@ -86,9 +89,26 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
                 $"The runtime profile authorizes unknown tool '{unknown}'.");
         }
 
-        var authorized = request.AllowAllTools
+        var baseAuthorized = request.AllowAllTools
             ? manifest.Tools
             : manifest.Tools.Where(item => requested.Contains(item.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+
+        // ponytail: intersect with formal agent ∩ mode effective tools at freeze time if session has mode_version
+        HashSet<string>? formalEffective = null;
+        try
+        {
+            var formal = _services?.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
+            if (formal is not null)
+                formalEffective = await formal.GetEffectiveToolsForSessionAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+        }
+        catch { }
+
+        IReadOnlyList<ToolManifestEntryDto> authorized;
+        if (formalEffective is null) authorized = baseAuthorized;
+        else if (formalEffective.Contains("*")) authorized = baseAuthorized;
+        else if (formalEffective.Count == 0) authorized = [];
+        else authorized = baseAuthorized.Where(item => formalEffective.Contains(item.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+
         var frozen = authorized.Select(ToFrozen).ToArray();
         return new ToolManifestSnapshot(manifest.ProtocolVersion, computedHash, frozen);
     }

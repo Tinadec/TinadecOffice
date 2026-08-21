@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.Context;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
@@ -30,6 +31,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // Register modules in dependency order.
         // Each module calls builder.RegisterModule() to declare its descriptor.
         new TenancyModuleRegistrar().Register(builder);
+        new AgentConfigurationModuleRegistrar().Register(builder);
         new VectorStoreModuleRegistrar().Register(builder);
         new LifecycleModuleRegistrar().Register(builder);
         new ModelsModuleRegistrar().Register(builder);
@@ -40,6 +42,8 @@ public static class TinadecCoreServiceCollectionExtensions
         new LoopGuardModuleRegistrar().Register(builder);
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
+
+        services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
 
         // Rebind ToolDispatchOptions from the frozen TOML runtime profile (this factory
         // registration replaces the defaults the Tools module registered; DI resolves
