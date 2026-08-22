@@ -39,6 +39,16 @@ const router = createRouter({
       component: () => import('./pages/RecoveryCheckPage.vue'),
     },
     {
+      path: '/governance',
+      name: 'governance-board',
+      component: () => import('./pages/GovernanceBoardPage.vue'),
+    },
+    {
+      path: '/snapshots',
+      name: 'snapshots',
+      component: () => import('./pages/SnapshotsPage.vue'),
+    },
+    {
       path: '/library',
       name: 'library',
       component: () => import('./pages/LibraryPage.vue'),

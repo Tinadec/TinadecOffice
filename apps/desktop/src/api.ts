@@ -1505,9 +1505,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  decideApproval: (approvalId: string, decision: 'approved' | 'rejected') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null) => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
     method: 'POST',
-    body: JSON.stringify({ decision })
+    body: JSON.stringify(reason ? { decision, reason } : { decision })
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),

@@ -84,12 +84,12 @@ export const useUserActionStore = defineStore('userAction', () => {
     return refresh(actionId)
   }
 
-  async function decideApproval(actionId: string, decision: 'approved' | 'rejected', _reason?: string): Promise<UserToolActionDto | null> {
+  async function decideApproval(actionId: string, decision: 'approved' | 'rejected', reason?: string | null): Promise<UserToolActionDto | null> {
     const current = get(actionId)
     if (!current?.action_approval_id) throw new Error(`action ${actionId} has no action_approval_id`)
-    // api.decideApproval posts { decision }; the Core endpoint binds the
-    // approval to the caller's principal, so no reason field crosses here yet.
-    await api.decideApproval(current.action_approval_id, decision)
+    // The decision response may be a wrapped projection; the authoritative
+    // action state comes from the follow-up GET on the same action.id.
+    await api.decideApproval(current.action_approval_id, decision, reason ?? null)
     return refresh(actionId)
   }
 

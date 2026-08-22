@@ -11,6 +11,6 @@ const tone = computed(() => runStatusTone(props.status))
 const text = computed(() => props.label ?? statusLabel(props.status))
 </script>
 
-<template vapor>
+<template>
   <span class="status-pill" :class="`status-pill--${tone}`" :data-run-status="status">{{ text }}</span>
 </template>
