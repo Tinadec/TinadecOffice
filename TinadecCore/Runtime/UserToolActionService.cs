@@ -347,7 +347,12 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
                 .SetProperty(x => x.CompletedAt, now)
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
         if (updated != 1)
+        {
+            var concurrent = await FindAsync(action.Id, cancellationToken).ConfigureAwait(false);
+            if (concurrent is not null && string.Equals(concurrent.RecoveryDecision, normalized, StringComparison.Ordinal))
+                return await ToResultAsync(concurrent, cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException("The user tool action recovery state changed concurrently.");
+        }
 
         var recovered = await FindAsync(action.Id, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("User tool action was not found after recovery.");
