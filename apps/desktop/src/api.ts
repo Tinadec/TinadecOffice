@@ -1395,7 +1395,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const message = extractErrorMessage(data, response.statusText);
-    throw new Error(message);
+    const code = data && typeof data === 'object' && typeof (data as Record<string, unknown>).code === 'string'
+      ? (data as Record<string, unknown>).code
+      : null;
+    // Coded errors let callers branch on machine codes (e.g. context_conflict)
+    // instead of parsing human messages.
+    throw Object.assign(new Error(message), { code, status: response.status });
   }
 
   return data as T;

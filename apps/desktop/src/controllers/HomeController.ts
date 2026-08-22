@@ -245,13 +245,17 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
       // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      const code = (err as { code?: unknown }).code
       // Main path only: POST /interactions is the single admission contract
       // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
       // fallbacks were removed so failures surface visibly instead of
       // silently degrading to a non-durable path.
-      if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'
+      if (code === 'context_conflict') {
+        // §4.1-4: show revision conflict guidance; user must re-read before resending.
+        invokeError.value = '上下文已更新（检测到新的目标修订）。请重新读取当前状态后再发送。'
+      } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'
       else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
-      else if (msg.includes('recovering') || msg.includes('409')) invokeError.value = '恢复中，请稍候再试'
+      else if (msg.includes('recovering')) invokeError.value = '恢复中，请稍候再试'
       else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '网络已断开'
       else invokeError.value = msg
       throw err
