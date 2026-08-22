@@ -1340,6 +1340,19 @@ export interface SnapshotDto {
   created_at: string;
 }
 
+export interface AgentLineageEntryDto {
+  id: string;
+  run_id: string;
+  parent_instance_id?: string | null;
+  task_id?: string | null;
+  layer: string;
+  role: string;
+  generation_depth: number;
+  generated: boolean;
+  status: string;
+  capabilities?: string[] | null;
+}
+
 export interface OrchestrationSnapshotDto {
   run?: OrchestrationRunDto | null;
   graph?: TaskGraphDto | null;
@@ -1499,6 +1512,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  getRunAgentLineage: (runId: string) => request<AgentLineageEntryDto[]>(`/api/v1/runs/${encodeURIComponent(runId)}/agent-lineage`),
   listWorkspaceSnapshots: (projectId: string) => request<SnapshotDto[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/snapshots`),
   getWorkspaceSnapshot: (snapshotId: string) => request<SnapshotDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}`),
   restoreWorkspaceSnapshot: (snapshotId: string, input: { idempotency_key?: string; expected_workspace_hash?: string; allow_conflicts?: boolean } = {}) => request<Record<string, unknown>>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/restore`, {
