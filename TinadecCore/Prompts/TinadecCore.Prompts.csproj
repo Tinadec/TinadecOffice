@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Prompts</RootNamespace>
     <Description>Prompts: deterministic assembly of fragments, agent instructions, and skill contributions.</Description>
   </PropertyGroup>

@@ -18,7 +18,20 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
 
 public sealed record MemoryPolicy(bool CandidateOnly, int RetrievalLimit, IReadOnlyList<string> AllowedScopes, IReadOnlyList<string> AllowedKinds);
 
-public sealed record ToolRuntimePolicy(string Provider, bool MutationRequiresApproval, bool SerializeWorkspaceWrites, int DefaultTimeoutSeconds, int MaxToolRounds);
+public sealed record ToolRuntimePolicy(string Provider, bool MutationRequiresApproval, bool SerializeWorkspaceWrites, int DefaultTimeoutSeconds, int MaxToolRounds)
+{
+    public const int MaximumRounds = 32;
+
+    public static void Validate(ToolRuntimePolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.MaxToolRounds is < 0 or > MaximumRounds)
+        {
+            throw new InvalidDataException(
+                $"max_tool_rounds must be between 0 and the Core safety ceiling ({MaximumRounds}).");
+        }
+    }
+}
 
 public sealed record ApplicationModeDefinition(
     string Id,
@@ -42,6 +55,17 @@ public sealed record RuntimeAgentDefinition(
     bool DirectUserOutput,
     string ContextAccess)
 {
+    /// <summary>
+    /// Immutable configuration identity captured at run admission. Formal agents
+    /// carry the published relational ids; TOML agents receive deterministic
+    /// virtual ids when the frozen run is assembled.
+    /// </summary>
+    public Guid? AgentDefinitionId { get; init; }
+
+    public Guid? AgentVersionId { get; init; }
+
+    public string VersionContentHash { get; init; } = string.Empty;
+
     /// <summary>
     /// Immutable tool allow-list declared by the runtime profile.  It is an
     /// optional v1-compatible property; omitted TOML means no autonomous tools.
@@ -247,6 +271,8 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
 
         Validate(applications, profiles, agents);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+        var toolPolicy = new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4));
+        ToolRuntimePolicy.Validate(toolPolicy);
         return new AgentRuntimeConfigurationSnapshot(
             version,
             hash,
@@ -256,7 +282,7 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             new SupervisionPolicy(Boolean(supervision, "required_before_final"), Integer(supervision, "max_revision_rounds", 2)),
             new ContextPolicy(Integer(context, "default_token_budget", 8192), Integer(context, "recent_message_limit", 24), Boolean(context, "optimistic_revision")),
             new MemoryPolicy(Boolean(memory, "candidate_only"), Integer(memory, "retrieval_limit", 8), Strings(memory, "allowed_scopes"), Strings(memory, "allowed_kinds")),
-            new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4)),
+            toolPolicy,
             applications,
             profiles,
             agents);

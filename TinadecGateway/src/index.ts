@@ -15,16 +15,8 @@ import {
   type AuthContext,
 } from './auth.js';
 import {
-  codeToolApprovalBlockFor,
-  codeToolApprovalUnavailableBlock,
-  codeToolRequiresApproval,
-  executeCodeToolViaRuntime,
   listCodeToolIds,
   listCodeToolSpecs,
-  normalizeCommandRunRequest,
-  validateCommandRunApproval,
-  type ApprovalSnapshot,
-  type CodeToolExecuteRequest,
 } from './codeTools.js';
 import { mcpRoutes } from './mcp/mcpRoutes.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
@@ -97,31 +89,32 @@ function forwardHeaders(request: Request): Record<string, string> {
   return buildForwardHeaders(requestAuthContexts.get(request), existing);
 }
 
-function setProxyResponseHeaders(set: { headers: Record<string, string | number> }, requestId: string) {
+function setProxyResponseHeaders(
+  set: { headers: Record<string, string | number> },
+  requestId: string,
+  responseHeaders?: Headers,
+) {
   set.headers['x-request-id'] = requestId;
   set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
+  const etag = responseHeaders?.get('etag');
+  if (etag) set.headers.etag = etag;
 }
 
-async function verifyCodeToolApproval(toolId: string, request: CodeToolExecuteRequest) {
-  const params = new URLSearchParams();
-  if (request.session_id) params.set('sessionId', request.session_id);
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  try {
-    const approvalResult = await proxyJson(`/api/v1/approvals${suffix}`);
-    if (approvalResult.status < 200 || approvalResult.status >= 300 || !Array.isArray(approvalResult.data)) {
-      return codeToolApprovalUnavailableBlock(toolId, request);
-    }
-    return codeToolApprovalBlockFor(toolId, request, approvalResult.data as ApprovalSnapshot[]);
-  } catch {
-    return codeToolApprovalUnavailableBlock(toolId, request);
-  }
+function setToolTransportResponseHeaders(
+  set: { headers: Record<string, string | number> },
+  requestId: string,
+  responseHeaders?: Headers,
+) {
+  setProxyResponseHeaders(set, requestId, responseHeaders);
+  const contentType = responseHeaders?.get('content-type');
+  if (contentType) set.headers['content-type'] = contentType;
 }
 
 const app = new Elysia()
   .use(swagger({
     path: '/docs',
     documentation: {
-      info: { title: 'Tinadec Gateway External API', version: '0.2.0', description: 'Thin proxy BFF to Core – all snake_case, RFC9457 ProblemDetails, full-duplex SSE' },
+      info: { title: 'Tinadec Gateway External API', version: 'v1', description: 'Stateless gateway facade – all snake_case, RFC9457 ProblemDetails, full-duplex SSE' },
       tags: [
         { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Agents' }, { name: 'Interactions' }, { name: 'PromptPipelines' }, { name: 'Tools' }, { name: 'System' }
       ]
@@ -255,6 +248,133 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped[0] ?? result.data;
   }, { detail: { summary: 'Create project', tags: ['Projects'] }, body: t.Object({ name: t.String(), path: t.String() }, { additionalProperties: true }) })
+  .post('/api/v1/projects/:projectId/snapshots', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/snapshots`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Create workspace snapshot', tags: ['Projects'] },
+    body: t.Object({
+      idempotency_key: t.Optional(t.String()),
+      expected_workspace_hash: t.Optional(t.String()),
+      include_hidden: t.Optional(t.Boolean()),
+      max_files: t.Optional(t.Number()),
+      max_bytes: t.Optional(t.Number()),
+    }, { additionalProperties: true }),
+  })
+  .get('/api/v1/projects/:projectId/snapshots', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/snapshots`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'List workspace snapshots', tags: ['Projects'] } })
+  .get('/api/v1/workspace-snapshots/:snapshotId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Get workspace snapshot', tags: ['Projects'] } })
+  .post('/api/v1/workspace-snapshots/:snapshotId/restore', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/restore`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Restore workspace snapshot', tags: ['Projects'] },
+    body: t.Object({
+      idempotency_key: t.Optional(t.String()),
+      expected_workspace_hash: t.Optional(t.String()),
+      allow_conflicts: t.Optional(t.Boolean()),
+    }, { additionalProperties: true }),
+  })
+  .get('/api/v1/workspace-defaults', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/workspace-defaults';
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Get workspace defaults', tags: ['Agents'] } })
+  .put('/api/v1/workspace-defaults/draft', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/workspace-defaults/draft';
+    const result = await proxyJson(path, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Update workspace defaults draft', tags: ['Agents'] },
+    body: t.Object({
+      default_agent_definition_id: t.Optional(t.String()),
+      default_agent_mode_id: t.Optional(t.String()),
+      default_prompt_pipeline_id: t.Optional(t.String()),
+    }, { additionalProperties: true }),
+  })
+  .post('/api/v1/workspace-defaults/publish', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/workspace-defaults/publish';
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Publish workspace defaults', tags: ['Agents'] } })
+  .post('/api/v1/workspace-defaults/archive', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/workspace-defaults/archive';
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Archive workspace defaults', tags: ['Agents'] } })
   .get('/api/v1/sessions', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -553,6 +673,111 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Decide approval', tags: ['System'] } })
+  .get('/api/v1/governance/permission-requests', async ({ query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    const q = query as Record<string, unknown>;
+    for (const key of ['status', 'run_id', 'task_id']) {
+      if (q[key] !== undefined && q[key] !== '') search.set(key, String(q[key]));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const path = `/api/v1/governance/permission-requests${suffix}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/governance/permission-requests'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'List permission requests', tags: ['System'] } })
+  .get('/api/v1/governance/permission-requests/:requestId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/permission-requests/${encodeURIComponent(params.requestId)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Get permission request', tags: ['System'] } })
+  .post('/api/v1/governance/permission-requests/:requestId/decision', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/permission-requests/${encodeURIComponent(params.requestId)}/decision`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Decide permission request', tags: ['System'] } })
+  .post('/api/v1/governance/policy-bundles', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/governance/policy-bundles';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create policy bundle', tags: ['System'] } })
+  .post('/api/v1/governance/policy-bundles/:bundleId/versions', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/policy-bundles/${encodeURIComponent(params.bundleId)}/versions`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Publish policy version', tags: ['System'] } })
+  .post('/api/v1/governance/policy-bundles/:bundleId/archive', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/policy-bundles/${encodeURIComponent(params.bundleId)}/archive`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Archive policy bundle', tags: ['System'] } })
+  .post('/api/v1/governance/capability-grants', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/governance/capability-grants';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create capability grant', tags: ['System'] } })
+  .post('/api/v1/governance/capability-grants/:grantId/revoke', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/capability-grants/${encodeURIComponent(params.grantId)}/revoke`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Revoke capability grant', tags: ['System'] } })
+  .post('/api/v1/governance/approval-delegations', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/governance/approval-delegations';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create approval delegation', tags: ['System'] } })
+  .post('/api/v1/governance/approval-delegations/:delegationId/revoke', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/approval-delegations/${encodeURIComponent(params.delegationId)}/revoke`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Revoke approval delegation', tags: ['System'] } })
+  .post('/api/v1/governance/capability-leases/:leaseId/revoke', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/governance/capability-leases/${encodeURIComponent(params.leaseId)}/revoke`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Revoke capability lease', tags: ['System'] } })
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
@@ -602,7 +827,7 @@ const app = new Elysia()
   .get('/api/v1/code/tools', () => ({
     tool_ids: listCodeToolIds(),
     tools: listCodeToolSpecs()
-  }), { detail: { summary: 'Code tool specs (legacy BFF)', tags: ['Tools'], description: 'Legacy: use /api/v1/tools/search proxied to Core. This endpoint preserves existing Desktop catalog.' } })
+  }), { detail: { summary: 'Code tool catalog', tags: ['Tools'], description: 'Current Desktop tool catalog facade. Execution is delegated to the Tool Provider.' } })
   .get('/api/v1/tools/search', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -635,33 +860,20 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Harness manifest (Core-owned)', tags: ['System'] } })
-  // Thin proxy: code tool execute no longer implements Gateway-side evaluateApproval; Core owns approval
+  // Current v1 user tool transport. Desktop and other explicit users use this
+  // path; Gateway only forwards the request to the Tool Provider.
   .post('/api/v1/code/tools/:toolId/execute', async ({ params, body, set, request }) => {
     const toolId = params.toolId;
-    const req = (body ?? {}) as CodeToolExecuteRequest;
-    const requiresApproval = codeToolRequiresApproval(toolId);
-    if (requiresApproval === null) {
-      setStatus(set, 404);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(404, 'run_not_found', 'Code tool was not found.', `/api/v1/code/tools/${toolId}/execute`);
-    }
-    if (requiresApproval && req.approval_id) {
-      const block = await verifyCodeToolApproval(toolId, req);
-      if (block) {
-        // CodeTool approval block is already in external shape (status: blocked)
-        return block;
-      }
-    }
-    // No Gateway-side approval strategy – just proxy to Tool Runtime via Core-owned path if possible
-    // Keep Tool Runtime path for backwards compat; Core will still enforce approval gate.
-    const result = await executeCodeToolViaRuntime(toolId, req as unknown as Record<string, unknown> as never);
-    if (!result) {
-      setStatus(set, 404);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(404, 'run_not_found', 'Code tool was not found.', `/api/v1/code/tools/${toolId}/execute`);
-    }
-    return result;
-  }, { detail: { summary: 'Execute code tool (thin proxy, Core approval)', tags: ['Tools'], description: 'Legacy code tool path – approval is Core-owned; no Gateway-side strategy. Prefer /api/v1/runs/{runId}/tools/{toolId}/execute' } })
+    const headers = forwardHeaders(request);
+    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(toolId)}/execute`, {
+      method: 'POST',
+      body: body as Record<string, unknown> | undefined,
+      headers,
+    });
+    setStatus(set, result.status);
+    setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Execute user tool (direct transport)', tags: ['Tools'], description: 'Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.' } })
   .get('/api/v1/prompt-fragments', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -1631,69 +1843,34 @@ const app = new Elysia()
     const headers = forwardHeaders(request);
     const result = await proxyToolRuntimeJson('/api/v1/health', { headers } as never);
     setStatus(set, result.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
+    setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Tool runtime health (legacy)', tags: ['System'] } })
+  }, { detail: { summary: 'Tool provider health', tags: ['System'] } })
   .get('/api/v1/tool-runtime/manifest', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyToolRuntimeJson('/api/v1/manifest', { headers } as never);
     setStatus(set, result.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
+    setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Tool runtime manifest (legacy)', tags: ['System'] } })
+  }, { detail: { summary: 'Tool provider manifest', tags: ['System'] } })
   .get('/api/v1/tool-runtime/tools', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyToolRuntimeJson('/api/v1/tools', { headers } as never);
     setStatus(set, result.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
+    setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Tool runtime tools (legacy)', tags: ['System'] } })
+  }, { detail: { summary: 'Tool provider tools', tags: ['System'] } })
   .post('/api/v1/tool-runtime/tools/:toolId/execute', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
-    if (params.toolId !== 'command_run') {
-      setStatus(set, 404);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(404, 'tool_not_found', 'Only command_run is available through this legacy route.', `/api/v1/tool-runtime/tools/${params.toolId}/execute`);
-    }
-
-    const normalized = normalizeCommandRunRequest(body);
-    if ('error' in normalized) {
-      setStatus(set, normalized.error.status);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(normalized.error.status, normalized.error.code, normalized.error.detail, '/api/v1/tool-runtime/tools/command_run/execute');
-    }
-
-    const approval = await proxyJson(`/api/v1/approvals/${encodeURIComponent(normalized.value.approval_id)}`, { headers });
-    if (approval.status < 200 || approval.status >= 300 || !approval.data || typeof approval.data !== 'object') {
-      const failure = approval.status >= 400 && approval.status < 500
-        ? validateCommandRunApproval(normalized.value, null)
-        : { status: 502, code: 'approval_unavailable', detail: 'Core approval could not be verified.' };
-      setStatus(set, failure?.status ?? 502);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(failure?.status ?? 502, failure?.code ?? 'approval_unavailable', failure?.detail ?? 'Core approval could not be verified.', '/api/v1/tool-runtime/tools/command_run/execute');
-    }
-    const approvalFailure = validateCommandRunApproval(normalized.value, approval.data as ApprovalSnapshot);
-    if (approvalFailure) {
-      setStatus(set, approvalFailure.status);
-      set.headers['content-type'] = 'application/problem+json';
-      return toProblemDetails(approvalFailure.status, approvalFailure.code, approvalFailure.detail, '/api/v1/tool-runtime/tools/command_run/execute');
-    }
-
-    const result = await proxyToolRuntimeJson('/api/v1/tools/command_run/execute', {
+    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
       method: 'POST',
-      body: {
-        tool_id: 'command_run',
-        session_id: normalized.value.session_id,
-        approval_id: normalized.value.approval_id,
-        approved: true,
-        params: normalized.value.params,
-      },
-      headers: headers as never,
+      body: body as Record<string, unknown> | undefined,
+      headers,
     });
     setStatus(set, result.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
+    setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
-  }, { detail: { summary: 'Execute approved command_run (legacy)', tags: ['System'], description: 'Legacy terminal URL retained for compatibility. Only Core-approved command_run requests are accepted.' } });
+  }, { detail: { summary: 'Execute user tool (direct transport)', tags: ['Tools'], description: 'Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.' } });
 
 export { app };
 

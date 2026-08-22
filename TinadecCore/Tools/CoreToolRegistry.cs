@@ -10,13 +10,13 @@ namespace TinadecCore.Tools;
 /// </summary>
 public sealed class CoreToolRegistry : IToolRegistry
 {
-    private readonly IToolProcessManager _processes;
+    private readonly IToolProvider _provider;
 
-    public CoreToolRegistry(IToolProcessManager processes) => _processes = processes;
+    public CoreToolRegistry(IToolProvider provider) => _provider = provider;
 
     public async Task<IReadOnlyList<ToolManifestEntryDto>> ListToolsAsync(string? workspaceRoot = null, CancellationToken cancellationToken = default)
     {
-        var manifest = await _processes.GetManifestAsync(workspaceRoot ?? string.Empty, cancellationToken).ConfigureAwait(false);
+        var manifest = await _provider.GetManifestAsync(workspaceRoot ?? string.Empty, cancellationToken).ConfigureAwait(false);
         return manifest.Tools;
     }
 

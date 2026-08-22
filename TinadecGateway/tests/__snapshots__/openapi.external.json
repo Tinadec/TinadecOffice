@@ -3,9 +3,9 @@
     "schemas": {}
   },
   "info": {
-    "description": "Thin proxy BFF to Core – all snake_case, RFC9457 ProblemDetails, full-duplex SSE",
+    "description": "Stateless gateway facade – all snake_case, RFC9457 ProblemDetails, full-duplex SSE",
     "title": "Tinadec Gateway External API",
-    "version": "0.2.0"
+    "version": "v1"
   },
   "openapi": "3.0.3",
   "paths": {
@@ -615,12 +615,12 @@
     },
     "/api/v1/code/tools": {
       "get": {
-        "description": "Legacy: use /api/v1/tools/search proxied to Core. This endpoint preserves existing Desktop catalog.",
+        "description": "Current Desktop tool catalog facade. Execution is delegated to the Tool Provider.",
         "operationId": "getApiV1CodeTools",
         "responses": {
           "200": {}
         },
-        "summary": "Code tool specs (legacy BFF)",
+        "summary": "Code tool catalog",
         "tags": [
           "Tools"
         ]
@@ -628,7 +628,7 @@
     },
     "/api/v1/code/tools/{toolId}/execute": {
       "post": {
-        "description": "Legacy code tool path – approval is Core-owned; no Gateway-side strategy. Prefer /api/v1/runs/{runId}/tools/{toolId}/execute",
+        "description": "Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.",
         "operationId": "postApiV1CodeToolsByToolIdExecute",
         "parameters": [
           {
@@ -643,7 +643,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Execute code tool (thin proxy, Core approval)",
+        "summary": "Execute user tool (direct transport)",
         "tags": [
           "Tools"
         ]
@@ -1001,6 +1001,208 @@
           "200": {}
         },
         "summary": "Update extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations": {
+      "post": {
+        "operationId": "postApiV1GovernanceApproval-delegations",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create approval delegation",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations/{delegationId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceApproval-delegationsByDelegationIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke approval delegation",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-grants",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create capability grant",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants/{grantId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-grantsByGrantIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grantId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke capability grant",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-leases/{leaseId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-leasesByLeaseIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "leaseId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke capability lease",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests": {
+      "get": {
+        "operationId": "getApiV1GovernancePermission-requests",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List permission requests",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{requestId}": {
+      "get": {
+        "operationId": "getApiV1GovernancePermission-requestsByRequestId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get permission request",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{requestId}/decision": {
+      "post": {
+        "operationId": "postApiV1GovernancePermission-requestsByRequestIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Decide permission request",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundles",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create policy bundle",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{bundleId}/archive": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundlesByBundleIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive policy bundle",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{bundleId}/versions": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundlesByBundleIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish policy version",
         "tags": [
           "System"
         ]
@@ -1639,6 +1841,122 @@
           "200": {}
         },
         "summary": "Create project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/snapshots": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdSnapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List workspace snapshots",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdSnapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create workspace snapshot",
         "tags": [
           "Projects"
         ]
@@ -2856,7 +3174,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Tool runtime health (legacy)",
+        "summary": "Tool provider health",
         "tags": [
           "System"
         ]
@@ -2868,7 +3186,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Tool runtime manifest (legacy)",
+        "summary": "Tool provider manifest",
         "tags": [
           "System"
         ]
@@ -2880,7 +3198,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Tool runtime tools (legacy)",
+        "summary": "Tool provider tools",
         "tags": [
           "System"
         ]
@@ -2888,7 +3206,7 @@
     },
     "/api/v1/tool-runtime/tools/{toolId}/execute": {
       "post": {
-        "description": "Legacy terminal URL retained for compatibility. Only Core-approved command_run requests are accepted.",
+        "description": "Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.",
         "operationId": "postApiV1Tool-runtimeToolsByToolIdExecute",
         "parameters": [
           {
@@ -2903,9 +3221,9 @@
         "responses": {
           "200": {}
         },
-        "summary": "Execute approved command_run (legacy)",
+        "summary": "Execute user tool (direct transport)",
         "tags": [
-          "System"
+          "Tools"
         ]
       }
     },
@@ -2942,6 +3260,211 @@
         "summary": "Shell tool (blocked until implemented)",
         "tags": [
           "Tools"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults": {
+      "get": {
+        "operationId": "getApiV1Workspace-defaults",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/archive": {
+      "post": {
+        "operationId": "postApiV1Workspace-defaultsArchive",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/draft": {
+      "put": {
+        "operationId": "putApiV1Workspace-defaultsDraft",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update workspace defaults draft",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/publish": {
+      "post": {
+        "operationId": "postApiV1Workspace-defaultsPublish",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}": {
+      "get": {
+        "operationId": "getApiV1Workspace-snapshotsBySnapshotId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get workspace snapshot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/restore": {
+      "post": {
+        "operationId": "postApiV1Workspace-snapshotsBySnapshotIdRestore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Restore workspace snapshot",
+        "tags": [
+          "Projects"
         ]
       }
     }

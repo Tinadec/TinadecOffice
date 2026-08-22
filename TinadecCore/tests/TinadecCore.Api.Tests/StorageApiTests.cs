@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -128,6 +129,135 @@ public sealed class StorageApiTests : IAsyncLifetime
         Assert.Equal("run.started", events[0].EventType);
         Assert.True(File.Exists(Path.Combine(_root, "data", "tasks", run.Id + ".tasks.json")));
         Assert.True(File.Exists(Path.Combine(_root, "data", "events", run.Id + ".events.jsonl")));
+    }
+
+    [Fact]
+    public async Task DebugSnapshot_PersistsTenantScopedRunTaskAndEventProjection()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new
+        {
+            name = "Debug snapshot test",
+            path = Path.Combine(_root, "workspace-debug-snapshot")
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = project.GetProperty("id").GetGuid(),
+            title = "Debug snapshot session"
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Snapshot trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.UpdateTaskAsync(run.Id, new { task_id = Guid.NewGuid(), status = "running" });
+        await lifecycle.AppendEventAsync(run.Id, "run.started", new { source = "debug-test" }, "Run started");
+
+        var first = await client.GetFromJsonAsync<JsonElement>($"/api/v1/debug/snapshot/{sessionId}");
+        Assert.Equal(sessionId, first.GetProperty("session_id").GetGuid());
+        Assert.Equal("session_runtime", first.GetProperty("kind").GetString());
+        Assert.Equal("lifecycle_projection", first.GetProperty("source").GetString());
+        Assert.Equal(1, first.GetProperty("runs").GetArrayLength());
+        Assert.Equal(run.Id, first.GetProperty("runs")[0].GetProperty("id").GetGuid());
+        Assert.Single(first.GetProperty("tasks").EnumerateArray());
+        Assert.Single(first.GetProperty("events").EnumerateArray());
+        var revision = first.GetProperty("revision").GetInt64();
+
+        var second = await client.GetFromJsonAsync<JsonElement>($"/api/v1/debug/snapshot/{sessionId}");
+        Assert.Equal(revision, second.GetProperty("revision").GetInt64());
+        await using var db = await _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync();
+        Assert.Equal(1, await db.SessionMetadataSnapshots.CountAsync(x => x.SessionId == sessionId));
+    }
+
+    [Fact]
+    public async Task WorkspaceSnapshot_IsIdempotentAndRestoresOnlyAfterConflictCheck()
+    {
+        var client = _factory!.CreateClient();
+        var workspace = Path.Combine(_root, "workspace-snapshot");
+        Directory.CreateDirectory(workspace);
+        var file = Path.Combine(workspace, "note.txt");
+        await File.WriteAllTextAsync(file, "before");
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Workspace snapshot", path = workspace }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+
+        var firstResponse = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/snapshots", new
+        {
+            idempotency_key = "snapshot-1",
+            max_files = 100,
+            max_bytes = 1024 * 1024
+        });
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        var first = await firstResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var snapshotId = first.GetProperty("id").GetGuid();
+        var secondResponse = await client.PostAsJsonAsync($"/api/v1/projects/{projectId}/snapshots", new { idempotency_key = "snapshot-1" });
+        Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
+        var second = await secondResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(snapshotId, second.GetProperty("id").GetGuid());
+
+        await File.WriteAllTextAsync(file, "after");
+        var added = Path.Combine(workspace, "created-after-snapshot.txt");
+        await File.WriteAllTextAsync(added, "should be removed");
+        var restoreConflict = await client.PostAsJsonAsync($"/api/v1/workspace-snapshots/{snapshotId}/restore", new
+        {
+            idempotency_key = "restore-1"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, restoreConflict.StatusCode);
+        Assert.Equal("after", await File.ReadAllTextAsync(file));
+        Assert.True(File.Exists(added));
+
+        var restoreAllowed = await client.PostAsJsonAsync($"/api/v1/workspace-snapshots/{snapshotId}/restore", new
+        {
+            idempotency_key = "restore-1-allowed",
+            allow_conflicts = true
+        });
+        Assert.Equal(HttpStatusCode.OK, restoreAllowed.StatusCode);
+        var restore = await restoreAllowed.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("restored_with_conflicts", restore.GetProperty("status").GetString());
+        Assert.Equal("before", await File.ReadAllTextAsync(file));
+        Assert.False(File.Exists(added));
+
+        var replay = await client.PostAsJsonAsync($"/api/v1/workspace-snapshots/{snapshotId}/restore", new
+        {
+            idempotency_key = "restore-1-allowed",
+            allow_conflicts = false
+        });
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(restore.GetProperty("restored_at").GetDateTimeOffset(),
+            (await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("restored_at").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public async Task WorkspaceDefaults_UsesEtagsAndRejectsUnpublishedReferences()
+    {
+        var client = _factory!.CreateClient();
+        var draft = await client.PutAsJsonAsync("/api/v1/workspace-defaults/draft", new
+        {
+            default_agent_definition_id = Guid.NewGuid(),
+            default_agent_mode_id = Guid.NewGuid(),
+            default_prompt_pipeline_id = Guid.NewGuid()
+        });
+        Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
+        var draftBody = await draft.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("draft", draftBody.GetProperty("status").GetString());
+        var revision = draftBody.GetProperty("revision").GetInt64();
+        Assert.Equal($"\"{revision}\"", draft.Headers.ETag?.Tag);
+
+        var stale = new HttpRequestMessage(HttpMethod.Put, "/api/v1/workspace-defaults/draft")
+        {
+            Content = JsonContent.Create(new { default_agent_definition_id = Guid.NewGuid() })
+        };
+        stale.Headers.TryAddWithoutValidation("If-Match", $"\"{revision - 1}\"");
+        using (stale)
+        using (var staleResponse = await client.SendAsync(stale))
+        {
+            Assert.Equal(HttpStatusCode.PreconditionFailed, staleResponse.StatusCode);
+        }
+
+        using var publish = await client.PostAsync("/api/v1/workspace-defaults/publish", content: null);
+        Assert.Equal(HttpStatusCode.BadRequest, publish.StatusCode);
+        var error = await publish.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("published", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -271,6 +401,11 @@ public sealed class StorageApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Testing");
+            builder.ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddDebug();
+            });
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),

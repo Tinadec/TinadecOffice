@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
@@ -26,6 +27,8 @@ public sealed class ControlPlaneService
     private readonly ISecretStore _secrets;
     private readonly ITenantContextAccessor _tenant;
     private readonly IToolApprovalCoordinator _approvals;
+    private readonly IToolExecutionCoordinator _executions;
+    private readonly IAuthorizationService _authorization;
     private readonly ILifecycleManager _runs;
     private readonly IFullDuplexRunEngine _engine;
     private readonly ICliProcessManager _cli;
@@ -33,8 +36,9 @@ public sealed class ControlPlaneService
     public ControlPlaneService(IDbContextFactory<ModelControlDbContext> models, IDbContextFactory<PromptControlDbContext> prompts,
         IDbContextFactory<AgentControlDbContext> agents, IDbContextFactory<LifecycleDbContext> lifecycle,
         IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant, IToolApprovalCoordinator approvals,
+        IAuthorizationService authorization, IToolExecutionCoordinator executions,
         ILifecycleManager runs, IFullDuplexRunEngine engine, ICliProcessManager cli)
-    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _runs = runs; _engine = engine; _cli = cli; }
+    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _runs = runs; _engine = engine; _cli = cli; }
 
     private TenantContext Tenant => _tenant.Current;
     private static async Task<(string text, ContentReference reference)> PutJsonAsync(IContentStore store, Guid tenant, Guid? workspace, string kind, object value, CancellationToken ct)
@@ -301,10 +305,22 @@ public sealed class ControlPlaneService
         if (run is { } runIdValue) q = q.Where(x => x.RunId == runIdValue);
         var rows = await q.ToListAsync(ct);
         rows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
-        return Results.Ok(rows.Select(ToResponse));
+        var result = rows.Select(ToResponse).Cast<object>().ToList();
+        if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
+        {
+            var permissions = await _authorization.ListPermissionRequestsAsync(null, run, null, ct).ConfigureAwait(false);
+            result.AddRange(permissions.Where(x => x.Status is PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser).Select(ToPermissionResponse));
+        }
+        return Results.Ok(result.OrderByDescending(x => x is ApprovalResponseDto approval ? approval.CreatedAt : DateTimeOffset.MinValue));
     }
     public async Task<IResult> GetApproval(Guid id, CancellationToken ct)
-    { await using var db = await _lifecycle.CreateDbContextAsync(ct); var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct); return row is null ? Results.NotFound() : Results.Ok(ToResponse(row)); }
+    {
+        await using var db = await _lifecycle.CreateDbContextAsync(ct);
+        var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+        if (row is not null) return Results.Ok(ToResponse(row));
+        var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
+        return permission is null ? Results.NotFound() : Results.Ok(ToPermissionResponse(permission.Request));
+    }
     public async Task<IResult> CreateApproval(ApprovalCreateRequestDto input, CancellationToken ct)
     {
         var parametersJson = input.Parameters is { } parameters ? parameters.GetRawText() : "{}";
@@ -326,6 +342,7 @@ public sealed class ControlPlaneService
             ParametersReference = string.Empty,
             Summary = input.Summary ?? string.Empty,
             RequestHash = requestHash,
+            NonceHash = Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32))).ToLowerInvariant(),
             Status = "pending",
             ExpiresAt = now.AddMinutes(30),
             RequestedByPrincipalId = Tenant.PrincipalId,
@@ -338,6 +355,28 @@ public sealed class ControlPlaneService
     }
     public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
     {
+        var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
+        if (permission is not null)
+        {
+            var approve = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(input.Decision, "granted", StringComparison.OrdinalIgnoreCase);
+            var resolved = await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(id, approve, null, null, input.Reason ?? string.Empty), ct).ConfigureAwait(false);
+            if (resolved.Request.Status == PermissionRequestStatuses.Granted && resolved.Request.RunId is { } permissionRun)
+            {
+                await using var db = await _lifecycle.CreateDbContextAsync(ct);
+                var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (execution is not null)
+                {
+                    var snapshot = await _executions.EnsureApprovalAsync(execution.Id, ct).ConfigureAwait(false);
+                    if (snapshot.ApprovalId is { } actionApproval)
+                        await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", input.Reason, ct).ConfigureAwait(false);
+                }
+                await _runs.SetRunStatusAsync(permissionRun.ToString(), "executing", "Legacy approval decision committed; resuming run.", ct).ConfigureAwait(false);
+                await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
+            }
+            return Results.Ok(new { id, status = resolved.Request.Status, decided_at = resolved.Decision.CreatedAt });
+        }
         ToolApprovalDecision decision;
         try { decision = await _approvals.DecideAsync(id, input.Decision, input.Reason, ct); }
         catch (KeyNotFoundException) { return Results.NotFound(); }
@@ -353,4 +392,20 @@ public sealed class ControlPlaneService
 
     private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row) => new()
     { Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt };
+
+    private static ApprovalResponseDto ToPermissionResponse(PermissionRequestSnapshot value) => new()
+    {
+        Id = value.Id,
+        RunId = value.RunId,
+        TaskId = value.TaskId,
+        AgentInstanceId = value.SubjectAgentInstanceId,
+        Kind = "permission",
+        ToolId = value.Claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? value.Claim.Resource[7..] : value.Claim.Resource,
+        Risk = value.Risk,
+        Summary = "Tool permission request requires authorization.",
+        Status = "pending",
+        ExpiresAt = value.ExpiresAt,
+        CreatedAt = value.CreatedAt,
+        UpdatedAt = value.UpdatedAt
+    };
 }

@@ -23,6 +23,7 @@ export interface ToolRuntimeOptions {
 export interface ToolRuntimeResult {
   status: number;
   data: unknown;
+  headers?: Headers;
 }
 
 /** Tool Runtime 基础 URL */
@@ -80,9 +81,9 @@ export async function proxyToolRuntimeJson(
     try {
       data = JSON.parse(text);
     } catch {
-      return {
-        status: 502,
-        data: {
+    return {
+      status: 502,
+      data: {
           code: 'TOOL_RUNTIME_INVALID_RESPONSE',
           message: `Tool Runtime returned a non-JSON response: ${text.substring(0, 200)}`,
         },
@@ -93,6 +94,7 @@ export async function proxyToolRuntimeJson(
   return {
     status: response.status,
     data,
+    headers: response.headers,
   };
 }
 

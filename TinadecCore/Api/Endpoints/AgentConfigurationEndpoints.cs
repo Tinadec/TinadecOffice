@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
+using TinadecCore.DmaEA;
 
 namespace TinadecCore.Api.Endpoints;
 
@@ -40,7 +42,16 @@ public static class AgentConfigurationEndpoints
         app.MapGet("/api/v1/prompt-pipelines/{id:guid}/versions", ListPipelineVersions);
         app.MapGet("/api/v1/prompt-pipelines/{id:guid}/versions/{versionId:guid}", GetPipelineVersion);
 
-        // Candidates & Instances (read-only thin wrappers)
+        // Workspace defaults are a separate control-plane object. They are
+        // drafted and published independently from the referenced definitions.
+        app.MapGet("/api/v1/workspace-defaults", GetWorkspaceDefaults);
+        app.MapPut("/api/v1/workspace-defaults/draft", UpdateWorkspaceDefaultsDraft);
+        app.MapPost("/api/v1/workspace-defaults/publish", PublishWorkspaceDefaults);
+        app.MapPost("/api/v1/workspace-defaults/archive", ArchiveWorkspaceDefaults);
+
+        // Candidates & instances are durable DmaEA projections.  Keep these
+        // compatibility routes wired to the runtime service; they must not
+        // return a fabricated empty collection.
         app.MapGet("/api/v1/agent-candidates", ListCandidates);
         app.MapPost("/api/v1/agent-candidates/{id:guid}/promote", PromoteCandidate);
         app.MapPost("/api/v1/agent-candidates/{id:guid}/reject", RejectCandidate);
@@ -52,8 +63,117 @@ public static class AgentConfigurationEndpoints
     // ── helpers ──
     static (Guid tenant, Guid workspace, Guid principal) Ctx(ITenantContextAccessor a) => (a.Current.TenantId, a.Current.WorkspaceId, a.Current.PrincipalId);
     static long IfMatch(HttpRequest r) => long.TryParse(r.Headers.IfMatch.FirstOrDefault()?.Trim('\"', 'W', '/', ' '), out var v) ? v : -1;
-    static IResult ETag(long rev) => Results.Ok(); // placeholder
     static string Slug(string? s, string fallback) => string.IsNullOrWhiteSpace(s) ? fallback : s.Trim().ToLowerInvariant().Replace(' ', '-');
+
+    static async Task<IResult> GetWorkspaceDefaults(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, HttpResponse response, CancellationToken ct)
+    {
+        var (t, w, _) = Ctx(a);
+        await using var db = await f.CreateDbContextAsync(ct);
+        var row = await db.WorkspaceDefaults.AsNoTracking().SingleOrDefaultAsync(x => x.TenantId == t && x.WorkspaceId == w, ct);
+        if (row is null) return Results.NotFound(new { code = "not_found" });
+        SetEtag(response, row.Revision);
+        return Results.Ok(ToWorkspaceDefaultsDto(row));
+    }
+
+    static async Task<IResult> UpdateWorkspaceDefaultsDraft(
+        WorkspaceDefaultsRequestDto? input,
+        HttpRequest req,
+        IDbContextFactory<AgentConfigurationDbContext> f,
+        ITenantContextAccessor a,
+        CancellationToken ct)
+    {
+        if (input is null) return Results.BadRequest(new { code = "invalid_request", message = "Workspace defaults are required." });
+        var expected = IfMatch(req);
+        var (t, w, p) = Ctx(a);
+        await using var db = await f.CreateDbContextAsync(ct);
+        var row = await db.WorkspaceDefaults.SingleOrDefaultAsync(x => x.TenantId == t && x.WorkspaceId == w, ct);
+        var now = DateTimeOffset.UtcNow;
+        if (row is null)
+        {
+            if (expected >= 0) return Results.Json(new { code = "conflict", message = "Workspace defaults do not exist." }, statusCode: 412);
+            row = new WorkspaceDefaultsRecord
+            {
+                TenantId = t, WorkspaceId = w, DefaultAgentDefinitionId = input.DefaultAgentDefinitionId,
+                DefaultAgentModeId = input.DefaultAgentModeId, DefaultPromptPipelineId = input.DefaultPromptPipelineId,
+                Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now
+            };
+            db.WorkspaceDefaults.Add(row);
+        }
+        else
+        {
+            if (row.Status == "archived") return Results.Conflict(new { code = "archived", message = "Archived workspace defaults cannot be edited." });
+            if (expected >= 0 && row.Revision != expected) return Results.Json(new { code = "conflict", message = "Revision conflict." }, statusCode: 412);
+            row.DefaultAgentDefinitionId = input.DefaultAgentDefinitionId;
+            row.DefaultAgentModeId = input.DefaultAgentModeId;
+            row.DefaultPromptPipelineId = input.DefaultPromptPipelineId;
+            row.Status = "draft";
+            row.Revision++;
+            row.UpdatedAt = now;
+        }
+        await db.SaveChangesAsync(ct);
+        SetEtag(req.HttpContext.Response, row.Revision);
+        return Results.Ok(ToWorkspaceDefaultsDto(row));
+    }
+
+    static async Task<IResult> PublishWorkspaceDefaults(
+        HttpRequest req,
+        IDbContextFactory<AgentConfigurationDbContext> f,
+        ITenantContextAccessor a,
+        CancellationToken ct)
+    {
+        var expected = IfMatch(req);
+        var (t, w, _) = Ctx(a);
+        await using var db = await f.CreateDbContextAsync(ct);
+        var row = await db.WorkspaceDefaults.SingleOrDefaultAsync(x => x.TenantId == t && x.WorkspaceId == w, ct);
+        if (row is null) return Results.NotFound(new { code = "not_found" });
+        if (expected >= 0 && row.Revision != expected) return Results.Json(new { code = "conflict", message = "Revision conflict." }, statusCode: 412);
+        if (!string.Equals(row.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new { code = "not_draft", message = "Only draft workspace defaults can be published." });
+        if (row.DefaultAgentDefinitionId is { } agent && !await db.AgentDefinitions.AnyAsync(x => x.Id == agent && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+            return Results.BadRequest(new { code = "invalid_request", message = "default_agent_definition_id must reference a published agent." });
+        if (row.DefaultAgentModeId is { } mode && !await db.AgentModes.AnyAsync(x => x.Id == mode && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+            return Results.BadRequest(new { code = "invalid_request", message = "default_agent_mode_id must reference a published mode." });
+        if (row.DefaultPromptPipelineId is { } prompt && !await db.PromptPipelines.AnyAsync(x => x.Id == prompt && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+            return Results.BadRequest(new { code = "invalid_request", message = "default_prompt_pipeline_id must reference a published prompt pipeline." });
+        row.Status = "active";
+        row.Revision++;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        SetEtag(req.HttpContext.Response, row.Revision);
+        return Results.Ok(ToWorkspaceDefaultsDto(row));
+    }
+
+    static async Task<IResult> ArchiveWorkspaceDefaults(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    {
+        var expected = IfMatch(req);
+        var (t, w, _) = Ctx(a);
+        await using var db = await f.CreateDbContextAsync(ct);
+        var row = await db.WorkspaceDefaults.SingleOrDefaultAsync(x => x.TenantId == t && x.WorkspaceId == w, ct);
+        if (row is null) return Results.NotFound(new { code = "not_found" });
+        if (expected >= 0 && row.Revision != expected) return Results.Json(new { code = "conflict", message = "Revision conflict." }, statusCode: 412);
+        row.Status = "archived";
+        row.ArchivedAt = DateTimeOffset.UtcNow;
+        row.Revision++;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        SetEtag(req.HttpContext.Response, row.Revision);
+        return Results.Ok(ToWorkspaceDefaultsDto(row));
+    }
+
+    static void SetEtag(HttpResponse response, long revision) => response.Headers.ETag = $"\"{revision}\"";
+
+    static object ToWorkspaceDefaultsDto(WorkspaceDefaultsRecord row) => new
+    {
+        tenant_id = row.TenantId,
+        workspace_id = row.WorkspaceId,
+        default_agent_definition_id = row.DefaultAgentDefinitionId,
+        default_agent_mode_id = row.DefaultAgentModeId,
+        default_prompt_pipeline_id = row.DefaultPromptPipelineId,
+        status = row.Status,
+        revision = row.Revision,
+        created_at = row.CreatedAt,
+        updated_at = row.UpdatedAt,
+        archived_at = row.ArchivedAt
+    };
 
     // ── agents ──
     static async Task<IResult> ListAgents(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, HttpRequest req, CancellationToken ct)
@@ -132,6 +252,7 @@ public static class AgentConfigurationEndpoints
         if (rec is null) return Results.NotFound(new { code = "not_found" });
         if (exp >= 0 && rec.Revision != exp) return Results.Json(new { code = "conflict", message = "Revision conflict" }, statusCode: 412);
         if (rec.Status == "archived") return Results.Conflict(new { code = "conflict", message = "Archived" });
+        if (!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new { code = "not_draft", message = "Only a draft agent can be published." });
         // minimal validation
         AgentConfigurationService.ValidateLayer(rec.Layer);
         if (string.IsNullOrWhiteSpace(rec.DisplayName)) return Results.BadRequest(new { code = "invalid_request", message = "display_name required" });
@@ -251,6 +372,7 @@ public static class AgentConfigurationEndpoints
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict",message="Revision conflict"},statusCode:412);
+        if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
         if(el.TryGetProperty("description",out var d)) rec.Description=d.GetString();
         rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow; rec.UpdatedByPrincipalId=p; rec.Status="draft";
@@ -404,6 +526,7 @@ public static class AgentConfigurationEndpoints
         var rec=await db.PromptPipelines.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict"},statusCode:412);
+        if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft prompt pipeline can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
         if(el.TryGetProperty("description",out var d)) rec.Description=d.GetString();
         if(el.TryGetProperty("graph",out var g)) { try{JsonDocument.Parse(g.GetRawText());}catch{return Results.BadRequest(new{code="invalid_request",message="graph invalid"});} var err=ValidatePromptGraph(g.GetRawText()); if(err is not null) return Results.BadRequest(new{code="invalid_request",message=err}); rec.GraphJson=g.GetRawText();}
@@ -462,38 +585,94 @@ public static class AgentConfigurationEndpoints
     }
 
     // ── candidates & instances ──
-    static async Task<IResult> ListCandidates(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> ListCandidates(string? status, IAgentInstanceService instances, CancellationToken ct)
     {
-        // thin wrapper: currently empty until evolution generates; return empty list shape compatible with Desktop
-        var (t,w,_)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
-        // check if we have a candidates table? reuse Memory candidates for now as fallback
-        return Results.Ok(Array.Empty<object>());
-    }
-    static async Task<IResult> PromoteCandidate(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
-    {
-        // stub: create a draft agent from candidate, optionally add to mode draft
-        var (t,w,p)=Ctx(a); var el=await JsonSerializer.DeserializeAsync<JsonElement>(req.Body,cancellationToken:ct);
-        var targetModeDraft = el.TryGetProperty("target_mode_draft_id", out var m) && Guid.TryParse(m.GetString(), out var gm) ? gm : (Guid?)null;
-        await using var db=await f.CreateDbContextAsync(ct);
-        // create draft agent
-        var rec=new AgentDefinitionRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, Slug="candidate-"+id.ToString("N")[..8], DisplayName="Promoted "+id.ToString()[..8], Layer="operation", Role="promoted", Status="draft", Revision=1, Version=0, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p, UpdatedByPrincipalId=p};
-        db.AgentDefinitions.Add(rec);
-        if(targetModeDraft.HasValue){
-            var mode=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==targetModeDraft.Value && x.TenantId==t && x.WorkspaceId==w, ct);
-            if(mode!=null){
-                db.ModeNodes.Add(new ModeNodeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, NodeKey="node-"+rec.Id.ToString("N")[..6], AgentDefinitionId=rec.Id, Layer=rec.Layer, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
-                mode.UpdatedAt=DateTimeOffset.UtcNow; mode.Revision++;
-            }
+        try
+        {
+            var candidates = await instances.ListCandidatesAsync(status, ct).ConfigureAwait(false);
+            return Results.Ok(candidates.Select(ToCandidateDto));
         }
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(new{ candidate_id=id, promoted_agent_id=rec.Id, target_mode_draft_id=targetModeDraft, message="Candidate promoted to draft; republish mode to activate"});
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message });
+        }
     }
-    static async Task<IResult> RejectCandidate(Guid id, CancellationToken ct) => Results.Ok(new{ candidate_id=id, status="rejected"});
-    static async Task<IResult> ListInstances(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static IResult PromoteCandidate(Guid id)
     {
-        // proxy to lifecycle agent_instances via query run_id; for now return empty
-        return Results.Ok(Array.Empty<object>());
+        // A generated candidate is never allowed to become a profile in one
+        // request. It must first pass the evolution pipeline (redaction,
+        // evaluation, review, publish, canary and activation).
+        return Results.Conflict(new
+        {
+            code = "candidate_pipeline_required",
+            candidate_id = id,
+            message = "Candidate promotion is disabled until sanitization, evaluation, review, publish, canary, and activation complete."
+        });
     }
+    static async Task<IResult> RejectCandidate(Guid id, ReviewDecisionRequest? request, IAgentInstanceService instances, CancellationToken ct)
+    {
+        try
+        {
+            var candidate = await instances.DecideCandidateAsync(id, "rejected", request?.Reason, ct).ConfigureAwait(false);
+            return Results.Ok(ToCandidateDto(candidate));
+        }
+        catch (KeyNotFoundException)
+        {
+            return Results.NotFound(new { code = "NOT_FOUND", message = "Agent candidate was not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { code = "ALREADY_DECIDED", message = ex.Message });
+        }
+    }
+
+    static async Task<IResult> ListInstances(HttpRequest req, IAgentInstanceService instances, CancellationToken ct)
+    {
+        if (!Guid.TryParse(req.Query["run_id"].ToString(), out var runId) || runId == Guid.Empty)
+            return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "run_id is required and must be a valid Guid." });
+
+        var instancesForRun = await instances.ListByRunAsync(runId, ct).ConfigureAwait(false);
+        return Results.Ok(instancesForRun.Select(ToInstanceDto));
+    }
+
+    static object ToCandidateDto(AgentCandidateRecord candidate) => new
+    {
+        id = candidate.Id,
+        source_run_id = candidate.SourceRunId,
+        source_instance_id = candidate.SourceInstanceId,
+        generated_by_instance_id = candidate.GeneratedByInstanceId,
+        name = candidate.Name,
+        layer = candidate.Layer,
+        agent_type = candidate.AgentType,
+        status = candidate.Status,
+        confidence = candidate.ConfidenceScore,
+        promoted_agent_id = candidate.PromotedAgentId,
+        decision_reason = candidate.DecisionReason,
+        created_at = candidate.CreatedAt,
+        updated_at = candidate.UpdatedAt
+    };
+
+    static object ToInstanceDto(RuntimeAgentInstance instance) => new
+    {
+        id = instance.Id,
+        run_id = instance.RunId,
+        parent_instance_id = instance.ParentInstanceId,
+        task_id = instance.TaskId,
+        layer = instance.Layer,
+        role = instance.Role,
+        generation_depth = instance.GenerationDepth,
+        generated = instance.Generated,
+        status = instance.Status,
+        capabilities = instance.Capabilities,
+        allowed_tools = instance.AllowedTools,
+        allowed_resources = instance.AllowedResources,
+        budget_tokens = instance.BudgetTokens,
+        agent_definition_id = instance.AgentDefinitionId,
+        agent_version_id = instance.AgentVersionId,
+        agent_version_content_hash = instance.AgentVersionContentHash,
+        created_at = instance.CreatedAt,
+        updated_at = instance.UpdatedAt
+    };
 
     static string? ValidateModelStrategy(string json)
     {

@@ -77,13 +77,14 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         Assert.True(framework.TryGetProperty("name", out var fwName));
         Assert.Equal("Microsoft Agent Framework", fwName.GetString());
         Assert.True(framework.TryGetProperty("version", out var fwVersion));
-        Assert.Equal("1.15.0", fwVersion.GetString());
+        Assert.Equal("1.18.0", fwVersion.GetString());
         Assert.True(framework.TryGetProperty("primitives", out var primitives));
         Assert.True(primitives.GetArrayLength() > 0);
 
-        // modules (incremental field — twelve modules, including agent_configuration, tenancy, VectorStore, and Tools)
+        // modules include the explicit Governance policy-decision module.
         Assert.True(root.TryGetProperty("modules", out var modules));
-        Assert.Equal(12, modules.GetArrayLength());
+        Assert.Equal(13, modules.GetArrayLength());
+        Assert.Contains(modules.EnumerateArray(), module => module.GetProperty("module_id").GetString() == "governance");
 
         // design_notes
         Assert.True(root.TryGetProperty("design_notes", out _));
@@ -149,7 +150,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         // Modules
         Assert.True(root.TryGetProperty("modules", out var modules));
         var moduleList = modules.EnumerateArray().ToList();
-        Assert.Equal(12, moduleList.Count);
+        Assert.Equal(13, moduleList.Count);
 
         // At least some modules should be "not_configured"
         var notConfiguredCount = moduleList.Count(m =>

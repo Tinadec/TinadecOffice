@@ -39,7 +39,7 @@ export function mapRuns(core: unknown): ExternalRunDto[] {
 }
 
 // 10-state validator
-export const RUN_STATUSES = new Set(['planning','understanding','executing','replanning','awaiting_approval','paused','reviewing','completed','failed','cancelled']);
+export const RUN_STATUSES = new Set(['planning','understanding','executing','replanning','awaiting_approval','awaiting_delegate','awaiting_user','paused','reviewing','completed','failed','cancelled']);
 
 export function normalizeRunStatus(status: string): string {
   const s = status.toLowerCase();

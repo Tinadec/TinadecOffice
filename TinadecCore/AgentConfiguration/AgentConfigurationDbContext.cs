@@ -10,8 +10,9 @@ namespace TinadecCore.AgentConfiguration;
 /// Publishing freezes an immutable version; draft revision is the ETag for optimistic concurrency.
 /// Mode publish validates dual-lane topology (operation ≥1 meeting, execution ≥1, cross-layer reuse warning) at service layer.
 /// SQLite default file shares data/tinadec.db; PostgreSQL via UseTinadecDatabase.
-/// If migrations have not yet been generated, EnsureTables fallback creates the schema on first startup
-/// (see DbContextSchemaBootstrapper); migrations are TODO to add idempotent CreateTable scripts.
+/// Migration modules provide idempotent SQLite/PostgreSQL CreateTable scripts;
+/// the startup EnsureTables fallback remains for databases created by older
+/// Core builds (see DbContextSchemaBootstrapper).
 /// </summary>
 public sealed class AgentConfigurationDbContext : DbContext
 {

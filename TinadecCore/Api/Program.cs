@@ -93,11 +93,7 @@ app.UseExceptionHandler(errorApp =>
 app.UseStatusCodePages();
 
 // Core-internal OpenAPI is the source of truth; Gateway generates its own external OpenAPI.
-app.MapOpenApi("/openapi/core.json").WithOpenApi(operation =>
-{
-    operation.Summary = "TinadecCore internal OpenAPI";
-    return operation;
-});
+app.MapOpenApi("/openapi/core.json").WithSummary("TinadecCore internal OpenAPI");
 
 // SQLite migrates at local startup. PostgreSQL only does so when explicitly configured.
 using (var scope = app.Services.CreateScope())
@@ -129,12 +125,7 @@ app.MapGet("/api/v1/health", () =>
         Version = "0.1.0",
         Time = DateTimeOffset.UtcNow
     });
-}).WithOpenApi(operation =>
-{
-    operation.Summary = "Health probe";
-    operation.Description = "Legacy-compatible health probe.";
-    return operation;
-});
+}).WithSummary("Health probe").WithDescription("Legacy-compatible health probe.");
 
 // ============================================================
 // GET /api/v1/harness/manifest — returns dual-layer Agent, MAF version, and Core module manifest
@@ -198,11 +189,7 @@ app.MapGet("/api/v1/harness/manifest", (ITinadecCoreBuilder coreBuilder) =>
     };
 
     return Results.Ok(manifest);
-}).WithOpenApi(operation =>
-{
-    operation.Summary = "Harness manifest";
-    return operation;
-});
+}).WithSummary("Harness manifest");
 
 // ============================================================
 // GET /api/v1/readiness — MAF assemblies loadable = ready; unconfigured modules use warning
@@ -233,7 +220,7 @@ app.MapGet("/api/v1/readiness", async (
         Status = status,
         FrameworkReady = true,
         FrameworkName = "Microsoft Agent Framework",
-        FrameworkVersion = "1.15.0",
+        FrameworkVersion = "1.18.0",
         Storage = storage,
         AgentRuntime = new ReadinessAgentRuntimeDto
         {
@@ -259,11 +246,7 @@ app.MapGet("/api/v1/readiness", async (
     };
 
     return Results.Ok(response);
-}).WithOpenApi(operation =>
-{
-    operation.Summary = "Readiness probe";
-    return operation;
-});
+}).WithSummary("Readiness probe");
 
 // ============================================================
 // Stub endpoints for Gateway proxy and Desktop frontend consumption.
@@ -275,8 +258,10 @@ app.MapDmaeaEndpoints();
 app.MapAgentConfigurationEndpoints();
 app.MapInteractionsEndpoints();
 app.MapControlPlaneEndpoints();
+app.MapGovernanceEndpoints();
 app.MapMemoryReviewEndpoints();
 app.MapEvolutionEndpoints();
+app.MapWorkspaceSnapshotEndpoints();
 app.MapStubEndpoints();
 
 

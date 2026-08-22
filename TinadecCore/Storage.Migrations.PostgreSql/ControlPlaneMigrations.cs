@@ -49,3 +49,14 @@ public sealed class LifecycleTenantScope : Migration
         """);
     protected override void Down(MigrationBuilder m) { }
 }
+
+[DbContext(typeof(LifecycleDbContext))]
+[Migration("202608220003_RunPrincipalBinding")]
+public sealed class RunPrincipalBinding : Migration
+{
+    protected override void Up(MigrationBuilder m) => m.Sql("""
+        alter table runs add column if not exists initiated_by_principal_id uuid not null default '00000000-0000-0000-0000-000000000000';
+        create index if not exists ix_runs_tenant_workspace_principal on runs(tenant_id, workspace_id, initiated_by_principal_id, created_at);
+        """);
+    protected override void Down(MigrationBuilder m) { }
+}

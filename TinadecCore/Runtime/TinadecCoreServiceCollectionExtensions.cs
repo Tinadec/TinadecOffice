@@ -1,8 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TinadecCore.Abstractions;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Context;
 using TinadecCore.DmaEA;
+using TinadecCore.Governance;
 using TinadecCore.Lifecycle;
 using TinadecCore.LoopGuard;
 using TinadecCore.Memory;
@@ -34,6 +37,7 @@ public static class TinadecCoreServiceCollectionExtensions
         new AgentConfigurationModuleRegistrar().Register(builder);
         new VectorStoreModuleRegistrar().Register(builder);
         new LifecycleModuleRegistrar().Register(builder);
+        new GovernanceModuleRegistrar().Register(builder);
         new ModelsModuleRegistrar().Register(builder);
         new ContextModuleRegistrar().Register(builder);
         new PromptsModuleRegistrar().Register(builder);
@@ -43,6 +47,10 @@ public static class TinadecCoreServiceCollectionExtensions
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
 
+        // Governance is registered before DmaEA so it can remain independently
+        // packageable. The composition root replaces its fail-closed placeholder
+        // with the Core-state resolver only in the full runtime.
+        services.Replace(ServiceDescriptor.Singleton<IAuthorizationContextResolver, CoreAuthorizationContextResolver>());
         services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
 
         // Rebind ToolDispatchOptions from the frozen TOML runtime profile (this factory

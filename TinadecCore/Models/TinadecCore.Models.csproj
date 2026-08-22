@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Models</RootNamespace>
     <Description>Models: provider instances, credentials, model routing, capabilities, readiness.</Description>
   </PropertyGroup>

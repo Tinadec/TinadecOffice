@@ -18,6 +18,7 @@ public sealed class ArchitectureTests
     private static readonly Assembly SkillsAssembly = typeof(Skills.SkillsModuleRegistrar).Assembly;
     private static readonly Assembly LoopGuardAssembly = typeof(LoopGuard.LoopGuardModuleRegistrar).Assembly;
     private static readonly Assembly LifecycleAssembly = typeof(Lifecycle.LifecycleModuleRegistrar).Assembly;
+    private static readonly Assembly GovernanceAssembly = typeof(Governance.GovernanceModuleRegistrar).Assembly;
     private static readonly Assembly RuntimeAssembly = typeof(Runtime.TinadecCoreBuilder).Assembly;
     private static readonly Assembly ApiAssembly = typeof(Program).Assembly;
 
@@ -25,7 +26,7 @@ public sealed class ArchitectureTests
     [
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
-        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
+        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
         RuntimeAssembly, ApiAssembly
     ];
 
@@ -33,7 +34,7 @@ public sealed class ArchitectureTests
     [
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
-        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
+        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
         RuntimeAssembly
     ];
 
@@ -83,6 +84,7 @@ public sealed class ArchitectureTests
             ("Skills", SkillsAssembly),
             ("LoopGuard", LoopGuardAssembly),
             ("Lifecycle", LifecycleAssembly),
+            ("Governance", GovernanceAssembly),
         };
 
         foreach (var (name, asm) in businessModules)
@@ -164,6 +166,7 @@ public sealed class ArchitectureTests
             "TinadecCore.Skills",
             "TinadecCore.LoopGuard",
             "TinadecCore.Lifecycle",
+            "TinadecCore.Governance",
             "TinadecCore.Runtime",
             "TinadecCore.Api",
             "TinadecGateway",

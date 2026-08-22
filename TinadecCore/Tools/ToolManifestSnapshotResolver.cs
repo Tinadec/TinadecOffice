@@ -13,13 +13,13 @@ namespace TinadecCore.Tools;
 public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
 {
     private readonly ISessionLocator _sessions;
-    private readonly IToolProcessManager _processes;
+    private readonly IToolProvider _provider;
     private readonly IServiceProvider? _services;
 
-    public ToolManifestSnapshotResolver(ISessionLocator sessions, IToolProcessManager processes, IServiceProvider? services = null)
+    public ToolManifestSnapshotResolver(ISessionLocator sessions, IToolProvider provider, IServiceProvider? services = null)
     {
         _sessions = sessions;
-        _processes = processes;
+        _provider = provider;
         _services = services;
     }
 
@@ -52,7 +52,7 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         ToolManifestDto manifest;
         try
         {
-            manifest = await _processes.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+            manifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

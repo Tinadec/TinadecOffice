@@ -3,27 +3,37 @@ using TinadecCore.Contracts.Dtos;
 namespace TinadecCore.Abstractions.Ports;
 
 /// <summary>
-/// Manages TinadecTools child processes (one per workspace root) and the
-/// line-delimited JSON call protocol. Implementations own process lifetime;
-/// callers only see request/response semantics.
+/// Provider-neutral tool execution port. Core depends on this contract rather
+/// than on a particular transport or process model. Providers may be local
+/// child processes, remote workers, or an in-process implementation; all of
+/// them expose the same manifest and structured call semantics.
 /// </summary>
-public interface IToolProcessManager
+public interface IToolProvider
 {
-    /// <summary>Ensures a process exists for the workspace root and returns its manifest.</summary>
+    /// <summary>Ensures the provider is available for the workspace and returns its manifest.</summary>
     Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default);
 
-    /// <summary>Sends one tool call and awaits the matched response line.</summary>
+    /// <summary>Dispatches one structured tool call and awaits its response.</summary>
     Task<ToolWireResponseDto> CallAsync(
         string workspaceRoot,
         ToolWireRequestDto request,
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Returns the cached manifest for a running (or freshly started) process.</summary>
+    /// <summary>Returns the provider manifest for a running (or freshly started) workspace.</summary>
     Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default);
 
-    /// <summary>Stops every managed process. In-flight calls fail with a structured process_exit error.</summary>
+    /// <summary>Stops provider resources. In-flight calls fail with a structured process_exit result.</summary>
     Task ShutdownAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Compatibility name retained for hosts that used the original local-process
+/// adapter. New Core code consumes <see cref="IToolProvider"/> so replacing the
+/// default provider does not require a process manager implementation.
+/// </summary>
+public interface IToolProcessManager : IToolProvider
+{
 }
 
 /// <summary>Cached view of the TinadecTools manifest exposed by a process manager.</summary>
@@ -42,6 +52,8 @@ public static class ToolDispatchStatus
     public const string Requested = "requested";
     public const string Completed = "completed";
     public const string AwaitingApproval = "awaiting_approval";
+    public const string AwaitingDelegate = "awaiting_delegate";
+    public const string AwaitingUser = "awaiting_user";
     public const string AwaitingResume = "awaiting_resume";
     public const string OutcomeUnknown = "outcome_unknown";
     public const string NotApproved = "not_approved";
@@ -106,6 +118,7 @@ public sealed record ToolInvocationScopeRequest(
 public sealed record ToolInvocationScope(
     Guid TenantId,
     Guid WorkspaceId,
+    Guid PrincipalId,
     Guid ProjectId,
     Guid SessionId,
     Guid RunId,
@@ -164,6 +177,23 @@ public interface IToolExecutionCoordinator
     Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> FailAsync(Guid executionId, string status, string errorCategory, string safeMessage, CancellationToken cancellationToken = default);
+    Task<ToolExecutionSnapshot> BindAuthorizationAsync(
+        Guid executionId,
+        Guid? permissionRequestId,
+        Guid? authorizationDecisionId,
+        Guid? capabilityLeaseId,
+        string status,
+        CancellationToken cancellationToken = default);
+    Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Compatibility projection for callers that own an execution coordinator but
+    /// need to atomically consume its bound action approval.
+    /// </summary>
+    Task<bool> TryConsumeApprovalAsync(
+        Guid approvalId,
+        string executionId,
+        string expectedRequestHash,
+        CancellationToken cancellationToken = default);
     Task<ToolExecutionRecoveryResult> ApplyRecoveryDecisionAsync(Guid executionId, string decision, CancellationToken cancellationToken = default);
     Task CancelPendingForRunAsync(Guid runId, CancellationToken cancellationToken = default);
 }
@@ -183,7 +213,9 @@ public sealed record ToolExecutionPrepareRequest(
     string ParametersJson,
     string ParametersHash,
     string ToolCallKey,
-    string Summary);
+    string Summary,
+    bool DeferApproval = false,
+    int LeaseUses = 1);
 
 public sealed record ToolExecutionSnapshot(
     Guid Id,
@@ -209,7 +241,11 @@ public sealed record ToolExecutionSnapshot(
     string? SafeErrorMessage,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? CompletedAt);
+    DateTimeOffset? CompletedAt,
+    Guid? PermissionRequestId = null,
+    Guid? AuthorizationDecisionId = null,
+    Guid? CapabilityLeaseId = null,
+    int LeaseUses = 1);
 
 /// <summary>
 /// Result of durably admitting one logical tool call. Replaying the same

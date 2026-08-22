@@ -1088,6 +1088,10 @@ export interface CodeToolExecuteRequestDto {
   approval_id?: string | null;
   cwd?: string | null;
   arguments?: Record<string, unknown> | null;
+  /** User intent fields are passed through to the Tool Provider; Desktop does not decide authorization. */
+  approval?: boolean;
+  confirmation?: boolean;
+  source?: 'human' | 'agent' | string;
 }
 
 export interface OrchestrationSnapshotDto {
@@ -1374,7 +1378,13 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input)
   }),
-  executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${toolId}/execute`, {
+  /** Current v1 user tool transport. Gateway forwards this request to the Tool Provider. */
+  executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${encodeURIComponent(toolId)}/execute`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  /** Explicit provider transport alias for clients that use the Tool Runtime surface. */
+  executeToolRuntime: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/tool-runtime/tools/${encodeURIComponent(toolId)}/execute`, {
     method: 'POST',
     body: JSON.stringify(payload)
   }),

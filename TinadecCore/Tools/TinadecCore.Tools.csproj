@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Tools</RootNamespace>
     <Description>Tools: Core-governed TinadecTools process management, registry, dispatcher, and approval gate.</Description>
   </PropertyGroup>

@@ -63,6 +63,15 @@ public sealed record FrozenRunConfigurationV1(
     /// <summary>Protocol version of <see cref="ToolManifest"/> (zero for legacy bodies).</summary>
     public int ToolManifestProtocolVersion { get; init; }
 
+    /// <summary>
+    /// Policy versions captured at admission.  An empty list is meaningful when
+    /// <see cref="PolicySnapshotHash"/> is populated: it means the run admitted
+    /// with no active policy bundles, rather than asking Governance to reload the
+    /// current policy set later.
+    /// </summary>
+    public string PolicySnapshotHash { get; init; } = "";
+    public IReadOnlyList<FrozenPolicyBundle> PolicyBundles { get; init; } = [];
+
     public string ToCanonicalJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     [JsonIgnore]
@@ -86,19 +95,22 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     private readonly IFormalModeResolver _formal;
     private readonly IContentStore _content;
     private readonly ISessionLocator _sessions;
+    private readonly IPolicySnapshotProvider? _policySnapshots;
 
     public AgentRuntimeConfigurationResolver(
         IAgentRuntimeConfiguration baseline,
         IDbContextFactory<AgentControlDbContext> agents,
         IFormalModeResolver formal,
         IContentStore content,
-        ISessionLocator sessions)
+        ISessionLocator sessions,
+        IPolicySnapshotProvider? policySnapshots = null)
     {
         _baseline = baseline;
         _agents = agents;
         _formal = formal;
         _content = content;
         _sessions = sessions;
+        _policySnapshots = policySnapshots;
     }
 
     public async Task<FrozenRunConfigurationV1> ResolveAsync(
@@ -112,6 +124,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             ?? throw new KeyNotFoundException("Session was not found.");
         var snapshot = _baseline.Current;
         var (app, mode, profile) = snapshot.Resolve(applicationMode, agentMode);
+        var policySnapshot = _policySnapshots is null
+            ? null
+            : await _policySnapshots.CaptureAsync(session.TenantId, session.WorkspaceId, cancellationToken).ConfigureAwait(false);
 
         var overrideRow = await LoadLatestOverrideAsync(session, profile.Id, cancellationToken).ConfigureAwait(false);
         var effective = overrideRow is null
@@ -153,7 +168,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             frozenOverride = new FrozenRuntimeOverride(overrideRow.Id, overrideRow.Version, overrideRow.ContentHash, overrideRow.CreatedAt);
         }
 
-        return new FrozenRunConfigurationV1(
+        var frozen = new FrozenRunConfigurationV1(
             "frozen-run-configuration/v1",
             snapshot.ContentHash,
             snapshot.Version,
@@ -170,7 +185,12 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             operation,
             execution,
             frozenOverride,
-            bindings);
+            bindings)
+        {
+            PolicySnapshotHash = policySnapshot?.SnapshotHash ?? "",
+            PolicyBundles = policySnapshot?.Bundles ?? []
+        };
+        return frozen;
     }
 
     private async Task<RuntimeProfileOverrideRecord?> LoadLatestOverrideAsync(
@@ -230,7 +250,15 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             {
                 throw new InvalidDataException($"Runtime profile agent '{id}' is not in the {layer} layer.");
             }
-            result.Add(agent);
+            // TOML built-in roles do not have relational rows. Bind them to
+            // deterministic virtual identities so a hot reload cannot make an
+            // existing run drift to a different agent version.
+            result.Add(agent with
+            {
+                AgentDefinitionId = agent.AgentDefinitionId ?? DeterministicGuid($"virtual-agent-definition:{agent.Id}"),
+                AgentVersionId = agent.AgentVersionId ?? DeterministicGuid($"virtual-agent-version:{snapshot.ContentHash}:{agent.Id}"),
+                VersionContentHash = string.IsNullOrWhiteSpace(agent.VersionContentHash) ? snapshot.ContentHash : agent.VersionContentHash
+            });
         }
         return result;
     }
@@ -244,6 +272,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         e.DirectUserOutput,
         e.ContextAccess)
     {
+        AgentDefinitionId = e.AgentDefinitionId,
+        AgentVersionId = e.AgentVersionId,
+        VersionContentHash = e.VersionContentHash,
         AllowedTools = e.AllowedTools,
         PromptProfile = e.PromptProfile
     };
@@ -273,12 +304,19 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         Strings(root, "memory", "allowed_scopes", fallback.AllowedScopes),
         Strings(root, "memory", "allowed_kinds", fallback.AllowedKinds));
 
-    private static ToolRuntimePolicy ReadTools(JsonElement root, ToolRuntimePolicy fallback) => new(
-        Text(root, "tools", "provider", fallback.Provider),
-        Boolean(root, "tools", "mutation_requires_approval", fallback.MutationRequiresApproval),
-        Boolean(root, "tools", "serialize_workspace_writes", fallback.SerializeWorkspaceWrites),
-        Positive(root, "tools", "default_timeout_seconds", fallback.DefaultTimeoutSeconds, 1, 1800),
-        Positive(root, "tools", "max_tool_rounds", fallback.MaxToolRounds, 0, 32));
+    private static ToolRuntimePolicy ReadTools(JsonElement root, ToolRuntimePolicy fallback)
+    {
+        var policy = new ToolRuntimePolicy(
+            Text(root, "tools", "provider", fallback.Provider),
+            Boolean(root, "tools", "mutation_requires_approval", fallback.MutationRequiresApproval),
+            Boolean(root, "tools", "serialize_workspace_writes", fallback.SerializeWorkspaceWrites),
+            Positive(root, "tools", "default_timeout_seconds", fallback.DefaultTimeoutSeconds, 1, 1800),
+            // Core tool rounds count durable model/tool/result cycles. MAF's
+            // auto-approval iteration limit has different N+1 inner-call semantics.
+            Positive(root, "tools", "max_tool_rounds", fallback.MaxToolRounds, 0, ToolRuntimePolicy.MaximumRounds));
+        ToolRuntimePolicy.Validate(policy);
+        return policy;
+    }
 
     private static RuntimeProfileDefinition ReadProfile(JsonElement root, RuntimeProfileDefinition fallback)
     {

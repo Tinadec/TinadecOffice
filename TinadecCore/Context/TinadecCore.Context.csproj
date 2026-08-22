@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Context</RootNamespace>
     <Description>Context: context pack with evidence, sources, and token budget.</Description>
   </PropertyGroup>

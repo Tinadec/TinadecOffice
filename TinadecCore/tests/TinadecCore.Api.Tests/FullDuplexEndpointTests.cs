@@ -202,6 +202,28 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvokeStream_DurableDoneAggregatesUsageAcrossAllModelRoles()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。")
+            .WithUsage(inputTokens: 1, outputTokens: 2);
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行任务", client_message_id = "usage-1" });
+
+        var done = chunks.Last(chunk => KindOf(chunk) == "done");
+        var usage = done.GetProperty("usage");
+        // planner + worker + supervisor + meeting
+        Assert.Equal(4, usage.GetProperty("input_tokens").GetInt64());
+        Assert.Equal(8, usage.GetProperty("output_tokens").GetInt64());
+        Assert.Equal(12, usage.GetProperty("total_tokens").GetInt64());
+    }
+
+    [Fact]
     public async Task InvokeStream_SameClientMessageId_IsIdempotent()
     {
         var script = new ScriptedChatClient()
@@ -472,7 +494,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Supervision_Escalate_CompletesWithEscalationFinishReason()
+    public async Task Supervision_Escalate_AwaitsUserDecisionAndContinuesWithoutEscalationFinishReason()
     {
         var script = new ScriptedChatClient()
             .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
@@ -483,11 +505,30 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "目标" });
+        var active = StartStreamingInvoke(client, sessionId, new { content = "目标" });
+        var acknowledgement = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(15));
+        var runId = RunIdOf(acknowledgement);
 
+        JsonElement orchestration = default;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+            if (orchestration.GetProperty("run").GetProperty("status").GetString() == "awaiting_user") break;
+            await Task.Delay(50);
+        }
+
+        Assert.Equal("awaiting_user", orchestration.GetProperty("run").GetProperty("status").GetString());
+        Assert.False(active.Completion.IsCompleted);
+
+        var resume = await client.PostAsJsonAsync($"/api/v1/runs/{runId}/control", new { action = "resume" });
+        Assert.Equal(HttpStatusCode.OK, resume.StatusCode);
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(15));
         var done = chunks.Last(c => KindOf(c) is "done" or "error");
         Assert.Equal("done", KindOf(done));
-        Assert.Equal("completed_with_escalation", done.GetProperty("finish_reason").GetString());
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+        Assert.DoesNotContain(chunks, chunk => chunk.TryGetProperty("finish_reason", out var reason)
+            && reason.GetString() == "completed_with_escalation");
     }
 
     [Fact]
@@ -513,6 +554,26 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var unknown = await client.GetAsync("/api/v1/agent-modes?application_mode=nope");
         Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentEvolution_PromoteRoute_IsFailClosedUntilPipelineExists()
+    {
+        var factory = CreateFactory();
+        var client = factory.CreateClient();
+        var candidateId = Guid.NewGuid();
+
+        var response = await client.PostAsJsonAsync($"/api/v1/agent-evolution/proposals/{candidateId}/promote", new { reason = "reviewed" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("candidate_pipeline_required", body.GetProperty("code").GetString());
+        Assert.Equal(candidateId, body.GetProperty("candidate_id").GetGuid());
+
+        var legacy = await client.PostAsJsonAsync($"/api/v1/agent-candidates/{candidateId}/promote", new { reason = "reviewed" });
+        Assert.Equal(HttpStatusCode.Conflict, legacy.StatusCode);
+        var legacyBody = await legacy.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("candidate_pipeline_required", legacyBody.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -648,6 +709,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private string? _planner;
         private string? _worker;
         private string? _meeting;
+        private UsageDetails? _usage;
         public int PlannerCalls;
         public int WorkerCalls;
         public Task? BeforeMeeting;
@@ -659,6 +721,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient ThenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient WhenMeeting(string script) { _meeting = script; return this; }
+        public ScriptedChatClient WithUsage(long inputTokens, long outputTokens)
+        {
+            _usage = new UsageDetails
+            {
+                InputTokenCount = inputTokens,
+                OutputTokenCount = outputTokens,
+                TotalTokenCount = inputTokens + outputTokens
+            };
+            return this;
+        }
 
         public void Dispose() { }
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
@@ -679,7 +751,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 if (BeforeWorker is not null) await BeforeWorker.WaitAsync(cancellationToken);
             }
             var text = RouteByPrompt(prompt, instructions);
-            return new ChatResponse(new ChatMessage(ChatRole.Assistant, text));
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, text)) { Usage = CloneUsage() };
         }
 
         /// <summary>Routes by prompt shape: the runtime's fixed Chinese scaffolding identifies the caller.</summary>
@@ -721,6 +793,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                     await Task.Delay(1, cancellationToken);
                     yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
                 }
+                if (CloneUsage() is { } usage)
+                {
+                    yield return new ChatResponseUpdate(null, [new UsageContent(usage)]);
+                }
             }
             else
             {
@@ -729,5 +805,14 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 yield return new ChatResponseUpdate(ChatRole.Assistant, response.Text);
             }
         }
+
+        private UsageDetails? CloneUsage() => _usage is null
+            ? null
+            : new UsageDetails
+            {
+                InputTokenCount = _usage.InputTokenCount,
+                OutputTokenCount = _usage.OutputTokenCount,
+                TotalTokenCount = _usage.TotalTokenCount
+            };
     }
 }

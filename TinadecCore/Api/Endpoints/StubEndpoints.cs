@@ -180,7 +180,8 @@ public static class StubEndpoints
                 ToolCallKey = input.ToolCallKey,
                 Params = input.Params
             }, ct).ConfigureAwait(false);
-            var status = result.Status == ToolDispatchStatus.AwaitingApproval ? StatusCodes.Status202Accepted : StatusCodes.Status200OK;
+            var status = result.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser
+                ? StatusCodes.Status202Accepted : StatusCodes.Status200OK;
             return Results.Json(result, statusCode: status);
         });
 
@@ -288,13 +289,6 @@ public static class StubEndpoints
         app.MapGet("/api/v1/debug/traces/{traceId}", () => Results.NotFound(new { code = "NOT_FOUND" }));
         app.MapGet("/api/v1/debug/spans", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/debug/metrics", () => Results.Ok(new { buckets = Array.Empty<object>() }));
-        app.MapGet("/api/v1/debug/snapshot/{sessionId}", () => Results.Ok(new
-        {
-            session_id = "",
-            runs = Array.Empty<object>(),
-            tasks = Array.Empty<object>(),
-            events = Array.Empty<object>()
-        }));
         app.MapGet("/api/v1/debug/diagnostics", () => Results.Ok(new { diagnostics = Array.Empty<object>() }));
         app.MapGet("/api/v1/debug/processes", () => Results.Ok(Array.Empty<object>()));
 

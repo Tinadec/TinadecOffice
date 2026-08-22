@@ -26,24 +26,27 @@ public sealed class ToolDispatcher : IToolDispatcher
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> WorkspaceLocks = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly IToolProcessManager _processes;
+    private readonly IToolProvider _provider;
     private readonly IToolInvocationScopeResolver _scopeResolver;
     private readonly IToolExecutionCoordinator _executions;
+    private readonly IAuthorizationService _authorization;
     private readonly ILifecycleManager _lifecycle;
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
 
     public ToolDispatcher(
-        IToolProcessManager processes,
+        IToolProvider provider,
         IToolInvocationScopeResolver scopeResolver,
         IToolExecutionCoordinator executions,
+        IAuthorizationService authorization,
         ILifecycleManager lifecycle,
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger)
     {
-        _processes = processes;
+        _provider = provider;
         _scopeResolver = scopeResolver;
         _executions = executions;
+        _authorization = authorization;
         _lifecycle = lifecycle;
         _options = options;
         _logger = logger;
@@ -83,8 +86,48 @@ public sealed class ToolDispatcher : IToolDispatcher
                 parametersJson,
                 ToolParametersHash.Compute(parametersJson),
                 toolCallKey,
-                $"Tool '{descriptor.Entry.Id}' requested by agent {scope.AgentInstanceId}."), cancellationToken).ConfigureAwait(false);
+                $"Tool '{descriptor.Entry.Id}' requested by agent {scope.AgentInstanceId}.",
+                DeferApproval: true,
+                LeaseUses: request.LeaseUses), cancellationToken).ConfigureAwait(false);
             var execution = preparation.Execution;
+
+            // Persist the execution before asking governance so permission requests
+            // can safely point at a stable execution id and be replayed after a host
+            // crash. The claim is intentionally fixed and provider-neutral.
+            if (execution.PermissionRequestId is null && execution.AuthorizationDecisionId is null)
+            {
+                var authorization = await AuthorizeAsync(scope, descriptor.Entry, execution, cancellationToken).ConfigureAwait(false);
+                if (authorization.Status is ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
+                {
+                    execution = await _executions.BindAuthorizationAsync(execution.Id,
+                        authorization.PermissionRequestId,
+                        authorization.AuthorizationDecisionId,
+                        authorization.CapabilityLeaseId,
+                        authorization.Status,
+                        cancellationToken).ConfigureAwait(false);
+                    await TrySetRunStatusAsync(execution.RunId, authorization.Status, cancellationToken).ConfigureAwait(false);
+                    return PreparedResult(execution, preparation.Existing, authorization);
+                }
+                if (authorization.Status == ToolDispatchStatus.Blocked)
+                {
+                    execution = await _executions.BindAuthorizationAsync(execution.Id,
+                        authorization.PermissionRequestId,
+                        authorization.AuthorizationDecisionId,
+                        authorization.CapabilityLeaseId,
+                        "blocked",
+                        cancellationToken).ConfigureAwait(false);
+                    await _executions.FailAsync(execution.Id, "failed", authorization.ErrorCategory ?? "not_authorized", authorization.Message ?? "Tool authorization was denied.", cancellationToken).ConfigureAwait(false);
+                    return DispatchBlocked(execution, authorization);
+                }
+                execution = await _executions.BindAuthorizationAsync(execution.Id,
+                    authorization.PermissionRequestId,
+                    authorization.AuthorizationDecisionId,
+                    authorization.CapabilityLeaseId,
+                    "requested",
+                    cancellationToken).ConfigureAwait(false);
+                if (execution.RequiresApproval)
+                    execution = await _executions.EnsureApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
+            }
 
             if (!preparation.Existing)
             {
@@ -115,7 +158,7 @@ public sealed class ToolDispatcher : IToolDispatcher
             // The caller must checkpoint this execution id before deciding when
             // to resume it. In particular, an unapproved read call must not run
             // between process recovery and persistence of its function call.
-            return PreparedResult(execution, preparation.Existing);
+            return PreparedResult(execution, preparation.Existing, null);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or UnauthorizedAccessException or KeyNotFoundException or DirectoryNotFoundException)
         {
@@ -149,6 +192,54 @@ public sealed class ToolDispatcher : IToolDispatcher
                 await _executions.FailAsync(execution.Id, "failed", "manifest_changed", manifestPolicyMessage, cancellationToken).ConfigureAwait(false);
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.Failed, ExecutionId = execution.Id.ToString(), ApprovalId = execution.ApprovalId?.ToString(), ErrorCategory = "manifest_changed", Message = manifestPolicyMessage };
             }
+
+            var authorization = await AuthorizeAsync(scope, descriptor, execution, cancellationToken).ConfigureAwait(false);
+            if (authorization.Status is ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
+            {
+                execution = await _executions.BindAuthorizationAsync(execution.Id,
+                    authorization.PermissionRequestId,
+                    authorization.AuthorizationDecisionId,
+                    authorization.CapabilityLeaseId,
+                    authorization.Status,
+                    cancellationToken).ConfigureAwait(false);
+                await TrySetRunStatusAsync(execution.RunId, authorization.Status, cancellationToken).ConfigureAwait(false);
+                return PreparedResult(execution, existing: true, authorization);
+            }
+            if (authorization.Status == ToolDispatchStatus.Blocked)
+            {
+                execution = await _executions.BindAuthorizationAsync(execution.Id,
+                    authorization.PermissionRequestId,
+                    authorization.AuthorizationDecisionId,
+                    authorization.CapabilityLeaseId,
+                    "blocked",
+                    cancellationToken).ConfigureAwait(false);
+                var denied = await _executions.FailAsync(execution.Id, "failed", authorization.ErrorCategory ?? "not_authorized", authorization.Message ?? "Tool authorization was denied.", cancellationToken).ConfigureAwait(false);
+                return DispatchBlocked(denied, authorization);
+            }
+            execution = await _executions.BindAuthorizationAsync(execution.Id,
+                authorization.PermissionRequestId,
+                authorization.AuthorizationDecisionId,
+                authorization.CapabilityLeaseId,
+                "requested",
+                cancellationToken).ConfigureAwait(false);
+            if (execution.CapabilityLeaseId is not { } leaseId)
+                return DispatchBlocked(execution, new DispatchAuthorization(ToolDispatchStatus.Blocked, null, authorization.AuthorizationDecisionId, null, "capability_lease_required", "A capability lease is required before a tool can execute."));
+            var consumedLease = await _authorization.ConsumeToolLeaseAsync(new ToolLeaseConsumptionCommand(
+                leaseId,
+                authorization.LeaseNonce,
+                scope.PrincipalId,
+                scope.AgentInstanceId,
+                ToolClaim(descriptor),
+                execution.RunId,
+                execution.TaskId,
+                $"tool-lease:{execution.Id:N}"), cancellationToken).ConfigureAwait(false);
+            if (consumedLease.Status != "allowed")
+            {
+                var failedLease = await _executions.FailAsync(execution.Id, "failed", consumedLease.Decision.ReasonCode, consumedLease.Decision.Reason, cancellationToken).ConfigureAwait(false);
+                return DispatchBlocked(failedLease, new DispatchAuthorization(ToolDispatchStatus.Blocked, consumedLease.Decision.PermissionRequestId, consumedLease.Decision.Id, leaseId, consumedLease.Decision.ReasonCode, consumedLease.Decision.Reason));
+            }
+            if (execution.RequiresApproval && execution.ApprovalId is null)
+                execution = await _executions.EnsureApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or UnauthorizedAccessException or KeyNotFoundException or DirectoryNotFoundException)
         {
@@ -211,7 +302,7 @@ public sealed class ToolDispatcher : IToolDispatcher
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    response = await _processes.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+                    response = await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -220,7 +311,7 @@ public sealed class ToolDispatcher : IToolDispatcher
             }
             else
             {
-                response = await _processes.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+                response = await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
             }
 
             if (response.IsSuccess)
@@ -276,7 +367,7 @@ public sealed class ToolDispatcher : IToolDispatcher
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)
     {
-        var manifest = await _processes.GetManifestAsync(scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+        var manifest = await _provider.GetManifestAsync(scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
         if (manifest.ProtocolVersion != 2) return (null, "TinadecTools manifest v2 is required for autonomous dispatch.");
         if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)
             || !string.Equals(manifest.ManifestHash, scope.FrozenToolManifestHash, StringComparison.OrdinalIgnoreCase)
@@ -362,12 +453,49 @@ public sealed class ToolDispatcher : IToolDispatcher
         return $"api:{runId:N}:{taskId:N}:{agentId:N}:{toolId}:{ToolParametersHash.Compute(parametersJson)}";
     }
 
-    private static ToolDispatchResultDto PreparedResult(ToolExecutionSnapshot execution, bool existing)
+    private async Task<DispatchAuthorization> AuthorizeAsync(
+        ToolInvocationScope scope,
+        ToolManifestEntryDto descriptor,
+        ToolExecutionSnapshot execution,
+        CancellationToken cancellationToken)
+    {
+        var result = await _authorization.AuthorizeToolAsync(new ToolAuthorizationCommand(
+            scope.PrincipalId,
+            scope.AgentInstanceId,
+            ToolClaim(descriptor),
+            execution.RunId,
+            execution.TaskId,
+            descriptor.Risk,
+            0m,
+            Math.Clamp(execution.LeaseUses, 1, 32),
+            TimeSpan.FromMinutes(30),
+            $"Tool '{descriptor.Id}' requested by agent {scope.AgentInstanceId}.",
+            $"tool-auth:{execution.Id:N}"), cancellationToken).ConfigureAwait(false);
+        var status = result.Status switch
+        {
+            "awaiting_delegate" => ToolDispatchStatus.AwaitingDelegate,
+            "awaiting_user" => ToolDispatchStatus.AwaitingUser,
+            "allowed" => ToolDispatchStatus.Requested,
+            _ => ToolDispatchStatus.Blocked
+        };
+        return new DispatchAuthorization(status, result.PermissionRequest?.Id,
+            result.Decision.Id, result.CapabilityLeaseId,
+            result.Decision.ReasonCode, result.Decision.Reason, result.LeaseNonce);
+    }
+
+    private static CapabilityClaim ToolClaim(ToolManifestEntryDto descriptor) => new(
+        "tool.invoke",
+        descriptor.MutatesWorkspace ? "mutate" : "read",
+        $"tool://{descriptor.Id}");
+
+    private static ToolDispatchResultDto PreparedResult(ToolExecutionSnapshot execution, bool existing, DispatchAuthorization? authorization)
     {
         var status = execution.Status switch
         {
             "requested" => ToolDispatchStatus.Requested,
             "awaiting_approval" => ToolDispatchStatus.AwaitingApproval,
+            "awaiting_delegate" => ToolDispatchStatus.AwaitingDelegate,
+            "awaiting_user" => ToolDispatchStatus.AwaitingUser,
             "outcome_unknown" => ToolDispatchStatus.OutcomeUnknown,
             "completed" => ToolDispatchStatus.Completed,
             "timed_out" => ToolDispatchStatus.Timeout,
@@ -379,6 +507,8 @@ public sealed class ToolDispatcher : IToolDispatcher
             Status = status,
             ExecutionId = execution.Id.ToString(),
             ApprovalId = execution.ApprovalId?.ToString(),
+            PermissionRequestId = execution.PermissionRequestId?.ToString() ?? authorization?.PermissionRequestId?.ToString(),
+            AuthorizationDecisionId = execution.AuthorizationDecisionId?.ToString() ?? authorization?.AuthorizationDecisionId?.ToString(),
             Attempt = execution.Attempt,
             ErrorCategory = execution.ErrorCategory,
             Message = status switch
@@ -387,10 +517,33 @@ public sealed class ToolDispatcher : IToolDispatcher
                     ? "Existing tool execution is ready for the durable worker."
                     : "Tool execution was persisted and is ready for the durable worker.",
                 ToolDispatchStatus.AwaitingApproval => "Tool execution is awaiting human approval.",
+                ToolDispatchStatus.AwaitingDelegate => "Tool execution is awaiting delegated approval.",
+                ToolDispatchStatus.AwaitingUser => "Tool execution is awaiting user authorization.",
                 _ => execution.SafeErrorMessage
             }
         };
     }
+
+    private static ToolDispatchResultDto DispatchBlocked(ToolExecutionSnapshot execution, DispatchAuthorization authorization) => new()
+    {
+        Status = authorization.Status == ToolDispatchStatus.Blocked ? ToolDispatchStatus.Blocked : authorization.Status,
+        ExecutionId = execution.Id.ToString(),
+        ApprovalId = execution.ApprovalId?.ToString(),
+        PermissionRequestId = execution.PermissionRequestId?.ToString() ?? authorization.PermissionRequestId?.ToString(),
+        AuthorizationDecisionId = execution.AuthorizationDecisionId?.ToString() ?? authorization.AuthorizationDecisionId?.ToString(),
+        Attempt = execution.Attempt,
+        ErrorCategory = authorization.ErrorCategory,
+        Message = authorization.Message
+    };
+
+    private sealed record DispatchAuthorization(
+        string Status,
+        Guid? PermissionRequestId,
+        Guid? AuthorizationDecisionId,
+        Guid? CapabilityLeaseId,
+        string? ErrorCategory,
+        string? Message,
+        string? LeaseNonce = null);
 
     private static bool IsObjectOrNull(string json)
     {
@@ -426,6 +579,8 @@ public sealed class ToolDispatcher : IToolDispatcher
         Status = status,
         ExecutionId = execution.Id.ToString(),
         ApprovalId = execution.ApprovalId?.ToString(),
+        PermissionRequestId = execution.PermissionRequestId?.ToString(),
+        AuthorizationDecisionId = execution.AuthorizationDecisionId?.ToString(),
         Attempt = execution.Attempt,
         ErrorCategory = execution.ErrorCategory,
         Message = execution.SafeErrorMessage
@@ -436,6 +591,8 @@ public sealed class ToolDispatcher : IToolDispatcher
         Status = ToolDispatchStatus.Blocked,
         ExecutionId = execution?.Id.ToString(),
         ApprovalId = execution?.ApprovalId?.ToString(),
+        PermissionRequestId = execution?.PermissionRequestId?.ToString(),
+        AuthorizationDecisionId = execution?.AuthorizationDecisionId?.ToString(),
         Attempt = execution?.Attempt ?? 0,
         ErrorCategory = "blocked",
         Message = message

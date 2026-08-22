@@ -59,7 +59,7 @@ export interface ApprovalSnapshot {
   consumed_at?: string | null;
   consumed_by_execution_id?: string | null;
   expires_at?: string | null;
-  /** Legacy-only fields retained for the Code Tool approval helper contract. */
+  /** Optional Core approval projection used by callers that choose to preflight. */
   command?: string | null;
   cwd?: string | null;
 }
@@ -454,10 +454,9 @@ export function codeToolApprovalUnavailableBlock(toolId: string, request: CodeTo
 }
 
 /**
- * Normalizes the legacy Tool Runtime envelope. The public route is deliberately
- * narrower than the generic Code Tool route: only an approved command_run can
- * reach the child process, and the child receives params rather than arbitrary
- * client fields.
+ * Normalizes a command_run envelope for callers that opt into a stricter
+ * client-side contract. HTTP user-tool routes do not invoke this helper or
+ * make approval decisions in Gateway.
  */
 export function normalizeCommandRunRequest(body: unknown):
   | { value: NormalizedCommandRun }

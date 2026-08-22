@@ -58,6 +58,19 @@ public sealed class AutonomousAgentControl : Migration
     protected override void Down(MigrationBuilder m) { }
 }
 
+[DbContext(typeof(AgentControlDbContext))]
+[Migration("202608220002_AgentInstanceVersionBinding")]
+public sealed class AgentInstanceVersionBinding : Migration
+{
+    protected override void Up(MigrationBuilder m) => m.Sql("""
+        alter table agent_instances add column agent_definition_id text not null default '00000000-0000-0000-0000-000000000000';
+        alter table agent_instances add column agent_version_id text not null default '00000000-0000-0000-0000-000000000000';
+        alter table agent_instances add column agent_version_hash text not null default '';
+        create index if not exists ix_agent_instances_run_version on agent_instances(tenant_id, workspace_id, run_id, agent_version_id);
+        """);
+    protected override void Down(MigrationBuilder m) { }
+}
+
 [DbContext(typeof(LifecycleDbContext))]
 [Migration("202608180004_DurableLifecycle")]
 public sealed class DurableLifecycle : Migration
@@ -86,6 +99,31 @@ public sealed class DurableLifecycle : Migration
         create index if not exists ix_run_stream_run_turn_sequence on run_stream(run_id, turn_id, sequence);
         create unique index if not exists ix_run_stream_run_key on run_stream(run_id, idempotency_key);
         create table if not exists run_stream_cursors (run_id text primary key, next_sequence integer not null, updated_at text not null);
+        """);
+    protected override void Down(MigrationBuilder m) { }
+}
+
+[DbContext(typeof(LifecycleDbContext))]
+[Migration("202608220003_WorkspaceSnapshots")]
+public sealed class WorkspaceSnapshots : Migration
+{
+    protected override void Up(MigrationBuilder m) => m.Sql("""
+        create table if not exists workspace_snapshots (id text primary key, tenant_id text not null, workspace_id text not null, project_id text not null, kind text not null, status text not null, is_git integer not null, workspace_hash text not null, content_reference text not null, content_hash text not null, content_length integer not null, file_count integer not null, base_snapshot_id text null, idempotency_key text null, last_restore_idempotency_key text null, conflict_json text null, applied_file_count integer not null default 0, restored_at text null, created_at text not null);
+        create unique index if not exists ix_workspace_snapshots_idempotency on workspace_snapshots(tenant_id, workspace_id, project_id, idempotency_key) where idempotency_key is not null;
+        create index if not exists ix_workspace_snapshots_project_created on workspace_snapshots(tenant_id, workspace_id, project_id, created_at);
+        """);
+    protected override void Down(MigrationBuilder m) { }
+}
+
+[DbContext(typeof(LifecycleDbContext))]
+[Migration("202608220006_SessionMetadataSnapshots")]
+public sealed class SessionMetadataSnapshots : Migration
+{
+    protected override void Up(MigrationBuilder m) => m.Sql("""
+        create table if not exists session_metadata_snapshots (id text primary key, tenant_id text not null, workspace_id text not null, session_id text not null, project_id text not null, kind text not null, source text not null, schema_version text not null, revision integer not null, content_reference text not null, content_hash text not null, content_length integer not null, captured_at text not null);
+        create unique index if not exists ix_session_metadata_snapshots_scope_revision on session_metadata_snapshots(tenant_id, workspace_id, session_id, kind, source, revision);
+        create unique index if not exists ix_session_metadata_snapshots_scope_hash on session_metadata_snapshots(tenant_id, workspace_id, session_id, kind, source, content_hash);
+        create index if not exists ix_session_metadata_snapshots_scope_captured on session_metadata_snapshots(tenant_id, workspace_id, session_id, captured_at);
         """);
     protected override void Down(MigrationBuilder m) { }
 }

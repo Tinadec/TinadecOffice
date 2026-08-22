@@ -1,16 +1,9 @@
 /**
- * 审批拦截器：人类操作 approval=true 透传 + 高风险命令二次确认。
+ * Optional client-side approval UX helpers.
  *
- * 流程：
- * 1. 人类通过 Desktop 发出命令，请求包中带 approval=true（表示人类发起）
- * 2. Gateway 检查命令风险等级
- * 3. 低风险命令：直接透传到 Tool Runtime（带 approval=true）
- * 4. 高风险命令：返回 confirmation_required，Desktop UI 显示弹窗警告
- * 5. 用户在 Desktop UI 确认后，请求带 confirmation=true 重新提交
- * 6. Gateway 验证 confirmation=true 后透传到 Tool Runtime
- *
- * Tool Runtime 收到 approval=true 的请求直接执行，不再次拦截。
- * Agent 发起的请求不带 approval=true，按 Core 审批门流程处理。
+ * The HTTP Gateway routes do not call these functions. Gateway forwards the
+ * user's tool request unchanged; Core or the Tool Provider owns authorization,
+ * risk policy, confirmation and execution facts.
  */
 
 /** 请求来源类型 */

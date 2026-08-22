@@ -1,10 +1,10 @@
 # TinadecCore 产品定义与 DmaEA 架构基线
 
 > 状态：产品与架构基线（Baseline）
-> 版本：0.2
+> 文档状态：持续维护的产品基线（不使用递增文档版本号）
 > 日期：2026-08-22
 > 适用范围：TinadecCore、DmaEA，以及 TinadecOffice 四产品之间的契约边界
-> 事实基线：截至 2026-08-22，当前工作树统一以 MAF `1.18.0` 为规范基线；实现状态仍须按本文标记区分，未提交工作树不等同于已发布能力
+> 事实基线：截至 2026-08-22，当前工作树统一以 MAF `1.18.0` 为规范基线；实现状态仍须按本文标记区分，未提交工作树不等同于已发布能力。TinadecOffice 尚未发布首个正式版，公开 API 固定为 `/api/v1`。
 
 本文是 TinadecCore 的权威产品定义。它回答四个问题：TinadecCore 是什么、DmaEA 为什么存在、智能体如何被配置与治理、TinadecCore 如何与 TinadecTool、TinadecGateway、TinadecApp 独立协作。
 
@@ -16,6 +16,16 @@
 - **工作树升级中**：当前未提交工作树已有实现，但公开契约、迁移、组合入口或测试尚未全部收口。
 - **部分实现**：已有数据结构或接口，但未形成完整运行闭环。
 - **目标态**：产品定义已确定，尚待实现。
+
+## 0. 文档与 API 版本规则
+
+TinadecOffice 尚未发布首个正式版，且产品生命周期内不承诺历史 API 兼容；所有 HTTP、OpenAPI、SSE 和 WebSocket 公共接口始终使用 `/api/v1`。
+
+- 不创建 `/api/v2`、`/api/v3`，不维护历史兼容路由、legacy 别名、迁移入口或弃用周期。
+- 发生破坏性调整时，直接修改 `/api/v1` 的实现、DTO、事件、测试、客户端生成物和本中文文档；不为旧客户端保留第二套路由或旧字段语义。
+- 中文产品定义是唯一权威文档；英文材料只维护固定术语表，历史设计文档不构成第二事实源。
+- `AgentVersion`、`ModeVersion`、`PromptVersion`、`PolicyVersion`、manifest 哈希和数据库 revision 是领域数据的不可变版本，不代表 HTTP API 版本迭代。
+- Gateway 的 `/api/v1/code/tools/*` 与 `/api/v1/tool-runtime/*` 是 Desktop 和外部用户显式使用工具的当前直连入口。它们不是 legacy 兼容层；Gateway 只做无状态身份、协议和流转，不产生业务状态或授权决定。
 
 ## 1. 执行摘要
 
@@ -38,7 +48,7 @@ TinadecCore 不是聊天 UI、API 转发层或工具集合，也不是对 MAF �
 | 编号 | 决策 |
 | --- | --- |
 | PD-01 | `DmaEA` 正式展开为 **Dual-layer multi-agent Evolution Architecture**，中文名为“**双层多智能体演化架构**”。 |
-| PD-02 | 两个正式层级为治理层 `operation` 与执行层 `execution`；“运营层”“运维层”和 `planning` 只作为历史称呼或迁移输入。机器值保持 `operation`。 |
+| PD-02 | 两个正式层级为治理层 `operation` 与执行层 `execution`；“运营层”“运维层”和 `planning` 只作为历史称呼，不是公开层级或迁移契约。机器值保持 `operation`。 |
 | PD-03 | 会议智能体是唯一面向用户形成正式答复的智能体；其它智能体只产出事件、证据、建议或治理决定。 |
 | PD-04 | TinadecCore 是状态、策略和审计权威；MAF 的 session、workflow state 和 checkpoint 是可替换的执行细节。 |
 | PD-05 | 权限授予、具体动作审批、结果质量监督是三个不同状态机，不能由一个模型判断替代。 |
@@ -46,8 +56,9 @@ TinadecCore 不是聊天 UI、API 转发层或工具集合，也不是对 MAF �
 | PD-07 | 配置发布后不可变；每个 run 冻结配置版本、模型选择、工具清单和策略哈希。 |
 | PD-08 | 演化默认只生成候选；候选在评测、审批、发布前不得进入正式运行或跨会话检索。 |
 | PD-09 | 工作区快照与 MAF checkpoint 是不同概念；“可回退”只覆盖已声明的本地资源，外部副作用必须使用补偿机制。 |
-| PD-10 | TinadecCore、TinadecTool、TinadecGateway、TinadecApp 分别版本化、部署和替换，通过公开契约协作，不形成编译期捆绑。 |
+| PD-10 | TinadecCore、TinadecTool、TinadecGateway、TinadecApp 可分别部署和替换，通过当前公开契约协作，不形成编译期捆绑；所有 HTTP 接口始终固定为 `/api/v1`，破坏性调整直接更新 `/api/v1`。 |
 | PD-11 | MAF `1.18.x` 只通过 DmaEA 内部适配器接入；Core 始终是审批、权限、检查点、工具执行记录和恢复判定的权威。 |
+| PD-12 | 运行面组件分为“自建权”与“MAF 可替换”两档（§5.5）：外部世界一致性、带身份的治理决策、预算账本与演化闭环自动化保留自建权；checkpoint 机械层、编排调度、压缩内核、审批内容协议、协议端点与评分器标记为 MAF 可替换。替换须经 DmaEA 内部适配器与兼容测试门禁，不得影响公开契约；Phase 2 收口前不做主动迁移。 |
 
 ## 2. 产品定位
 
@@ -85,11 +96,11 @@ TinadecOffice 是产品族，不是必须整体安装的单体应用。
 | 产品 | 产品职责 | 独立使用方式 | 不拥有的职责 | 当前仓库映射 |
 | --- | --- | --- | --- | --- |
 | **TinadecCore** | 智能体治理、DmaEA 编排、会话/run/task 状态、模型路由、权限与审批、上下文/记忆、审计与演化 | 作为 .NET 嵌入式运行时，或作为 headless HTTP/SSE 服务 | UI、通用网关、具体工具实现 | `TinadecCore/` |
-| **TinadecTool** | 工具发现、参数 schema、风险元数据、隔离执行和结构化结果 | 作为 MCP/本地进程/远程工具服务供任意兼容客户端调用 | 任务编排、会话状态、最终授权决定 | 当前代码名 `TinadecTools/` 与 `TinadecTools.Generators/` |
-| **TinadecGateway** | 对外 API 门面、身份接入、协议适配、限流、聚合和流转发 | 连接 TinadecCore 或其它兼容上游，为 Web/企业网络提供稳定入口 | Core 业务状态、智能体决策、工具策略 | `TinadecGateway/` |
-| **TinadecApp** | 面向不同场景的交互应用和可视化客户端 | 直连 TinadecCore，或经 TinadecGateway 连接兼容后端 | 编排真相、密钥、审批策略和工具执行 | 当前由 `apps/desktop`、`apps/web`、`apps/TinadecUI` 等承载 |
+| **TinadecTool** | 工具发现、参数 schema、风险元数据、隔离执行和结构化结果 | 作为 MCP/本地进程/远程工具服务供符合当前契约的客户端调用 | 任务编排、会话状态、最终授权决定 | 当前代码名 `TinadecTools/` 与 `TinadecTools.Generators/` |
+| **TinadecGateway** | 对外 API 门面、身份接入、协议适配、限流、聚合和流转发 | 连接 TinadecCore 或当前契约上游，为 Web/企业网络提供稳定入口；也暴露用户显式工具直连入口 | Core 业务状态、智能体决策、工具策略 | `TinadecGateway/` |
+| **TinadecApp** | 面向不同场景的交互应用和可视化客户端 | 直连 TinadecCore，或经 TinadecGateway 连接当前契约后端 | 编排真相、密钥、审批策略和工具执行 | 当前由 `apps/desktop`、`apps/web`、`apps/TinadecUI` 等承载 |
 
-“可单独使用”必须准确理解：四个产品应能独立安装、版本化、替换和升级，但客户端或网关仍需要一个符合契约的上游服务。TinadecCore 与 TinadecTool 可直接提供独立运行价值；TinadecGateway 与 TinadecApp 的独立性是“不强制捆绑某个具体实现”，不是“脱离任何上游仍能完成业务”。
+“可单独使用”必须准确理解：四个产品应能独立安装、部署和替换，但客户端或网关仍需要一个符合当前契约的上游服务。TinadecCore 与 TinadecTool 可直接提供独立运行价值；TinadecGateway 与 TinadecApp 的独立性是“不强制捆绑某个具体实现”，不是“脱离任何上游仍能完成业务”。
 
 ### 3.1 默认组合，但不是唯一组合
 
@@ -111,7 +122,19 @@ flowchart LR
 - TinadecTool 不得读取或修改 Core 数据库来判断权限。
 - Gateway 不得保存 session、run、approval、agent configuration 等业务真相。
 - App 只可保存窗口布局、主题等本地体验偏好；业务状态必须来自 Core 契约。
-- 四个产品分别维护 SemVer、兼容矩阵和弃用周期。
+- 四个产品分别维护自己的构建与部署产物；不维护 SemVer API 兼容矩阵或弃用周期，所有公开 HTTP 接口固定为 `/api/v1`。
+
+### 3.3 用户工具直连与智能体工具执行是两条路径
+
+Gateway 保留两组用途明确的当前 v1 工具传输入口：
+
+| 调用者 | 入口 | Gateway 行为 | 授权与执行事实 |
+| --- | --- | --- | --- |
+| Desktop 或其它明确的用户操作 | `POST /api/v1/code/tools/{toolId}/execute` | 原样转发请求、状态码、响应体和必要响应头到 Tool Provider | Tool Provider 负责工具自身校验；用户治理操作如需 Core 决定，调用方应使用 Core 提供的治理接口 |
+| Desktop 或其它需要访问 provider surface 的客户端 | `GET /api/v1/tool-runtime/health`、`/manifest`、`/tools`、`POST /api/v1/tool-runtime/tools/{toolId}/execute` | 原样代理 Tool Runtime 的健康、清单、工具和执行请求 | Tool Runtime/Provider 负责 provider 协议、沙箱和执行结果 |
+| DmaEA 智能体运行 | `POST /api/v1/runs/{runId}/tools/{toolId}/execute` | 仅代理到 Core | Core 负责冻结配置、PDP、租约、ActionApproval、审计和调用 Tool Provider |
+
+前两组不是旧路由、迁移入口或兼容别名，而是产品设计中专门给用户和 Desktop 使用的直连传输面。Gateway 不读取 `approval_id`、`approved`、`source` 或风险字段来形成授权结论，也不把用户请求改写成智能体 run。需要智能体治理的调用必须显式进入第三组路径。
 
 ## 4. TinadecCore 的边界与交付形态
 
@@ -133,9 +156,9 @@ flowchart LR
 1. **嵌入式包**：`TinadecCore.Runtime` 与稳定的 `Contracts`/`Abstractions` NuGet 包，供 .NET 宿主按模块组合。
 2. **独立服务**：`TinadecCore.Api` 可执行程序或容器，提供 OpenAPI、SSE 和管理接口。
 3. **客户端 SDK**：由 OpenAPI 生成的 TypeScript/.NET SDK，不泄漏 MAF 类型。
-4. **开发工具**：用于配置校验、迁移、导入导出和兼容检查的 `tinadec-core` CLI。
+4. **开发工具**：用于配置校验、迁移、导入导出和当前契约检查的 `tinadec-core` CLI。
 
-当前全局 `IsPackable=false`，因此“可复用框架”尚未形成正式 NuGet 交付面；这是产品独立化的必要工作，不应只靠源码项目引用宣称完成。
+当前 `Contracts`、`Abstractions` 和 `Runtime` 已显式启用 `IsPackable=true`，Runtime 所需的内部实现模块也作为非稳定依赖包参与还原；这只是可验证的打包边界，尚未等同于发布到 NuGet 源。API 可通过 `dotnet publish` 生成独立服务目录，Client SDK、CLI 和容器镜像仍是后续交付。具体命令与边界见 [TinadecCore 打包与独立部署](tinadec-core-packaging.zh-CN.md)。
 
 ## 5. 技术架构
 
@@ -233,11 +256,44 @@ MVP 继续采用模块化单体，不为了“智能体很多”提前拆微服�
 | 上下文与记忆 | `Context`、`Memory`、`VectorStore` | 区分短期 context、候选记忆、正式记忆和检索版本 |
 | 权限治理 | `Lifecycle`/工具审批的现有片段 | 新增独立 Governance 模块或边界，承载 PDP、grant、delegation、lease 和 decision |
 | 工具接入 | `TinadecCore.Tools` + `TinadecToolsProcessManager` | 抽象 Tool Provider transport；本地进程只是一个 adapter |
-| 工作区回退 | 尚无 | 新增 Snapshot port/module，内容存储由 Git/file provider 实现 |
+| 工作区回退 | `Lifecycle/WorkspaceSnapshotService` + `IWorkspaceSnapshotService` | 补齐 Git diff/restore plan、外部副作用补偿和 provider 扩展 |
 | 演化评测 | 候选 API + `AgentInstanceService` | 新增 Evaluation/Promotion service，负责 eval、review、canary、revoke |
 | 宿主与公开契约 | `Runtime`、`Api`、`Contracts`、`Abstractions` | 分离稳定/实验 API，形成 NuGet、服务和生成 SDK 交付物 |
 
 跨模块协作只通过窄接口、领域命令和追加事件完成。数据库可保持同一 SQLite/PostgreSQL 实例，但表所有权、迁移和写入口必须唯一。
+
+### 5.5 自建权与 MAF 可替换边界
+
+MAF 已经把大量运行时机械做成可直接引用的零件。为避免在框架已提供的原语上重复投入（沉没成本），也避免把 Core 的差异化能力误交给框架，所有运行面组件按下表分为两档。本表是决策约束：新增自建代码前必须先对照本表；“MAF 可替换”档的自建实现不得继续加深与其它模块的耦合，必须保持可整体换出。
+
+#### 自建权（Core 长期拥有，不因 MAF 演进而放弃）
+
+| 能力 | 保留理由 |
+| --- | --- |
+| 外部世界一致性：工作区快照、Git 变更治理、副作用补偿与不可逆标记 | MAF checkpoint 只覆盖框架内状态，不覆盖文件系统/VCS/外部 API 副作用（PD-09） |
+| 带身份的治理决策：租户作用域、RBAC/ABAC、PolicyBundle 多层求交、委托包络、审批人路由、多级审批台账与合规导出 | MAF 审批规则是会话级、无身份维度；治理台账是产品差异化价值（PD-05/PD-06） |
+| 预算账本：跨 run 的 token/成本/轮次/副作用硬预算 | MAF 只有局部上限常量；预算属 Tinadec 产品策略，独立版本化（§5.3） |
+| 任务图持久层、产品状态机与追加事件账本 | LangGraph/Dify 同样把它留给宿主；这是 Core 状态权威的本体（PD-04） |
+| 演化闭环自动化：eval 集、回归比较、canary、晋升/撤销流水线 | 打分内核可换用 MAF Evaluation 包，但门禁与闭环编排归 Core（PD-08） |
+| Tool Provider 传输抽象与 manifest 冻结契约 | 南向接口独立性（§14.2）；本地进程只是 adapter |
+
+#### MAF 可替换（当前自建，允许未来整体换为 MAF 原语）
+
+| 当前自建实现 | MAF 对应物 | 替换条件 |
+| --- | --- | --- |
+| 持久运行引擎的 checkpoint 存取/replay 机械层 | Workflow checkpoint、Parent 链、time-travel | 契约测试证明幂等键、副作用 receipt、事件水位等恢复语义等价 |
+| 单次编排调度（顺序/并发/移交/群聊/Magentic 式协作） | 五种 Orchestration Builder | 双层拓扑与角色激活仍由确定性 Trigger Engine 决定 |
+| 上下文压缩内核 | CompactionProvider 家族（ContextWindow/ToolResult/Pipeline） | 自研策略只以 CompactionStrategy 插件形式存在 |
+| 审批内容协议与防伪造校验 | ApprovalRequiredAIFunction、ApprovalResponseBindingChatClient、ToolApprovalAgent | 台账、身份与委托包络判断仍归 Governance 模块 |
+| 协议端点（OpenAI 兼容/A2A/MCP 发布） | Hosting.OpenAI、Hosting.A2A、hosting-mcp | snake_case 公开契约与 ProblemDetails 语义不受影响 |
+| 演化评分内核 | Evaluation 包（RubricScore、ExpectedToolCall） | eval 集、基线比较与发布门禁仍归 Core |
+
+#### 边界纪律
+
+1. 两档之间没有灰色地带；拿不准时按“自建权”处理并在设计评审中说明。
+2. “MAF 可替换”档的自建实现禁止向其它模块暴露内部类型，必须与 MAF 类型遵守同一隔离纪律（见 §5.2 末段），使未来替换只动 DmaEA 适配器内部。
+3. 替换决策必须走 §5.3 的升级流程：编译、架构、checkpoint 恢复、HITL、工具循环上限与遥测契约测试全部通过后才允许切换。
+4. Phase 2（权限自治闭环）收口之前不做主动迁移；本节先冻结边界，防止继续加深“可替换”档实现的耦合成本。
 
 ## 6. DmaEA：双层多智能体演化架构
 
@@ -348,7 +404,7 @@ sequenceDiagram
 | `controlled_execution` | `meeting` + `task_planner` + 少量 worker + `supervisor` | 写操作逐项审批 | 单任务开发和办公自动化 |
 | `full_duplex` | 完整治理层 + 并行执行层 | 动态权限、快照与审批 | 长任务、多任务和持续协作 |
 
-当前 `conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 可作为兼容 profile；面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
+当前 `conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 是内置 profile；面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
 
 ## 8. 运行、并发与事件契约
 
@@ -371,7 +427,7 @@ run 创建时必须持久化以下引用和哈希：
 - tool manifest 与有效工具交集；
 - permission policy、delegation 和预算版本；
 - context revision、memory view 和 workspace snapshot 基线；
-- Core/MAF 运行时兼容版本。
+- Core/MAF 运行时适配版本（当前为 MAF `1.18.0`）。
 
 ### 8.3 全双工语义
 
@@ -397,7 +453,7 @@ run 创建时必须持久化以下引用和哈希：
 - 聚合终态与对应终态事件在同一事务、CAS 或 outbox 边界提交，不能出现状态已完成但事件丢失。
 - checkpoint 记录 `applied_through_seq`；恢复时先核对既有 tool receipt，再决定重试、补偿或升级人工判断。
 - 客户端先加载 snapshot，再从其 cursor 之后重放事件，最后跟随实时流；按 `run_id + seq` 去重。
-- 消费者必须忽略未知的加法字段和事件 kind；schema 版本与 Core 包版本分别演进。
+- 当前契约的消费者可以忽略不影响自身的未知加法字段和事件 kind；这不是对旧客户端的兼容承诺。字段或事件语义发生变化时，直接更新 `/api/v1`、schema、测试、客户端生成物和本文。
 
 ## 9. 智能体配置模型
 
@@ -409,7 +465,7 @@ run 创建时必须持久化以下引用和哈希：
 4. **PolicyBundle/PolicyVersion**：权限上限、风险分类、委托和升级规则。
 5. **WorkspaceDefaults**：工作区默认模式、会议智能体、提示词和模型路由。
 
-稳定基线已覆盖 Agent、Mode、PromptPipeline 和 WorkspaceDefaults 的控制面结构。升级工作树新增了 Governance 的 PolicyBundle、grant、delegation、permission request、decision 与 lease 领域实现和测试，但尚未接入 Runtime、迁移、API、ACP 与工具热路径，因此属于“部分实现”，不是可用的动态权限闭环。
+稳定基线已覆盖 Agent、Mode、PromptPipeline 和 WorkspaceDefaults 的控制面结构。升级工作树新增了 Governance 的 PolicyBundle、grant、delegation、permission request、decision 与 lease 领域实现，并已接入 Runtime、SQLite/PostgreSQL 迁移、治理 API 与 ToolDispatcher 热路径；ACP `permission.request` 仍按本阶段约束 fail-closed，通用远程 provider 仍是后续工作。
 
 ### 9.2 Agent Definition 最小字段
 
@@ -546,7 +602,7 @@ flowchart TD
 
 - Tool provider 只接收 Core 签发的执行 envelope，不自行推断用户是否同意。
 - 单次动作审批必须绑定 tool id、规范化参数哈希、run/task/agent、有效期和一次性 nonce。
-- ACP 的 `permission.request` 目标态应转换为 Core `PermissionRequest`，暂停当前 turn 并走同一治理流程；当前实现会直接令 run 失败，属于待补齐项。
+- ACP 的 `permission.request` 后续应转换为 Core `PermissionRequest`，暂停当前 turn 并走同一治理流程；当前阶段继续 fail-closed 并明确返回未实现，不伪造授权事实。
 
 ## 11. 上下文、记忆与压缩
 
@@ -576,13 +632,15 @@ flowchart TD
 | --- | --- | --- |
 | 对话 checkpoint | 消息水位、摘要、`context_revision`、未解决交互 | 部分实现 |
 | Run checkpoint | 工作流进度、任务图、agent 实例、待处理请求、租约、MAF 状态引用和事件 cursor | 已实现主要部分 |
-| 工作区快照 | 文件、Git 状态、环境变更和恢复计划 | 目标态 |
+| 工作区快照 | 文件清单、内容引用、Git 检测、冲突检查和恢复结果 | 工作树已实现主要部分 |
 
 run 冻结的 Agent/Mode/Prompt/Policy/Model/Tool 哈希是不可变配置绑定，不是第四种可回退状态。`RestorePoint` 可以关联上述三类对象，但恢复时必须明确选择恢复哪些维度。MAF checkpoint 不能恢复被覆盖的文件，也不能撤销已经发送的邮件或数据库写入。
 
 ### 12.2 Snapshot Service
 
 `snapshot_curator` 只判断时机并提出请求，确定性的 Snapshot Service 负责创建和恢复：
+
+当前工作树已提供 `IWorkspaceSnapshotService` 与 `WorkspaceSnapshotService`：支持 Git/非 Git 检测、文件清单哈希、ContentStore 内容保存、创建幂等、租户/工作区隔离、恢复冲突检查、显式允许冲突和恢复幂等；恢复会删除捕获范围内快照之后新增的文件。完整 Git diff/restore plan、外部副作用补偿和 `snapshot_curator` 事件驱动调度仍属于后续阶段。
 
 - Git 仓库优先保存 HEAD、index、untracked manifest、diff/blob 和 worktree 标识。
 - 非 Git 目录使用内容寻址的增量文件快照，并设置大小与敏感文件排除策略。
@@ -646,7 +704,7 @@ stateDiagram-v2
 - 运行面：sessions、interactions、runs、controls、events、approvals、context versions 和 snapshots。
 - 观测面：readiness、traces、metrics、evaluations 和 audit export。
 - 所有公开 JSON 使用 `snake_case`、RFC 9457 Problem Details、幂等键和并发 revision。
-- 新客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，再通过持久 run stream 跟随结果；`invoke-stream` 仅作为迁移期兼容入口，不能继续演化出第二套语义。
+- 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，也可使用 `invoke-stream` 完成全双工运行；两者都属于当前 `/api/v1` 契约。后续若合并或调整语义，直接更新 `/api/v1`、测试和本文，不保留旧兼容入口。
 
 ### 14.2 南向接口
 
@@ -656,12 +714,12 @@ stateDiagram-v2
 - **Snapshot Provider**：capture、diff、restore plan、restore、retention。
 - **Identity/Policy Provider**：主体解析、组/角色、属性和外部策略集成。
 
-### 14.3 兼容原则
+### 14.3 API 版本与变更原则
 
-- API 和事件 envelope 版本与实现版本分离。
-- provider 通过 capability negotiation 协商，不按产品名写死。
-- 新事件 kind 必须向前兼容；消费者忽略未知 kind。
-- 删除字段先弃用，至少跨一个次版本保留。
+- 所有 HTTP、OpenAPI、SSE 和 WebSocket 公共接口及事件入口始终固定使用 `/api/v1`；不创建 `/api/v2` 或 `/api/v3`。
+- 不保留历史兼容路由、legacy 别名、迁移入口或弃用周期。破坏性变更直接修改 `/api/v1` 的端点、DTO、事件、测试、客户端生成物和中文文档。
+- provider 可以通过 capability negotiation 描述当前实现能力，但这不是 API 版本协商，也不产生旧契约兼容义务。
+- `AgentVersion` 等领域版本、内部 schema revision 和内容哈希用于冻结与审计，不得被解释为 HTTP API 版本迭代。
 
 ## 15. 安全、可靠性与可观测性
 
@@ -703,14 +761,14 @@ stateDiagram-v2
 | 持久化全双工 run | 已实现 | task planning、动态 worker、meeting 汇总、监督、暂停/恢复/取消、checkpoint 恢复 | 队列超限项尚未持久化 |
 | 正式智能体配置 | 部分实现 | 11 张表、draft/revision、不可变版本、mode/prompt 发布 API | `AgentConfigurationService` 仍是桩；验证逻辑集中于 endpoint |
 | 每智能体模型策略 | 已实现主要部分 | `inherit`、`fixed`、`parent_select`，选择事件可审计 | 能力/评测驱动选择与完整 fallback policy |
-| 工具治理 | 已实现主要部分 | manifest v2 冻结、agent/mode/manifest 交集、单次审批、恢复 | 通用 provider transport、动态 capability grant、ACP 权限桥 |
+| 工具治理 | 已实现主要部分 | manifest v2 冻结、agent/mode/manifest 交集、PDP/租约/委托、单次审批、恢复和拒绝 fail-closed | 通用远程 provider transport、ACP 权限桥 |
 | 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence | `context_compressor` 尚未作为事件驱动角色进入热路径 |
 | 监督 | 部分实现 | `pass/revise/escalate` 质量门 | 不是委托审批代理；尚无 ApprovalDelegation |
 | 演化 | 部分实现 | 候选生成/晋升/拒绝 API 与临时 agent lineage | 正常 run 不会自动观察并生成候选；缺 eval/canary/revoke 闭环 |
 | Git 智能体 | 未实现 | 仅有部分 Git 工具/UI 概念 | `git_steward`、`worker.git` 与变更治理协议 |
-| 工作区快照 | 未实现 | 现有配置/context/checkpoint 不等于文件回退 | Snapshot Provider、restore plan、补偿记录 |
-| 动态权限 | 未实现 | 当前只支持具体工具调用审批 | grant/request/delegation/PDP；ACP 请求当前直接失败 |
-| 独立交付 | 未实现 | Core 可作为 API 项目运行 | 全局不可打包；缺稳定 SDK、CLI、容器和兼容矩阵 |
+| 工作区快照 | 已实现主要部分 | 文件清单/哈希、ContentStore、Git 检测、创建与恢复幂等、冲突检查和租户隔离 | 完整 Git restore plan、外部副作用补偿、快照智能体调度 |
+| 动态权限 | 已实现主要部分 | PermissionRequest、PDP 求交、CapabilityGrant/Delegation/Lease、冻结策略和工具授权闭环 | ACP 请求桥接、远程 provider 契约 |
+| 独立交付 | 工作树升级中 | Contracts、Abstractions、Runtime 可从源码打包，Api 可 `dotnet publish` | 尚未发布包源、稳定 SDK、CLI 和容器 |
 | 四产品解耦 | 部分实现 | 代码目录已分离 | Core 直接托管 TinadecTools；独立 Tool HTTP/WS 服务尚不存在 |
 
 当前热路径主要使用 `meeting`、`task_planner`、动态 worker 与 `supervisor`。`context_compressor`、`capability_advisor/skill_recommender` 和 `evolution` 目前主要是配置声明，不应对外描述为完整自治闭环。
@@ -734,7 +792,7 @@ stateDiagram-v2
 目标：Core 不依赖 TinadecOffice 整体仓库即可被宿主使用。
 
 - 发布 `Contracts`、`Abstractions`、`Runtime` 包和 `Api` 可执行交付物。
-- 明确模块稳定性级别与兼容策略，生成 TypeScript/.NET client。
+- 明确模块稳定性级别和当前 `/api/v1` 契约，生成 TypeScript/.NET client。
 - 将 TinadecToolsProcessManager 降为一个可选 Tool Provider adapter。
 - 提供无 Tool provider 的问答/计划模式和 mock provider 示例。
 - 完成生产身份适配、tenant/workspace 作用域测试和部署文档。
@@ -781,9 +839,9 @@ stateDiagram-v2
 目标：证明各产品可替换和独立演进。
 
 - TinadecTool 提供稳定的 MCP/进程/远程服务契约。
-- TinadecGateway 只依赖公开 Core 契约并支持兼容上游。
+- TinadecGateway 只依赖当前公开 Core 契约并保持无状态代理。
 - TinadecApp 统一桌面/Web 客户端产品命名与连接配置。
-- 建立跨版本兼容矩阵、契约测试套件和独立发布流水线。
+- 建立当前 `/api/v1` 契约测试套件和独立发布流水线；不建立跨版本兼容矩阵。
 
 验收：替换 Tool provider 不改 DmaEA；App 可在直连 Core 与经 Gateway 两种拓扑间切换；任一组件升级失败可单独回滚。
 
@@ -800,12 +858,16 @@ stateDiagram-v2
 - 从 Traycer 学习协议/持久化独立版本、cursor 恢复和角色/权限分离。
 - 从 PlanWeave 学习把任务 DAG、claim、review gate 和反馈回路建模为一等产物。
 - 从 Grok Build 学习 Agent/persona 解耦、子 Agent I/O 契约、组织硬约束和 sandbox/permission 双层防护。
+- 从 Codex 学习审批粒度位图、Forbidden 显式拒绝态、审批记忆化与会话回退的稳定 ID 命名法；LLM 预审只作建议源。
+- 从 Gemini CLI 学习分层策略优先级编码、Confirmation Bus 确认流解耦与 headless fail-closed 降级。
+- 从 better-harness、pi 学习写前交付门禁、diff 分类评审路由和多会话 Git 行为纪律。
+- 从 hermes-agent、TencentDB-Agent-Memory 学习会话级工具表面、溯源信任模型与记忆资产生命周期。
 
 所有吸收项必须通过“是否强化专业化、治理、可恢复或演化”判断；如果只增加 agent 数量或隐藏状态，则不引入。
 
 ## 19. 产品验收总则
 
-TinadecCore 达到 1.0 至少需要满足：
+TinadecCore 首个正式版至少需要满足：
 
 1. Core 可独立安装、嵌入或部署，不要求同时安装 Gateway/App/TinadecTool。
 2. 至少两种不同模型可按 agent 独立绑定，并有确定性 fallback 与审计。
@@ -815,7 +877,7 @@ TinadecCore 达到 1.0 至少需要满足：
 6. 工作区快照的覆盖范围和不可逆动作对用户透明。
 7. 临时 agent 到正式版本必须经过 candidate/eval/review/publish/canary。
 8. SQLite 与 PostgreSQL 通过同一持久化契约测试。
-9. MAF 升级不会改变公开 DTO、事件和配置契约。
+9. MAF 升级时，公开 DTO、事件和配置契约同步更新并经过当前 `/api/v1` 契约测试，不依赖旧版兼容。
 10. DmaEA 相对单 agent 基线在目标 eval 集上证明可量化收益，且成本与延迟在模式预算内。
 
 ## 20. 事实源优先级

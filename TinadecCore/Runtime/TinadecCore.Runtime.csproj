@@ -4,6 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TinadecCore.Runtime</RootNamespace>
     <Description>Runtime: full composition of all TinadecCore modules.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>TinadecCore.Runtime</PackageId>
+    <PackageTags>tinadec;agent;runtime;dmaea;maf</PackageTags>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +27,7 @@
     <ProjectReference Include="..\Skills\TinadecCore.Skills.csproj" />
     <ProjectReference Include="..\LoopGuard\TinadecCore.LoopGuard.csproj" />
     <ProjectReference Include="..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\Tools\TinadecCore.Tools.csproj" />
     <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <ProjectReference Include="..\Storage.Migrations.PostgreSql\TinadecCore.Storage.Migrations.PostgreSql.csproj" />
@@ -29,6 +35,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
   </ItemGroup>
 
 </Project>

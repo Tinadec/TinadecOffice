@@ -1,7 +1,7 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-21
-**Last Updated By:** Codex (closed Mimosa open-high Gateway/Tools execution paths)
+**Last Updated:** 2026-08-22
+**Last Updated By:** Codex (fixed v1 contract and user tool transport boundary)
 **Last Verified Commit:** 1a32062
 **Branch:** DmaEA/MVP
 
@@ -33,11 +33,11 @@ Gateway 自身不执行文件、Git、Shell、PTY 或 MCP 操作，只负责：
 ### 连接拓扑
 ```
 Desktop ──HTTP/SSE/WS──> Gateway ──HTTP/SSE/WS──> Core
-                         Gateway ──HTTP/SSE/WS──> Tool Runtime
+                         Gateway ──HTTP/SSE/WS──> Tool Runtime（用户工具传输面）
                          Core ←──HTTP──→ Tool Runtime
 ```
 
-Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互相通信。
+Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以通过 Gateway 传输到 Tool Runtime；Gateway 不读取审批、不计算参数哈希、不选择工具、不保存状态。智能体的治理执行仍走 Core 的 run-scoped 工具路径。`/api/v1` 是当前唯一公开 HTTP API 前缀；没有 `/v2`、legacy 或兼容别名，破坏性变更直接更新 v1 并同步文档。
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
@@ -47,11 +47,11 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 | Core 代理 | `src/coreClient.ts` | `coreUrl()`，JSON 代理，SSE 代理，流式代理 |
 | Tool Runtime 代理 | `src/toolRuntimeClient.ts` | `toolRuntimeUrl()`，JSON 代理，SSE 代理，流式代理 |
 | 认证中间件 | `src/auth.ts` | API Key / JWT HS256 验签（WebCrypto），租户上下文，反向代理头 |
-| 审批拦截器 | `src/approval.ts` | 人类操作 approval=true 透传，高风险命令二次确认 |
+| 请求上下文 | `src/approval.ts` | 仅规范化/透传用户请求和审批字段；授权事实由 Core 或 Tool Provider 产生 |
 | WebSocket 代理 | `src/websocket.ts` | 路由表，目标 URL 构建，消息透传 |
 | 流式 HTTP 代理 | `src/streaming.ts` | 大文件/日志流式透传 |
 | Model/Agent center BFF | `src/modelAgentCenter.ts` | 无状态聚合视图 |
-| Code tools 规格 | `src/codeTools.ts` | 工具规格定义，审批验证，Tool Runtime 代理执行 |
+| Code tools 规格 | `src/codeTools.ts` | Desktop 工具目录与 Tool Runtime 传输适配 |
 | MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
 | 测试 | `src/coreClient.test.ts`, `src/codeTools.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
 
@@ -85,24 +85,23 @@ Gateway 可直接连接 Core 和 Tool Runtime；Core 与 Tool Runtime 也能互�
 
 ### 全双工运行期代理
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` 原样转发完整 JSON 请求和 Core 的 SSE 状态/主体；Gateway 不解释 `application_mode`、`agent_mode`、`permission_mode`、`target_run_id` 或 `expected_context_revision`。
-- `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 兼容别名的解析属于 Core。
+- `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
 - 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
 
-### 审批流
-1. Core 是 approval 状态、会话归属和命令参数 hash 的权威；Gateway 不信任客户端 `approved`、`source` 或客户端工具 ID。
-2. `/api/v1/runs/{runId}/tools/{toolId}/execute` 是首选的 Core-owned 工具执行路径。
-3. 保留的 `/api/v1/tool-runtime/tools/{toolId}/execute` legacy URL 只接受 `toolId=command_run`，强制 `session_id`、`approval_id`、结构化命令参数，并在转发前读取单条 Core approval，校验 approved、`kind=tool`、工具、会话/run、过期/消费状态和参数 hash。
-4. 通过审批后 Gateway 注入规范化的 `tool_id=command_run` 和 `approved=true`，只转发 Core/租户上下文头及规范化 `params`；任意其他工具 ID、裸命令、跨会话/跨上下文审批均在 Gateway 阻断。
-5. TinadecTools `command_run` 仍允许任意获批 executable，但 Windows 沙箱在宿主入口和 runner 子进程边界重复校验 executable、ArgumentList 参数、工作目录、超时和环境变量，并以沙箱账户 ACL、Job Object 和工作区权限执行。
+### 工具传输与治理边界
+1. Core 是 agent/run 工具治理、权限状态、动作审批、会话归属和审计的权威；Gateway 不信任或解释客户端 `approved`、`source`、参数哈希或工具风险字段。
+2. `/api/v1/runs/{runId}/tools/{toolId}/execute` 是智能体的 Core-owned 工具执行路径，Core 负责冻结配置、PDP、租约、ActionApproval 和 Tool Provider 调用。
+3. `/api/v1/code/tools/{toolId}/execute` 与 `/api/v1/tool-runtime/tools/{toolId}/execute` 是 Desktop 用户直操作的当前 v1 传输入口。Gateway 原样转发请求、状态码和响应，不在本地审批或过滤。
+4. Tool Runtime/Tool Provider 必须继续执行自己的沙箱与协议校验；需要 Core 治理事实的用户动作应由 Core 提供对应的直接工具 API，Gateway 不得自行补做一套授权状态机。
 
 ### Code Tool 规格
-- `/api/v1/code/tools` 发布工具规格（snake_case DTO），Gateway 仅提供 BFF 组合
-- `/api/v1/code/tools/:toolId/execute` 是兼容 Code Tool 代理；需审批的工具先验证 Core 状态，再代理到 Tool Runtime。
-- `/api/v1/tool-runtime/tools/:toolId/execute` 是保留的终端兼容 URL，但只允许经过 Core 审批且参数 hash 匹配的 `command_run`；不得把它当作通用 Tool Runtime passthrough。
-- `executeCodeToolViaRuntime()` 是唯一的执行入口，通过 `toolRuntimeClient.ts` 代理
+- `/api/v1/code/tools` 发布 Desktop 工具目录；目录可由当前 Tool Provider 规格生成，Gateway 不把它作为业务状态保存。
+- `/api/v1/code/tools/:toolId/execute` 与 `/api/v1/tool-runtime/tools/:toolId/execute` 均为当前 v1 的无状态传输入口，工具请求不得在 Gateway 形成授权事实。
+- 这两组入口不是兼容路由：它们是 Desktop/用户显式使用工具的当前传输面。Gateway 必须保留请求体、Tool Provider 状态码、响应体和必要响应头；不要把 provider 错误转换成 Core ProblemDetails，也不要把用户请求改写成 run-scoped agent 调用。
+- 智能体执行必须使用 `/api/v1/runs/{runId}/tools/{toolId}/execute`，不要从用户直操作入口绕过 Core。
 
 ### Model/Agent Center
 - `GET /api/v1/model-center/overview` 和 `GET /api/v1/agent-center/overview` 是无状态 BFF 聚合视图

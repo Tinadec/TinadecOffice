@@ -34,6 +34,13 @@ public sealed class RunRecoveryHostedService : BackgroundService
                 try
                 {
                     if (!Guid.TryParse(run.RunId, out var runId)) continue;
+                    if (run.Status is RunStatus.AwaitingApproval or RunStatus.AwaitingDelegate or RunStatus.AwaitingUser)
+                    {
+                        // Waiting runs are durable user/delegate decision points,
+                        // not orphaned work. Their checkpoint is resumed by the
+                        // decision endpoint after an explicit authorization fact.
+                        continue;
+                    }
                     await _lifecycle.SetRunStatusAsync(run.RunId, "failed", "Recovered after host restart.", stoppingToken).ConfigureAwait(false);
                     await _lifecycle.AppendEventAsync(runId, "run.recovered",
                         new { run_id = run.RunId, reason = "host_restart" },

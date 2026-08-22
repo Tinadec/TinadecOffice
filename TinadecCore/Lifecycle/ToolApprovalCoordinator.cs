@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
@@ -66,7 +67,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
         var now = DateTimeOffset.UtcNow;
         var executionId = Guid.NewGuid();
-        var approvalId = needsApproval ? Guid.NewGuid() : (Guid?)null;
+        var approvalId = needsApproval && !request.DeferApproval ? Guid.NewGuid() : (Guid?)null;
         var execution = new ToolExecutionRecord
         {
             Id = executionId,
@@ -83,7 +84,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Risk = NormalizeRisk(request.Risk),
             MutatesWorkspace = request.MutatesWorkspace,
             RequiresApproval = needsApproval,
-            Status = needsApproval ? "awaiting_approval" : "requested",
+            LeaseUses = request.LeaseUses,
+            Status = needsApproval && !request.DeferApproval ? "awaiting_approval" : "requested",
             ParametersHash = request.ParametersHash,
             ParametersReference = parameters.Value,
             ParametersLength = parameters.Length,
@@ -97,7 +99,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             db.ToolExecutions.Add(execution);
-            if (approvalId is { } pendingApprovalId)
+            if (approvalId is { } pendingApprovalId && !request.DeferApproval)
             {
                 db.ApprovalRequests.Add(new ApprovalRequestRecord
                 {
@@ -114,6 +116,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     ToolId = request.ToolId,
                     Risk = NormalizeRisk(request.Risk),
                     RequestHash = request.ParametersHash,
+                    NonceHash = NewApprovalNonceHash(),
                     ParametersReference = parameters.Value,
                     Summary = Truncate(request.Summary, 4096),
                     Status = "pending",
@@ -147,6 +150,91 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             x.Id == executionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
             cancellationToken).ConfigureAwait(false);
         return row is null ? null : await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ToolExecutionSnapshot> BindAuthorizationAsync(
+        Guid executionId,
+        Guid? permissionRequestId,
+        Guid? authorizationDecisionId,
+        Guid? capabilityLeaseId,
+        string status,
+        CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Tool execution was not found.");
+        if (row.Status is "completed" or "failed" or "timed_out" or "cancelled")
+            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+        row.AuthorizationDecisionId = authorizationDecisionId;
+        row.PermissionRequestId = permissionRequestId;
+        row.CapabilityLeaseId = capabilityLeaseId;
+        row.Status = status;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Tool execution was not found.");
+        if (!row.RequiresApproval || row.ApprovalId is not null)
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+        }
+        row.ApprovalId = Guid.NewGuid();
+        row.Status = "awaiting_approval";
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        db.ApprovalRequests.Add(new ApprovalRequestRecord
+        {
+            Id = row.ApprovalId.Value,
+            TenantId = row.TenantId,
+            WorkspaceId = row.WorkspaceId,
+            ProjectId = row.ProjectId,
+            SessionId = row.SessionId,
+            RunId = row.RunId,
+            TaskId = row.TaskId,
+            AgentInstanceId = row.AgentInstanceId,
+            ExecutionId = row.Id,
+            Kind = "tool",
+            ToolId = row.ToolId,
+            Risk = row.Risk,
+            RequestHash = row.ParametersHash,
+            NonceHash = NewApprovalNonceHash(),
+            ParametersReference = row.ParametersReference,
+            Summary = $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.",
+            Status = "pending",
+            ExpiresAt = row.UpdatedAt.Add(DefaultExpiry),
+            RequestedByPrincipalId = scope.PrincipalId,
+            CreatedAt = row.UpdatedAt,
+            UpdatedAt = row.UpdatedAt
+        });
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException)
+        {
+            // The unique execution_id index makes approval creation a durable
+            // compare-and-set under concurrent resume/recovery hosts. Re-read
+            // the winner rather than surfacing a duplicate approval error.
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            await using var retryDb = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var winner = await retryDb.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.Id == executionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+                cancellationToken).ConfigureAwait(false);
+            if (winner is null) throw;
+            return await ToSnapshotAsync(winner, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, CancellationToken cancellationToken = default)
@@ -221,6 +309,23 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new ToolExecutionStartDecision("not_approved", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
         }
+        if (approval.Kind != "tool"
+            || approval.ExecutionId != execution.Id
+            || approval.RunId != execution.RunId
+            || approval.TaskId != execution.TaskId
+            || approval.AgentInstanceId != execution.AgentInstanceId
+            || !string.Equals(approval.ToolId, execution.ToolId, StringComparison.Ordinal)
+            || !string.Equals(approval.RequestHash, execution.ParametersHash, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(approval.NonceHash))
+        {
+            execution.Status = "failed";
+            execution.ErrorCategory = "approval_binding_mismatch";
+            execution.SafeErrorMessage = "Approval does not match the persisted tool execution.";
+            execution.UpdatedAt = now;
+            execution.CompletedAt = now;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return new ToolExecutionStartDecision("not_approved", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
+        }
         if (approval.Status == "pending") return new ToolExecutionStartDecision("awaiting_approval", snapshot, "Approval is pending.");
         if (approval.Status is "rejected" or "expired" or "cancelled")
         {
@@ -243,16 +348,26 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new ToolExecutionStartDecision("outcome_unknown", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
         }
-        if (approval.Status != "approved") return new ToolExecutionStartDecision("not_approved", snapshot, "Approval is not executable.");
+        if (approval.Status != "approved"
+            || !string.Equals(approval.Decision, "approved", StringComparison.OrdinalIgnoreCase))
+            return new ToolExecutionStartDecision("not_approved", snapshot, "Approval is not executable.");
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var consumed = await db.ApprovalRequests
             .Where(x => x.Id == approvalId
                 && x.TenantId == scope.TenantId
                 && x.WorkspaceId == scope.WorkspaceId
+                && x.Kind == "tool"
+                && x.ExecutionId == execution.Id
+                && x.RunId == execution.RunId
+                && x.TaskId == execution.TaskId
+                && x.AgentInstanceId == execution.AgentInstanceId
+                && x.ToolId == execution.ToolId
                 && x.Status == "approved"
+                && x.Decision == "approved"
                 && x.ConsumedByExecutionId == null
-                && x.RequestHash == execution.ParametersHash)
+                && x.RequestHash == execution.ParametersHash
+                && !string.IsNullOrWhiteSpace(x.NonceHash))
             .ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.Status, "consumed")
                 .SetProperty(x => x.ConsumedByExecutionId, executionId)
@@ -365,6 +480,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Risk = source.Risk,
             MutatesWorkspace = source.MutatesWorkspace,
             RequiresApproval = needsApproval,
+            LeaseUses = source.LeaseUses,
             Status = needsApproval ? "awaiting_approval" : "requested",
             ParametersHash = source.ParametersHash,
             ParametersReference = source.ParametersReference,
@@ -392,6 +508,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 ToolId = source.ToolId,
                 Risk = source.Risk,
                 RequestHash = source.ParametersHash,
+                NonceHash = NewApprovalNonceHash(),
                 ParametersReference = source.ParametersReference,
                 Summary = $"Retry for tool '{source.ToolId}' after unknown outcome from execution {source.Id}.",
                 Status = "pending",
@@ -460,6 +577,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ToolId = toolId,
             Risk = "elevated",
             RequestHash = parametersHash,
+            NonceHash = NewApprovalNonceHash(),
             ParametersReference = string.Empty,
             Summary = Truncate(summary, 4096),
             Status = "pending",
@@ -476,6 +594,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     public async Task<bool> TryConsumeApprovalAsync(Guid approvalId, string executionId, string expectedRequestHash, CancellationToken cancellationToken = default)
     {
         if (!Guid.TryParse(executionId, out var executionGuid)) return false;
+        if (string.IsNullOrWhiteSpace(expectedRequestHash)) return false;
+        expectedRequestHash = expectedRequestHash.Trim().ToLowerInvariant();
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -487,8 +607,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             && x.TenantId == scope.TenantId
             && x.WorkspaceId == scope.WorkspaceId
             && x.Status == "approved"
+            && x.Decision == "approved"
             && x.ConsumedByExecutionId == null
-            && x.RequestHash == expectedRequestHash, cancellationToken).ConfigureAwait(false);
+            && x.RequestHash == expectedRequestHash
+            && (x.ExecutionId == null || x.ExecutionId == executionGuid)
+            && !string.IsNullOrWhiteSpace(x.NonceHash), cancellationToken).ConfigureAwait(false);
         if (candidate is null) return false;
 
         if (candidate.ExpiresAt <= now)
@@ -497,8 +620,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 && x.TenantId == scope.TenantId
                 && x.WorkspaceId == scope.WorkspaceId
                 && x.Status == "approved"
+                && x.Decision == "approved"
                 && x.ConsumedByExecutionId == null
-                && x.RequestHash == expectedRequestHash)
+                && x.RequestHash == expectedRequestHash
+                && (x.ExecutionId == null || x.ExecutionId == executionGuid)
+                && !string.IsNullOrWhiteSpace(x.NonceHash))
                 .ExecuteUpdateAsync(set => set
                     .SetProperty(x => x.Status, "expired")
                     .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
@@ -509,8 +635,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             && x.TenantId == scope.TenantId
             && x.WorkspaceId == scope.WorkspaceId
             && x.Status == "approved"
+            && x.Decision == "approved"
             && x.ConsumedByExecutionId == null
-            && x.RequestHash == expectedRequestHash)
+            && x.RequestHash == expectedRequestHash
+            && (x.ExecutionId == null || x.ExecutionId == executionGuid)
+            && !string.IsNullOrWhiteSpace(x.NonceHash))
             .ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.Status, "consumed")
                 .SetProperty(x => x.ConsumedByExecutionId, executionGuid)
@@ -526,29 +655,52 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         var scope = _tenant.Current;
         var now = DateTimeOffset.UtcNow;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
             && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Approval was not found.");
         if (row.ExpiresAt <= now && row.Status == "pending")
         {
-            row.Status = "expired";
-            row.UpdatedAt = now;
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            var expired = await db.ApprovalRequests.Where(x => x.Id == approvalId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.Status == "pending")
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.Status, "expired")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            if (expired == 1)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            else
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException("Approval is no longer actionable.");
         }
-        if (row.Status != "pending") throw new InvalidOperationException("Approval is no longer actionable.");
-        row.Status = normalized;
-        row.Decision = normalized;
-        row.DecisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
-        row.DecidedAt = now;
-        row.UpdatedAt = now;
+        if (row.Status != "pending")
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException("Approval is no longer actionable.");
+        }
+        var decisionReason = string.IsNullOrWhiteSpace(reason) ? null : Truncate(reason, 4096);
+        var changed = await db.ApprovalRequests.Where(x => x.Id == approvalId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.Status == "pending")
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Status, normalized)
+                .SetProperty(x => x.Decision, normalized)
+                .SetProperty(x => x.DecisionReason, decisionReason)
+                .SetProperty(x => x.DecidedAt, now)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        if (changed != 1)
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("Approval is no longer actionable.");
+        }
         db.ApprovalDecisions.Add(new ApprovalDecisionRecord
         {
-            Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = row.DecisionReason,
+            Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
             DecidedByPrincipalId = scope.PrincipalId, CreatedAt = now
         });
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return new ToolApprovalDecision(row.Id, row.Status, row.RunId, row.TaskId, row.ExecutionId, now);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new ToolApprovalDecision(row.Id, normalized, row.RunId, row.TaskId, row.ExecutionId, now);
     }
 
     private async Task<ToolExecutionRecord> GetExecutionForWriteAsync(Guid executionId, CancellationToken cancellationToken)
@@ -632,7 +784,13 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     private static ToolExecutionSnapshot ToSnapshot(ToolExecutionRecord row, string parametersJson, string? resultJson) => new(
         row.Id, row.TenantId, row.WorkspaceId, row.ProjectId ?? Guid.Empty, row.SessionId, row.RunId, row.TaskId, row.AgentInstanceId,
         row.ApprovalId, row.ToolId, row.ToolCallKey, row.Risk, row.MutatesWorkspace, row.RequiresApproval, row.Status, parametersJson,
-        row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt);
+        row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt,
+        row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses);
+
+    // Action approvals carry a server-generated, one-time nonce. Only its hash
+    // is persisted and the nonce is never returned through the API surface.
+    private static string NewApprovalNonceHash() =>
+        Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32))).ToLowerInvariant();
 
     private static bool IsExecutionTerminal(string status) => status is "completed" or "failed" or "timed_out" or "cancelled";
 
@@ -645,6 +803,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             throw new ArgumentException("Tool id and parameters hash are required.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.ToolCallKey) || request.ToolCallKey.Trim().Length > 512)
             throw new ArgumentException("tool_call_key is required and must not exceed 512 characters.", nameof(request));
+        if (request.LeaseUses is < 1 or > 32)
+            throw new ArgumentOutOfRangeException(nameof(request), "Lease use count must be between 1 and 32.");
     }
 
     private static string NormalizeRisk(string risk) => risk.Trim().ToLowerInvariant() switch

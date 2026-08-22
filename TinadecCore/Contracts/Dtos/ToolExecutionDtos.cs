@@ -20,6 +20,7 @@ public sealed class ToolWireRequestDto
 
     [JsonPropertyName("params")]
     public JsonElement? Params { get; init; }
+
 }
 
 /// <summary>Wire response a TinadecTools child process returns for one call.</summary>
@@ -112,6 +113,9 @@ public sealed class ToolDispatchRequestDto
 
     [JsonPropertyName("params")]
     public JsonElement? Params { get; init; }
+
+    [JsonIgnore]
+    public int LeaseUses { get; init; } = 1;
 }
 
 /// <summary>
@@ -135,6 +139,12 @@ public sealed class ToolDispatchResultDto
 
     [JsonPropertyName("approval_id")]
     public string? ApprovalId { get; init; }
+
+    [JsonPropertyName("permission_request_id")]
+    public string? PermissionRequestId { get; init; }
+
+    [JsonPropertyName("authorization_decision_id")]
+    public string? AuthorizationDecisionId { get; init; }
 
     [JsonPropertyName("attempt")]
     public int Attempt { get; init; }

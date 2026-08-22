@@ -17,6 +17,11 @@ namespace TinadecCore.Tools;
 /// in-flight calls with a structured process_exit result and are restarted on
 /// the next call.
 /// </summary>
+/// <summary>
+/// Default local-process implementation of <see cref="IToolProvider"/>.
+/// The process-specific compatibility port is implemented as well so existing
+/// embedders can migrate without changing their registrations in one release.
+/// </summary>
 public sealed class TinadecToolsProcessManager : IToolProcessManager, IHostedService, IDisposable
 {
     private const string ManifestToolId = "#manifest";

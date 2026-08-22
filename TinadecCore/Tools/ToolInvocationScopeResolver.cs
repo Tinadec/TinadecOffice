@@ -12,18 +12,21 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
 {
     private readonly ILifecycleManager _lifecycle;
     private readonly ISessionLocator _sessions;
-    private readonly IToolProcessManager _processes;
+    private readonly IToolProvider _provider;
+    private readonly ITenantContextAccessor _tenant;
     private readonly IAgentToolAuthorization? _agents;
 
     public ToolInvocationScopeResolver(
         ILifecycleManager lifecycle,
         ISessionLocator sessions,
-        IToolProcessManager processes,
+        IToolProvider provider,
+        ITenantContextAccessor tenant,
         IServiceProvider services)
     {
         _lifecycle = lifecycle;
         _sessions = sessions;
-        _processes = processes;
+        _provider = provider;
+        _tenant = tenant;
         _agents = services.GetService(typeof(IAgentToolAuthorization)) as IAgentToolAuthorization;
     }
 
@@ -80,7 +83,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new InvalidOperationException("The run does not contain a valid frozen TinadecTools v2 manifest.");
         }
 
-        var liveManifest = await _processes.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+        var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
         if (liveManifest.ProtocolVersion != 2
             || !string.Equals(liveManifest.ManifestHash, frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(ToolManifestHasher.Compute(liveManifest.Tools), frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
@@ -100,6 +103,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         return new ToolInvocationScope(
             tenantId,
             workspaceId,
+            _tenant.Current.PrincipalId,
             project.ProjectId,
             sessionId,
             request.RunId,

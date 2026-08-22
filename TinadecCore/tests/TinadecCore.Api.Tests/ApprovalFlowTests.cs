@@ -121,6 +121,20 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Decide_ConcurrentRequests_OnlyOneDecisionCommits()
+    {
+        var client = _factory!.CreateClient();
+        var approvalId = await CreateApprovalAsync(client, "{}");
+
+        var responses = await Task.WhenAll(
+            client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" }, Json),
+            client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "rejected" }, Json));
+
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+    }
+
+    [Fact]
     public async Task Decide_InvalidDecision_ReturnsBadRequest()
     {
         var client = _factory!.CreateClient();
@@ -174,6 +188,7 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
 
         var scope = _factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
         var coordinator = _factory.Services.GetRequiredService<IToolExecutionCoordinator>();
+        var approvalCoordinator = _factory.Services.GetRequiredService<IToolApprovalCoordinator>();
         var runId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -209,6 +224,12 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var approvals = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/approvals?run_id={runId}");
         Assert.Single(approvals!);
         Assert.Equal(first.Execution.ApprovalId, approvals![0].GetProperty("id").GetGuid());
+
+        var approvalId = first.Execution.ApprovalId!.Value;
+        await approvalCoordinator.DecideAsync(approvalId, "approved", null);
+        var hash = ToolParametersHash.Compute(parameters);
+        Assert.False(await approvalCoordinator.TryConsumeApprovalAsync(approvalId, Guid.NewGuid().ToString(), hash));
+        Assert.True(await approvalCoordinator.TryConsumeApprovalAsync(approvalId, first.Execution.Id.ToString(), hash));
     }
 
     private async Task<Guid> CreateApprovalAsync(HttpClient client, string rawParameters)

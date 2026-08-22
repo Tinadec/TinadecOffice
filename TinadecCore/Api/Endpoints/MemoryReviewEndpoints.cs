@@ -7,10 +7,11 @@ using TinadecCore.DmaEA;
 namespace TinadecCore.Api.Endpoints;
 
 /// <summary>
-/// Human review endpoints for Core-owned memory and agent candidates. Candidates are
-/// proposals only; promote/reject decisions create immutable promoted versions or
-/// terminal rejections. Memory review and tool approvals are deliberately separate
-/// state machines (never share decision tokens).
+/// Human review endpoints for Core-owned memory and agent candidates. Memory
+/// candidates can be promoted to immutable memory versions; generated agent
+/// candidates are proposals only and remain fail-closed until the staged evolution
+/// pipeline exists. Memory review and tool approvals are deliberately separate state
+/// machines (never share decision tokens).
 /// </summary>
 public static class MemoryReviewEndpoints
 {
@@ -102,6 +103,7 @@ public static class MemoryReviewEndpoints
             var candidate = await instances.DecideCandidateAsync(candidateId, decision, request?.Reason, ct);
             return Results.Ok(ToAgentCandidate(candidate));
         }
+        catch (AgentCandidatePipelineRequiredException ex) { return Results.Conflict(new { code = "candidate_pipeline_required", candidate_id = ex.CandidateId, message = ex.Message }); }
         catch (KeyNotFoundException) { return Results.NotFound(new { code = "NOT_FOUND", message = "Agent candidate was not found." }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_DECISION", message = ex.Message }); }
         catch (InvalidOperationException ex) { return Results.Conflict(new { code = "ALREADY_DECIDED", message = ex.Message }); }

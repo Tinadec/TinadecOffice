@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { app } from './index.js';
-import { commandParametersHash } from './codeTools.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -72,6 +71,96 @@ test('full-duplex runtime routes preserve Core paths, query names, and command b
   assert.deepEqual(JSON.parse(requests[9]!.body ?? ''), { reason: 'insufficient evidence' });
 });
 
+test('workspace governance routes stay stateless Core proxies and preserve If-Match/ETag', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined; headers: Headers }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      headers: new Headers(init?.headers),
+    });
+    return new Response(JSON.stringify({ proxied: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', etag: '"7"' },
+    });
+  }) as typeof fetch;
+
+  const headers = { 'content-type': 'application/json', 'if-match': '"6"' };
+  const calls = [
+    new Request('http://gateway.local/api/v1/projects/project-1/snapshots', { method: 'POST', headers, body: JSON.stringify({ idempotency_key: 'snap-1' }) }),
+    new Request('http://gateway.local/api/v1/projects/project-1/snapshots'),
+    new Request('http://gateway.local/api/v1/workspace-snapshots/snapshot-1'),
+    new Request('http://gateway.local/api/v1/workspace-snapshots/snapshot-1/restore', { method: 'POST', headers, body: JSON.stringify({ allow_conflicts: true }) }),
+    new Request('http://gateway.local/api/v1/workspace-defaults'),
+    new Request('http://gateway.local/api/v1/workspace-defaults/draft', { method: 'PUT', headers, body: JSON.stringify({ default_agent_mode_id: 'mode-1' }) }),
+    new Request('http://gateway.local/api/v1/workspace-defaults/publish', { method: 'POST', headers }),
+    new Request('http://gateway.local/api/v1/workspace-defaults/archive', { method: 'POST', headers }),
+  ];
+
+  const responses: Response[] = [];
+  for (const call of calls) responses.push(await app.handle(call));
+  for (const response of responses) {
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('etag'), '"7"');
+    assert.deepEqual(await response.json(), { proxied: true });
+  }
+
+  assert.deepEqual(requests.map((request) => [request.method, request.url]), [
+    ['POST', 'http://127.0.0.1:48731/api/v1/projects/project-1/snapshots'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/projects/project-1/snapshots'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/workspace-snapshots/snapshot-1'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/workspace-snapshots/snapshot-1/restore'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/workspace-defaults'],
+    ['PUT', 'http://127.0.0.1:48731/api/v1/workspace-defaults/draft'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/workspace-defaults/publish'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/workspace-defaults/archive'],
+  ]);
+  assert.equal(requests[0]!.headers.get('if-match'), '"6"');
+  assert.deepEqual(JSON.parse(requests[5]!.body ?? ''), { default_agent_mode_id: 'mode-1' });
+});
+
+test('governance control routes proxy decisions and grants without local authorization', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(input), method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : undefined });
+    return new Response(JSON.stringify({ proxied: true }), { status: 202, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const calls = [
+    new Request('http://gateway.local/api/v1/governance/permission-requests?status=pending&run_id=run-1'),
+    new Request('http://gateway.local/api/v1/governance/permission-requests/request-1'),
+    new Request('http://gateway.local/api/v1/governance/permission-requests/request-1/decision', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approve: true }) }),
+    new Request('http://gateway.local/api/v1/governance/policy-bundles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'workspace' }) }),
+    new Request('http://gateway.local/api/v1/governance/policy-bundles/bundle-1/versions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules: [] }) }),
+    new Request('http://gateway.local/api/v1/governance/policy-bundles/bundle-1/archive', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'retired' }) }),
+    new Request('http://gateway.local/api/v1/governance/capability-grants', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ capability: 'tool.invoke' }) }),
+    new Request('http://gateway.local/api/v1/governance/capability-grants/grant-1/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'revoked' }) }),
+    new Request('http://gateway.local/api/v1/governance/approval-delegations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ max_risk: 'low' }) }),
+    new Request('http://gateway.local/api/v1/governance/approval-delegations/delegation-1/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'revoked' }) }),
+    new Request('http://gateway.local/api/v1/governance/capability-leases/lease-1/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: 'revoked' }) }),
+  ];
+  for (const call of calls) {
+    const response = await app.handle(call);
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), { proxied: true });
+  }
+  assert.deepEqual(requests.map((request) => [request.method, request.url]), [
+    ['GET', 'http://127.0.0.1:48731/api/v1/governance/permission-requests?status=pending&run_id=run-1'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/governance/permission-requests/request-1'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/permission-requests/request-1/decision'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/policy-bundles'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/policy-bundles/bundle-1/versions'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/policy-bundles/bundle-1/archive'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/capability-grants'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/capability-grants/grant-1/revoke'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/approval-delegations'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/approval-delegations/delegation-1/revoke'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/governance/capability-leases/lease-1/revoke'],
+  ]);
+  assert.deepEqual(JSON.parse(requests[2]!.body ?? ''), { approve: true });
+});
+
 test('invoke-stream preserves the full-duplex request envelope and Core SSE response', { concurrency: false }, async () => {
   let forwarded: { url: string; method: string; body: string | undefined } | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -111,171 +200,63 @@ test('invoke-stream preserves the full-duplex request envelope and Core SSE resp
   });
 });
 
-function commandEnvelope(overrides: Record<string, unknown> = {}) {
-  return {
-    session_id: 'session-1',
-    approval_id: 'approval-1',
-    cwd: 'C:/workspace',
-    arguments: {
-      executable: 'git',
-      arguments: ['status', '--porcelain', 'value with spaces', 'quote"value', 'semi;colon', 'amp&value'],
-      working_directory: 'C:/workspace',
-      timeout_ms: 1000,
-    },
-    ...overrides,
-  };
-}
-
-test('legacy tool runtime rejects arbitrary tool ids before contacting runtime', { concurrency: false }, async () => {
-  let calls = 0;
-  globalThis.fetch = (async () => {
-    calls += 1;
-    return new Response('{}', { status: 500 });
-  }) as typeof fetch;
-
-  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/write_file/execute', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(commandEnvelope()),
-  }));
-
-  assert.equal(response.status, 404);
-  assert.equal(calls, 0);
-});
-
-test('legacy command_run requires structured session, approval, and command parameters', { concurrency: false }, async () => {
-  let calls = 0;
-  globalThis.fetch = (async () => {
-    calls += 1;
-    return new Response('{}', { status: 500 });
-  }) as typeof fetch;
-
-  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ session_id: 'session-1', approval_id: 'approval-1', command: 'git status', approved: true }),
-  }));
-
-  assert.equal(response.status, 400);
-  assert.equal(calls, 0);
-});
-
-test('legacy command_run accepts the Tool Runtime params envelope and still normalizes it', { concurrency: false }, async () => {
-  const envelope = commandEnvelope();
-  const { arguments: commandParameters, ...withoutArguments } = envelope;
-  const body = { ...withoutArguments, params: commandParameters };
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
+test('tool provider execution is a transport-only facade', { concurrency: false }, async () => {
+  let forwarded: { url: string; method: string; body: string | undefined; headers: Headers } | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ url: String(input), init });
-    if (requests.length === 1) {
-      return new Response(JSON.stringify({
-        id: 'approval-1', session_id: 'session-1', kind: 'tool', tool_id: 'command_run', status: 'approved',
-        request_hash: commandParametersHash(commandParameters),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-
-  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }));
-
-  assert.equal(response.status, 200);
-  assert.equal(requests.length, 2);
-  assert.equal(JSON.parse(String(requests[1]!.init?.body)).params.executable, 'git');
-});
-
-test('legacy command_run blocks wrong-session and mismatched command approvals', { concurrency: false }, async () => {
-  const envelope = commandEnvelope();
-  let calls = 0;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    calls += 1;
-    assert.match(String(input), /\/api\/v1\/approvals\/approval-1$/);
-    return new Response(JSON.stringify({
-      id: 'approval-1',
-      session_id: 'other-session',
-      kind: 'tool',
-      tool_id: 'command_run',
-      status: 'approved',
-      request_hash: commandParametersHash(envelope.arguments),
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-
-  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(envelope),
-  }));
-
-  assert.equal(response.status, 403);
-  assert.equal(calls, 1);
-});
-
-test('legacy command_run blocks an approval whose command context hash differs', { concurrency: false }, async () => {
-  const envelope = commandEnvelope();
-  let calls = 0;
-  globalThis.fetch = (async () => {
-    calls += 1;
-    return new Response(JSON.stringify({
-      id: 'approval-1', session_id: 'session-1', kind: 'tool', tool_id: 'command_run', status: 'approved',
-      request_hash: commandParametersHash({ ...envelope.arguments, arguments: ['different-command'] }),
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-
-  const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
-  }));
-
-  assert.equal(response.status, 403);
-  assert.equal(calls, 1);
-});
-
-test('legacy command_run forwards only normalized approved parameters and context headers', { concurrency: false }, async () => {
-  const envelope = commandEnvelope({ tool_id: 'command_run', approved: false, source: 'client', ignored: 'field' });
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ url: String(input), init });
-    if (requests.length === 1) {
-      return new Response(JSON.stringify({
-        id: 'approval-1',
-        session_id: 'session-1',
-        kind: 'tool',
-        tool_id: 'command_run',
-        status: 'approved',
-        request_hash: commandParametersHash(envelope.arguments),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
+    forwarded = { url: String(input), method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : undefined, headers: new Headers(init?.headers) };
     return new Response(JSON.stringify({ ok: true }), { status: 202, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
 
+  const body = { session_id: 'session-1', approval_id: 'approval-1', command: 'git status', approved: false };
   const response = await app.handle(new Request('http://gateway.local/api/v1/tool-runtime/tools/command_run/execute', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-request-id': 'request-1',
-      'x-tenant-id': 'tenant-1',
-      'x-user-id': 'user-1',
-    },
-    body: JSON.stringify(envelope),
+    headers: { 'content-type': 'application/json', 'x-request-id': 'request-1', 'x-user-id': 'user-1' },
+    body: JSON.stringify(body),
   }));
 
   assert.equal(response.status, 202);
-  assert.equal(requests.length, 2);
-  assert.match(requests[0]!.url, /\/api\/v1\/approvals\/approval-1$/);
-  assert.equal(requests[0]!.init?.headers?.['x-request-id'], 'request-1');
-  assert.equal(requests[0]!.init?.headers?.['x-tenant-id'], 'tenant-1');
-  assert.equal(requests[1]!.url, 'http://127.0.0.1:48732/api/v1/tools/command_run/execute');
-  assert.equal(requests[1]!.init?.headers?.['x-user-id'], 'user-1');
-  assert.deepEqual(JSON.parse(String(requests[1]!.init?.body)), {
-    tool_id: 'command_run',
-    session_id: 'session-1',
-    approval_id: 'approval-1',
-    approved: true,
-    params: {
-      executable: 'git',
-      arguments: ['status', '--porcelain', 'value with spaces', 'quote"value', 'semi;colon', 'amp&value'],
-      working_directory: 'C:/workspace',
-      timeout_ms: 1000,
-    },
-  });
+  assert.deepEqual(await response.json(), { ok: true });
+  assert.equal(forwarded?.url, 'http://127.0.0.1:48732/api/v1/tools/command_run/execute');
+  assert.equal(forwarded?.method, 'POST');
+  assert.deepEqual(JSON.parse(forwarded?.body ?? ''), body);
+  assert.equal(forwarded?.headers.get('x-request-id'), 'request-1');
+  assert.equal(forwarded?.headers.get('x-user-id'), 'user-1');
+});
+
+test('code tools remain the current v1 direct user transport and preserve provider errors', { concurrency: false }, async () => {
+  let forwarded: { url: string; method: string; body: string | undefined; headers: Headers } | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    forwarded = {
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      headers: new Headers(init?.headers),
+    };
+    return new Response(JSON.stringify({ code: 'provider_denied', detail: 'Tool provider rejected the user request.' }), {
+      status: 422,
+      headers: { 'content-type': 'application/problem+json', etag: '"provider-4"' },
+    });
+  }) as typeof fetch;
+
+  const body = {
+    cwd: 'C:/workspace',
+    source: 'human',
+    approval: true,
+    arguments: { path: 'README.md' },
+  };
+  const response = await app.handle(new Request('http://gateway.local/api/v1/code/tools/read_file/execute', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-request-id': 'request-direct-1', 'x-tenant-id': 'tenant-1' },
+    body: JSON.stringify(body),
+  }));
+
+  assert.equal(response.status, 422);
+  assert.equal(response.headers.get('content-type'), 'application/problem+json');
+  assert.equal(response.headers.get('etag'), '"provider-4"');
+  assert.deepEqual(await response.json(), { code: 'provider_denied', detail: 'Tool provider rejected the user request.' });
+  assert.equal(forwarded?.url, 'http://127.0.0.1:48732/api/v1/tools/read_file/execute');
+  assert.equal(forwarded?.method, 'POST');
+  assert.deepEqual(JSON.parse(forwarded?.body ?? ''), body);
+  assert.equal(forwarded?.headers.get('x-request-id'), 'request-direct-1');
+  assert.equal(forwarded?.headers.get('x-tenant-id'), 'tenant-1');
 });

@@ -507,6 +507,7 @@ public static class DmaeaEndpoints
                 var created = await instances.SpawnAsync(new AgentSpawnRequest(parentId, goal.GetString()!, success, selectors, modelPurpose, tools, resources, budget, null, role, limits, intent), ct);
                 return Results.Created($"/api/v1/runs/{runId}/agent-lineage/{created.Id}", new { id = created.Id, run_id = created.RunId, intent = intentRaw, layer = created.Layer, role = created.Role, generated = created.Generated, status = created.Status });
             }
+            catch (AgentProfilePromotionDisabledException ex) { return Results.Conflict(new { code = "candidate_pipeline_required", message = ex.Message }); }
             catch (UnauthorizedAccessException ex) { return Results.Json(new { code = "FORBIDDEN_SPAWN", message = ex.Message }, statusCode: 403); }
             catch (InvalidOperationException ex) { return Results.Json(new { code = "SPAWN_LIMIT", message = ex.Message }, statusCode: 409); }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { code = "NOT_FOUND", message = ex.Message }); }

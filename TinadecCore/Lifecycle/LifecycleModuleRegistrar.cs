@@ -19,8 +19,13 @@ public sealed class LifecycleModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<LifecycleDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<StorageDiagnostics>();
         builder.Services.AddSingleton<StorageLifecycleService>();
+        builder.Services.AddSingleton<IWorkspaceSnapshotService, WorkspaceSnapshotService>();
         builder.Services.AddSingleton<IStorageMigrationParticipant>(sp => sp.GetRequiredService<StorageLifecycleService>());
         builder.Services.AddSingleton<ILifecycleManager, LifecycleManager>();
+        // Recover durable runs left without an in-memory owner after a host restart.
+        // Waiting authorization states remain paused; other non-terminal runs are
+        // marked failed with an auditable recovery event.
+        builder.Services.AddHostedService<RunRecoveryHostedService>();
         builder.Services.AddSingleton<ToolApprovalCoordinator>();
         builder.Services.AddSingleton<IToolApprovalCoordinator>(sp => sp.GetRequiredService<ToolApprovalCoordinator>());
         builder.Services.AddSingleton<IToolExecutionCoordinator>(sp => sp.GetRequiredService<ToolApprovalCoordinator>());
@@ -78,7 +83,8 @@ internal sealed class LifecycleManager : ILifecycleManager
             var result = await storage.StartOrGetRunAsync(sessionId, messageId, new RunStartOptions(
                 Guid.TryParse(request.TurnId, out var turnId) ? turnId : null,
                 request.ContextRevision, request.ConfigurationVersion, request.ConfigurationHash,
-                request.ApplicationMode, request.AgentMode, request.PermissionMode, request.RuntimeProfileId), cancellationToken).ConfigureAwait(false);
+                request.ApplicationMode, request.AgentMode, request.PermissionMode, request.RuntimeProfileId,
+                request.InitiatedByPrincipalId), cancellationToken).ConfigureAwait(false);
             return new RunStartResult(result.Run.Id.ToString(), result.Existing);
         }
         var runId = await StartRunAsync(request.SessionId, request.TriggerMessageId, cancellationToken).ConfigureAwait(false);
@@ -302,7 +308,7 @@ internal sealed class LifecycleManager : ILifecycleManager
         SessionId = run.SessionId.ToString(),
         TriggerMessageId = run.TriggerMessageId.ToString(),
         TurnId = run.TurnId?.ToString(),
-        Status = Enum.TryParse<RunStatus>(run.Status, true, out var status) ? status : RunStatus.Planning,
+        Status = ParseRunStatus(run.Status),
         ContextRevision = run.ContextRevision,
         ConfigurationVersion = run.ConfigurationVersion,
         ConfigurationHash = run.ConfigurationHash,
@@ -312,6 +318,7 @@ internal sealed class LifecycleManager : ILifecycleManager
         RuntimeProfileId = run.RuntimeProfileId,
         TenantId = run.TenantId.ToString(),
         WorkspaceId = run.WorkspaceId.ToString(),
+        InitiatedByPrincipalId = run.InitiatedByPrincipalId == Guid.Empty ? null : run.InitiatedByPrincipalId.ToString(),
         CheckpointRevision = run.CheckpointRevision,
         FrozenConfigurationHash = run.FrozenConfigurationHash,
         LeaseOwner = run.LeaseOwner,
@@ -328,4 +335,21 @@ internal sealed class LifecycleManager : ILifecycleManager
         try { return _services.GetService<StorageLifecycleService>(); }
         catch (InvalidOperationException) { return null; }
     }
+
+    private static RunStatus ParseRunStatus(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "planning" => RunStatus.Planning,
+        "understanding" => RunStatus.Understanding,
+        "executing" => RunStatus.Executing,
+        "replanning" => RunStatus.Replanning,
+        "awaiting_approval" => RunStatus.AwaitingApproval,
+        "awaiting_delegate" => RunStatus.AwaitingDelegate,
+        "awaiting_user" => RunStatus.AwaitingUser,
+        "paused" => RunStatus.Paused,
+        "reviewing" => RunStatus.Reviewing,
+        "completed" => RunStatus.Completed,
+        "failed" => RunStatus.Failed,
+        "cancelled" => RunStatus.Cancelled,
+        _ => RunStatus.Planning
+    };
 }

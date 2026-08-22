@@ -163,6 +163,8 @@ public sealed record RunState
     public string RuntimeProfileId { get; init; } = "conversation.auto";
     public string? TenantId { get; init; }
     public string? WorkspaceId { get; init; }
+    /// <summary>Immutable principal that admitted the run. Empty means legacy runs cannot authorize tools.</summary>
+    public string? InitiatedByPrincipalId { get; init; }
     public long CheckpointRevision { get; init; }
     public string? FrozenConfigurationHash { get; init; }
     public string? LeaseOwner { get; init; }
@@ -185,7 +187,8 @@ public sealed record RunStartRequest(
     string ApplicationMode = "conversation",
     string AgentMode = "auto",
     string PermissionMode = "default",
-    string RuntimeProfileId = "conversation.auto");
+    string RuntimeProfileId = "conversation.auto",
+    string? InitiatedByPrincipalId = null);
 
 /// <summary>Values captured when a tool call is dispatched to the tool layer.</summary>
 public sealed record ToolExecutionStart(
@@ -211,6 +214,8 @@ public enum RunStatus
     Executing,
     Replanning,
     AwaitingApproval,
+    AwaitingDelegate,
+    AwaitingUser,
     Paused,
     Reviewing,
     Completed,

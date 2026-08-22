@@ -360,6 +360,13 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 context_revision = appliedRevision,
                 turn_id = turn.Id
             }, "Meeting context patch accepted.", cancellationToken: cancellationToken).ConfigureAwait(false);
+            // A supervision escalation is a user-review gate. Supplying a
+            // correction is an explicit decision to resume and replan, so wake
+            // awaiting_user runs before enqueueing them.
+            if (target.Status == RunStatus.AwaitingUser)
+            {
+                await _lifecycle.SetRunStatusAsync(targetRunId.ToString(), "executing", "User correction accepted; resuming after supervision review.", cancellationToken).ConfigureAwait(false);
+            }
             if (target.Status != RunStatus.Paused)
             {
                 await _engine.EnqueueAsync(targetRunId, cancellationToken).ConfigureAwait(false);

@@ -266,8 +266,28 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var execution = new List<RuntimeAgentRosterEntry>();
             foreach (var node in nodes)
             {
-                var agent = await cfg.AgentDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == node.AgentDefinitionId, ct).ConfigureAwait(false);
+                var agent = await cfg.AgentDefinitions.AsNoTracking().FirstOrDefaultAsync(x =>
+                    x.Id == node.AgentDefinitionId
+                    && x.TenantId == sess.TenantId
+                    && x.WorkspaceId == sess.WorkspaceId, ct).ConfigureAwait(false);
                 if (agent is null || agent.Status == "archived") continue;
+                // A run must bind the immutable published agent version, never the
+                // mutable definition row. Missing versions are rejected below;
+                // virtual identities are only valid for the TOML baseline path.
+                var version = await cfg.AgentVersions.AsNoTracking()
+                    .Where(x => x.AgentDefinitionId == agent.Id
+                        && x.TenantId == sess.TenantId
+                        && x.WorkspaceId == sess.WorkspaceId
+                        && x.Status == "published")
+                    .OrderByDescending(x => x.Version)
+                    .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                if (version is null)
+                {
+                    // Relational agent modes are formal configuration. They must
+                    // bind an immutable published AgentVersion; deterministic
+                    // virtual versions are reserved for the TOML baseline path.
+                    throw new InvalidDataException($"Agent '{agent.Slug}' in mode '{mv.AgentModeId}' has no published AgentVersion.");
+                }
                 var layer = string.IsNullOrWhiteSpace(node.Layer) ? agent.Layer : node.Layer;
                 var entry = new RuntimeAgentRosterEntry(
                     agent.Slug,
@@ -278,7 +298,10 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     DirectUserOutput: string.Equals(agent.Role, "session_coordinator", StringComparison.OrdinalIgnoreCase),
                     ContextAccess: "workspace",
                     ParseTools(agent.ToolScopeJson).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
-                    agent.Slug);
+                    agent.Slug,
+                    agent.Id,
+                    version?.Id,
+                    version?.ContentHash ?? string.Empty);
                 if (string.Equals(layer, "operation", StringComparison.Ordinal)) operation.Add(entry);
                 else if (string.Equals(layer, "execution", StringComparison.Ordinal)) execution.Add(entry);
             }

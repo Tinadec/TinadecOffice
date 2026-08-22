@@ -18,19 +18,22 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     private readonly ISessionLocator _sessions;
     private readonly StoragePaths _paths;
     private readonly StorageDiagnostics _diagnostics;
+    private readonly ITenantContextAccessor _tenant;
 
     public StorageLifecycleService(
         IDbContextFactory<LifecycleDbContext> dbFactory,
         ISessionLocator sessions,
         StoragePaths paths,
         StorageDiagnostics diagnostics,
-        IContentStore contentStore)
+        IContentStore contentStore,
+        ITenantContextAccessor tenant)
     {
         _dbFactory = dbFactory;
         _sessions = sessions;
         _paths = paths;
         _diagnostics = diagnostics;
         _contentStore = contentStore;
+        _tenant = tenant;
     }
 
     private readonly IContentStore _contentStore;
@@ -61,9 +64,30 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         }
 
         var now = DateTimeOffset.UtcNow;
+        var initiatedByPrincipalId = _tenant.Current.PrincipalId;
+        if (!string.IsNullOrWhiteSpace(options?.InitiatedByPrincipalId))
+        {
+            if (!Guid.TryParse(options.InitiatedByPrincipalId, out var requestedPrincipal)
+                || requestedPrincipal == Guid.Empty)
+            {
+                throw new ArgumentException("InitiatedByPrincipalId must be a valid non-empty Guid.", nameof(options));
+            }
+
+            // The request may carry the authenticated principal as an explicit
+            // admission fact, but it must never be allowed to impersonate the
+            // tenant context established by the host.
+            if (requestedPrincipal != _tenant.Current.PrincipalId)
+            {
+                throw new UnauthorizedAccessException("The run initiator does not match the authenticated principal.");
+            }
+
+            initiatedByPrincipalId = requestedPrincipal;
+        }
+
         var run = new RunRecord
         {
             Id = Guid.NewGuid(), TenantId = session.TenantId, WorkspaceId = session.WorkspaceId, SessionId = sessionId, TriggerMessageId = triggerMessageId,
+            InitiatedByPrincipalId = initiatedByPrincipalId,
             TurnId = options?.TurnId, ContextRevision = options?.ContextRevision ?? 0, ConfigurationVersion = options?.ConfigurationVersion ?? 0,
             ConfigurationHash = options?.ConfigurationHash ?? string.Empty, ApplicationMode = options?.ApplicationMode ?? "conversation",
             AgentMode = options?.AgentMode ?? "auto", PermissionMode = options?.PermissionMode ?? "default",
@@ -292,6 +316,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         // filter runs in memory; a stored unix-ms column would keep it in SQL when the runs table grows.
         var runs = await db.Runs.AsNoTracking()
             .Where(x => x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"
+                && x.Status != "awaiting_delegate" && x.Status != "awaiting_user" && x.Status != "awaiting_approval"
                 && (x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         return runs.Where(x => x.CreatedAt <= admissionGrace).OrderBy(x => x.UpdatedAt).ToList();
@@ -757,6 +782,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
         await EnsureRunTableColumnsAsync(db, cancellationToken).ConfigureAwait(false);
+        await EnsureToolExecutionColumnsAsync(db, cancellationToken).ConfigureAwait(false);
     }
 
     // ponytail: SQLite-only additive column alignment for the runtime-owned runs table.
@@ -780,6 +806,39 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 ? "INTEGER NULL"
                 : "TEXT NULL";
             await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"runs\" ADD COLUMN \"{column}\" {type}", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // SQLite migrations are intentionally additive for local databases that may
+    // have been created by an earlier Core build. Keep the durable tool record
+    // readable before a restart even when an older migration history omitted one
+    // of the governance bindings.
+    private static async Task EnsureToolExecutionColumnsAsync(LifecycleDbContext db, CancellationToken cancellationToken)
+    {
+        if (!db.Database.IsSqlite()) return;
+
+        var existing = (await db.Database
+                .SqlQueryRaw<string>("SELECT name FROM pragma_table_info('tool_executions')")
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var required = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["permission_request_id"] = "TEXT NULL",
+            ["authorization_decision_id"] = "TEXT NULL",
+            ["capability_lease_id"] = "TEXT NULL",
+            ["lease_uses"] = "INTEGER NOT NULL DEFAULT 1",
+            ["mutates_workspace"] = "INTEGER NOT NULL DEFAULT 0",
+            ["error_category"] = "TEXT NULL",
+            ["safe_error_message"] = "TEXT NULL"
+        };
+
+        foreach (var (column, definition) in required)
+        {
+            if (existing.Contains(column)) continue;
+            await db.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE \"tool_executions\" ADD COLUMN \"{column}\" {definition}",
+                cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -985,13 +1044,14 @@ public sealed record RunStartOptions(
     string ApplicationMode,
     string AgentMode,
     string PermissionMode,
-    string RuntimeProfileId);
+    string RuntimeProfileId,
+    string? InitiatedByPrincipalId = null);
 
 public static class RunStatusMachine
 {
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
-        "planning", "understanding", "executing", "replanning", "awaiting_approval", "paused", "reviewing", "completed", "failed", "cancelled"
+        "planning", "understanding", "executing", "replanning", "awaiting_approval", "awaiting_delegate", "awaiting_user", "paused", "reviewing", "completed", "failed", "cancelled"
     };
 
     public static bool IsKnown(string status) => Known.Contains(status);
@@ -1006,11 +1066,13 @@ public static class RunStatusMachine
             "failed" => true,
             "planning" => from is "planning",
             "understanding" => from is "planning",
-            "executing" => from is "planning" or "understanding" or "replanning" or "paused" or "awaiting_approval" or "reviewing",
+            "executing" => from is "planning" or "understanding" or "replanning" or "paused" or "awaiting_approval" or "awaiting_delegate" or "awaiting_user" or "reviewing",
             "replanning" => from is "understanding" or "executing" or "awaiting_approval" or "reviewing",
             "awaiting_approval" => from is "understanding" or "executing" or "replanning",
+            "awaiting_delegate" => from is "understanding" or "executing" or "replanning" or "awaiting_approval",
+            "awaiting_user" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "awaiting_delegate" or "reviewing",
             "reviewing" => from is "executing",
-            "paused" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "reviewing",
+            "paused" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "awaiting_delegate" or "awaiting_user" or "reviewing",
             "completed" => from is "executing" or "reviewing",
             _ => false
         };

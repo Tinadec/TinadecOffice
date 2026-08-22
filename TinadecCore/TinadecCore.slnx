@@ -19,6 +19,8 @@
     <Project Path="Skills/TinadecCore.Skills.csproj" />
     <Project Path="LoopGuard/TinadecCore.LoopGuard.csproj" />
     <Project Path="Lifecycle/TinadecCore.Lifecycle.csproj" />
+    <Project Path="Governance/TinadecCore.Governance.csproj" />
+    <Project Path="Tools/TinadecCore.Tools.csproj" />
   </Folder>
   <Folder Name="/src/host/">
     <Project Path="Runtime/TinadecCore.Runtime.csproj" />
@@ -28,5 +30,6 @@
     <Project Path="tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj" />
     <Project Path="tests/TinadecCore.AgentFramework.Tests/TinadecCore.AgentFramework.Tests.csproj" />
     <Project Path="tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj" />
+    <Project Path="tests/TinadecCore.Governance.Tests/TinadecCore.Governance.Tests.csproj" />
   </Folder>
 </Solution>

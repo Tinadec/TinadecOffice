@@ -53,4 +53,7 @@ public sealed record RuntimeAgentRosterEntry(
     bool DirectUserOutput,
     string ContextAccess,
     IReadOnlyList<string> AllowedTools,
-    string PromptProfile);
+    string PromptProfile,
+    Guid? AgentDefinitionId = null,
+    Guid? AgentVersionId = null,
+    string VersionContentHash = "");

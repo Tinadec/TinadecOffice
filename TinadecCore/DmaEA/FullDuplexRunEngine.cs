@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Agents.AI;
@@ -43,6 +42,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         AllowSynchronousContinuations = false
     });
     private readonly ConcurrentDictionary<Guid, byte> _queued = new();
+    // A decision can enqueue a run during the small window in which the prior
+    // owner is unwinding. Keep that wake-up durable until the owner has left the
+    // running set; otherwise the queue item is consumed and silently discarded.
+    private readonly ConcurrentDictionary<Guid, byte> _wakeAfterRun = new();
     private readonly string _ownerId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
     public FullDuplexRunEngine(
@@ -99,7 +102,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Durable full-duplex recovery scan failed.");
+                    TryLogWarning(ex, "Durable full-duplex recovery scan failed.");
                 }
                 nextScan = DateTimeOffset.UtcNow.Add(ScanInterval);
             }
@@ -107,7 +110,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             while (_queue.Reader.TryRead(out var runId))
             {
                 _queued.TryRemove(runId, out _);
-                if (running.ContainsKey(runId)) continue;
+                if (running.ContainsKey(runId))
+                {
+                    _wakeAfterRun.TryAdd(runId, 0);
+                    continue;
+                }
                 // Calling an async method establishes BackgroundService ownership without
                 // using request-bound Task.Run. It starts at its first awaited I/O.
                 running[runId] = ExecuteRunAsync(runId, stoppingToken);
@@ -117,8 +124,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             {
                 try { await running[completed].ConfigureAwait(false); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-                catch (Exception ex) { _logger.LogError(ex, "Durable engine task {RunId} ended unexpectedly.", completed); }
+                catch (Exception ex) { TryLogError(ex, "Durable engine task {RunId} ended unexpectedly.", completed); }
                 running.Remove(completed);
+                if (_wakeAfterRun.TryRemove(completed, out _)
+                    && !stoppingToken.IsCancellationRequested)
+                {
+                    await EnqueueAsync(completed, stoppingToken).ConfigureAwait(false);
+                }
             }
 
             var delay = Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
@@ -138,8 +150,18 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private async Task ExecuteRunAsync(Guid runId, CancellationToken stoppingToken)
     {
-        var lease = await _lifecycle.TryAcquireRunLeaseAsync(runId.ToString(), _ownerId, LeaseDuration, stoppingToken).ConfigureAwait(false);
-        if (!lease.Acquired) return;
+        // A decision endpoint can wake a run while its previous owner is still
+        // completing the final checkpoint/release transaction. Retry briefly so
+        // that hand-off does not rely on the delayed recovery scan (which skips
+        // young admissions by design).
+        RunLease? lease = null;
+        for (var attempt = 0; attempt < 20 && !stoppingToken.IsCancellationRequested; attempt++)
+        {
+            lease = await _lifecycle.TryAcquireRunLeaseAsync(runId.ToString(), _ownerId, LeaseDuration, stoppingToken).ConfigureAwait(false);
+            if (lease.Acquired) break;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken).ConfigureAwait(false);
+        }
+        if (lease is null or { Acquired: false }) return;
 
         try
         {
@@ -187,6 +209,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             var checkpoint = await LoadOrCreateCheckpointAsync(runId, run, sessionId, turnId, trigger, stoppingToken).ConfigureAwait(false);
             if (checkpoint is null) return;
 
+            // A supervision checkpoint is written before its run status. If a host
+            // stops in that small window, repair the status before considering the
+            // phase. Never let a recovered escalation fall through to finalization.
+            if (!IsTerminal(run.Status)
+                && checkpoint.Phase == "awaiting_user"
+                && run.Status is not RunStatus.AwaitingUser and not RunStatus.Executing)
+            {
+                await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review.", stoppingToken).ConfigureAwait(false);
+                return;
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 await HeartbeatAsync(runId, stoppingToken).ConfigureAwait(false);
@@ -196,7 +229,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                     await FinalizeCancellationAsync(runId, checkpoint, stoppingToken).ConfigureAwait(false);
                     return;
                 }
-                if (run.Status == RunStatus.Paused) return;
+                if (run.Status is RunStatus.Paused or RunStatus.AwaitingUser) return;
                 if (IsTerminal(run.Status)) return;
 
                 if (await ApplyPendingContextPatchesAsync(run, checkpoint, stoppingToken).ConfigureAwait(false))
@@ -217,6 +250,20 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                         break;
                     case "responding":
                         checkpoint = await RespondToInteractionAsync(run, checkpoint, stoppingToken).ConfigureAwait(false);
+                        break;
+                    case "awaiting_user":
+                        // A resumed escalation is an explicit user choice to
+                        // continue. Corrections are applied above as context
+                        // patches and move the checkpoint back to planning.
+                        checkpoint.SupervisionDecision = null;
+                        checkpoint.SupervisionReasons = [];
+                        checkpoint.Phase = "finalizing";
+                        await AppendEventAsync(Guid.Parse(run.RunId), "supervision.user_decision", "User chose to continue after supervision escalation.", new
+                        {
+                            run_id = run.RunId,
+                            decision = "continue"
+                        }, stoppingToken).ConfigureAwait(false);
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-continued", stoppingToken).ConfigureAwait(false);
                         break;
                     case "finalizing":
                         await FinalizeAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
@@ -243,7 +290,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
+            // A logging provider failure must not prevent the durable failure
+            // transition below from publishing the terminal stream event.
+            TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
             var checkpoint = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
             if (checkpoint is not null) await FailRunAsync(runId, checkpoint, "runtime", SafeError(ex), CancellationToken.None).ConfigureAwait(false);
@@ -252,8 +301,26 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         finally
         {
             try { await _lifecycle.ReleaseRunLeaseAsync(runId.ToString(), _ownerId, CancellationToken.None).ConfigureAwait(false); }
-            catch (Exception ex) { _logger.LogDebug(ex, "Could not release run lease {RunId}.", runId); }
+            catch (Exception ex) { TryLogDebug(ex, "Could not release run lease {RunId}.", runId); }
         }
+    }
+
+    private void TryLogWarning(Exception exception, string message, params object[] args)
+    {
+        try { _logger.LogWarning(exception, message, args); }
+        catch { /* logging is advisory; durable state remains authoritative */ }
+    }
+
+    private void TryLogError(Exception exception, string message, params object[] args)
+    {
+        try { _logger.LogError(exception, message, args); }
+        catch { /* logging is advisory; durable state remains authoritative */ }
+    }
+
+    private void TryLogDebug(Exception exception, string message, params object[] args)
+    {
+        try { _logger.LogDebug(exception, message, args); }
+        catch { /* logging is advisory; durable state remains authoritative */ }
     }
 
     private async Task<FullDuplexCheckpointV1?> LoadOrCreateCheckpointAsync(
@@ -325,7 +392,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             try
             {
                 var contextForPlanner = CreateRunContext(run, checkpoint);
-                planned = await new PlanningAgent(_chatClients, _logger).PlanAsync(contextForPlanner, [], cancellationToken).ConfigureAwait(false);
+                var planner = new PlanningAgent(_chatClients, _logger);
+                planned = await planner.PlanAsync(contextForPlanner, [], cancellationToken).ConfigureAwait(false);
+                checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 var materialized = ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
                     ? materialized
@@ -432,6 +501,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var contextChanged = await ApplyPendingContextPatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false);
         foreach (var result in results)
         {
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, result.Usage);
             if (!contextChanged)
             {
                 await ApplyTaskResultAsync(runId, checkpoint, result, cancellationToken).ConfigureAwait(false);
@@ -506,17 +576,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             if (!model.IsAvailable || model.Error is not null)
             {
                 var failed = new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = model.Error ?? "Worker model is unavailable.", Evidence = [] };
-                return new TaskExecutionResult(task.TaskId, worker.Id, "failed", failed);
+                return new TaskExecutionResult(task.TaskId, worker.Id, "failed", failed, model.Usage);
             }
             if (model.Calls.Count != 0)
             {
                 var failed = new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "The model requested a tool that was not advertised to this worker.", Evidence = [] };
-                return new TaskExecutionResult(task.TaskId, worker.Id, "failed", failed);
+                return new TaskExecutionResult(task.TaskId, worker.Id, "failed", failed, model.Usage);
             }
             var result = string.IsNullOrWhiteSpace(model.Text)
                 ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [] }
                 : new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "completed", Summary = model.Text, Evidence = [model.Text] };
-            return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result);
+            return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result, model.Usage);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -583,6 +653,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                         AgentInstanceId = worker.Id.ToString(),
                         ToolId = pendingTurn.ToolId,
                         ToolCallKey = toolCallKey,
+                        LeaseUses = Math.Max(1, configuration.Tools.MaxToolRounds - task.ToolRounds + 1),
                         Params = parameters
                     }, cancellationToken).ConfigureAwait(false);
 
@@ -601,11 +672,18 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
                 dispatch = await dispatcher.ResumeAsync(pendingTurn.ExecutionId!, cancellationToken).ConfigureAwait(false);
                 pendingTurn.DispatchStatus = dispatch.Status;
-                if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingResume)
+                if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingResume
+                    or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
                 {
-                    if (dispatch.Status == ToolDispatchStatus.AwaitingApproval)
+                    if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
                     {
-                        await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_approval", dispatch.Message, cancellationToken).ConfigureAwait(false);
+                        var runStatus = dispatch.Status switch
+                        {
+                            ToolDispatchStatus.AwaitingDelegate => "awaiting_delegate",
+                            ToolDispatchStatus.AwaitingUser => "awaiting_user",
+                            _ => "awaiting_approval"
+                        };
+                        await _lifecycle.SetRunStatusAsync(run.RunId, runStatus, dispatch.Message, cancellationToken).ConfigureAwait(false);
                     }
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
                     return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
@@ -636,6 +714,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
 
             var model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, descriptors, cancellationToken).ConfigureAwait(false);
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, model.Usage);
             if (!model.IsAvailable || model.Error is not null)
             {
                 return FailedToolTask(checkpoint, task, worker, "model_unavailable", model.Error ?? "Worker model is unavailable.");
@@ -700,8 +779,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             ?? throw new KeyNotFoundException("Session was not found while resolving worker tools.");
         var project = await sessions.FindProjectAsync(session.ProjectId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Project was not found while resolving worker tools.");
-        var processes = _services.GetRequiredService<IToolProcessManager>();
-        var manifest = await processes.GetManifestAsync(project.RootPath, cancellationToken).ConfigureAwait(false);
+        var provider = _services.GetRequiredService<IToolProvider>();
+        var manifest = await provider.GetManifestAsync(project.RootPath, cancellationToken).ConfigureAwait(false);
         if (manifest.ProtocolVersion < 2) throw new InvalidOperationException("TinadecTools manifest v2 is required for autonomous workers.");
         if (!string.IsNullOrWhiteSpace(configuration.ToolManifestHash)
             && !string.Equals(configuration.ToolManifestHash, manifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
@@ -801,6 +880,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             task.ToolTurns,
             tools,
             assembly.Instructions,
+            configuration.Context.RecentMessageLimit,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -914,9 +994,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             revision_round = checkpoint.SupervisionRound,
             result_count = results.Length
         }, cancellationToken).ConfigureAwait(false);
-        var verdict = configuration.Supervision.RequiredBeforeFinal
-            ? await new SupervisionAgent(_chatClients, _logger).ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, cancellationToken).ConfigureAwait(false)
-            : new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+        SupervisionVerdict verdict;
+        if (configuration.Supervision.RequiredBeforeFinal)
+        {
+            var supervisor = new SupervisionAgent(_chatClients, _logger);
+            verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, cancellationToken).ConfigureAwait(false);
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
+        }
+        else
+        {
+            verdict = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+        }
         checkpoint.SupervisionDecision = verdict.DecictionString();
         checkpoint.SupervisionReasons = verdict.Reasons.ToList();
         await AppendEventAsync(runId, "supervision.completed", $"Supervision decision: {checkpoint.SupervisionDecision}.", new
@@ -926,6 +1014,25 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             reasons = checkpoint.SupervisionReasons,
             revise_task_indexes = verdict.ReviseTaskIndexes
         }, cancellationToken).ConfigureAwait(false);
+
+        if (verdict.Decision == SupervisionDecision.Escalate)
+        {
+            // Escalation is a durable user-review gate, not a successful terminal
+            // result. Persist the phase before changing the aggregate status so a
+            // restart cannot accidentally continue the run without a decision.
+            checkpoint.Phase = "awaiting_user";
+            checkpoint.MeetingResponse = null;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
+            await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "supervision.user_review.requested", "Supervision escalated the run and is waiting for a user decision.", new
+            {
+                run_id = run.RunId,
+                decision = "escalate",
+                reasons = checkpoint.SupervisionReasons,
+                options = new[] { "continue", "correct", "cancel" }
+            }, cancellationToken).ConfigureAwait(false);
+            return checkpoint;
+        }
 
         if (verdict.Decision == SupervisionDecision.Revise && checkpoint.SupervisionRound < configuration.Supervision.MaxRevisionRounds)
         {
@@ -996,9 +1103,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         {
             checkpoint.ContextRevision = patch.AppliedRevision;
             await _lifecycle.AdvanceRunContextRevisionAsync(run.RunId, patch.AppliedRevision, cancellationToken).ConfigureAwait(false);
-            if (patch.Kind == "goal_adjustment")
+            // Any user context supplied while a supervision escalation is
+            // pending is a correction decision. Replan from the new evidence;
+            // do not leave the checkpoint in the continuation-only phase.
+            var supervisionCorrection = checkpoint.Phase == "awaiting_user"
+                && string.Equals(checkpoint.SupervisionDecision, "escalate", StringComparison.OrdinalIgnoreCase);
+            if (patch.Kind == "goal_adjustment" || supervisionCorrection)
             {
-                checkpoint.UserGoal = patch.Content;
+                if (patch.Kind == "goal_adjustment") checkpoint.UserGoal = patch.Content;
                 checkpoint.Phase = "planning";
                 checkpoint.SupervisionDecision = null;
                 checkpoint.SupervisionReasons = [];
@@ -1031,6 +1143,23 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
+
+        // This is a defensive invariant for legacy or partially committed
+        // checkpoints. An unresolved supervision escalation must never produce a
+        // meeting response or terminal success, even if its phase was corrupted
+        // to finalizing during recovery.
+        if (checkpoint.SupervisionDecision == "escalate")
+        {
+            checkpoint.Phase = "awaiting_user";
+            checkpoint.MeetingResponse = null;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
+            if (run.Status != RunStatus.AwaitingUser)
+            {
+                await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(checkpoint.MeetingResponse))
         {
             var context = await BuildContextAsync(run, configuration, "meeting", checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
@@ -1061,12 +1190,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             character_count = meetingResponse.Length,
             supervision_decision = checkpoint.SupervisionDecision
         }, cancellationToken).ConfigureAwait(false);
-        var finish = checkpoint.SupervisionDecision == "escalate" ? "completed_with_escalation" : "completed";
         await _lifecycle.AppendRunStreamAsync(run.RunId, new DurableRunStreamAppend(
             checkpoint.TurnId,
             "done",
             checkpoint.AssistantMessageId,
-            FinishReason: finish,
+            UsageJson: Maf18RuntimeAdapter.SerializeUsage(checkpoint.ModelUsage),
+            FinishReason: "completed",
             IdempotencyKey: $"run:{run.RunId}:turn:{checkpoint.TurnId}:done"), cancellationToken).ConfigureAwait(false);
         await _lifecycle.CompleteRunAsync(run.RunId, cancellationToken).ConfigureAwait(false);
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
@@ -1159,13 +1288,19 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         if (meeting is null)
         {
             meeting = await _instances.CreateRootAsync(new RuntimeAgentSeed(sessionId, runId, meetingDefinition.Id, meetingDefinition.Layer,
-                meetingDefinition.Role, "chat", meetingDefinition.Capabilities, [], ["workspace"], configuration.Context.DefaultTokenBudget), cancellationToken).ConfigureAwait(false);
+                meetingDefinition.Role, "chat", meetingDefinition.Capabilities, [], ["workspace"], configuration.Context.DefaultTokenBudget,
+                AgentDefinitionId: meetingDefinition.AgentDefinitionId,
+                AgentVersionId: meetingDefinition.AgentVersionId,
+                VersionContentHash: meetingDefinition.VersionContentHash), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "agent.created", "Meeting agent created.", new { agent_instance_id = meeting.Id, layer = meeting.Layer, role = meeting.Role }, cancellationToken).ConfigureAwait(false);
         }
         if (planner is null)
         {
             planner = await _instances.CreateRootAsync(new RuntimeAgentSeed(sessionId, runId, plannerDefinition.Id, plannerDefinition.Layer,
-                plannerDefinition.Role, "chat", plannerDefinition.Capabilities, ["*"], ["workspace"], configuration.Context.DefaultTokenBudget), cancellationToken).ConfigureAwait(false);
+                plannerDefinition.Role, "chat", plannerDefinition.Capabilities, ["*"], ["workspace"], configuration.Context.DefaultTokenBudget,
+                AgentDefinitionId: plannerDefinition.AgentDefinitionId,
+                AgentVersionId: plannerDefinition.AgentVersionId,
+                VersionContentHash: plannerDefinition.VersionContentHash), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "agent.created", "Task planning agent created.", new { agent_instance_id = planner.Id, layer = planner.Layer, role = planner.Role }, cancellationToken).ConfigureAwait(false);
         }
         return (meeting, planner);
@@ -1196,18 +1331,19 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var evidence = string.Join("\n", checkpoint.Tasks.Select(item => $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
         var instructions = assembly.Instructions + "\n\nYou are the meeting agent, the only user-facing agent. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}";
-        var agent = new ChatClientAgent(await _chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false), new ChatClientAgentOptions
-        {
-            Name = "meeting",
-            ChatOptions = new ChatOptions { Instructions = instructions }
-        });
-        var response = new StringBuilder();
-        await foreach (var update in agent.RunStreamingAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false))
-        {
-            if (!string.IsNullOrEmpty(update.Text)) response.Append(update.Text);
-        }
-        if (response.Length == 0) throw new InvalidOperationException("Meeting agent returned no output.");
-        return response.ToString();
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await _chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            "operation.meeting",
+            "meeting",
+            "Produces the only formal user-facing response from governed evidence.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunStreamingAsync(prompt, cancellationToken: cancellationToken)
+            .ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+        if (string.IsNullOrWhiteSpace(response.Text)) throw new InvalidOperationException("Meeting agent returned no output.");
+        return response.Text;
     }
 
     private static List<DurableTaskNode> ValidateAndMaterializeGraph(PlannedTask[] tasks, int maxTasks)
@@ -1364,7 +1500,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private sealed class InvalidTaskGraphException(string message) : InvalidOperationException(message);
 
-    private sealed record TaskExecutionResult(Guid TaskId, Guid? WorkerAgentId, string Status, StepResult Result);
+    private sealed record TaskExecutionResult(
+        Guid TaskId,
+        Guid? WorkerAgentId,
+        string Status,
+        StepResult Result,
+        ModelUsage? Usage = null);
     private sealed record ToolTaskExecutionResult(
         FullDuplexCheckpointV1 Checkpoint,
         bool Waiting,
@@ -1392,6 +1533,7 @@ internal sealed class FullDuplexCheckpointV1
     public string? SupervisionDecision { get; set; }
     public List<string> SupervisionReasons { get; set; } = [];
     public string? MeetingResponse { get; set; }
+    public ModelUsage? ModelUsage { get; set; }
     public Guid? AssistantMessageId { get; set; }
 }
 
