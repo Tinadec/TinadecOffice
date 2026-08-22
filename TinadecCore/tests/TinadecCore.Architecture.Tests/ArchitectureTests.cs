@@ -129,6 +129,29 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void MafAssembliesAreReferencedOnlyByTheDmaeaAdapterModule()
+    {
+        var unexpected = AllModuleAssemblies
+            .Where(assembly => assembly != DmaEAAssembly)
+            .SelectMany(assembly => assembly.GetReferencedAssemblies()
+                .Where(reference => reference.Name?.StartsWith("Microsoft.Agents.AI", StringComparison.Ordinal) == true)
+                .Select(reference => $"{assembly.GetName().Name} -> {reference.Name}"))
+            .ToArray();
+
+        Assert.Empty(unexpected);
+
+        var mafReferences = DmaEAAssembly.GetReferencedAssemblies()
+            .Where(reference => reference.Name?.StartsWith("Microsoft.Agents.AI", StringComparison.Ordinal) == true)
+            .ToDictionary(reference => reference.Name!, reference => reference.Version!);
+        Assert.Equal(4, mafReferences.Count);
+        Assert.All(mafReferences.Values, version =>
+        {
+            Assert.Equal(1, version.Major);
+            Assert.Equal(18, version.Minor);
+        });
+    }
+
+    [Fact]
     public void PersistenceDoesNotDependOnBusinessModulesOrApi()
     {
         var forbidden = new[]

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.DmaEA;
 
@@ -25,7 +26,7 @@ public sealed class ExecutionAgent
     /// <summary>Compatibility entry point used by the legacy request-bound runtime.</summary>
     public async Task<StepResult> ExecuteAsync(DmaeaRunContext ctx, AgentDefinition agent, PlannedTask task, Guid taskNodeId, CancellationToken ct)
     {
-        var turn = await GetNextTurnAsync(ctx, agent, task, [], [], null, ct).ConfigureAwait(false);
+        var turn = await GetNextTurnAsync(ctx, agent, task, [], [], null, 24, ct).ConfigureAwait(false);
         if (!turn.IsAvailable)
         {
             return Failed(taskNodeId, agent, turn.Error ?? "Chat route unavailable.");
@@ -52,6 +53,7 @@ public sealed class ExecutionAgent
         IReadOnlyList<WorkerToolTurn> history,
         IReadOnlyList<WorkerToolDescriptor> tools,
         string? assembledInstructions,
+        int maxHistoryMessages,
         CancellationToken ct)
     {
         var resolved = await _chatClients.ResolveChatAsync(agent.ModelRoutePurpose ?? "chat", ct).ConfigureAwait(false);
@@ -78,8 +80,9 @@ public sealed class ExecutionAgent
                 .ToList();
         }
 
+        var conversation = await BuildConversationAsync(ctx.UserGoal, history, maxHistoryMessages, ct).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
-            .GetResponseAsync(BuildConversation(ctx.UserGoal, history), options, ct)
+            .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
         var messages = response.Messages.Count != 0
             ? response.Messages.ToList()
@@ -111,12 +114,16 @@ public sealed class ExecutionAgent
         {
             text = messages.Select(message => message.Text).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         }
-        return new WorkerModelTurn(true, text ?? string.Empty, calls, null);
+        return new WorkerModelTurn(true, text ?? string.Empty, calls, null, Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
     }
 
-    private static List<ChatMessage> BuildConversation(string goal, IReadOnlyList<WorkerToolTurn> history)
+    private static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(
+        string goal,
+        IReadOnlyList<WorkerToolTurn> history,
+        int maxHistoryMessages,
+        CancellationToken cancellationToken)
     {
-        var messages = new List<ChatMessage> { new(ChatRole.User, goal) };
+        var messages = new List<ChatMessage>();
         foreach (var turn in history)
         {
             var assistantContents = new List<AIContent>();
@@ -131,7 +138,11 @@ public sealed class ExecutionAgent
                 ]));
             }
         }
-        return messages;
+        return await Maf18RuntimeAdapter.CompactWorkerConversationAsync(
+            new ChatMessage(ChatRole.User, goal),
+            messages,
+            maxHistoryMessages,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static IDictionary<string, object?> ParseArguments(string json)
@@ -190,7 +201,12 @@ public sealed record WorkerToolDescriptor(string ToolId, string Description, Jso
 public sealed record WorkerToolCall(string CallId, string ToolId, string ArgumentsJson);
 
 /// <summary>One raw worker model response, before any tool side effect is started.</summary>
-public sealed record WorkerModelTurn(bool IsAvailable, string Text, IReadOnlyList<WorkerToolCall> Calls, string? Error)
+public sealed record WorkerModelTurn(
+    bool IsAvailable,
+    string Text,
+    IReadOnlyList<WorkerToolCall> Calls,
+    string? Error,
+    ModelUsage? Usage = null)
 {
     public static WorkerModelTurn Unavailable(string error) => new(false, string.Empty, [], error);
     public static WorkerModelTurn Invalid(string error) => new(true, string.Empty, [], error);

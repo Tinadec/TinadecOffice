@@ -47,7 +47,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
     }
 
     [Fact]
-    public async Task Manifest_Returns200_WithSnakeCaseAndElevenModules()
+    public async Task Manifest_Returns200_WithSnakeCaseAndRegisteredModules()
     {
         var client = _factory.CreateClient();
 
@@ -133,7 +133,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         Assert.Equal("Microsoft Agent Framework", fwName.GetString());
 
         Assert.True(root.TryGetProperty("framework_version", out var fwVersion));
-        Assert.Equal("1.15.0", fwVersion.GetString());
+        Assert.Equal("1.18.0", fwVersion.GetString());
 
         // Status should be "warning" because some modules are not_configured
         Assert.True(root.TryGetProperty("status", out var status));

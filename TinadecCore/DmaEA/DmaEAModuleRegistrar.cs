@@ -17,6 +17,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        Maf18RuntimeAdapter.EnsureCompatible();
         builder.Services.AddDbContextFactory<AgentControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<AgentControlDbContext>>();
         builder.Services.AddSingleton<AgentRuntimeConfigurationStore>();

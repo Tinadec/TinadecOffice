@@ -11,8 +11,4 @@
     <ProjectReference Include="..\Strategies\TinadecCore.Strategies.fsproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Abstractions" />
-  </ItemGroup>
-
 </Project>

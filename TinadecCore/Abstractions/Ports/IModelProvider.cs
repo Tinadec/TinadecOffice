@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 namespace TinadecCore.Abstractions.Ports;
@@ -48,6 +49,18 @@ public sealed class ModelReadiness
     public string? StatusMessage { get; init; }
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
+
+/// <summary>
+/// Provider-neutral token accounting persisted by TinadecCore. Framework-specific
+/// usage objects are normalized into this type inside the MAF adapter.
+/// </summary>
+public sealed record ModelUsage(
+    [property: JsonPropertyName("input_tokens")] long? InputTokens,
+    [property: JsonPropertyName("output_tokens")] long? OutputTokens,
+    [property: JsonPropertyName("total_tokens")] long? TotalTokens,
+    [property: JsonPropertyName("cached_input_tokens")] long? CachedInputTokens = null,
+    [property: JsonPropertyName("reasoning_tokens")] long? ReasoningTokens = null,
+    [property: JsonPropertyName("additional_counts")] IReadOnlyDictionary<string, long>? AdditionalCounts = null);
 
 public sealed class ChatResolution
 {

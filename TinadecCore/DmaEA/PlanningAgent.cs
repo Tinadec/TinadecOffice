@@ -21,6 +21,8 @@ public sealed class PlanningAgent
     private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger? _logger;
 
+    public ModelUsage? LastUsage { get; private set; }
+
     public PlanningAgent(IAgentChatClientFactory chatClients, ILogger? logger = null)
     {
         _chatClients = chatClients;
@@ -34,9 +36,15 @@ public sealed class PlanningAgent
 
         var chatClient = await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false);
         var options = new ChatOptions { Instructions = PlanningInstructions };
-        var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { Name = "planning", ChatOptions = options });
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            chatClient,
+            "operation.task_planner",
+            "task_planner",
+            "Creates the execution task graph without performing side effects.",
+            options);
 
         var response = await agent.RunAsync(ctx.UserGoal, cancellationToken: ct).ConfigureAwait(false);
+        LastUsage = Maf18RuntimeAdapter.NormalizeUsage(response.Usage);
         var tasks = TryParseTasks(response.Text);
         if (tasks.Length == 0)
         {

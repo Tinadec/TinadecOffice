@@ -48,6 +48,8 @@ public sealed class SupervisionAgent
     private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger? _logger;
 
+    public ModelUsage? LastUsage { get; private set; }
+
     public SupervisionAgent(IAgentChatClientFactory chatClients, ILogger? logger = null)
     {
         _chatClients = chatClients;
@@ -68,8 +70,14 @@ public sealed class SupervisionAgent
             var taskLines = string.Join("\n", tasks.Select((task, index) => $"{index}. {task.Title} | criteria: {string.Join("; ", task.SuccessCriteria)}"));
             var evidenceLines = string.Join("\n", results.Select(result => $"task {result.TaskNodeId}: [{result.Status}] {result.Summary}"));
             var prompt = $"用户目标:\n{userGoal}\n\n任务列表:\n{taskLines}\n\n执行证据 (第 {revisionRound} 轮修正后):\n{evidenceLines}";
-            var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { Name = "supervisor", ChatOptions = new ChatOptions { Instructions = SupervisionInstructions } });
+            using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+                chatClient,
+                "operation.supervisor",
+                "supervisor",
+                "Reviews execution evidence and emits a non-authoritative quality verdict.",
+                new ChatOptions { Instructions = SupervisionInstructions });
             var response = await agent.RunAsync(prompt, cancellationToken: ct).ConfigureAwait(false);
+            LastUsage = Maf18RuntimeAdapter.NormalizeUsage(response.Usage);
             var verdict = TryParseVerdict(response.Text);
             if (verdict is null)
             {
