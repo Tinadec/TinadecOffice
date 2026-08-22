@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -32,6 +33,19 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
     {
         _factory?.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        if (Directory.Exists(_root))
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(_root, "*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal);
+                    else if (Directory.Exists(path)) new DirectoryInfo(path).Attributes = FileAttributes.Normal;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
         for (var attempt = 0; attempt < 10 && Directory.Exists(_root); attempt++)
         {
             try
@@ -300,6 +314,80 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var fetched = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{completed.GetProperty("action").GetProperty("id").GetGuid()}");
         Assert.Equal("completed", fetched.GetProperty("status").GetString());
         Assert.StartsWith("user-tool-action:", fetched.GetProperty("audit_reference").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UserToolAction_GitCommit_UsesGitSnapshotAndGovernanceChain()
+    {
+        var client = _factory!.CreateClient();
+        var repositoryPath = Path.Combine(_root, "git-action-repository");
+        Directory.CreateDirectory(repositoryPath);
+        await RunGitAsync(repositoryPath, "init", "--quiet");
+        await RunGitAsync(repositoryPath, "config", "user.email", "tinadec-tests@example.invalid");
+        await RunGitAsync(repositoryPath, "config", "user.name", "Tinadec Tests");
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "governed.txt"), "git governed\n");
+
+        var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new { name = "Git action project", path = repositoryPath }, Json);
+        Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
+        var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+
+        var create = await client.PostAsJsonAsync("/api/v1/user/tool-actions", new
+        {
+            project_id = projectId,
+            tool_id = "git_commit",
+            @params = new
+            {
+                repository_path = repositoryPath,
+                message = "governed git commit",
+                include_all = true,
+                commit_staged_only = false,
+                confirm_commit = "COMMIT"
+            },
+            idempotency_key = "user-action-git-commit-1"
+        }, Json);
+        Assert.Equal(HttpStatusCode.Accepted, create.StatusCode);
+        var requested = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("awaiting_user", requested.GetProperty("status").GetString());
+        var actionId = requested.GetProperty("id").GetGuid();
+        var permissionRequestId = requested.GetProperty("permission_request_id").GetGuid();
+        var snapshotId = requested.GetProperty("snapshot_id").GetGuid();
+        Assert.NotEqual(Guid.Empty, snapshotId);
+
+        var permission = await client.PostAsJsonAsync($"/api/v1/governance/permission-requests/{permissionRequestId}/decision",
+            new { approve = true, reason = "User confirmed the Git commit." }, Json);
+        Assert.Equal(HttpStatusCode.Accepted, permission.StatusCode);
+        var awaitingApproval = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{actionId}");
+        Assert.Equal("awaiting_approval", awaitingApproval.GetProperty("status").GetString());
+        var actionApprovalId = awaitingApproval.GetProperty("action_approval_id").GetGuid();
+
+        var approval = await client.PostAsJsonAsync($"/api/v1/approvals/{actionApprovalId}/decision",
+            new { decision = "approved", reason = "User confirmed the governed commit." }, Json);
+        Assert.Equal(HttpStatusCode.OK, approval.StatusCode);
+        var completed = await approval.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("completed", completed.GetProperty("action").GetProperty("status").GetString());
+        Assert.Equal(40, (await RunGitAsync(repositoryPath, "rev-parse", "HEAD")).Trim().Length);
+        Assert.Equal("", (await RunGitAsync(repositoryPath, "status", "--porcelain")).Trim());
+    }
+
+    private static async Task<string> RunGitAsync(string workingDirectory, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("git was not found.");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)} failed: {stderr}");
+        return stdout;
     }
 
     private sealed class Factory : WebApplicationFactory<Program>
