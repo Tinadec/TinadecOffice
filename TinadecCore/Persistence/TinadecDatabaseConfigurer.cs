@@ -37,7 +37,11 @@ internal sealed class TinadecDatabaseConfigurer : ITinadecDatabaseConfigurer
         switch (_connectionInfo.Provider)
         {
             case DatabaseProvider.PostgreSql:
-                options.UseNpgsql(_connectionInfo.ConnectionString, db => db.MigrationsAssembly("TinadecCore.Storage.Migrations.PostgreSql"));
+                options.UseNpgsql(_connectionInfo.ConnectionString, db =>
+                {
+                    db.MigrationsAssembly("TinadecCore.Storage.Migrations.PostgreSql");
+                    db.UseVector();
+                });
                 break;
             default:
                 options.UseSqlite(_connectionInfo.ConnectionString, db => db.MigrationsAssembly("TinadecCore.Storage.Migrations.Sqlite"));

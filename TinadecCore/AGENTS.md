@@ -106,12 +106,12 @@ Api (Runtime, Web SDK)
 - `AddTinadecPersistence(configuration, contentRootPath)` registers options, connection info, configurer, Core-owned data paths, migration coordination, and readiness probe. It does not own business entities.
 - `MemoryDbContext` owns `projects` and `sessions`; `LifecycleDbContext` owns `runs` and `event_index`. Shared mappings use only provider-neutral CLR types and string-backed state values.
 - SQLite uses `Storage.Migrations.Sqlite` and migrates automatically at local startup. PostgreSQL uses `Storage.Migrations.PostgreSql` and migration startup is opt-in through `TinadecPersistence:ApplyMigrationsOnStartup`.
-- `.github/workflows/core-storage-postgres.yml` provisions PostgreSQL 16 and runs the provider-specific migration/storage contract test.
+- `.github/workflows/core-storage-postgres.yml` provisions `pgvector/pgvector:pg16` and runs the provider-specific migration/storage contract test.
 - Session histories atomically replace files under `data/sessions/`; task snapshots, immutable JSONL events, and artifacts live under `data/tasks/`, `data/events/`, and `data/artifacts/`.
 - `GET /api/v1/readiness` includes `storage: { provider, state, detail }` from `IDatabaseReadiness` (`SELECT 1` probe).
 - `ITenantContextAccessor` is the sole request isolation port. Development uses the configured bootstrap identity; production must replace it with a verified external identity adapter.
 - `IContentStore` uses tenant/workspace-partitioned immutable references. `ISecretStore` exposes secret references only; database rows must not carry secret values.
-- `IProjectVectorDatabase` is Persistence's provider-specific vector storage port. SQLite stores one `sqlite-vec` database per tenant/workspace/project under `data/vectors/`; PostgreSQL vector persistence is reserved until its `pgvector` schema and migration contract are implemented.
+- `IProjectVectorDatabase` is Persistence's provider-specific vector storage port. SQLite stores one `sqlite-vec` database per tenant/workspace/project under `data/vectors/`; PostgreSQL uses `pgvector` via `PostgresProjectVectorDatabase` (Npgsql + `Vector` type, shared `vector_chunks`/`vector_collections` tables, `vector_cosine_ops` ivfflat/hnsw, `Migration 202608260001_VectorStorePgVector`).
 - `VectorStore` is a foundation capability, not a business module. It owns chunking, embedding requests, and semantic retrieval through `IVectorStore`; callers do not pass embeddings or database details.
 - Models, prompts, agents, integrations, policy/approval, run configuration bindings, artifacts, and control-event indexes now have module-owned provider-neutral DbContexts. Their current projections reference immutable versions or ContentStore bodies.
 
