@@ -66,7 +66,7 @@ function normalizeLayer(v: unknown): 'operation' | 'execution' {
   if (s === 'planning') return 'operation'
   return s === 'execution' ? 'execution' : (s as 'operation' | 'execution')
 }
-function agentTypeLabel(t: string) { return t || '—' }
+function agentTypeLabel(t?: string | null) { return t || '—' }
 function readinessVariant(status?: string | null): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'published' || status === 'ready' || status === 'active') return 'default'
   if (status === 'archived' || status === 'disabled') return 'outline'
@@ -130,6 +130,7 @@ function toggleManifestTool(id: string) {
 
 const harnessManifest = ref<HarnessManifestDto | null>(null)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, []))
+const manifestToolIds = computed(() => manifestToolList.value.map((tool) => tool.id))
 
 const filteredAgents = computed(() => {
   const q = agentQuery.value.trim().toLowerCase()
@@ -200,10 +201,10 @@ async function saveAgentDraft() {
     }
     if (editingAgentId.value) {
       const updated = await api.updateAgentDraft(editingAgentId.value, body, agentDraft.value.etag ?? null)
-      notify.success({ title: t('agentCenter.agentForm.saveSuccess'), message: updated.name })
+      notify.success({ title: t('agentCenter.agentForm.saveSuccess'), message: updated.display_name ?? updated.slug ?? updated.name ?? '' })
     } else {
       const created = await api.createAgentDraft(body)
-      notify.success({ title: t('agentCenter.agentForm.saveSuccess'), message: created.name })
+      notify.success({ title: t('agentCenter.agentForm.saveSuccess'), message: created.display_name ?? created.slug ?? created.name ?? '' })
     }
     showAgentForm.value = false
     await loadAgents()
@@ -1047,8 +1048,8 @@ onMounted(() => {
           <div class="provider-detail-head compact">
             <span class="provider-brand-icon"><Bot :size="16" /></span>
             <div class="provider-detail-info">
-              <strong>{{ selectedAgentForInspector.name }}</strong>
-              <span class="provider-detail-driver">{{ normalizeLayer(selectedAgentForInspector.layer) }} · {{ agentTypeLabel(selectedAgentForInspector.agent_type) }}</span>
+              <strong>{{ selectedAgentForInspector.display_name ?? selectedAgentForInspector.slug ?? selectedAgentForInspector.name }}</strong>
+              <span class="provider-detail-driver">{{ normalizeLayer(selectedAgentForInspector.layer) }} · {{ agentTypeLabel(selectedAgentForInspector.role ?? selectedAgentForInspector.agent_type) }}</span>
             </div>
             <UiBadge :variant="readinessVariant(selectedAgentForInspector.status)">{{ selectedAgentForInspector.status ?? 'draft' }}</UiBadge>
           </div>
@@ -1221,8 +1222,8 @@ onMounted(() => {
                 <button class="model-provider-identity" :aria-expanded="expandedAgentId === a.id" @click="selectAgentItem(a.id)">
                   <span class="provider-brand-icon"><Bot :size="16" /></span>
                   <span>
-                    <strong :title="a.name">{{ a.name }}</strong>
-                    <small :title="a.layer">{{ normalizeLayer(a.layer) }} · {{ agentTypeLabel(a.agent_type) }}</small>
+                    <strong :title="a.display_name ?? a.slug ?? a.name">{{ a.display_name ?? a.slug ?? a.name }}</strong>
+                    <small :title="a.layer">{{ normalizeLayer(a.layer) }} · {{ agentTypeLabel(a.role ?? a.agent_type) }}</small>
                   </span>
                 </button>
                 <span class="model-provider-cell">
@@ -1389,6 +1390,9 @@ onMounted(() => {
               </div>
             </div>
           </UiSheet>
+
+          <!-- Git governance roles: git_steward vs worker.git (§4.7) -->
+          <GovernanceRolesPanel :manifest-tool-ids="manifestToolIds" />
         </section>
 
         <!-- 3.2 运行图 (TOPOLOGY) -->

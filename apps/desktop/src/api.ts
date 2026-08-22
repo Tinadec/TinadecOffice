@@ -805,21 +805,44 @@ export interface AgentCandidateDto {
 // ── New config objects (snake_case, If-Match via etag/revision) ──
 export interface AgentDefinitionDto {
   id: string;
-  name: string;
+  /** Legacy flat shape (old AgentProfile projection). */
+  name?: string;
+  /** Versioned AgentDefinition shape (Core ToAgentDto). */
+  slug?: string;
+  display_name?: string;
   layer: 'operation' | 'execution' | string;
-  agent_type: string;
-  description: string;
+  /** Legacy flat shape. */
+  agent_type?: string;
+  /** Versioned shape. */
+  role?: string;
+  description?: string;
   model_route_purpose?: string | null;
-  allowed_tools: string[];
-  capabilities: string[];
+  /** Versioned shape: { kind: inherit|fixed|parent_select, ... }. */
+  model_strategy?: Record<string, unknown> | 'inherit' | 'fixed' | 'parent_select' | string | null;
+  /** Legacy flat shape. */
+  allowed_tools?: string[];
+  /** Versioned shape: string[] or "*". */
+  tool_scope?: string[] | string | null;
+  capabilities?: string[];
   system_prompt?: string | null;
-  enabled: boolean;
+  enabled?: boolean;
   is_built_in?: boolean;
   status?: string;
   revision?: number | null;
+  version?: number | null;
   etag?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface WorkspaceDefaultsDto {
+  id?: string;
+  default_agent_id?: string | null;
+  default_agent_mode_id?: string | null;
+  default_prompt_pipeline_id?: string | null;
+  status?: string;
+  revision?: number | null;
+  etag?: string | null;
 }
 
 export interface AgentVersionDto {
@@ -1612,6 +1635,7 @@ export const api = {
   updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
   publishAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
   archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  getWorkspaceDefaults: () => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults'),
   listAgentVersions: (id: string) => request<AgentVersionDto[]>(`/api/v1/agents/${encodeURIComponent(id)}/versions`),
   getAgentVersion: (id: string, versionId: string) => request<AgentVersionDto>(`/api/v1/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`),
   // agent-modes topology

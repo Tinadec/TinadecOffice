@@ -24,7 +24,7 @@ vi.mock('@/stores/run', () => ({
 
 function mountHeader() {
   return mount(ChatHeader, {
-    props: { currentSession: { id: 's1', title: 'Test session', project_id: 'p1', created_at: '', updated_at: '' } },
+    props: { currentSession: { id: 's1', title: 'Test session', project_id: 'p1', status: 'active', created_at: '', updated_at: '' } },
   })
 }
 
