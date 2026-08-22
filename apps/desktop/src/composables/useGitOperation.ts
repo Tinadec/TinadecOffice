@@ -411,9 +411,38 @@ export function useGitOperation(
     return action
   }
 
+  /** Only `blocked + error_category=snapshot_failed` may offer the one-shot override (docs/app-core-ui.md §6.2). */
+  const snapshotOverrideCandidate = ref<UserToolActionDto | null>(null)
+
+  async function overrideSnapshotAndResume(): Promise<void> {
+    const candidate = snapshotOverrideCandidate.value
+    if (!candidate) return
+    try {
+      const fresh = await api.overrideUserToolActionSnapshot(
+        candidate.id,
+        'User acknowledged non-reversible proceed-without-snapshot.',
+      )
+      userActions.set(fresh.id, fresh)
+      const resumed = await api.resumeUserToolAction(fresh.id)
+      userActions.set(resumed.id, resumed)
+      actionCompleted(resumed)
+      await refreshAll()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
+    } finally {
+      snapshotOverrideCandidate.value = null
+    }
+  }
+
   function actionCompleted(action: UserToolActionDto | null): boolean {
     if (!action) return false
     const message = userToolActionStatusMessage(action, action.tool_id)
+    if (action.status === 'blocked' && action.error_category === 'snapshot_failed') {
+      // Surface the one-time override instead of a generic warning.
+      snapshotOverrideCandidate.value = action
+      notify.warning({ message, source: 'git', persistence: 'sticky' })
+      return false
+    }
     if (action.status !== 'completed') {
       notify.warning({ message, source: 'git' })
       return false
@@ -1145,6 +1174,7 @@ export function useGitOperation(
     fetchApproval,
     mergeApproval,
     rebaseApproval,
+    snapshotOverrideCandidate,
     resolveConflictApproval,
     deleteBranchApproval,
     renameBranchApproval,
@@ -1173,6 +1203,7 @@ export function useGitOperation(
     loadLog,
     loadBranches,
     refreshAll,
+    overrideSnapshotAndResume,
     syncSelection,
     togglePath,
     toggleSelectAll,
