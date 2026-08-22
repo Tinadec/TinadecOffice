@@ -13,6 +13,12 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, createUserToolActionForPath, type ApprovalDto, type CodeToolExecuteResultDto, type UserToolActionDto } from '../api'
 import { useNotifications } from '../composables/useNotifications'
+import {
+  userToolActionIdempotencyKey,
+  userToolActionStatusMessage,
+  userToolActionToApproval,
+  withGitToolConfirmation,
+} from '../userToolAction'
 import CommitMessageEditor from './git/CommitMessageEditor.vue'
 
 const { t } = useI18n()
@@ -158,9 +164,21 @@ async function requestCommitApproval() {
   operationLoading.value = true
   try {
     const paths = selectedCommitPaths.value
-    const action = await createUserToolActionForPath(props.currentProjectPath, 'git_commit', {
-      confirm_commit: true, paths, message: commitMessage.value.trim(),
-    }, `desktop:git_commit:${props.currentProjectPath}:${paths.join('\0')}:${commitMessage.value.trim()}`)
+    const parameters = withGitToolConfirmation('git_commit', {
+      repository_path: props.currentProjectPath,
+      paths,
+      message: commitMessage.value.trim(),
+    })
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:commit-panel:git_commit', {
+      project_path: props.currentProjectPath,
+      parameters,
+    })
+    const action = await createUserToolActionForPath(
+      props.currentProjectPath,
+      'git_commit',
+      parameters,
+      idempotencyKey,
+    )
     commitAction.value = action
     commitApprovalId.value = actionApprovalId(action)
     notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
@@ -179,9 +197,9 @@ async function executeApprovedCommit() {
     const action = await api.resumeUserToolAction(commitAction.value.id)
     commitAction.value = action
     if (action.status !== 'completed') {
-      notify.warning({ message: action.message ?? action.status, source: 'git' })
+      notify.warning({ message: userToolActionStatusMessage(action, 'Git commit'), source: 'git' })
     } else {
-      notify.success({ message: action.message ?? 'Git commit completed.', source: 'git' })
+      notify.success({ message: userToolActionStatusMessage(action, 'Git commit'), source: 'git' })
     }
     commitMessage.value = ''
     commitApprovalId.value = actionApprovalId(action)
@@ -200,9 +218,22 @@ async function requestPushApproval() {
     const branch = pushData.value.branch ?? 'HEAD'
     const upstream = pushData.value.upstream ?? 'origin'
     const ahead = typeof pushData.value.ahead === 'number' ? pushData.value.ahead : 0
-    const action = await createUserToolActionForPath(props.currentProjectPath, 'git_push', {
-      action: 'push', confirm_push: true, set_upstream: noUpstreamOnly.value, remote: 'origin',
-    }, `desktop:git_push:${props.currentProjectPath}:${branch}:${upstream}`)
+    const parameters = withGitToolConfirmation('git_push', {
+      repository_path: props.currentProjectPath,
+      branch,
+      set_upstream: noUpstreamOnly.value,
+      remote: 'origin',
+    })
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:commit-panel:git_push', {
+      project_path: props.currentProjectPath,
+      parameters,
+    })
+    const action = await createUserToolActionForPath(
+      props.currentProjectPath,
+      'git_push',
+      parameters,
+      idempotencyKey,
+    )
     pushAction.value = action
     pushApprovalId.value = actionApprovalId(action)
     notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
@@ -221,9 +252,9 @@ async function executeApprovedPush() {
     const action = await api.resumeUserToolAction(pushAction.value.id)
     pushAction.value = action
     if (action.status !== 'completed') {
-      notify.warning({ message: action.message ?? action.status, source: 'git' })
+      notify.warning({ message: userToolActionStatusMessage(action, 'Git push'), source: 'git' })
     } else {
-      notify.success({ message: action.message ?? 'Git push completed.', source: 'git' })
+      notify.success({ message: userToolActionStatusMessage(action, 'Git push'), source: 'git' })
     }
     pushApprovalId.value = actionApprovalId(action)
     await loadGit()
@@ -248,12 +279,17 @@ function actionApproval(action: UserToolActionDto | null, existing: ApprovalDto[
   const idValue = id ?? actionApprovalId(action)
   const existingApproval = existing.find((a) => a.id === idValue)
   if (existingApproval) return existingApproval
-  const status = action.status === 'completed' ? 'approved' : action.status === 'blocked' || action.status === 'failed' ? 'rejected' : 'pending'
-  return { id: idValue, kind: 'user_tool', summary: action.message ?? action.tool_id, status, governance_status: action.status, created_at: action.created_at, decided_at: action.completed_at ?? null }
+  return userToolActionToApproval(action, action.message ?? action.tool_id, {
+    sessionId: props.selectedSessionId,
+    cwd: props.currentProjectPath,
+  })
 }
 
 function toApproval(action: UserToolActionDto, summary: string): ApprovalDto {
-  return { id: actionApprovalId(action), kind: 'user_tool', summary, status: action.status === 'completed' ? 'approved' : action.status === 'blocked' || action.status === 'failed' ? 'rejected' : 'pending', governance_status: action.status, created_at: action.created_at, decided_at: action.completed_at ?? null }
+  return userToolActionToApproval(action, summary, {
+    sessionId: props.selectedSessionId,
+    cwd: props.currentProjectPath,
+  })
 }
 
 function decideGitApproval(approval: ApprovalDto | null, decision: 'approved' | 'rejected') {

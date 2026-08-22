@@ -7,6 +7,7 @@ import {
   userToolActionStatusMessage,
   userToolActionToApproval,
   userToolApprovalId,
+  withGitToolConfirmation,
 } from './userToolAction'
 import type { UserToolActionDto } from './api'
 
@@ -38,6 +39,18 @@ describe('user tool action projection', () => {
     expect(userToolActionApprovalStatus(action({ status: 'completed' }))).toBe('approved')
     expect(userToolActionApprovalStatus(action({ status: 'blocked' }))).toBe('rejected')
     expect(isUserToolActionTerminal('outcome_unknown')).toBe(true)
+  })
+
+  it('adds only the manifest-declared Git confirmation field', () => {
+    expect(withGitToolConfirmation('git_commit', { message: 'feat: governed commit' })).toEqual({
+      message: 'feat: governed commit',
+      confirm_commit: 'desktop:git_commit',
+    })
+    expect(withGitToolConfirmation('git_branch_create', { branch: 'feature/governance' })).toEqual({
+      branch: 'feature/governance',
+      confirm_branch_create: 'desktop:git_branch_create',
+    })
+    expect(withGitToolConfirmation('git_stage', { paths: ['a.txt'] })).toEqual({ paths: ['a.txt'] })
   })
 
   it('projects context and uses permission kind before action approval exists', () => {

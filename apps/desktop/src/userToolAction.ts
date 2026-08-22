@@ -3,6 +3,22 @@ import type { ApprovalDto, UserToolActionDto } from './api'
 const TERMINAL_STATUSES = new Set(['completed', 'blocked', 'failed', 'outcome_unknown'])
 const DECISION_STATUSES = new Set(['awaiting_delegate', 'awaiting_user', 'awaiting_approval'])
 
+const GIT_CONFIRMATION_FIELDS: Readonly<Record<string, string>> = Object.freeze({
+  git_commit: 'confirm_commit',
+  git_fetch: 'confirm_fetch',
+  git_push: 'confirm_push',
+  git_pull: 'confirm_pull',
+  git_checkout: 'confirm_checkout',
+  git_branch_create: 'confirm_branch_create',
+  git_branch_delete: 'confirm_branch_delete',
+  git_branch_rename: 'confirm_branch_rename',
+  git_merge: 'confirm_merge',
+  git_rebase: 'confirm_rebase',
+  git_conflict_resolve: 'confirm_resolve',
+  git_worktree_create: 'confirm_worktree_create',
+  git_worktree_remove: 'confirm_worktree_remove',
+})
+
 /**
  * Return the public approval identity for a Core user action.
  *
@@ -75,9 +91,25 @@ export async function userToolActionIdempotencyKey(scope: string, payload: unkno
   return `${scope}:${digest ?? fallbackHash(canonical)}`.slice(0, 256)
 }
 
+/**
+ * Add the explicit user-intent field published by the TinadecTools Git
+ * manifest. The value is not an authorization fact: Core still owns the
+ * PermissionRequest, CapabilityLease, and ActionApproval state machines.
+ */
+export function withGitToolConfirmation(
+  toolId: string,
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const field = GIT_CONFIRMATION_FIELDS[toolId]
+  return field
+    ? { ...parameters, [field]: `desktop:${toolId}` }
+    : { ...parameters }
+}
+
 export function userToolActionApprovalStatus(action: UserToolActionDto): ApprovalDto['status'] {
   if (action.status === 'completed') return 'approved'
   if (isUserToolActionTerminal(action.status)) return 'rejected'
+  if (!userToolActionNeedsDecision(action.status)) return action.status
   return 'pending'
 }
 
