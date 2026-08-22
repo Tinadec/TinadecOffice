@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-22
-**Last Updated By:** Codex (Core UserToolAction Git write path and governance UI contract)
-**Last Verified Commit:** 7d19eef
+**Last Updated:** 2026-08-23
+**Last Updated By:** opencode (D0 baseline repair: Pinia store facts, stale nested Vue copies, CSS contract fixes, NotificationIslandHost test skip)
+**Last Verified Commit:** 62a2d98
 **Branch:** DmaEA/MVP
 
 ## OVERVIEW
@@ -63,7 +63,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 - Main and Debug Studio windows use `titleBarStyle: 'hidden'` without `titleBarOverlay`, preserving the custom controls while leaving the native frame available for Windows DWM corners and shadows. Detached panels remain frameless because their drag and window-control hit testing depends on the custom title bar; pet windows remain transparent and frameless.
 - Router uses `createWebHashHistory()`; routes: `/`, `/settings`, `/market`, `/debug-studio`, `/panel` (detached panel window), `/pet` (transparent local pet window).
 - Debug Studio and detached panels load with `?splash=0`: `App.vue` must skip connection polling and route transitions for them, global CSS must reset the main window's root minimum size, and `.main-content` must remain above `.background-layer` and clip page-transition overflow. Failed Debug Studio renderers are destroyed so the next open recreates them.
-- No Pinia/store layer exists; use composables and local refs.
+- Pinia is installed (`src/stores/`: project/session/run/workbench). Prefer a store when state must be shared across components or survive route changes; composables and local refs remain fine for component-local or module-singleton state (e.g. `useTerminal`, controllers).
 - `usePanelStyles()` owns the global panel material under `tinadec-panel-style`. Its normalized `{ effect, opacity, blur }` state uses a detached module-lifetime `useStorage` scope with synchronous writes, so page unmounts, renderer reloads, and Desktop restarts preserve the selected material.
 - Material roots carry `data-panel-effect`; descendants inherit the active `opaque`/`translucent`/`blur` `--surface-*` values and must consume those role-based tokens directly for neutral backgrounds, using scoped Tailwind utility remaps only as a compatibility fallback.
 - Settings content keeps only its navigation and content outer frames. Inside those frames, use `--surface-section`/`--surface-chrome`/`--surface-raised`, spacing, hover, and selected states before neutral decorative borders; preserve functional input/focus boundaries, semantic warning/error/risk accents, and modal elevation. `--material-filter-section` and `--material-filter-raised` are reserved for a few top-level groups, never repeated list items.
@@ -105,7 +105,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 The dev server exposes a live Vue introspection server via `vite-plugin-vue-mcp`. When it is available, use it to inspect the *running* app instead of guessing from source, especially for UI work:
 
 - **Use it when** you need the actual runtime picture: component hierarchy, a component's current state, registered routes, or whether a UI change renders as intended. `get-component-tree` and `get-component-state` answer "what is really on screen" faster than reading source.
-- **Tools**: `get-component-tree` (live hierarchy), `get-component-state` (`componentName`), `edit-component-state` (`componentName`, `path`, `value`, `valueType`), `highlight-component` (`componentName`), `get-router-info` (registered routes), `get-pinia-tree` / `get-pinia-state` (`storeName`). Note this app currently has **no Pinia store layer** — Pinia tools only matter if one is introduced.
+- **Tools**: `get-component-tree` (live hierarchy), `get-component-state` (`componentName`), `edit-component-state` (`componentName`, `path`, `value`, `valueType`), `highlight-component` (`componentName`), `get-router-info` (registered routes), `get-pinia-tree` / `get-pinia-state` (`storeName`). Pinia stores live in `src/stores/` (project/session/run/workbench).
 - **Prerequisites**: dev server running (`npm run dev:desktop`) AND the app loaded in the Electron window (or a browser against the dev server) AND Claude Code connected to `vue-mcp` (root `.mcp.json`, SSE `http://localhost:5173/__mcp/sse`). Tools return empty/stale results if the app page is not open.
 - **Fallback**: if the `vue-mcp` MCP server is not connected, read the source under `src/` instead — never report "no components" as a fact when you simply lack a live connection.
 - **UI automation (chrome-devtools / electron)**: `scripts/dev.mjs` launches dev Electron with `--remote-debugging-port=9222`; `electron-mcp-server` (root `.mcp.json`/`opencode.jsonc`) auto-attaches there for window info, screenshots, UI interaction, eval, and logs. `chrome-devtools-mcp` can attach to that CDP endpoint too (`--browser-url http://127.0.0.1:9222`) or drive the plain Vite renderer at 5173 in Chrome for renderer-only checks.
@@ -120,5 +120,6 @@ npm run rebuild:native -w @tinadec/desktop  # rebuild node-pty for Electron (req
 ```
 
 ## NOTES
+- **Stale nested Vue copies**: root `overrides` pin `vue`/`@vue/compiler-sfc` to `3.6.0-rc.2`, but a bare `npm install` can (re)create physical `apps/desktop/node_modules/vue@3.5.x` + `node_modules/@vue/*` nested copies that shadow the override and break ~25 component tests (`insertBefore` null, boundary/css-contract assertion failures). Fix: delete `apps/desktop/node_modules/vue` and `apps/desktop/node_modules/@vue`, then re-run tests — resolution falls through to the root 3.6.0-rc.2. Do not "fix" the failing tests themselves for this cause.
 - `vite-plugin-vue-mcp` 在 Vite dev server 上暴露 MCP server（SSE，`http://localhost:5173/__mcp/sse`），供 AI 客户端读取组件树/状态/路由/Pinia。项目根 `.mcp.json` 已注册 `vue-mcp` 客户端；需先启动 dev server，再启动 Claude Code（或 `/mcp` 重连）。
 - 该插件 peer 范围只到 Vite 6，故根目录 `.npmrc` 设 `legacy-peer-deps=true`。此模式下 npm 不自动安装 peer 依赖，因此 `react`/`react-dom`/`react-is` 已作为显式依赖保留，勿删除。

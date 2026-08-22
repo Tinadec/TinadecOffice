@@ -2,7 +2,6 @@
   "$schema": "https://ui.shadcn.com/schema.json",
   "style": "base-nova",
   "tailwind": {
-    "config": "tailwind.config.js",
     "css": "src/styles.css",
     "baseColor": "neutral",
     "cssVariables": true,

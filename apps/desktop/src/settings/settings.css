@@ -1495,6 +1495,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color) 72%, transparent);
 
 .tool-discovery-card.risky {
   background: color-mix(in srgb, var(--accent-danger) 6%, var(--surface-raised));
+  box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-danger) 72%, transparent);
 }
 
 .tool-discovery-title {
@@ -4062,7 +4063,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 10px;
   margin-top: 16px;
 }
-.agent-mode-card.disabled {
+.settings-page .agent-mode-card.disabled {
   opacity: 0.55;
   pointer-events: none;
 }
