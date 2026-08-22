@@ -653,14 +653,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List approvals', tags: ['System'] } })
-  .post('/api/v1/approvals', async ({ body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/approvals', { method: 'POST', body: body as Record<string, unknown>, headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/approvals'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Create approval', tags: ['System'] } })
   .post('/api/v1/approvals/:approvalId/decision', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/approvals/${params.approvalId}/decision`, { method: 'POST', body: body as Record<string, unknown>, headers });

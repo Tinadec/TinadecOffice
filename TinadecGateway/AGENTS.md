@@ -47,13 +47,13 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | Core 代理 | `src/coreClient.ts` | `coreUrl()`，JSON 代理，SSE 代理，流式代理 |
 | Tool Runtime 代理 | `src/toolRuntimeClient.ts` | `toolRuntimeUrl()`，JSON 代理，SSE 代理，流式代理 |
 | 认证中间件 | `src/auth.ts` | API Key / JWT HS256 验签（WebCrypto），租户上下文，反向代理头 |
-| 请求上下文 | `src/approval.ts` | 仅规范化/透传用户请求和审批字段；授权事实由 Core 或 Tool Provider 产生 |
+| 请求上下文 | `src/headers.ts`, `src/auth.ts` | 只处理请求 id、认证和租户头；授权事实由 Core 或 Tool Provider 产生 |
 | WebSocket 代理 | `src/websocket.ts` | 路由表，目标 URL 构建，消息透传 |
 | 流式 HTTP 代理 | `src/streaming.ts` | 大文件/日志流式透传 |
 | Model/Agent center BFF | `src/modelAgentCenter.ts` | 无状态聚合视图 |
-| Code tools 规格 | `src/codeTools.ts` | Desktop 工具目录与 Tool Runtime 传输适配 |
+| Code tools 传输 | `src/index.ts`, `src/toolRuntimeClient.ts` | Desktop 工具目录代理 Core，用户执行请求原样转发 Tool Provider |
 | MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
-| 测试 | `src/coreClient.test.ts`, `src/codeTools.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
+| 测试 | `src/coreClient.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
 
 ## CONVENTIONS
 
@@ -99,12 +99,13 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 
 ### Code Tool 规格
 - `/api/v1/code/tools` 是 Core `/api/v1/tools` 的薄代理；目录由 Core/当前 Tool Provider 生成，Gateway 不维护风险、审批或工具状态事实。
+- Gateway 不再包含本地 `codeTools.ts` catalog 或 `approval.ts` 风险/审批辅助；路由层只代理实时清单和执行传输。
 - `/api/v1/code/tools/:toolId/execute` 与 `/api/v1/tool-runtime/tools/:toolId/execute` 均为当前 v1 的无状态传输入口，工具请求不得在 Gateway 形成授权事实。
 - 这两组入口不是兼容路由：它们是 Desktop/用户显式使用工具的当前传输面。Gateway 必须保留请求体、Tool Provider 状态码、响应体和必要响应头；不要把 provider 错误转换成 Core ProblemDetails，也不要把用户请求改写成 run-scoped agent 调用。
 - 智能体执行必须使用 `/api/v1/runs/{runId}/tools/{toolId}/execute`，不要从用户直操作入口绕过 Core。
 
 ### User Tool Actions and Governance
-- `/api/v1/user/tool-actions`（list/create/detail/decision/cancel）是 Core-owned durable action state 的无状态北向代理；Gateway 不生成 nonce、参数哈希、审批决定、租约或 PDP 结果。
+- `/api/v1/user/tool-actions`（list/create/detail/resume/snapshot-override）是 Core-owned durable action state 的无状态北向代理；Gateway 不生成 nonce、参数哈希、审批决定、租约或 PDP 结果。
 - `/api/v1/governance/permission-requests` 及其 detail/decision、grant/delegation/lease 控制路由全部直接代理 Core；Gateway 不持有治理状态或内部 nonce。
 
 ### Model/Agent Center

@@ -579,16 +579,6 @@
         "tags": [
           "System"
         ]
-      },
-      "post": {
-        "operationId": "postApiV1Approvals",
-        "responses": {
-          "200": {}
-        },
-        "summary": "Create approval",
-        "tags": [
-          "System"
-        ]
       }
     },
     "/api/v1/approvals/{approvalId}/decision": {
