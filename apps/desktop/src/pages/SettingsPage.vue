@@ -44,6 +44,9 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AboutSection from '@/settings/sections/AboutSection.vue'
+import GeneralSection from '@/settings/sections/GeneralSection.vue'
+import LanguageSection from '@/settings/sections/LanguageSection.vue'
+import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
 import { useTheme } from '../composables/useTheme'
 import {
   api,
@@ -117,23 +120,8 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
-import {
-  getDispatchPref,
-  setDispatchPref,
-  getModeVersionPref,
-  setModeVersionPref,
-  getMeetingModelPref,
-  setMeetingModelPref,
-  type DispatchPref
-} from '@/lib/dispatchPref'
 
 type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
-
-interface DesktopAppConfig {
-  gateway_url: string
-  source: 'default' | 'user' | 'environment'
-  managed: boolean
-}
 
 interface ProviderForm {
   id: string
@@ -153,7 +141,7 @@ interface ProviderForm {
   enabled: boolean
 }
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const { theme, setTheme, accentColor, setAccentColor, accentColors } = useTheme()
 const { items: notificationItems, notify, banner, confirm, dismiss: dismissNotification, status, dismissByKey } = useNotifications()
@@ -237,44 +225,6 @@ function openExternal(url: string) {
 }
 
 const activeSection = ref<SettingsSection>('general')
-const appConfig = ref<DesktopAppConfig>({ gateway_url: api.gatewayUrl, source: 'default', managed: false })
-const gatewayUrlDraft = ref(api.gatewayUrl)
-const gatewayConfigBusy = ref(false)
-const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
-const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
-const modeVersionDraft = ref<string | null>(getModeVersionPref())
-const meetingModelDraft = ref<string>(getMeetingModelPref())
-const generalTopologies = ref<AgentModeTopologyDto[]>([])
-const generalTopologiesLoading = ref(false)
-
-async function loadGeneralTopologies() {
-  generalTopologiesLoading.value = true
-  try {
-    const list = await api.listAgentModeTopologies()
-    generalTopologies.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
-  } catch {
-    /* ignore offline */
-  } finally {
-    generalTopologiesLoading.value = false
-  }
-}
-
-function onEnterPrefChange(e: Event) {
-  const v = (e.target as HTMLSelectElement).value as DispatchPref
-  enterPrefDraft.value = v
-  setDispatchPref(v)
-}
-
-function onModeVersionChange(e: Event) {
-  const v = (e.target as HTMLSelectElement).value || null
-  modeVersionDraft.value = v
-  setModeVersionPref(v)
-}
-
-function onMeetingModelChange(v: string) {
-  meetingModelDraft.value = v
-  setMeetingModelPref(v)
-}
 const PET_CATALOG_PAGE_SIZE = 48
 const petCatalog = ref<PetdexCatalogPet[]>([])
 const downloadedPets = ref<DownloadedPet[]>([])
@@ -371,7 +321,6 @@ async function loadPets(force = false) {
 
 function selectSettingsSection(section: SettingsSection) {
   activeSection.value = section
-  if (section === 'general' && generalTopologies.value.length === 0) void loadGeneralTopologies()
   if (section === 'pets' && petCatalog.value.length === 0) void loadPets()
 }
 
@@ -552,101 +501,7 @@ const navItems = computed(() => [
   { key: 'about' as const, icon: Info, label: t('settings.about') },
 ])
 
-async function loadAppConfig() {
-  appConfig.value = await window.tinadec.getAppConfig()
-  gatewayUrlDraft.value = appConfig.value.gateway_url
-}
-
-function normalizedGatewayDraft() {
-  const url = new URL(gatewayUrlDraft.value.trim())
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(t('settings.gatewayUrlInvalid'))
-  return url.toString().replace(/\/$/, '')
-}
-
-async function testGatewayConnection() {
-  dismissByKey('gateway-config')
-  gatewayConnectionState.value = 'testing'
-  try {
-    const gatewayUrl = normalizedGatewayDraft()
-    const response = await fetch(`${gatewayUrl}/api/v1/health`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000)
-    })
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
-    gatewayConnectionState.value = 'ready'
-    notify.success({ message: t('settings.gatewayConnectionReady'), source: 'gateway' })
-  } catch (error) {
-    gatewayConnectionState.value = 'failed'
-    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayConnectionFailed') })
-  }
-}
-
-async function saveGatewayConfiguration() {
-  dismissByKey('gateway-config')
-  try {
-    normalizedGatewayDraft()
-  } catch (error) {
-    status.error({ key: 'gateway-config', source: 'gateway', message: error instanceof Error ? error.message : t('settings.gatewayUrlInvalid') })
-    return
-  }
-  gatewayConfigBusy.value = true
-  dismissByKey('gateway-config')
-  try {
-    appConfig.value = await window.tinadec.saveGatewayUrl(gatewayUrlDraft.value)
-    gatewayUrlDraft.value = appConfig.value.gateway_url
-    if (appConfig.value.gateway_url !== api.gatewayUrl) {
-      banner.warning({
-        key: 'gateway-restart',
-        message: t('settings.gatewaySavedRestart'),
-        action: { label: t('settings.restartNow'), run: restartDesktop }
-      })
-    } else {
-      clearGatewayRestartBanner()
-      notify.success(t('settings.gatewaySaved'))
-    }
-  } catch (error) {
-    notify.error(error, { title: t('settings.gatewaySaveFailed') })
-  } finally {
-    gatewayConfigBusy.value = false
-  }
-}
-
-async function resetGatewayConfiguration() {
-  gatewayConfigBusy.value = true
-  dismissByKey('gateway-config')
-  try {
-    appConfig.value = await window.tinadec.resetGatewayUrl()
-    gatewayUrlDraft.value = appConfig.value.gateway_url
-    gatewayConnectionState.value = 'idle'
-    if (appConfig.value.gateway_url !== api.gatewayUrl) {
-      banner.warning({
-        key: 'gateway-restart',
-        message: t('settings.gatewayResetRestart'),
-        action: { label: t('settings.restartNow'), run: restartDesktop }
-      })
-    } else {
-      clearGatewayRestartBanner()
-      notify.success(t('settings.gatewayReset'))
-    }
-  } catch (error) {
-    notify.error(error, { title: t('settings.gatewaySaveFailed') })
-  } finally {
-    gatewayConfigBusy.value = false
-  }
-}
-
-function restartDesktop() {
-  void window.tinadec.restartApp()
-}
-
-function clearGatewayRestartBanner() {
-  const existing = notificationItems.value.find((item) => item.key === 'gateway-restart')
-  if (existing) dismissNotification(existing.id)
-}
-
-void loadAppConfig()
-void loadGeneralTopologies()
-
+// Gateway/dispatch config moved to settings/sections/GeneralSection.vue (D7.2)
 const modelCenterSections = computed(() => [
   { key: 'api' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
   { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
@@ -904,10 +759,6 @@ function modelCatalogModeLabel(mode?: string) {
   return mode === 'configured_only' ? t('settings.configuredOnly') : mode ?? t('settings.configuredOnly')
 }
 
-function setLocale(lang: string) {
-  locale.value = lang
-  localStorage.setItem('tinadec-locale', lang)
-}
 
 function fillForm(provider: ModelProviderInstanceDto) {
   providerForm.id = provider.id
@@ -1915,119 +1766,7 @@ import '../settings/settings.css'
         <Transition name="section-fade" mode="out-in">
         <div :key="activeSection" class="settings-section-wrapper">
         <template v-if="activeSection === 'general'">
-          <div class="general-settings-heading">
-            <div>
-              <h2>{{ t('settings.general') }}</h2>
-              <p>{{ t('settings.generalSubtitle') }}</p>
-            </div>
-          </div>
-
-          <section class="general-settings-group" aria-labelledby="gateway-settings-title">
-            <div class="general-settings-group-heading">
-              <div>
-                <h3 id="gateway-settings-title">{{ t('settings.gatewayConnection') }}</h3>
-                <p>{{ t('settings.gatewayConnectionHint') }}</p>
-              </div>
-              <UiBadge :variant="gatewayConnectionState === 'ready' ? 'secondary' : gatewayConnectionState === 'failed' ? 'destructive' : 'outline'">
-                {{ gatewayConnectionState === 'testing'
-                  ? t('settings.gatewayTesting')
-                  : gatewayConnectionState === 'ready'
-                    ? t('settings.gatewayConnected')
-                    : gatewayConnectionState === 'failed'
-                      ? t('settings.gatewayUnreachable')
-                      : t('settings.gatewayNotTested') }}
-              </UiBadge>
-            </div>
-
-            <div class="gateway-config-field">
-              <UiLabel for="gateway-url">{{ t('settings.gatewayUrl') }}</UiLabel>
-              <UiInput
-                id="gateway-url"
-                v-model="gatewayUrlDraft"
-                type="url"
-                :disabled="appConfig.managed || gatewayConfigBusy"
-                placeholder="https://tinadec.example.com"
-                @keydown.enter="testGatewayConnection"
-              />
-              <div class="gateway-config-meta">
-                <span>{{ t('settings.gatewayConfigSource') }}: {{ t(`settings.gatewaySource_${appConfig.source}`) }}</span>
-                <span>{{ t('settings.gatewayHttpsHint') }}</span>
-              </div>
-            </div>
-
-            <p v-if="appConfig.managed" class="gateway-config-managed">
-              <ShieldCheck :size="14" />
-              {{ t('settings.gatewayManaged') }}
-            </p>
-
-            <div class="gateway-config-actions">
-              <UiButton variant="outline" :disabled="gatewayConnectionState === 'testing'" @click="testGatewayConnection">
-                <RefreshCw :size="14" :class="{ spinning: gatewayConnectionState === 'testing' }" />
-                {{ t('settings.testConnection') }}
-              </UiButton>
-              <UiButton variant="outline" :disabled="appConfig.managed || gatewayConfigBusy" @click="resetGatewayConfiguration">
-                {{ t('settings.restoreDefault') }}
-              </UiButton>
-              <UiButton :disabled="appConfig.managed || gatewayConfigBusy" @click="saveGatewayConfiguration">
-                <Save :size="14" />
-                {{ t('settings.save') }}
-              </UiButton>
-            </div>
-          </section>
-
-          <section class="general-settings-group" aria-labelledby="dispatch-settings-title">
-            <div class="general-settings-group-heading">
-              <div>
-                <h3 id="dispatch-settings-title">{{ t('settings.dispatchBehavior') }}</h3>
-                <p>{{ t('settings.dispatchBehaviorHint') }}</p>
-              </div>
-            </div>
-
-            <div class="gateway-config-field">
-              <UiLabel for="mode-version-pref">{{ t('settings.defaultModeTopology') }}</UiLabel>
-              <select
-                id="mode-version-pref"
-                class="settings-select"
-                :value="modeVersionDraft ?? ''"
-                :disabled="generalTopologiesLoading && generalTopologies.length === 0"
-                @change="onModeVersionChange"
-              >
-                <option value="">{{ t('settings.defaultModeTopologyFollow') }}</option>
-                <option v-for="m in generalTopologies" :key="m.id" :value="m.id">
-                  {{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}
-                </option>
-              </select>
-              <div class="gateway-config-meta">
-                <span>{{ t('settings.defaultModeTopologyHint') }}</span>
-              </div>
-            </div>
-
-            <div class="gateway-config-field">
-              <UiLabel for="meeting-model-pref">{{ t('settings.defaultMeetingModel') }}</UiLabel>
-              <UiInput
-                id="meeting-model-pref"
-                :model-value="meetingModelDraft"
-                :placeholder="t('settings.defaultMeetingModelPlaceholder')"
-                class="settings-input"
-                @update:model-value="onMeetingModelChange"
-              />
-              <div class="gateway-config-meta">
-                <span>{{ t('settings.defaultMeetingModelHint') }}</span>
-              </div>
-            </div>
-
-            <div class="gateway-config-field">
-              <UiLabel for="enter-pref">{{ t('settings.enterKeyBehavior') }}</UiLabel>
-              <select id="enter-pref" class="settings-select" :value="enterPrefDraft" @change="onEnterPrefChange">
-                <option value="queued">{{ t('settings.enterQueued') }}</option>
-                <option value="parallel">{{ t('settings.enterParallel') }}</option>
-                <option value="ask">{{ t('settings.enterAsk') }}</option>
-              </select>
-              <div class="gateway-config-meta">
-                <span>{{ t('settings.enterKeyBehaviorMeta') }}</span>
-              </div>
-            </div>
-          </section>
+          <GeneralSection />
         </template>
 
         <template v-if="activeSection === 'model'">
@@ -4012,28 +3751,11 @@ import '../settings/settings.css'
         </template>
 
         <template v-if="activeSection === 'language'">
-          <h2>{{ t('settings.language') }}</h2>
-          <div class="lang-options">
-            <UiButton
-              variant="outline"
-              :class="['lang-option', { active: locale === 'zh-CN' }]"
-              @click="setLocale('zh-CN')"
-            >
-              中文
-            </UiButton>
-            <UiButton
-              variant="outline"
-              :class="['lang-option', { active: locale === 'en' }]"
-              @click="setLocale('en')"
-            >
-              English
-            </UiButton>
-          </div>
+          <LanguageSection />
         </template>
 
         <template v-if="activeSection === 'apiDocs'">
-          <h2>{{ t('settings.apiDocs') }}</h2>
-          <iframe class="api-docs-frame" :src="api.gatewayUrl + '/docs'" />
+          <ApiDocsSection />
         </template>
 
         <template v-if="activeSection === 'about'">
