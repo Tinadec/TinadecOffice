@@ -200,6 +200,76 @@ test('invoke-stream preserves the full-duplex request envelope and Core SSE resp
   });
 });
 
+test('tool catalog routes are Core-owned and do not use Gateway risk metadata', { concurrency: false }, async () => {
+  let forwarded: { url: string; method: string } | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    forwarded = { url: String(input), method: init?.method ?? 'GET' };
+    return new Response(JSON.stringify([{ id: 'provider.tool', risk: 'provider-owned' }]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/code/tools?domain=code'));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), [{ id: 'provider.tool', risk: 'provider-owned' }]);
+  assert.deepEqual(forwarded, {
+    url: 'http://127.0.0.1:48731/api/v1/tools?domain=code',
+    method: 'GET',
+  });
+});
+
+test('user tool action routes are stateless Core proxies', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+    });
+    return new Response(JSON.stringify({ status: 'awaiting_user' }), {
+      status: 202,
+      headers: { 'content-type': 'application/json', etag: '"action-1"' },
+    });
+  }) as typeof fetch;
+
+  const calls = [
+    new Request('http://gateway.local/api/v1/user/tool-actions?status=awaiting_user'),
+    new Request('http://gateway.local/api/v1/user/tool-actions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tool_id: 'write_file', parameters: { path: 'a.txt' } }),
+    }),
+    new Request('http://gateway.local/api/v1/user/tool-actions/action-1'),
+    new Request('http://gateway.local/api/v1/user/tool-actions/action-1/resume', {
+      method: 'POST',
+    }),
+    new Request('http://gateway.local/api/v1/user/tool-actions/action-1/snapshot-override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'user accepted non-reversible change' }),
+    }),
+  ];
+
+  for (const call of calls) {
+    const response = await app.handle(call);
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), { status: 'awaiting_user' });
+  }
+
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ['GET', 'http://127.0.0.1:48731/api/v1/user/tool-actions?status=awaiting_user'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1/resume'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1/snapshot-override'],
+  ]);
+  assert.deepEqual(JSON.parse(requests[1]!.body ?? ''), { tool_id: 'write_file', parameters: { path: 'a.txt' } });
+  assert.equal(requests[3]!.body, undefined);
+  assert.deepEqual(JSON.parse(requests[4]!.body ?? ''), { reason: 'user accepted non-reversible change' });
+});
+
 test('tool provider execution is a transport-only facade', { concurrency: false }, async () => {
   let forwarded: { url: string; method: string; body: string | undefined; headers: Headers } | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

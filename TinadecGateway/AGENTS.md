@@ -98,10 +98,14 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 4. Tool Runtime/Tool Provider 必须继续执行自己的沙箱与协议校验；需要 Core 治理事实的用户动作应由 Core 提供对应的直接工具 API，Gateway 不得自行补做一套授权状态机。
 
 ### Code Tool 规格
-- `/api/v1/code/tools` 发布 Desktop 工具目录；目录可由当前 Tool Provider 规格生成，Gateway 不把它作为业务状态保存。
+- `/api/v1/code/tools` 是 Core `/api/v1/tools` 的薄代理；目录由 Core/当前 Tool Provider 生成，Gateway 不维护风险、审批或工具状态事实。
 - `/api/v1/code/tools/:toolId/execute` 与 `/api/v1/tool-runtime/tools/:toolId/execute` 均为当前 v1 的无状态传输入口，工具请求不得在 Gateway 形成授权事实。
 - 这两组入口不是兼容路由：它们是 Desktop/用户显式使用工具的当前传输面。Gateway 必须保留请求体、Tool Provider 状态码、响应体和必要响应头；不要把 provider 错误转换成 Core ProblemDetails，也不要把用户请求改写成 run-scoped agent 调用。
 - 智能体执行必须使用 `/api/v1/runs/{runId}/tools/{toolId}/execute`，不要从用户直操作入口绕过 Core。
+
+### User Tool Actions and Governance
+- `/api/v1/user/tool-actions`（list/create/detail/decision/cancel）是 Core-owned durable action state 的无状态北向代理；Gateway 不生成 nonce、参数哈希、审批决定、租约或 PDP 结果。
+- `/api/v1/governance/permission-requests` 及其 detail/decision、grant/delegation/lease 控制路由全部直接代理 Core；Gateway 不持有治理状态或内部 nonce。
 
 ### Model/Agent Center
 - `GET /api/v1/model-center/overview` 和 `GET /api/v1/agent-center/overview` 是无状态 BFF 聚合视图

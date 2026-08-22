@@ -14,10 +14,6 @@ import {
   isPublicPath,
   type AuthContext,
 } from './auth.js';
-import {
-  listCodeToolIds,
-  listCodeToolSpecs,
-} from './codeTools.js';
 import { mcpRoutes } from './mcp/mcpRoutes.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
 import { proxyStream, setStreamHeaders } from './streaming.js';
@@ -778,6 +774,69 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
   }, { detail: { summary: 'Revoke capability lease', tags: ['System'] } })
+  // User tool actions are Core-owned durable records. Gateway only forwards
+  // the request and response; authorization, approval, leases, snapshots,
+  // idempotency, and execution state remain in Core.
+  .get('/api/v1/user/tool-actions', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/user/tool-actions${new URL(request.url).search}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, '/api/v1/user/tool-actions');
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'List user tool actions', tags: ['Tools'] } })
+  .post('/api/v1/user/tool-actions', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/user/tool-actions';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create user tool action', tags: ['Tools'] } })
+  .get('/api/v1/user/tool-actions/:actionId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/user/tool-actions/${encodeURIComponent(params.actionId)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Get user tool action', tags: ['Tools'] } })
+  .post('/api/v1/user/tool-actions/:actionId/resume', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/user/tool-actions/${encodeURIComponent(params.actionId)}/resume`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Resume user tool action', tags: ['Tools'] } })
+  .post('/api/v1/user/tool-actions/:actionId/snapshot-override', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/user/tool-actions/${encodeURIComponent(params.actionId)}/snapshot-override`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Override failed user action snapshot', tags: ['Tools'] } })
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
@@ -824,10 +883,18 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Run-scoped tool execution (Core-owned)', tags: ['Tools'] } })
-  .get('/api/v1/code/tools', () => ({
-    tool_ids: listCodeToolIds(),
-    tools: listCodeToolSpecs()
-  }), { detail: { summary: 'Code tool catalog', tags: ['Tools'], description: 'Current Desktop tool catalog facade. Execution is delegated to the Tool Provider.' } })
+  .get('/api/v1/code/tools', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/tools${new URL(request.url).search}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, '/api/v1/code/tools');
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Code tool catalog (Core registry)', tags: ['Tools'], description: 'Core/Tool Provider-owned catalog. Gateway does not maintain tool risk or approval facts.' } })
   .get('/api/v1/tools/search', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();

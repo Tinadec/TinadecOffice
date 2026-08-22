@@ -615,12 +615,12 @@
     },
     "/api/v1/code/tools": {
       "get": {
-        "description": "Current Desktop tool catalog facade. Execution is delegated to the Tool Provider.",
+        "description": "Core/Tool Provider-owned catalog. Gateway does not maintain tool risk or approval facts.",
         "operationId": "getApiV1CodeTools",
         "responses": {
           "200": {}
         },
-        "summary": "Code tool catalog",
+        "summary": "Code tool catalog (Core registry)",
         "tags": [
           "Tools"
         ]
@@ -3258,6 +3258,94 @@
           "200": {}
         },
         "summary": "Shell tool (blocked until implemented)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions": {
+      "get": {
+        "operationId": "getApiV1UserTool-actions",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List user tool actions",
+        "tags": [
+          "Tools"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1UserTool-actions",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}": {
+      "get": {
+        "operationId": "getApiV1UserTool-actionsByActionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}/resume": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdResume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Resume user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}/snapshot-override": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdSnapshot-override",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Override failed user action snapshot",
         "tags": [
           "Tools"
         ]
