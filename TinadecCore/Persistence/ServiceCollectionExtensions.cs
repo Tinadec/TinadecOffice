@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ISecretStore>(sp => OperatingSystem.IsWindows()
             ? new ProtectedFileSecretStore(sp.GetRequiredService<StoragePaths>())
             : new EnvironmentSecretStore());
+        services.TryAddSingleton<INonceMaterialStore, NonceMaterialStore>();
         services.TryAddSingleton<IStorageMigrationRunner, StorageMigrationRunner>();
         return services;
     }

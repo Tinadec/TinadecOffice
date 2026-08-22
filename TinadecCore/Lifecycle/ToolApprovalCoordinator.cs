@@ -22,17 +22,20 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     private readonly ITenantContextAccessor _tenant;
     private readonly IContentStore _content;
     private readonly ISessionLocator _sessions;
+    private readonly INonceMaterialStore _nonceMaterials;
 
     public ToolApprovalCoordinator(
         IDbContextFactory<LifecycleDbContext> factory,
         ITenantContextAccessor tenant,
         IContentStore content,
-        ISessionLocator sessions)
+        ISessionLocator sessions,
+        INonceMaterialStore? nonceMaterials = null)
     {
         _factory = factory;
         _tenant = tenant;
         _content = content;
         _sessions = sessions;
+        _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
     }
 
     public async Task<ToolExecutionPreparation> PrepareAsync(
@@ -101,7 +104,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             db.ToolExecutions.Add(execution);
             if (approvalId is { } pendingApprovalId && !request.DeferApproval)
             {
-                db.ApprovalRequests.Add(new ApprovalRequestRecord
+                var approval = new ApprovalRequestRecord
                 {
                     Id = pendingApprovalId,
                     TenantId = request.TenantId,
@@ -116,7 +119,6 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     ToolId = request.ToolId,
                     Risk = NormalizeRisk(request.Risk),
                     RequestHash = request.ParametersHash,
-                    NonceHash = NewApprovalNonceHash(),
                     ParametersReference = parameters.Value,
                     Summary = Truncate(request.Summary, 4096),
                     Status = "pending",
@@ -124,7 +126,9 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     RequestedByPrincipalId = scope.PrincipalId,
                     CreatedAt = now,
                     UpdatedAt = now
-                });
+                };
+                await PrepareApprovalNonceAsync(approval, cancellationToken).ConfigureAwait(false);
+                db.ApprovalRequests.Add(approval);
             }
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -192,7 +196,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.ApprovalId = Guid.NewGuid();
         row.Status = "awaiting_approval";
         row.UpdatedAt = DateTimeOffset.UtcNow;
-        db.ApprovalRequests.Add(new ApprovalRequestRecord
+        var approval = new ApprovalRequestRecord
         {
             Id = row.ApprovalId.Value,
             TenantId = row.TenantId,
@@ -207,7 +211,6 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ToolId = row.ToolId,
             Risk = row.Risk,
             RequestHash = row.ParametersHash,
-            NonceHash = NewApprovalNonceHash(),
             ParametersReference = row.ParametersReference,
             Summary = $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.",
             Status = "pending",
@@ -215,7 +218,9 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             RequestedByPrincipalId = scope.PrincipalId,
             CreatedAt = row.UpdatedAt,
             UpdatedAt = row.UpdatedAt
-        });
+        };
+        await PrepareApprovalNonceAsync(approval, cancellationToken).ConfigureAwait(false);
+        db.ApprovalRequests.Add(approval);
         try
         {
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -316,7 +321,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             || approval.AgentInstanceId != execution.AgentInstanceId
             || !string.Equals(approval.ToolId, execution.ToolId, StringComparison.Ordinal)
             || !string.Equals(approval.RequestHash, execution.ParametersHash, StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(approval.NonceHash))
+            || string.IsNullOrWhiteSpace(approval.NonceHash)
+            || string.IsNullOrWhiteSpace(approval.NonceSecretReference))
         {
             execution.Status = "failed";
             execution.ErrorCategory = "approval_binding_mismatch";
@@ -493,7 +499,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         db.ToolExecutions.Add(replacement);
         if (approvalId is { } nextApprovalId)
         {
-            db.ApprovalRequests.Add(new ApprovalRequestRecord
+            var approval = new ApprovalRequestRecord
             {
                 Id = nextApprovalId,
                 TenantId = source.TenantId,
@@ -508,7 +514,6 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 ToolId = source.ToolId,
                 Risk = source.Risk,
                 RequestHash = source.ParametersHash,
-                NonceHash = NewApprovalNonceHash(),
                 ParametersReference = source.ParametersReference,
                 Summary = $"Retry for tool '{source.ToolId}' after unknown outcome from execution {source.Id}.",
                 Status = "pending",
@@ -516,7 +521,9 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 RequestedByPrincipalId = scope.PrincipalId,
                 CreatedAt = now,
                 UpdatedAt = now
-            });
+            };
+            await PrepareApprovalNonceAsync(approval, cancellationToken).ConfigureAwait(false);
+            db.ApprovalRequests.Add(approval);
         }
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -577,7 +584,6 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ToolId = toolId,
             Risk = "elevated",
             RequestHash = parametersHash,
-            NonceHash = NewApprovalNonceHash(),
             ParametersReference = string.Empty,
             Summary = Truncate(summary, 4096),
             Status = "pending",
@@ -586,6 +592,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             CreatedAt = now,
             UpdatedAt = now
         };
+        await PrepareApprovalNonceAsync(row, cancellationToken).ConfigureAwait(false);
         db.ApprovalRequests.Add(row);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return row.Id;
@@ -613,6 +620,16 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             && (x.ExecutionId == null || x.ExecutionId == executionGuid)
             && !string.IsNullOrWhiteSpace(x.NonceHash), cancellationToken).ConfigureAwait(false);
         if (candidate is null) return false;
+
+        var protectedNonce = await _nonceMaterials.GetAsync(candidate.NonceSecretReference ?? string.Empty, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(protectedNonce) || !FixedEquals(candidate.NonceHash, HashNonce(protectedNonce)))
+        {
+            await db.ApprovalRequests.Where(x => x.Id == approvalId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "approved")
+                .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "cancelled")
+                    .SetProperty(x => x.Decision, "rejected").SetProperty(x => x.DecisionReason, "approval_nonce_unavailable")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            return false;
+        }
 
         if (candidate.ExpiresAt <= now)
         {
@@ -788,9 +805,23 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses);
 
     // Action approvals carry a server-generated, one-time nonce. Only its hash
-    // is persisted and the nonce is never returned through the API surface.
-    private static string NewApprovalNonceHash() =>
-        Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32))).ToLowerInvariant();
+    // and a protected-material reference are persisted; the material is never
+    // returned through a DTO, event, log, or Gateway response.
+    private async Task PrepareApprovalNonceAsync(ApprovalRequestRecord row, CancellationToken cancellationToken)
+    {
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        row.Nonce = nonce;
+        row.NonceHash = HashNonce(nonce);
+        row.NonceSecretReference = $"approval_nonce_{row.TenantId:N}_{row.Id:N}";
+        await _nonceMaterials.PutAsync(row.NonceSecretReference, nonce, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string HashNonce(string nonce) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(nonce))).ToLowerInvariant();
+
+    private static bool FixedEquals(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right)
+        && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(left), Encoding.UTF8.GetBytes(right));
 
     private static bool IsExecutionTerminal(string status) => status is "completed" or "failed" or "timed_out" or "cancelled";
 
@@ -826,6 +857,17 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         var prefixLength = Math.Max(1, 512 - suffix.Length);
         var prefix = string.IsNullOrWhiteSpace(sourceKey) ? "tool" : sourceKey.Trim();
         return prefix[..Math.Min(prefix.Length, prefixLength)] + suffix;
+    }
+
+    private sealed class InMemoryNonceMaterialStore : INonceMaterialStore
+    {
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+        public Task<string> PutAsync(string reference, string value, CancellationToken cancellationToken = default)
+        { _values[reference] = value; return Task.FromResult(reference); }
+        public Task<string?> GetAsync(string reference, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_values.TryGetValue(reference, out var value) ? value : null);
+        public Task DeleteAsync(string reference, CancellationToken cancellationToken = default)
+        { _values.Remove(reference); return Task.CompletedTask; }
     }
 
     private static async Task CancelExecutionAsync(LifecycleDbContext db, ToolExecutionRecord execution, CancellationToken cancellationToken)

@@ -193,6 +193,9 @@ public sealed class CapabilityLeaseRecord
     public Guid? RunId { get; set; }
     public Guid? TaskId { get; set; }
     public string NonceHash { get; set; } = string.Empty;
+    public string NonceSecretReference { get; set; } = string.Empty;
+    /// <summary>Transient material hydrated only for Core-internal consumption.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public string Nonce { get; set; } = string.Empty;
     public string PolicySnapshotHash { get; set; } = string.Empty;
     public string Status { get; set; } = "active";

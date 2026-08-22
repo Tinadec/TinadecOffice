@@ -112,7 +112,7 @@ public sealed class GovernanceDbContext : DbContext
             entity.HasKey(x => x.Id);
             ConfigureClaim(entity);
             entity.Property(x => x.NonceHash).HasMaxLength(128).IsRequired();
-            entity.Property(x => x.Nonce).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.NonceSecretReference).HasMaxLength(512).IsRequired();
             entity.Property(x => x.PolicySnapshotHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.RevokeReason).HasMaxLength(4096);

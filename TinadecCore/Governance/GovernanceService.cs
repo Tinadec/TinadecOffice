@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Governance;
 
@@ -13,18 +14,21 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private readonly IDbContextFactory<GovernanceDbContext> _dbFactory;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IAuthorizationContextResolver _authorizationContextResolver;
+    private readonly INonceMaterialStore _nonceMaterials;
     private readonly TimeProvider _timeProvider;
 
     public GovernanceService(
         IDbContextFactory<GovernanceDbContext> dbFactory,
         ITenantContextAccessor tenantAccessor,
         IAuthorizationContextResolver authorizationContextResolver,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        INonceMaterialStore? nonceMaterials = null)
     {
         _dbFactory = dbFactory;
         _tenantAccessor = tenantAccessor;
         _authorizationContextResolver = authorizationContextResolver;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
     }
 
     /// <summary>
@@ -488,6 +492,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 var leaseExpiresAt = grant.ExpiresAt < expiresAt ? grant.ExpiresAt : expiresAt;
                 var (lease, nonce) = NewLease(scope, grant, record.Id, claim, command.RunId, command.TaskId,
                     command.RequestedUses, now, leaseExpiresAt, boundaryResult.Hash);
+                await PersistLeaseNonceAsync(lease, nonce, cancellationToken).ConfigureAwait(false);
                 db.CapabilityLeases.Add(lease);
                 record.Status = PermissionRequestStatuses.Granted;
                 record.CapabilityGrantId = grant.Id;
@@ -686,6 +691,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         grant.Status = "exhausted";
         var (lease, nonce) = NewLease(scope, grant, request.Id, claim, request.RunId, request.TaskId,
             request.RequestedUses, now, delegatedExpiresAt, boundaryResult.Hash);
+        await PersistLeaseNonceAsync(lease, nonce, cancellationToken).ConfigureAwait(false);
         db.CapabilityGrants.Add(grant);
         db.CapabilityLeases.Add(lease);
         request.Status = PermissionRequestStatuses.Granted;
@@ -832,6 +838,17 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         }
         var leaseFailure = ValidateLease(lease, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
             claim, command.RunId, command.TaskId, now);
+        if (leaseFailure is null && lease is not null)
+        {
+            var protectedNonce = await _nonceMaterials.GetAsync(lease.NonceSecretReference, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(protectedNonce))
+            {
+                await db.CapabilityLeases.Where(x => x.Id == lease.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+                    .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "revoked")
+                        .SetProperty(x => x.RevokedAt, now).SetProperty(x => x.RevokeReason, "nonce_material_unavailable"), cancellationToken).ConfigureAwait(false);
+                leaseFailure = ("lease_nonce_unavailable", "The protected lease nonce material is unavailable.");
+            }
+        }
         if (leaseFailure is null && requireNonce)
         {
             leaseFailure = nonceHash is null
@@ -1358,7 +1375,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         return new PermissionResolution(ToSnapshot(request), ToSnapshot(decision), null, null);
     }
 
-    private static async Task<PermissionResolution> LoadResolutionAsync(
+    private async Task<PermissionResolution> LoadResolutionAsync(
         GovernanceDbContext db,
         PermissionRequestRecord request,
         CancellationToken cancellationToken)
@@ -1372,6 +1389,15 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         var lease = request.CapabilityLeaseId is { } leaseId
             ? await db.CapabilityLeases.AsNoTracking().SingleOrDefaultAsync(x => x.Id == leaseId, cancellationToken).ConfigureAwait(false)
             : null;
+        if (lease is not null)
+        {
+            lease.Nonce = await _nonceMaterials.GetAsync(lease.NonceSecretReference, cancellationToken).ConfigureAwait(false) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(lease.Nonce))
+            {
+                lease.Status = "revoked";
+                lease.RevokeReason = "nonce_material_unavailable";
+            }
+        }
         return new PermissionResolution(ToSnapshot(request), ToSnapshot(decision), grant is null ? null : ToSnapshot(grant), lease is null ? null : ToSnapshot(lease, lease.Nonce));
     }
 
@@ -1432,11 +1458,19 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             SubjectPrincipalId = grant.SubjectPrincipalId, SubjectAgentInstanceId = grant.SubjectAgentInstanceId,
             CapabilityGrantId = grant.Id, PermissionRequestId = permissionRequestId,
             Capability = claim.Capability, Action = claim.Action, Resource = claim.Resource,
-            RunId = runId, TaskId = taskId, NonceHash = CapabilityRuleMatcher.HashNonce(nonce), Nonce = nonce,
+            RunId = runId, TaskId = taskId, NonceHash = CapabilityRuleMatcher.HashNonce(nonce),
+            NonceSecretReference = $"lease_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", Nonce = nonce,
             PolicySnapshotHash = policyHash, Status = "active", MaxUses = maxUses, UseCount = 0, Revision = 1,
             StartsAt = now, ExpiresAt = expiresAt, StartsAtUnixMilliseconds = now.ToUnixTimeMilliseconds(),
             ExpiresAtUnixMilliseconds = expiresAt.ToUnixTimeMilliseconds(), CreatedAt = now, UpdatedAt = now
         }, nonce);
+    }
+
+    private async Task PersistLeaseNonceAsync(CapabilityLeaseRecord lease, string nonce, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(lease.NonceSecretReference))
+            throw new InvalidOperationException("Capability lease nonce material reference is missing.");
+        await _nonceMaterials.PutAsync(lease.NonceSecretReference, nonce, cancellationToken).ConfigureAwait(false);
     }
 
     private AuthorizationDecisionRecord NewDecision(
@@ -1582,4 +1616,15 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
 
     private sealed record BoundaryEvaluation(bool Allowed, string ReasonCode, string Reason, string Hash);
     private sealed record EscalationEntry(string Reason, DateTimeOffset At);
+
+    private sealed class InMemoryNonceMaterialStore : INonceMaterialStore
+    {
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+        public Task<string> PutAsync(string reference, string value, CancellationToken cancellationToken = default)
+        { _values[reference] = value; return Task.FromResult(reference); }
+        public Task<string?> GetAsync(string reference, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_values.TryGetValue(reference, out var value) ? value : null);
+        public Task DeleteAsync(string reference, CancellationToken cancellationToken = default)
+        { _values.Remove(reference); return Task.CompletedTask; }
+    }
 }

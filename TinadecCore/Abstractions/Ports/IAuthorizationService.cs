@@ -360,7 +360,7 @@ public sealed record CapabilityLeaseSnapshot(
     CapabilityClaim Claim,
     Guid? RunId,
     Guid? TaskId,
-    string Nonce,
+    [property: JsonIgnore] string Nonce,
     string PolicySnapshotHash,
     string Status,
     int MaxUses,

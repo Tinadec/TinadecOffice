@@ -52,6 +52,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // with the Core-state resolver only in the full runtime.
         services.Replace(ServiceDescriptor.Singleton<IAuthorizationContextResolver, CoreAuthorizationContextResolver>());
         services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
+        services.AddSingleton<IUserToolActionService, UserToolActionService>();
 
         // Rebind ToolDispatchOptions from the frozen TOML runtime profile (this factory
         // registration replaces the defaults the Tools module registered; DI resolves

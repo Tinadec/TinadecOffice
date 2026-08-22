@@ -262,6 +262,7 @@ app.MapGovernanceEndpoints();
 app.MapMemoryReviewEndpoints();
 app.MapEvolutionEndpoints();
 app.MapWorkspaceSnapshotEndpoints();
+app.MapUserToolActionEndpoints();
 app.MapStubEndpoints();
 
 

@@ -28,6 +28,7 @@ public sealed class ControlPlaneService
     private readonly ITenantContextAccessor _tenant;
     private readonly IToolApprovalCoordinator _approvals;
     private readonly IToolExecutionCoordinator _executions;
+    private readonly IUserToolActionService _userActions;
     private readonly IAuthorizationService _authorization;
     private readonly ILifecycleManager _runs;
     private readonly IFullDuplexRunEngine _engine;
@@ -37,8 +38,9 @@ public sealed class ControlPlaneService
         IDbContextFactory<AgentControlDbContext> agents, IDbContextFactory<LifecycleDbContext> lifecycle,
         IContentStore content, ISecretStore secrets, ITenantContextAccessor tenant, IToolApprovalCoordinator approvals,
         IAuthorizationService authorization, IToolExecutionCoordinator executions,
-        ILifecycleManager runs, IFullDuplexRunEngine engine, ICliProcessManager cli)
-    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _runs = runs; _engine = engine; _cli = cli; }
+        ILifecycleManager runs, IFullDuplexRunEngine engine, ICliProcessManager cli,
+        IUserToolActionService userActions)
+    { _models = models; _prompts = prompts; _agents = agents; _lifecycle = lifecycle; _content = content; _secrets = secrets; _tenant = tenant; _approvals = approvals; _authorization = authorization; _executions = executions; _userActions = userActions; _runs = runs; _engine = engine; _cli = cli; }
 
     private TenantContext Tenant => _tenant.Current;
     private static async Task<(string text, ContentReference reference)> PutJsonAsync(IContentStore store, Guid tenant, Guid? workspace, string kind, object value, CancellationToken ct)
@@ -376,6 +378,23 @@ public sealed class ControlPlaneService
                 await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
             }
             return Results.Ok(new { id, status = resolved.Request.Status, decided_at = resolved.Decision.CreatedAt });
+        }
+        var approveAction = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(input.Decision, "granted", StringComparison.OrdinalIgnoreCase);
+        await using (var actionDb = await _lifecycle.CreateDbContextAsync(ct))
+        {
+            var actionApproval = await actionDb.ApprovalRequests.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.UserToolActionId != null, ct);
+            if (actionApproval?.UserToolActionId is { } userActionId)
+            {
+                try { await _approvals.DecideAsync(id, approveAction ? "approved" : "rejected", input.Reason, ct); }
+                catch (KeyNotFoundException) { return Results.NotFound(); }
+                catch (InvalidOperationException ex) { return Results.Conflict(new { message = ex.Message }); }
+                var resumed = await _userActions.ResumeAsync(userActionId, ct);
+                return Results.Json(new { id, user_tool_action_id = userActionId, status = resumed.Status, action = resumed },
+                    statusCode: resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
+            }
         }
         ToolApprovalDecision decision;
         try { decision = await _approvals.DecideAsync(id, input.Decision, input.Reason, ct); }
