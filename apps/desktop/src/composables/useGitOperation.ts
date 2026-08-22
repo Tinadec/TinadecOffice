@@ -785,7 +785,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await createGitAction('git_rebase', { operation: 'start', branch }, `Rebase ${previewData.value.branch ?? 'HEAD'} onto ${branch}`)
+      const approval = await createRebaseAction('start', { branch }, `Rebase ${previewData.value.branch ?? 'HEAD'} onto ${branch}`)
       rebaseApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -796,14 +796,42 @@ export function useGitOperation(
     }
   }
 
+  /**
+   * Each rebase sub-command creates its own action with its own idempotency
+   * key (`desktop:git-rebase:<op>`), so retrying "continue" never replays the
+   * original "start", and abort/skip cannot collide with each other.
+   */
+  async function createRebaseAction(
+    operation: 'start' | 'continue' | 'abort' | 'skip',
+    args: Record<string, unknown>,
+    summary: string,
+  ): Promise<ApprovalDto> {
+    if (!cwd.value) throw new Error('A project workspace is required.')
+    const parameters = withGitToolConfirmation('git_rebase', {
+      repository_path: cwd.value,
+      operation,
+      ...args,
+    })
+    const idempotencyKey = await userToolActionIdempotencyKey(`desktop:git-rebase:${operation}`, {
+      project_path: cwd.value,
+      parameters,
+    })
+    const action = await createUserToolActionForPath(cwd.value, 'git_rebase', parameters, idempotencyKey)
+    return actionToApproval(action, summary)
+  }
+
   async function executeApprovedRebase(operation: 'start' | 'continue' | 'abort' | 'skip' = 'start') {
-    if (!cwd.value || !rebaseApproval.value) return
+    if (!cwd.value) return
     operationLoading.value = true
     try {
-      const result = await resumeGitAction(rebaseApproval.value)
-      if (!actionCompleted(result)) return
-      if (operation !== 'start') {
-        rebaseApprovalId.value = null
+      // start resumes the approved action; continue/abort/skip are new actions.
+      if (operation === 'start') {
+        if (!rebaseApproval.value) return
+        const result = await resumeGitAction(rebaseApproval.value)
+        if (!actionCompleted(result)) return
+      } else {
+        const approval = await createRebaseAction(operation, {}, `Rebase ${operation} on ${previewData.value.branch ?? 'HEAD'}`)
+        rebaseApprovalId.value = approval.id
       }
       await refreshAll()
     } catch (err) {

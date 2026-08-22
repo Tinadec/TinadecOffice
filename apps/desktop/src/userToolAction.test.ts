@@ -11,8 +11,9 @@ import {
 } from './userToolAction'
 import type { UserToolActionDto } from './api'
 
-const action = (overrides: Partial<UserToolActionDto> = {}): UserToolActionDto => ({
+const action = (overrides: Partial<Omit<UserToolActionDto, 'audit_reference'>> = {}): UserToolActionDto => ({
   id: 'action-1',
+  audit_reference: 'user-tool-action:test',
   tenant_id: 'tenant-1',
   workspace_id: 'workspace-1',
   project_id: 'project-1',
@@ -100,6 +101,20 @@ describe('user tool action projection', () => {
       content: 'two',
     })
     expect(first).not.toBe(second)
+  })
+
+  it('gives each rebase sub-command a distinct idempotency key scope', async () => {
+    const scopes = ['start', 'continue', 'abort', 'skip'] as const
+    const keys = await Promise.all(
+      scopes.map((op) =>
+        userToolActionIdempotencyKey(`desktop:git-rebase:${op}`, {
+          project_path: 'D:/repo',
+          parameters: { repository_path: 'D:/repo', operation: op },
+        }),
+      ),
+    )
+    expect(new Set(keys).size).toBe(4)
+    keys.forEach((key) => expect(key.startsWith('desktop:git-rebase:')).toBe(true))
   })
 
   it('recognizes only governance decision states as approval waits', () => {

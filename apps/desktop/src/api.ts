@@ -1282,6 +1282,7 @@ export type UserToolActionStatus =
 /** Core-owned user action. Nonces and internal lease material never cross this DTO. */
 export interface UserToolActionDto {
   id: string;
+  audit_reference: string;
   tenant_id: string;
   workspace_id: string;
   project_id: string;
@@ -1296,12 +1297,26 @@ export interface UserToolActionDto {
   action_approval_id?: string | null;
   snapshot_id?: string | null;
   snapshot_hash?: string | null;
+  snapshot_override?: boolean;
+  snapshot_override_reason?: string | null;
+  non_reversible?: boolean;
+  compensation_guidance?: string | null;
+  recovery_decision?: string | null;
+  recovery_reason?: string | null;
+  recovered_at?: string | null;
   result?: Record<string, unknown> | null;
   error_category?: string | null;
   message?: string | null;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
+}
+
+export type UserToolActionRecoveryDecision = 'mark_completed' | 'mark_failed';
+
+export interface RecoveryDecisionInput {
+  decision: UserToolActionRecoveryDecision;
+  reason?: string | null;
 }
 
 export interface CreateUserToolActionInput {
@@ -1479,6 +1494,10 @@ export const api = {
   overrideUserToolActionSnapshot: (actionId: string, reason: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/snapshot-override`, {
     method: 'POST',
     body: JSON.stringify({ reason }),
+  }),
+  decideUserToolActionRecovery: (actionId: string, input: RecoveryDecisionInput) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/recovery-decision`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   }),
   listWorkspaceSnapshots: (projectId: string) => request<SnapshotDto[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/snapshots`),
   getWorkspaceSnapshot: (snapshotId: string) => request<SnapshotDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}`),
