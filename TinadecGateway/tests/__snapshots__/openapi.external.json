@@ -3297,6 +3297,28 @@
         ]
       }
     },
+    "/api/v1/user/tool-actions/{actionId}/recovery-decision": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdRecovery-decision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Decide unknown user tool action outcome",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
     "/api/v1/user/tool-actions/{actionId}/resume": {
       "post": {
         "operationId": "postApiV1UserTool-actionsByActionIdResume",

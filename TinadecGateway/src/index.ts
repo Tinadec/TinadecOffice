@@ -829,6 +829,18 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result.data;
   }, { detail: { summary: 'Override failed user action snapshot', tags: ['Tools'] } })
+  .post('/api/v1/user/tool-actions/:actionId/recovery-decision', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/user/tool-actions/${encodeURIComponent(params.actionId)}/recovery-decision`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Decide unknown user tool action outcome', tags: ['Tools'] } })
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();

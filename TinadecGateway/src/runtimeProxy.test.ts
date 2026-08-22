@@ -250,6 +250,11 @@ test('user tool action routes are stateless Core proxies', { concurrency: false 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reason: 'user accepted non-reversible change' }),
     }),
+    new Request('http://gateway.local/api/v1/user/tool-actions/action-1/recovery-decision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision: 'mark_failed', reason: 'verified no remote change' }),
+    }),
   ];
 
   for (const call of calls) {
@@ -264,10 +269,12 @@ test('user tool action routes are stateless Core proxies', { concurrency: false 
     ['GET', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1'],
     ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1/resume'],
     ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1/snapshot-override'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/user/tool-actions/action-1/recovery-decision'],
   ]);
   assert.deepEqual(JSON.parse(requests[1]!.body ?? ''), { tool_id: 'write_file', parameters: { path: 'a.txt' } });
   assert.equal(requests[3]!.body, undefined);
   assert.deepEqual(JSON.parse(requests[4]!.body ?? ''), { reason: 'user accepted non-reversible change' });
+  assert.deepEqual(JSON.parse(requests[5]!.body ?? ''), { decision: 'mark_failed', reason: 'verified no remote change' });
 });
 
 test('tool provider execution is a transport-only facade', { concurrency: false }, async () => {
