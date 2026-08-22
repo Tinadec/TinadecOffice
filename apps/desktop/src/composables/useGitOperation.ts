@@ -2,6 +2,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { api, createUserToolActionForPath, type ApprovalDto, type CodeToolExecuteResultDto, type UserToolActionDto } from '../api'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from './useNotifications'
+import { useUserActionStore } from '@/stores/userAction'
 import {
   userToolActionIdempotencyKey,
   userToolActionStatusMessage,
@@ -173,6 +174,9 @@ export function useGitOperation(
 ) {
   const { t } = useI18n()
   const { notify } = useNotifications()
+  // Every Git mutation mirrors into the unified store so approval panels and
+  // the recovery page observe one source of client-side action state.
+  const userActionStore = useUserActionStore()
 
   // ---- Reactive state ----
   const loading = ref(false)
@@ -403,6 +407,7 @@ export function useGitOperation(
     if (!current) return null
     const action = await api.resumeUserToolAction(current.id)
     userActions.set(approval.id, action)
+    userActionStore.actions = { ...userActionStore.actions, [action.id]: action }
     return action
   }
 

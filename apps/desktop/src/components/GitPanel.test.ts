@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
+import { setActivePinia, createPinia } from 'pinia';
 import GitPanel from './GitPanel.vue';
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api';
 
@@ -172,6 +173,7 @@ async function flushPromises() {
 
 describe('GitPanel', () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
     executeCodeTool.mockReset();
     executeCodeTool
       .mockResolvedValueOnce(previewResult)
