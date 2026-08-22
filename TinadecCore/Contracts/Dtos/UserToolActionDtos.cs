@@ -42,6 +42,8 @@ public sealed class UserToolActionDto
     [JsonPropertyName("action_approval_id")] public Guid? ActionApprovalId { get; init; }
     [JsonPropertyName("snapshot_id")] public Guid? SnapshotId { get; init; }
     [JsonPropertyName("snapshot_hash")] public string? SnapshotHash { get; init; }
+    [JsonPropertyName("non_reversible")] public bool NonReversible { get; init; }
+    [JsonPropertyName("compensation_guidance")] public string? CompensationGuidance { get; init; }
     [JsonPropertyName("result")] public JsonElement? Result { get; init; }
     [JsonPropertyName("error_category")] public string? ErrorCategory { get; init; }
     [JsonPropertyName("message")] public string? Message { get; init; }

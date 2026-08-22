@@ -165,6 +165,9 @@ public sealed class LifecycleDbContext : DbContext
             entity.ToTable("user_tool_actions"); entity.HasKey(x => x.Id);
             entity.Property(x => x.AuditReference).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ToolId).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.ProviderManifestHash).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ToolDescriptorReference).HasMaxLength(1024).IsRequired();
+            entity.Property(x => x.ToolDescriptorHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.ParametersReference).HasMaxLength(1024).IsRequired();
             entity.Property(x => x.ParametersHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.Risk).HasMaxLength(32).IsRequired();
@@ -174,6 +177,7 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.ResultReference).HasMaxLength(1024);
             entity.Property(x => x.SnapshotHash).HasMaxLength(128);
             entity.Property(x => x.SnapshotOverrideReason).HasMaxLength(4096);
+            entity.Property(x => x.CompensationGuidance).HasMaxLength(4096);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.CreatedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => x.ActionApprovalId);
@@ -309,6 +313,11 @@ public sealed class UserToolActionRecord
     public Guid ProjectId { get; set; }
     public Guid PrincipalId { get; set; }
     public string ToolId { get; set; } = string.Empty;
+    public int ProviderProtocolVersion { get; set; }
+    public string ProviderManifestHash { get; set; } = string.Empty;
+    public string ToolDescriptorReference { get; set; } = string.Empty;
+    public string ToolDescriptorHash { get; set; } = string.Empty;
+    public long ToolDescriptorLength { get; set; }
     public string ParametersReference { get; set; } = string.Empty;
     public long ParametersLength { get; set; }
     public string ParametersHash { get; set; } = string.Empty;
@@ -325,6 +334,8 @@ public sealed class UserToolActionRecord
     public string? SnapshotHash { get; set; }
     public bool SnapshotOverride { get; set; }
     public string? SnapshotOverrideReason { get; set; }
+    public bool NonReversible { get; set; }
+    public string? CompensationGuidance { get; set; }
     public string? ResultReference { get; set; }
     public string? ResultHash { get; set; }
     public long? ResultLength { get; set; }

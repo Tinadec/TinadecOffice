@@ -491,6 +491,129 @@
         },
         "type": "object"
       },
+      "UserToolActionDto": {
+        "properties": {
+          "action_approval_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "audit_reference": {
+            "type": "string"
+          },
+          "authorization_decision_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "compensation_guidance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mutates_workspace": {
+            "type": "boolean"
+          },
+          "non_reversible": {
+            "type": "boolean"
+          },
+          "permission_request_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "requires_approval": {
+            "type": "boolean"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "risk": {
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "UserToolActionSnapshotOverrideRequestDto": {
         "properties": {
           "reason": {
@@ -3751,6 +3874,16 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserToolActionDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -3777,7 +3910,27 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Bad Request"
           }
         },
         "tags": [
@@ -3800,7 +3953,17 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "404": {
+            "description": "Not Found"
           }
         },
         "tags": [
@@ -3823,7 +3986,27 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "404": {
+            "description": "Not Found"
           }
         },
         "tags": [
@@ -3862,7 +4045,30 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
           }
         },
         "tags": [

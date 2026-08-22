@@ -14,6 +14,16 @@ public interface IUserToolActionService
     Task<UserToolActionResult> OverrideSnapshotAsync(Guid actionId, string reason, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Performs the one-time host-start recovery pass for durable user actions.
+/// Implementations must never replay an action already marked running or
+/// outcome_unknown.
+/// </summary>
+public interface IUserToolActionRecovery
+{
+    Task RecoverAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed record UserToolActionRequest(
     Guid ProjectId,
     string ToolId,
@@ -37,6 +47,8 @@ public sealed record UserToolActionResult(
     Guid? ActionApprovalId,
     Guid? SnapshotId,
     string? SnapshotHash,
+    bool NonReversible,
+    string? CompensationGuidance,
     string? ResultJson,
     string? ErrorCategory,
     string? Message,

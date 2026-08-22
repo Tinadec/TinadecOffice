@@ -99,6 +99,8 @@ public sealed class CoreOpenApiSnapshotTests
         Assert.Contains("TinadecCore", title, StringComparison.OrdinalIgnoreCase);
         Assert.True(root.TryGetProperty("paths", out var paths) && paths.ValueKind == JsonValueKind.Object, "paths must be an object");
         Assert.True(paths.EnumerateObject().Any(), "openapi.paths must be non-empty");
+        Assert.DoesNotContain("\"nonce\"", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("nonce_secret_reference", body, StringComparison.OrdinalIgnoreCase);
 
         var snapshotPath = ResolveSnapshotPath();
         Directory.CreateDirectory(Path.GetDirectoryName(snapshotPath)!);
