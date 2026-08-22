@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Security.Cryptography;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
@@ -323,38 +322,6 @@ public sealed class ControlPlaneService
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
         return permission is null ? Results.NotFound() : Results.Ok(ToPermissionResponse(permission.Request));
     }
-    public async Task<IResult> CreateApproval(ApprovalCreateRequestDto input, CancellationToken ct)
-    {
-        var parametersJson = input.Parameters is { } parameters ? parameters.GetRawText() : "{}";
-        var requestHash = ToolParametersHash.Compute(parametersJson);
-        var now = DateTimeOffset.UtcNow;
-        await using var db = await _lifecycle.CreateDbContextAsync(ct);
-        var row = new ApprovalRequestRecord
-        {
-            Id = Guid.NewGuid(),
-            TenantId = Tenant.TenantId,
-            WorkspaceId = Tenant.WorkspaceId,
-            SessionId = Guid.TryParse(input.SessionId, out var sessionId) ? sessionId : null,
-            RunId = Guid.TryParse(input.RunId, out var runId) ? runId : null,
-            TaskId = Guid.TryParse(input.TaskId, out var taskId) ? taskId : null,
-            AgentInstanceId = Guid.TryParse(input.AgentInstanceId, out var agentId) ? agentId : null,
-            Kind = string.IsNullOrWhiteSpace(input.Kind) ? "tool" : input.Kind,
-            ToolId = input.ToolId ?? string.Empty,
-            Risk = "medium",
-            ParametersReference = string.Empty,
-            Summary = input.Summary ?? string.Empty,
-            RequestHash = requestHash,
-            NonceHash = Convert.ToHexString(SHA256.HashData(RandomNumberGenerator.GetBytes(32))).ToLowerInvariant(),
-            Status = "pending",
-            ExpiresAt = now.AddMinutes(30),
-            RequestedByPrincipalId = Tenant.PrincipalId,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        db.ApprovalRequests.Add(row);
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(ToResponse(row));
-    }
     public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
     {
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
@@ -364,6 +331,23 @@ public sealed class ControlPlaneService
                 || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(input.Decision, "granted", StringComparison.OrdinalIgnoreCase);
             var resolved = await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(id, approve, null, null, input.Reason ?? string.Empty), ct).ConfigureAwait(false);
+
+            // User actions have no run/task graph. A permission decision must
+            // wake the Core-owned action directly; never manufacture a run for
+            // a Desktop action.
+            await using (var actionDb = await _lifecycle.CreateDbContextAsync(ct))
+            {
+                var userAction = await actionDb.UserToolActions.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+                if (userAction is not null)
+                {
+                    var resumed = await _userActions.ResumeAsync(userAction.Id, ct).ConfigureAwait(false);
+                    return Results.Json(new { id, user_tool_action_id = userAction.Id, status = resumed.Status, action = resumed },
+                        statusCode: resumed.Status is UserToolActionStatuses.AwaitingApproval or UserToolActionStatuses.AwaitingDelegate or UserToolActionStatuses.AwaitingUser or UserToolActionStatuses.SnapshotRequired
+                            ? StatusCodes.Status202Accepted
+                            : StatusCodes.Status200OK);
+                }
+            }
             if (resolved.Request.Status == PermissionRequestStatuses.Granted && resolved.Request.RunId is { } permissionRun)
             {
                 await using var db = await _lifecycle.CreateDbContextAsync(ct);

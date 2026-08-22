@@ -47,7 +47,6 @@ public static class ControlPlaneEndpoints
 
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
         app.MapGet("/api/v1/approvals/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.GetApproval(id, ct));
-        app.MapPost("/api/v1/approvals", (ApprovalCreateRequestDto input, ControlPlaneService service, CancellationToken ct) => service.CreateApproval(input, ct));
         app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct));
         return app;
     }

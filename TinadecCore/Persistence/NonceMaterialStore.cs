@@ -49,8 +49,9 @@ internal sealed class NonceMaterialStore : INonceMaterialStore
         }
         catch (CryptographicException)
         {
-            // A protected material failure is deliberately surfaced as missing
-            // material. Governance callers revoke and fail closed.
+            // A protected material failure must never fall back to an in-process
+            // copy. Governance callers revoke and fail closed on this path.
+            return null;
         }
         catch (InvalidOperationException)
         {

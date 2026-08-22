@@ -1,38 +1,6 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TinadecCore.Contracts.Dtos;
-
-/// <summary>
-/// Control-plane approval creation request. The server canonicalizes <c>parameters</c>
-/// and computes <c>request_hash</c> itself; client-supplied hashes are never trusted.
-/// </summary>
-public sealed class ApprovalCreateRequestDto
-{
-    [JsonPropertyName("session_id")]
-    public string? SessionId { get; init; }
-
-    [JsonPropertyName("run_id")]
-    public string? RunId { get; init; }
-
-    [JsonPropertyName("task_id")]
-    public string? TaskId { get; init; }
-
-    [JsonPropertyName("agent_instance_id")]
-    public string? AgentInstanceId { get; init; }
-
-    [JsonPropertyName("kind")]
-    public string Kind { get; init; } = "tool";
-
-    [JsonPropertyName("tool_id")]
-    public string? ToolId { get; init; }
-
-    [JsonPropertyName("parameters")]
-    public JsonElement? Parameters { get; init; }
-
-    [JsonPropertyName("summary")]
-    public string? Summary { get; init; }
-}
 
 /// <summary>Human decision on a pending approval.</summary>
 public sealed class ApprovalDecisionRequestDto

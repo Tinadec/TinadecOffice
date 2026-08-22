@@ -188,6 +188,16 @@ public sealed class UserToolActionService : IUserToolActionService
                 && x.UserToolActionId == action.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
             if (approval is null) return await BlockAsync(action, "approval_missing", "Action approval was not found.", cancellationToken).ConfigureAwait(false);
             if (approval.Status == "pending") { action.Status = UserToolActionStatuses.AwaitingApproval; await SaveAsync(action, cancellationToken).ConfigureAwait(false); return await ToResultAsync(action, cancellationToken).ConfigureAwait(false); }
+            if (approval.Status == "consumed")
+            {
+                action.Status = UserToolActionStatuses.OutcomeUnknown;
+                action.ErrorCategory = "outcome_unknown";
+                action.SafeErrorMessage = "The action approval was consumed before the tool outcome was recorded.";
+                action.CompletedAt = null;
+                action.UpdatedAt = DateTimeOffset.UtcNow;
+                await SaveAsync(action, cancellationToken).ConfigureAwait(false);
+                return await ToResultAsync(action, cancellationToken).ConfigureAwait(false);
+            }
             if (approval.Status != "approved" || approval.ExpiresAt <= DateTimeOffset.UtcNow)
                 return await BlockAsync(action, approval.Status == "expired" ? "approval_expired" : "not_approved", "The action approval was not approved.", cancellationToken).ConfigureAwait(false);
             if (!await TryConsumeUserApprovalAsync(approval, action, cancellationToken).ConfigureAwait(false))
@@ -349,6 +359,7 @@ public sealed class UserToolActionService : IUserToolActionService
             && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "approved"
             && x.ConsumedByExecutionId == null && x.RequestHash == action.ParametersHash)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "consumed")
+                .SetProperty(x => x.ConsumedByExecutionId, action.Id)
                 .SetProperty(x => x.ConsumedAt, DateTimeOffset.UtcNow).SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
         return updated == 1;
     }

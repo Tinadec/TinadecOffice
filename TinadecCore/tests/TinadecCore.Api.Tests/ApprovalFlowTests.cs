@@ -41,26 +41,18 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
     {
         var client = _factory!.CreateClient();
         var coordinator = _factory.Services.GetRequiredService<IToolApprovalCoordinator>();
-
-        var createResponse = await client.PostAsJsonAsync("/api/v1/approvals", new
-        {
-            kind = "tool",
-            tool_id = "write_file",
-            summary = "write report",
-            parameters = JsonSerializer.SerializeToElement(new { path = "a.txt", content = "hi" })
-        }, Json);
-        Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
-        var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var approvalId = created.GetProperty("id").GetGuid();
+        const string parameters = "{\"content\":\"hi\",\"path\":\"a.txt\"}";
+        var approvalId = await CreateApprovalAsync(client, parameters);
+        var created = await client.GetFromJsonAsync<JsonElement>($"/api/v1/approvals/{approvalId}");
         Assert.Equal("pending", created.GetProperty("status").GetString());
+        var hash = ToolParametersHash.Compute(parameters);
         Assert.False(string.IsNullOrWhiteSpace(created.GetProperty("request_hash").GetString()));
 
         var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" }, Json);
-        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
+        Assert.True(decideResponse.IsSuccessStatusCode, await decideResponse.Content.ReadAsStringAsync());
         var decided = await decideResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("approved", decided.GetProperty("status").GetString());
 
-        var hash = created.GetProperty("request_hash").GetString()!;
         var executionId = Guid.NewGuid().ToString();
         Assert.True(await coordinator.TryConsumeApprovalAsync(approvalId, executionId, hash));
         Assert.False(await coordinator.TryConsumeApprovalAsync(approvalId, Guid.NewGuid().ToString(), hash), "consumed approval must not be consumable twice");
@@ -76,13 +68,7 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var client = _factory!.CreateClient();
         var coordinator = _factory.Services.GetRequiredService<IToolApprovalCoordinator>();
 
-        var createResponse = await client.PostAsJsonAsync("/api/v1/approvals", new
-        {
-            tool_id = "command_run",
-            parameters = JsonSerializer.SerializeToElement(new { command = "dotnet build" })
-        }, Json);
-        var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var approvalId = created.GetProperty("id").GetGuid();
+        var approvalId = await CreateApprovalAsync(client, "{\"command\":\"dotnet build\"}", "command_run");
 
         await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" }, Json);
 
@@ -234,16 +220,28 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
 
     private async Task<Guid> CreateApprovalAsync(HttpClient client, string rawParameters)
     {
-        var parameters = JsonSerializer.Deserialize<JsonElement>(rawParameters);
-        var response = await client.PostAsJsonAsync("/api/v1/approvals", new
-        {
-            kind = "tool",
-            tool_id = "write_file",
-            parameters
-        }, Json);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        return body.GetProperty("id").GetGuid();
+        return await CreateApprovalAsync(client, rawParameters, "write_file");
+    }
+
+    private async Task<Guid> CreateApprovalAsync(HttpClient client, string rawParameters, string toolId)
+    {
+        _ = client;
+        var coordinator = _factory!.Services.GetRequiredService<IToolApprovalCoordinator>();
+        return await coordinator.CreateToolApprovalAsync(
+            Guid.NewGuid().ToString(),
+            string.Empty,
+            string.Empty,
+            toolId,
+            ToolParametersHash.Compute(rawParameters),
+            $"Test approval for {toolId}");
+    }
+
+    [Fact]
+    public async Task ClientCannotCreateArbitraryApproval()
+    {
+        var client = _factory!.CreateClient();
+        using var response = await client.PostAsJsonAsync("/api/v1/approvals", new { tool_id = "write_file", parameters = new { } }, Json);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
     }
 
     private sealed class Factory : WebApplicationFactory<Program>

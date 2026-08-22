@@ -42,6 +42,7 @@ public static class GovernanceEndpoints
             Guid id,
             PermissionDecisionRequestDto? input,
             IAuthorizationService authorization,
+            IUserToolActionService actions,
             ILifecycleManager lifecycle,
             IFullDuplexRunEngine engine,
             CancellationToken ct) =>
@@ -58,7 +59,22 @@ public static class GovernanceEndpoints
             // between these operations, the persisted executing status is visible
             // to the normal lease/recovery scan and the run can be enqueued again.
             await WakeRunAsync(resolution, lifecycle, engine, ct).ConfigureAwait(false);
-            var statusCode = resolution.Request.Status is PermissionRequestStatuses.AwaitingDelegate
+
+            // A user tool action is deliberately outside the run/task graph.
+            // Reconcile its durable state after the permission decision so a
+            // governance-client decision wakes the same action as the legacy
+            // approval projection endpoint, without manufacturing a run.
+            var userAction = (await actions.ListAsync(null, ct).ConfigureAwait(false))
+                .FirstOrDefault(value => value.PermissionRequestId == id);
+            var actionStatus = userAction is null
+                ? null
+                : (await actions.ResumeAsync(userAction.Id, ct).ConfigureAwait(false)).Status;
+            var statusCode = actionStatus is UserToolActionStatuses.SnapshotRequired
+                or UserToolActionStatuses.AwaitingDelegate
+                or UserToolActionStatuses.AwaitingUser
+                or UserToolActionStatuses.AwaitingApproval
+                or UserToolActionStatuses.OutcomeUnknown
+                || resolution.Request.Status is PermissionRequestStatuses.AwaitingDelegate
                 or PermissionRequestStatuses.AwaitingUser
                 ? StatusCodes.Status202Accepted
                 : StatusCodes.Status200OK;
