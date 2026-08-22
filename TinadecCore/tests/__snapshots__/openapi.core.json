@@ -564,6 +564,25 @@
             "format": "uuid",
             "type": "string"
           },
+          "recovered_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "requires_approval": {
             "type": "boolean"
           },
@@ -618,6 +637,17 @@
           },
           "workspace_id": {
             "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserToolActionRecoveryDecisionRequestDto": {
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "reason": {
             "type": "string"
           }
         },
@@ -3973,6 +4003,61 @@
           },
           "404": {
             "description": "Not Found"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{id}/recovery-decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UserToolActionRecoveryDecisionRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict"
           }
         },
         "tags": [

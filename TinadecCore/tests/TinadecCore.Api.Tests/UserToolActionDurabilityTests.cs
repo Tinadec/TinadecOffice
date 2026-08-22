@@ -276,6 +276,43 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         Assert.Equal(0, _factory.Provider.CallCount);
     }
 
+    [Theory]
+    [InlineData("mark_completed", "completed", null)]
+    [InlineData("mark_failed", "failed", "recovery_marked_failed")]
+    public async Task RecoveryDecision_ClosesUnknownOutcomeWithoutProviderReplay(
+        string decision,
+        string expectedStatus,
+        string? expectedError)
+    {
+        var client = _factory!.CreateClient();
+        var (actionId, _) = await CreateActionAsync(client, $"recover-{decision}");
+        await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            await db.UserToolActions.Where(x => x.Id == actionId)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.Status, UserToolActionStatuses.OutcomeUnknown)
+                    .SetProperty(x => x.ErrorCategory, "outcome_unknown"));
+        }
+
+        var response = await client.PostAsJsonAsync($"/api/v1/user/tool-actions/{actionId}/recovery-decision",
+            new { decision, reason = "User inspected the workspace and external system." }, Json);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var action = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(expectedStatus, action.GetProperty("status").GetString());
+        Assert.Equal(decision, action.GetProperty("recovery_decision").GetString());
+        Assert.Equal(expectedError, action.TryGetProperty("error_category", out var error) && error.ValueKind != JsonValueKind.Null
+            ? error.GetString()
+            : null);
+        Assert.NotEqual(JsonValueKind.Null, action.GetProperty("recovered_at").ValueKind);
+        Assert.Equal(0, _factory.Provider.CallCount);
+
+        var replay = await client.PostAsJsonAsync($"/api/v1/user/tool-actions/{actionId}/recovery-decision",
+            new { decision, reason = "Idempotent duplicate." }, Json);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(0, _factory.Provider.CallCount);
+    }
+
     private async Task<(Guid ActionId, Guid PermissionId)> CreateActionAsync(HttpClient client, string key)
     {
         var projectPath = Path.Combine(_root, key);

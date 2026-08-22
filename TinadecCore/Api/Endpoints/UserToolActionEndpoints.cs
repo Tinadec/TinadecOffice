@@ -48,6 +48,16 @@ public static class UserToolActionEndpoints
             .Produces<UserToolActionDto>(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/v1/user/tool-actions/{id:guid}/recovery-decision", async (Guid id, UserToolActionRecoveryDecisionRequestDto? input, IUserToolActionService actions, CancellationToken ct) =>
+        {
+            if (input is null) return Results.BadRequest(new { code = "invalid_request", message = "A recovery decision body is required." });
+            var result = await actions.DecideRecoveryAsync(id, input.Decision, input.Reason, ct).ConfigureAwait(false);
+            return Results.Ok(ToDto(result));
+        }).Produces<UserToolActionDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict);
         return app;
     }
 
@@ -69,6 +79,7 @@ public static class UserToolActionEndpoints
             ActionApprovalId = value.ActionApprovalId, SnapshotId = value.SnapshotId, SnapshotHash = value.SnapshotHash,
             SnapshotOverride = value.SnapshotOverride, SnapshotOverrideReason = value.SnapshotOverrideReason,
             NonReversible = value.NonReversible, CompensationGuidance = value.CompensationGuidance,
+            RecoveryDecision = value.RecoveryDecision, RecoveryReason = value.RecoveryReason, RecoveredAt = value.RecoveredAt,
             Result = result, ErrorCategory = value.ErrorCategory, Message = value.Message,
             CreatedAt = value.CreatedAt, UpdatedAt = value.UpdatedAt, CompletedAt = value.CompletedAt
         };

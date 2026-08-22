@@ -24,6 +24,15 @@ public sealed class UserToolActionSnapshotOverrideRequestDto
     public string Reason { get; init; } = string.Empty;
 }
 
+public sealed class UserToolActionRecoveryDecisionRequestDto
+{
+    [JsonPropertyName("decision")]
+    public string Decision { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; init; } = string.Empty;
+}
+
 public sealed class UserToolActionDto
 {
     [JsonPropertyName("id")] public Guid Id { get; init; }
@@ -46,6 +55,9 @@ public sealed class UserToolActionDto
     [JsonPropertyName("snapshot_override_reason")] public string? SnapshotOverrideReason { get; init; }
     [JsonPropertyName("non_reversible")] public bool NonReversible { get; init; }
     [JsonPropertyName("compensation_guidance")] public string? CompensationGuidance { get; init; }
+    [JsonPropertyName("recovery_decision")] public string? RecoveryDecision { get; init; }
+    [JsonPropertyName("recovery_reason")] public string? RecoveryReason { get; init; }
+    [JsonPropertyName("recovered_at")] public DateTimeOffset? RecoveredAt { get; init; }
     [JsonPropertyName("result")] public JsonElement? Result { get; init; }
     [JsonPropertyName("error_category")] public string? ErrorCategory { get; init; }
     [JsonPropertyName("message")] public string? Message { get; init; }

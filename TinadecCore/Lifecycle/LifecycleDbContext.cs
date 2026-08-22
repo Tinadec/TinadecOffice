@@ -178,6 +178,8 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.SnapshotHash).HasMaxLength(128);
             entity.Property(x => x.SnapshotOverrideReason).HasMaxLength(4096);
             entity.Property(x => x.CompensationGuidance).HasMaxLength(4096);
+            entity.Property(x => x.RecoveryDecision).HasMaxLength(32);
+            entity.Property(x => x.RecoveryReason).HasMaxLength(4096);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.CreatedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => x.ActionApprovalId);
@@ -336,6 +338,9 @@ public sealed class UserToolActionRecord
     public string? SnapshotOverrideReason { get; set; }
     public bool NonReversible { get; set; }
     public string? CompensationGuidance { get; set; }
+    public string? RecoveryDecision { get; set; }
+    public string? RecoveryReason { get; set; }
+    public DateTimeOffset? RecoveredAt { get; set; }
     public string? ResultReference { get; set; }
     public string? ResultHash { get; set; }
     public long? ResultLength { get; set; }

@@ -305,6 +305,55 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         return await AuthorizeAndMaybeRunAsync(action, descriptor, project, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<UserToolActionResult> DecideRecoveryAsync(
+        Guid actionId,
+        string decision,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = decision?.Trim().ToLowerInvariant();
+        if (normalized is not ("mark_completed" or "mark_failed"))
+            throw new ArgumentException("decision must be mark_completed or mark_failed", nameof(decision));
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("A recovery decision reason is required.", nameof(reason));
+
+        var action = await FindAsync(actionId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("User tool action was not found.");
+        var scope = _tenant.Current;
+        if (action.PrincipalId != scope.PrincipalId)
+            throw new UnauthorizedAccessException("Only the initiating user may decide an unknown tool outcome.");
+        if (action.RecoveryDecision is not null)
+        {
+            if (string.Equals(action.RecoveryDecision, normalized, StringComparison.Ordinal))
+                return await ToResultAsync(action, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException("The user tool action already has a different recovery decision.");
+        }
+        if (action.Status != UserToolActionStatuses.OutcomeUnknown)
+            throw new InvalidOperationException("Only an outcome_unknown user tool action accepts a recovery decision.");
+
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var updated = await db.UserToolActions.Where(x => x.Id == action.Id
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                && x.PrincipalId == scope.PrincipalId && x.Status == UserToolActionStatuses.OutcomeUnknown
+                && x.RecoveryDecision == null)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Status, normalized == "mark_completed" ? UserToolActionStatuses.Completed : UserToolActionStatuses.Failed)
+                .SetProperty(x => x.RecoveryDecision, normalized)
+                .SetProperty(x => x.RecoveryReason, SafeMessage(reason))
+                .SetProperty(x => x.RecoveredAt, now)
+                .SetProperty(x => x.ErrorCategory, normalized == "mark_completed" ? null : "recovery_marked_failed")
+                .SetProperty(x => x.SafeErrorMessage, normalized == "mark_completed" ? null : SafeMessage(reason))
+                .SetProperty(x => x.CompletedAt, now)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        if (updated != 1)
+            throw new InvalidOperationException("The user tool action recovery state changed concurrently.");
+
+        var recovered = await FindAsync(action.Id, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("User tool action was not found after recovery.");
+        return await ToResultAsync(recovered, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<UserToolActionResult> AuthorizeAndMaybeRunAsync(UserToolActionRecord action, ToolManifestEntryDto descriptor, ProjectReference project, CancellationToken cancellationToken)
     {
         if (action.PermissionRequestId is null)
@@ -545,7 +594,8 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
             action.ToolId, action.Status, action.Risk, action.MutatesWorkspace, action.RequiresApproval,
             action.PermissionRequestId, action.AuthorizationDecisionId, action.ActionApprovalId, action.SnapshotId,
             action.SnapshotHash, action.SnapshotOverride, action.SnapshotOverrideReason,
-            action.NonReversible, action.CompensationGuidance, result,
+            action.NonReversible, action.CompensationGuidance,
+            action.RecoveryDecision, action.RecoveryReason, action.RecoveredAt, result,
             action.ErrorCategory, action.SafeErrorMessage, action.CreatedAt, action.UpdatedAt, action.CompletedAt);
     }
 
@@ -708,7 +758,7 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         string.Equals(toolId, "git_push", StringComparison.OrdinalIgnoreCase)
             ? "A remote push cannot be rolled back by a workspace snapshot. Inspect the remote ref and, when policy permits, create and push a compensating revert commit."
             : null;
-    private static bool IsTerminal(string status) => status is UserToolActionStatuses.Completed or UserToolActionStatuses.Blocked or UserToolActionStatuses.OutcomeUnknown or "failed";
+    private static bool IsTerminal(string status) => status is UserToolActionStatuses.Completed or UserToolActionStatuses.Blocked or UserToolActionStatuses.OutcomeUnknown or UserToolActionStatuses.Failed;
     private static int RiskRank(string risk) => risk.ToLowerInvariant() switch { "low" => 0, "medium" => 1, "high" => 2, "critical" => 3, _ => int.MaxValue };
     private static string NormalizeRisk(string risk) => risk.ToLowerInvariant() is "low" or "medium" or "high" or "critical" ? risk.ToLowerInvariant() : "high";
     private static string? NormalizeIdempotencyKey(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim()[..Math.Min(value.Trim().Length, 256)];

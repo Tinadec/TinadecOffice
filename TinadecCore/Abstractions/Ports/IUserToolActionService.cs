@@ -12,6 +12,7 @@ public interface IUserToolActionService
     Task<UserToolActionResult?> GetAsync(Guid actionId, CancellationToken cancellationToken = default);
     Task<UserToolActionResult> ResumeAsync(Guid actionId, CancellationToken cancellationToken = default);
     Task<UserToolActionResult> OverrideSnapshotAsync(Guid actionId, string reason, CancellationToken cancellationToken = default);
+    Task<UserToolActionResult> DecideRecoveryAsync(Guid actionId, string decision, string reason, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -51,6 +52,9 @@ public sealed record UserToolActionResult(
     string? SnapshotOverrideReason,
     bool NonReversible,
     string? CompensationGuidance,
+    string? RecoveryDecision,
+    string? RecoveryReason,
+    DateTimeOffset? RecoveredAt,
     string? ResultJson,
     string? ErrorCategory,
     string? Message,
@@ -68,4 +72,5 @@ public static class UserToolActionStatuses
     public const string Completed = "completed";
     public const string Blocked = "blocked";
     public const string OutcomeUnknown = "outcome_unknown";
+    public const string Failed = "failed";
 }
