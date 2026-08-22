@@ -45,7 +45,7 @@ POST /api/v1/user/tool-actions/{id}/recovery-decision
 Desktop API 封装应至少提供：
 
 - `createUserToolAction`、`getUserToolAction`、`listUserToolActions`；
-- `resumeUserToolAction`、`overrideUserToolActionSnapshot`；
+- `resumeUserToolAction`、`overrideUserToolActionSnapshot`、`decideUserToolActionRecovery`；
 - `listPermissionRequests`、`getPermissionRequest`、`decidePermissionRequest`；
 - `listApprovals`、`decideApproval`（只作为 Core 持久投影/决定入口）。
 
