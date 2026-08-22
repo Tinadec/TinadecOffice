@@ -39,7 +39,18 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
             return [DenyBoundary("missing_identity", request.Claim)];
 
         if (request.RunId is not { } runId || request.TaskId is not { } taskId || runId == Guid.Empty || taskId == Guid.Empty)
-            return [DenyBoundary("missing_run_boundary", request.Claim)];
+        {
+            // Explicit Desktop/user actions intentionally have no synthetic run,
+            // task, or agent instance. Their principal and tenant/workspace are
+            // already bound by UserToolActionService; this boundary only says
+            // that the human action may enter the normal permission-request
+            // state machine. A later grant, policy, or explicit deny still
+            // decides whether a lease is issued.
+            return request.SubjectAgentInstanceId is null
+                ? [new AuthorizationBoundary("user_principal", [new CapabilityRule(
+                    "allow", request.Claim.Capability, request.Claim.Action, request.Claim.Resource)])]
+                : [DenyBoundary("missing_run_boundary", request.Claim)];
+        }
 
         var run = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         if (!Guid.TryParse(run.TenantId, out var runTenant) || !Guid.TryParse(run.WorkspaceId, out var runWorkspace)

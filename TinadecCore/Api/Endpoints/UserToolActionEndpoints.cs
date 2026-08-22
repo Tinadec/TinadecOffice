@@ -54,7 +54,7 @@ public static class UserToolActionEndpoints
         }
         return new UserToolActionDto
         {
-            Id = value.Id, TenantId = value.TenantId, WorkspaceId = value.WorkspaceId, ProjectId = value.ProjectId,
+            Id = value.Id, AuditReference = value.AuditReference, TenantId = value.TenantId, WorkspaceId = value.WorkspaceId, ProjectId = value.ProjectId,
             PrincipalId = value.PrincipalId, ToolId = value.ToolId, Status = value.Status, Risk = value.Risk,
             MutatesWorkspace = value.MutatesWorkspace, RequiresApproval = value.RequiresApproval,
             PermissionRequestId = value.PermissionRequestId, AuthorizationDecisionId = value.AuthorizationDecisionId,

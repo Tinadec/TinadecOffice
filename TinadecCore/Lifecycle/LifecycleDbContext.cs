@@ -163,6 +163,7 @@ public sealed class LifecycleDbContext : DbContext
         modelBuilder.Entity<UserToolActionRecord>(entity =>
         {
             entity.ToTable("user_tool_actions"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.AuditReference).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ToolId).HasMaxLength(256).IsRequired();
             entity.Property(x => x.ParametersReference).HasMaxLength(1024).IsRequired();
             entity.Property(x => x.ParametersHash).HasMaxLength(128).IsRequired();
@@ -301,6 +302,8 @@ public sealed class SessionMetadataSnapshotRecord
 public sealed class UserToolActionRecord
 {
     public Guid Id { get; set; }
+    /// <summary>Stable reference used to correlate lifecycle/audit events.</summary>
+    public string AuditReference { get; set; } = string.Empty;
     public Guid TenantId { get; set; }
     public Guid WorkspaceId { get; set; }
     public Guid ProjectId { get; set; }

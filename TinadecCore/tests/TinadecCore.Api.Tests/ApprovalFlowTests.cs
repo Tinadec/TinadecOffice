@@ -32,7 +32,22 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
     {
         _factory?.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_root)) Directory.Delete(_root, true);
+        for (var attempt = 0; attempt < 10 && Directory.Exists(_root); attempt++)
+        {
+            try
+            {
+                Directory.Delete(_root, true);
+                break;
+            }
+            catch (IOException) when (attempt < 9)
+            {
+                Thread.Sleep(250);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 9)
+            {
+                Thread.Sleep(250);
+            }
+        }
         return Task.CompletedTask;
     }
 
@@ -242,6 +257,49 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         var client = _factory!.CreateClient();
         using var response = await client.PostAsJsonAsync("/api/v1/approvals", new { tool_id = "write_file", parameters = new { } }, Json);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UserToolAction_WriteFile_UsesPermissionApprovalLeaseAndProvider()
+    {
+        var client = _factory!.CreateClient();
+        var projectPath = Path.Combine(_root, "user-action-workspace");
+        Directory.CreateDirectory(projectPath);
+        var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new { name = "User action project", path = projectPath }, Json);
+        Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
+        var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+
+        var create = await client.PostAsJsonAsync("/api/v1/user/tool-actions", new
+        {
+            project_id = projectId,
+            tool_id = "write_file",
+            @params = new { filepath = "user-action.txt", content = "governed" },
+            idempotency_key = "user-action-write-1"
+        }, Json);
+        Assert.Equal(HttpStatusCode.Accepted, create.StatusCode);
+        var requested = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("awaiting_user", requested.GetProperty("status").GetString());
+        var actionId = requested.GetProperty("id").GetGuid();
+        var permissionRequestId = requested.GetProperty("permission_request_id").GetGuid();
+
+        var permission = await client.PostAsJsonAsync($"/api/v1/governance/permission-requests/{permissionRequestId}/decision",
+            new { approve = true, reason = "User confirmed the file write." }, Json);
+        Assert.Equal(HttpStatusCode.Accepted, permission.StatusCode);
+        var awaitingApproval = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{actionId}");
+        Assert.Equal("awaiting_approval", awaitingApproval.GetProperty("status").GetString());
+        var actionApprovalId = awaitingApproval.GetProperty("action_approval_id").GetGuid();
+
+        var approval = await client.PostAsJsonAsync($"/api/v1/approvals/{actionApprovalId}/decision",
+            new { decision = "approved", reason = "User confirmed the governed write." }, Json);
+        Assert.Equal(HttpStatusCode.OK, approval.StatusCode);
+        var completed = await approval.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("completed", completed.GetProperty("action").GetProperty("status").GetString());
+        Assert.Equal("governed", await File.ReadAllTextAsync(Path.Combine(projectPath, "user-action.txt")));
+
+        var fetched = await client.GetFromJsonAsync<JsonElement>($"/api/v1/user/tool-actions/{completed.GetProperty("action").GetProperty("id").GetGuid()}");
+        Assert.Equal("completed", fetched.GetProperty("status").GetString());
+        Assert.StartsWith("user-tool-action:", fetched.GetProperty("audit_reference").GetString(), StringComparison.Ordinal);
     }
 
     private sealed class Factory : WebApplicationFactory<Program>

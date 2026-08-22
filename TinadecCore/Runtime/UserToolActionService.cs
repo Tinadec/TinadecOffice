@@ -83,9 +83,10 @@ public sealed class UserToolActionService : IUserToolActionService
 
         var stored = await PutContentAsync(scope, "user-tool-parameters", parametersJson, cancellationToken).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
+        var actionId = Guid.NewGuid();
         var action = new UserToolActionRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+            Id = actionId, AuditReference = $"user-tool-action:{actionId:N}", TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             ProjectId = project.ProjectId, PrincipalId = scope.PrincipalId, ToolId = descriptor.Id,
             ParametersReference = stored.Value, ParametersLength = stored.Length, ParametersHash = parametersHash,
             Risk = NormalizeRisk(descriptor.Risk), MutatesWorkspace = descriptor.MutatesWorkspace,
@@ -285,6 +286,28 @@ public sealed class UserToolActionService : IUserToolActionService
                 return await BlockAsync(action, "snapshot_unavailable", SafeMessage(ex.Message), cancellationToken).ConfigureAwait(false);
             }
         }
+
+        if (action.CapabilityLeaseId is not { } leaseId)
+            return await BlockAsync(action, "capability_lease_required", "A matching capability lease is required before the tool can execute.", cancellationToken).ConfigureAwait(false);
+
+        // User actions keep the lease secret entirely inside Core. The
+        // authorization port reloads protected nonce material and performs the
+        // atomic, idempotent one-use CAS immediately before the provider call.
+        var consumedLease = await _authorization.ConsumeToolLeaseAsync(new ToolLeaseConsumptionCommand(
+            CapabilityLeaseId: leaseId,
+            Nonce: null,
+            SubjectPrincipalId: action.PrincipalId,
+            SubjectAgentInstanceId: null,
+            Claim: new CapabilityClaim("tool.invoke", descriptor.MutatesWorkspace ? "mutate" : "read", $"tool://{descriptor.Id}"),
+            RunId: null,
+            TaskId: null,
+            IdempotencyKey: $"user-tool-action-lease:{action.Id:N}"), cancellationToken).ConfigureAwait(false);
+        if (consumedLease.Status != "allowed")
+            return await BlockAsync(action, consumedLease.ErrorCategory ?? "lease_not_authorized", consumedLease.Message ?? "The capability lease could not be consumed.", cancellationToken).ConfigureAwait(false);
+        action.AuthorizationDecisionId = consumedLease.AuthorizationDecisionId;
+        action.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveAsync(action, cancellationToken).ConfigureAwait(false);
+
         action.Status = UserToolActionStatuses.Running;
         action.UpdatedAt = DateTimeOffset.UtcNow;
         await SaveAsync(action, cancellationToken).ConfigureAwait(false);
@@ -351,13 +374,32 @@ public sealed class UserToolActionService : IUserToolActionService
 
     private async Task<bool> TryConsumeUserApprovalAsync(ApprovalRequestRecord approval, UserToolActionRecord action, CancellationToken cancellationToken)
     {
+        var now = DateTimeOffset.UtcNow;
+        if (approval.Status != "approved"
+            || !string.Equals(approval.Decision, "approved", StringComparison.OrdinalIgnoreCase)
+            || approval.ExpiresAt <= now
+            || approval.RequestedByPrincipalId != action.PrincipalId
+            || approval.ToolId != action.ToolId
+            || approval.ProjectId != action.ProjectId
+            || approval.RequestHash != action.ParametersHash
+            || approval.ParametersReference != action.ParametersReference
+            || approval.UserToolActionId != action.Id
+            || approval.RunId is not null
+            || approval.TaskId is not null
+            || approval.AgentInstanceId is not null
+            || approval.ExecutionId is not null)
+            return false;
+
         var nonce = await _nonceMaterials.GetAsync(approval.NonceSecretReference ?? string.Empty, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(nonce) || !FixedEquals(approval.NonceHash, ToolParametersHash.Compute(nonce))) return false;
         var scope = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var updated = await db.ApprovalRequests.Where(x => x.Id == approval.Id && x.UserToolActionId == action.Id
             && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "approved"
-            && x.ConsumedByExecutionId == null && x.RequestHash == action.ParametersHash)
+            && x.Decision == "approved" && x.ConsumedByExecutionId == null
+            && x.RequestedByPrincipalId == action.PrincipalId && x.ProjectId == action.ProjectId
+            && x.ToolId == action.ToolId && x.RequestHash == action.ParametersHash
+            && x.ParametersReference == action.ParametersReference)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "consumed")
                 .SetProperty(x => x.ConsumedByExecutionId, action.Id)
                 .SetProperty(x => x.ConsumedAt, DateTimeOffset.UtcNow).SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
@@ -390,7 +432,7 @@ public sealed class UserToolActionService : IUserToolActionService
             try { result = await ReadContentAsync(action.ResultReference, action.ResultHash ?? string.Empty, action.ResultLength ?? 0, "application/json", cancellationToken).ConfigureAwait(false); }
             catch (InvalidDataException) { }
         }
-        return new UserToolActionResult(action.Id, action.TenantId, action.WorkspaceId, action.ProjectId, action.PrincipalId,
+        return new UserToolActionResult(action.Id, action.AuditReference, action.TenantId, action.WorkspaceId, action.ProjectId, action.PrincipalId,
             action.ToolId, action.Status, action.Risk, action.MutatesWorkspace, action.RequiresApproval,
             action.PermissionRequestId, action.AuthorizationDecisionId, action.ActionApprovalId, action.SnapshotId,
             action.SnapshotHash, result, action.ErrorCategory, action.SafeErrorMessage, action.CreatedAt, action.UpdatedAt, action.CompletedAt);

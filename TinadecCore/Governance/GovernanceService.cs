@@ -364,9 +364,27 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         // This is a Core-internal consumption path. The public lease snapshot never
         // carries the nonce; binding the lease to the full execution claim and the
         // idempotency key keeps dispatch replay-safe without exposing the secret.
+        // UserToolAction deliberately does not persist or expose the lease nonce.
+        // Resolve missing material only inside this Core-owned port so a restarted
+        // process can replay the action without putting the nonce in a DTO, event,
+        // log, or Gateway response.
+        var nonce = command.Nonce;
+        if (string.IsNullOrWhiteSpace(nonce))
+        {
+            var scope = _tenantAccessor.Current;
+            await using var nonceDb = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var secretReference = await nonceDb.CapabilityLeases.AsNoTracking()
+                .Where(x => x.Id == command.CapabilityLeaseId
+                    && x.TenantId == scope.TenantId
+                    && x.WorkspaceId == scope.WorkspaceId)
+                .Select(x => x.NonceSecretReference)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(secretReference))
+                nonce = await _nonceMaterials.GetAsync(secretReference, cancellationToken).ConfigureAwait(false);
+        }
         var consumed = await ConsumeLeaseAsync(new LeaseConsumptionCommand(
             command.CapabilityLeaseId,
-            command.Nonce,
+            nonce,
             command.SubjectPrincipalId,
             command.SubjectAgentInstanceId,
             command.Claim,
@@ -606,8 +624,11 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             && command.ApproverAgentInstanceId is { } approverAgentId
             && await _authorizationContextResolver.IsSelfOrDescendantAsync(scope.TenantId, scope.WorkspaceId,
                 requesterAgentId, approverAgentId, cancellationToken).ConfigureAwait(false);
-        if (selfOrRelated || (request.SubjectAgentInstanceId is null && command.ApproverAgentInstanceId is null
-                && request.SubjectPrincipalId == scope.PrincipalId))
+        // Agent self-approval (including an ancestor/descendant agent in the
+        // same execution lineage) is never valid. A user-originated action has
+        // no agent instance, however, and the initiating human may explicitly
+        // confirm that action through the normal human approval path.
+        if (selfOrRelated)
         {
             return await DenyRequestAsync(db, transaction, request, scope, claim, "self_approval_forbidden",
                 "The requester and approver cannot be the same agent or belong to the same ancestor chain.",

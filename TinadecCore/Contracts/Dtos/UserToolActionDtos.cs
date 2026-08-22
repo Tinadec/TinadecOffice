@@ -27,6 +27,7 @@ public sealed class UserToolActionSnapshotOverrideRequestDto
 public sealed class UserToolActionDto
 {
     [JsonPropertyName("id")] public Guid Id { get; init; }
+    [JsonPropertyName("audit_reference")] public string AuditReference { get; init; } = string.Empty;
     [JsonPropertyName("tenant_id")] public Guid TenantId { get; init; }
     [JsonPropertyName("workspace_id")] public Guid WorkspaceId { get; init; }
     [JsonPropertyName("project_id")] public Guid ProjectId { get; init; }

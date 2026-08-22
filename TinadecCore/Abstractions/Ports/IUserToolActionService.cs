@@ -22,6 +22,7 @@ public sealed record UserToolActionRequest(
 
 public sealed record UserToolActionResult(
     Guid Id,
+    string AuditReference,
     Guid TenantId,
     Guid WorkspaceId,
     Guid ProjectId,

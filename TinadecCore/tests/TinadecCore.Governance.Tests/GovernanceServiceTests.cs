@@ -165,6 +165,36 @@ public sealed class GovernanceServiceTests
     }
 
     [Fact]
+    public async Task ExplicitUserAction_CanBeConfirmedByInitiatingHuman_AndCoreResolvesLeaseNonce()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        harness.Context.Boundaries = [new("hard_policy", [AllowWrite])];
+        var principal = harness.Tenant.Current.PrincipalId;
+
+        var pending = await harness.Service.RequestPermissionAsync(Request(principal, "user-action-confirmation"));
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, pending.Request.Status);
+
+        var approved = await harness.Service.DecidePermissionAsync(new PermissionDecisionCommand(
+            pending.Request.Id, true, null, null, "The initiating user explicitly confirmed this action."));
+
+        Assert.Equal(PermissionRequestStatuses.Granted, approved.Request.Status);
+        Assert.Equal(GovernanceOutcomes.Allowed, approved.Decision.Outcome);
+        Assert.NotNull(approved.Lease);
+
+        var consumed = await harness.Service.ConsumeToolLeaseAsync(new ToolLeaseConsumptionCommand(
+            approved.Lease!.Id,
+            Nonce: null,
+            SubjectPrincipalId: principal,
+            SubjectAgentInstanceId: null,
+            Claim: WriteClaim,
+            RunId: null,
+            TaskId: null,
+            IdempotencyKey: "user-tool-action-lease:test"));
+
+        Assert.Equal("allowed", consumed.Status);
+    }
+
+    [Fact]
     public async Task Lease_ExpiresRevokesExhausts_AndIdempotentReplayDoesNotConsumeTwice()
     {
         await using var harness = await GovernanceHarness.CreateAsync();
