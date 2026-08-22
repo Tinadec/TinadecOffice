@@ -20,7 +20,6 @@ import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { DispatchMode } from '@/api'
-import type { SseChunk } from '@/generated/client'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 // ---------------------------------------------------------------------------
@@ -207,47 +206,7 @@ async function createSession(projectId: string) {
 const streamingText = ref<Map<string, string>>(new Map())
 const invokeError = ref<string | null>(null)
 const lastCursor = ref<number | null>(null)
-const seenInvoke = new Set<string>()
 
-function handleInvokeChunk(chunk: SseChunk) {
-  const key = `${chunk.run_id}:${chunk.seq}`
-  if (seenInvoke.has(key)) return
-  seenInvoke.add(key)
-  lastCursor.value = chunk.seq
-  if (chunk.kind === 'heartbeat') return
-  if (chunk.kind === 'ack') {
-    // optimistic: keep busy until done/error
-    return
-  }
-  if (chunk.kind === 'delta') {
-    const d = String((chunk.payload.delta as string) ?? '')
-    if (!d) return
-    const cur = streamingText.value.get(chunk.run_id) ?? ''
-    const next = new Map(streamingText.value)
-    next.set(chunk.run_id, cur + d)
-    streamingText.value = next
-    return
-  }
-  if (chunk.kind === 'done') {
-    // done will be followed by persisted assistant message via polling
-    streamingText.value = new Map()
-    return
-  }
-  if (chunk.kind === 'error') {
-    const cat = String((chunk.payload.error_category as string) ?? (chunk.payload as Record<string, unknown>).code ?? '')
-    const safe = String((chunk.payload.safe_error_message as string) ?? (chunk.payload as Record<string, unknown>).message ?? cat)
-    if (cat === 'model_not_configured') invokeError.value = '模型未配置：请在设置中配置模型后再试'
-    else if (cat === 'permission_denied' || cat === 'forbidden') invokeError.value = '权限不足'
-    else if (cat === 'recovering' || cat === 'recovering_state') invokeError.value = '恢复中，请稍后重试'
-    else invokeError.value = safe || '调用失败'
-    if (!navigator.onLine) invokeError.value = '连接已断开'
-    return
-  }
-  // task_node_update / supervision_update / context_version_update -> trigger orchestration refresh
-  if (chunk.kind === 'task_node_update' || chunk.kind === 'supervision_update' || chunk.kind === 'context_version_update') {
-    void loadMessagesAndApprovals()
-  }
-}
 
 async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
   await run('send message', async () => {
@@ -286,28 +245,16 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
       // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('404') || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) {
-        // fallback to legacy invoke-stream if interactions not yet deployed
-        try {
-          await api.invokeStreamWithAdmission(sessionId, {
-            content: snapshotContent,
-            client_message_id: clientMessageId,
-            application_mode: 'conversation',
-            agent_mode: currentMode.value,
-            permission_mode: currentPermission.value,
-          }, handleInvokeChunk, (e) => { invokeError.value = e.message })
-          if (invokeError.value) throw new Error(invokeError.value)
-        } catch {
-          if (!invokeError.value) await api.postMessage(sessionId, snapshotContent)
-        }
-      } else {
-        if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置：请在设置中配置模型后再试'
-        else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
-        else if (msg.includes('recovering') || msg.includes('409')) invokeError.value = '恢复中，请稍后重试'
-        else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '连接已断开'
-        else invokeError.value = msg
-        throw err
-      }
+      // Main path only: POST /interactions is the single admission contract
+      // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
+      // fallbacks were removed so failures surface visibly instead of
+      // silently degrading to a non-durable path.
+      if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'
+      else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
+      else if (msg.includes('recovering') || msg.includes('409')) invokeError.value = '恢复中，请稍候再试'
+      else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '网络已断开'
+      else invokeError.value = msg
+      throw err
     }
     if (pendingSessionId.value === sessionId) {
       const title = generateTitle(snapshotContent)
