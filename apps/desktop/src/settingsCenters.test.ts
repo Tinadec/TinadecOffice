@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import topologyCanvas from './components/AgentTopologyCanvas.vue?raw'
 import zhCn from './locales/zh-CN.ts?raw'
 import settingsPage from './pages/SettingsPage.vue?raw'
+// D7.2 moved the pets UI into its own section; assert against both sources.
+import petsSection from './settings/sections/PetsSection.vue?raw'
+const settingsSources = settingsPage + petsSection
 
 describe('settings centers presentation contract', () => {
   it('renders the rewritten model workbench contract', () => {
@@ -57,9 +60,9 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("label: t('settings.promptContext')")
     expect(settingsPage).toContain("label: t('settings.promptEngineering')")
     expect(settingsPage).toContain("label: t('settings.pets')")
-    expect(settingsPage).toContain("t('settings.petdexCatalog')")
-    expect(settingsPage).toContain("t('settings.openPetFolder')")
-    expect(settingsPage).toContain("t('settings.deletePet')")
+    expect(settingsSources).toContain("t('settings.petdexCatalog')")
+    expect(settingsSources).toContain("t('settings.openPetFolder')")
+    expect(settingsSources).toContain("t('settings.deletePet')")
   })
 
   it('keeps the topology readable and the inspector beside the work surface', () => {
