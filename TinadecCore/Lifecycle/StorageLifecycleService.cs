@@ -830,7 +830,9 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             ["lease_uses"] = "INTEGER NOT NULL DEFAULT 1",
             ["mutates_workspace"] = "INTEGER NOT NULL DEFAULT 0",
             ["error_category"] = "TEXT NULL",
-            ["safe_error_message"] = "TEXT NULL"
+            ["safe_error_message"] = "TEXT NULL",
+            ["workspace_snapshot_id"] = "TEXT NULL",
+            ["workspace_snapshot_hash"] = "TEXT NULL"
         };
 
         foreach (var (column, definition) in required)

@@ -180,6 +180,34 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<ToolExecutionSnapshot> BindWorkspaceSnapshotAsync(
+        Guid executionId,
+        Guid snapshotId,
+        string snapshotHash,
+        CancellationToken cancellationToken = default)
+    {
+        if (snapshotId == Guid.Empty || string.IsNullOrWhiteSpace(snapshotHash))
+            throw new ArgumentException("A workspace snapshot id and hash are required.");
+        var scope = _tenant.Current;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Tool execution was not found.");
+        if (row.WorkspaceSnapshotId is { } existingId)
+        {
+            if (existingId != snapshotId || !string.Equals(row.WorkspaceSnapshotHash, snapshotHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Tool execution is already bound to a different workspace snapshot.");
+            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+        }
+        if (row.Status is "completed" or "failed" or "timed_out" or "cancelled")
+            return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+        row.WorkspaceSnapshotId = snapshotId;
+        row.WorkspaceSnapshotHash = snapshotHash.Trim().ToLowerInvariant();
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
@@ -491,6 +519,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ParametersHash = source.ParametersHash,
             ParametersReference = source.ParametersReference,
             ParametersLength = source.ParametersLength,
+            WorkspaceSnapshotId = source.WorkspaceSnapshotId,
+            WorkspaceSnapshotHash = source.WorkspaceSnapshotHash,
             Attempt = source.Attempt + 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -802,7 +832,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.Id, row.TenantId, row.WorkspaceId, row.ProjectId ?? Guid.Empty, row.SessionId, row.RunId, row.TaskId, row.AgentInstanceId,
         row.ApprovalId, row.ToolId, row.ToolCallKey, row.Risk, row.MutatesWorkspace, row.RequiresApproval, row.Status, parametersJson,
         row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt,
-        row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses);
+        row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses,
+        row.WorkspaceSnapshotId, row.WorkspaceSnapshotHash);
 
     // Action approvals carry a server-generated, one-time nonce. Only its hash
     // and a protected-material reference are persisted; the material is never

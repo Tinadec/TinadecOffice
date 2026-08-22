@@ -19,6 +19,8 @@ public sealed class LifecycleModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<LifecycleDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<StorageDiagnostics>();
         builder.Services.AddSingleton<StorageLifecycleService>();
+        builder.Services.AddSingleton<IWorkspaceSnapshotProvider, GitWorkspaceSnapshotProvider>();
+        builder.Services.AddSingleton<IWorkspaceSnapshotProvider, FileSystemWorkspaceSnapshotProvider>();
         builder.Services.AddSingleton<IWorkspaceSnapshotService, WorkspaceSnapshotService>();
         builder.Services.AddSingleton<IStorageMigrationParticipant>(sp => sp.GetRequiredService<StorageLifecycleService>());
         builder.Services.AddSingleton<ILifecycleManager, LifecycleManager>();

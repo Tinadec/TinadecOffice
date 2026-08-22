@@ -30,6 +30,7 @@ public sealed class ToolDispatcher : IToolDispatcher
     private readonly IToolInvocationScopeResolver _scopeResolver;
     private readonly IToolExecutionCoordinator _executions;
     private readonly IAuthorizationService _authorization;
+    private readonly IWorkspaceSnapshotService _snapshots;
     private readonly ILifecycleManager _lifecycle;
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
@@ -39,6 +40,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         IToolInvocationScopeResolver scopeResolver,
         IToolExecutionCoordinator executions,
         IAuthorizationService authorization,
+        IWorkspaceSnapshotService snapshots,
         ILifecycleManager lifecycle,
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger)
@@ -47,6 +49,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         _scopeResolver = scopeResolver;
         _executions = executions;
         _authorization = authorization;
+        _snapshots = snapshots;
         _lifecycle = lifecycle;
         _options = options;
         _logger = logger;
@@ -90,6 +93,28 @@ public sealed class ToolDispatcher : IToolDispatcher
                 DeferApproval: true,
                 LeaseUses: request.LeaseUses), cancellationToken).ConfigureAwait(false);
             var execution = preparation.Execution;
+
+            // High-risk writes receive the same pre-write snapshot guard as
+            // explicit user actions. The execution was persisted first, so a
+            // snapshot failure can durably block it without calling the provider.
+            if (NeedsPrewriteSnapshot(execution)
+                && execution.WorkspaceSnapshotId is null
+                && execution.Status is not ("completed" or "failed" or "timed_out" or "cancelled"))
+            {
+                try
+                {
+                    var snapshot = await _snapshots.CreateAsync(new WorkspaceSnapshotCreateRequest(
+                        scope.ProjectId, $"execution:{execution.Id:N}:prewrite"), cancellationToken).ConfigureAwait(false);
+                    execution = await _executions.BindWorkspaceSnapshotAsync(
+                        execution.Id, snapshot.Id, snapshot.WorkspaceHash, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or DirectoryNotFoundException)
+                {
+                    var blocked = await _executions.FailAsync(execution.Id, "failed", "snapshot_failed",
+                        SafeMessage(ex.Message), cancellationToken).ConfigureAwait(false);
+                    return ResultForFailure(blocked, ToolDispatchStatus.Blocked);
+                }
+            }
 
             // Persist the execution before asking governance so permission requests
             // can safely point at a stable execution id and be replayed after a host
@@ -278,6 +303,26 @@ public sealed class ToolDispatcher : IToolDispatcher
         {
             var failed = await _executions.FailAsync(execution.Id, "failed", "invalid_parameters", "Persisted tool parameters are invalid JSON.", cancellationToken).ConfigureAwait(false);
             return ResultForFailure(failed, ToolDispatchStatus.Failed);
+        }
+
+        if (execution.MutatesWorkspace && execution.WorkspaceSnapshotId is { } snapshotId)
+        {
+            try
+            {
+                var validation = await _snapshots.ValidateAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+                if (!validation.IsValid)
+                {
+                    var failed = await _executions.FailAsync(execution.Id, "failed", "snapshot_changed",
+                        "The pre-write workspace snapshot no longer matches the current workspace.", cancellationToken).ConfigureAwait(false);
+                    return ResultForFailure(failed, ToolDispatchStatus.Blocked);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or KeyNotFoundException or DirectoryNotFoundException)
+            {
+                var failed = await _executions.FailAsync(execution.Id, "failed", "snapshot_unavailable",
+                    SafeMessage(ex.Message), cancellationToken).ConfigureAwait(false);
+                return ResultForFailure(failed, ToolDispatchStatus.Blocked);
+            }
         }
 
         var safeReadRetry = !execution.MutatesWorkspace
@@ -607,6 +652,18 @@ public sealed class ToolDispatcher : IToolDispatcher
     }
 
     private static string SafeMessage(string? value) => string.IsNullOrWhiteSpace(value) ? "Tool call failed." : value.Trim()[..Math.Min(value.Trim().Length, 4096)];
+
+    private static bool NeedsPrewriteSnapshot(ToolExecutionSnapshot execution) =>
+        execution.MutatesWorkspace && RiskRank(execution.Risk) >= 2;
+
+    private static int RiskRank(string risk) => risk.Trim().ToLowerInvariant() switch
+    {
+        "low" => 0,
+        "medium" => 1,
+        "high" => 2,
+        "critical" => 3,
+        _ => int.MaxValue
+    };
 }
 
 /// <summary>Canonical parameters hashing shared by dispatch and approval consumption.</summary>

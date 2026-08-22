@@ -18,8 +18,6 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
     private const string SessionProjectionKind = "session_runtime";
     private const string SessionProjectionSource = "lifecycle_projection";
     private const string SessionProjectionSchemaVersion = "1.0";
-    private const long DefaultMaxBytes = 64 * 1024 * 1024;
-    private const long MaxSingleFileBytes = 8 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> ProjectionLocks = new();
 
@@ -28,19 +26,22 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
     private readonly IContentStore _content;
     private readonly ITenantContextAccessor _tenant;
     private readonly StoragePaths _paths;
+    private readonly IReadOnlyList<IWorkspaceSnapshotProvider> _providers;
 
     public WorkspaceSnapshotService(
         IDbContextFactory<LifecycleDbContext> dbFactory,
         ISessionLocator sessions,
         IContentStore content,
         ITenantContextAccessor tenant,
-        StoragePaths paths)
+        StoragePaths paths,
+        IEnumerable<IWorkspaceSnapshotProvider> providers)
     {
         _dbFactory = dbFactory;
         _sessions = sessions;
         _content = content;
         _tenant = tenant;
         _paths = paths;
+        _providers = providers.OrderByDescending(x => string.Equals(x.Kind, "git", StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 
     public async Task<WorkspaceSnapshot> CreateAsync(
@@ -64,8 +65,12 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
             if (prior is not null) return ToSnapshot(prior);
         }
 
-        var manifest = await BuildManifestAsync(project.RootPath, request.IncludeHidden,
-            Math.Clamp(request.MaxFiles, 1, 100_000), Math.Clamp(request.MaxBytes, 1, 1024L * 1024 * 1024), cancellationToken).ConfigureAwait(false);
+        var provider = ResolveProvider(project.RootPath);
+        var manifest = await provider.CaptureAsync(new WorkspaceSnapshotCaptureRequest(
+            project.RootPath,
+            request.IncludeHidden,
+            Math.Clamp(request.MaxFiles, 1, 100_000),
+            Math.Clamp(request.MaxBytes, 1, 1024L * 1024 * 1024)), cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(request.ExpectedWorkspaceHash)
             && !FixedEquals(request.ExpectedWorkspaceHash, manifest.WorkspaceHash))
         {
@@ -88,7 +93,7 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
         var row = new WorkspaceSnapshotRecord
         {
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
-            ProjectId = request.ProjectId, Kind = manifest.IsGit ? "git" : "filesystem", Status = "created",
+            ProjectId = request.ProjectId, Kind = manifest.ProviderKind, Status = "created",
             IsGit = manifest.IsGit, WorkspaceHash = manifest.WorkspaceHash, ContentReference = stored.Value,
             ContentHash = stored.Sha256, ContentLength = stored.Length, FileCount = manifest.Files.Count,
             BaseSnapshotId = priorSnapshot?.Id, IdempotencyKey = key, CreatedAt = now
@@ -126,6 +131,48 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
         var row = await db.WorkspaceSnapshots.AsNoTracking().SingleOrDefaultAsync(x =>
             x.Id == snapshotId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
         return row is null ? null : ToSnapshot(row);
+    }
+
+    public async Task<WorkspaceSnapshotValidationResult> ValidateAsync(
+        Guid snapshotId,
+        CancellationToken cancellationToken = default)
+    {
+        if (snapshotId == Guid.Empty) throw new ArgumentException("Snapshot id is required.", nameof(snapshotId));
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.WorkspaceSnapshots.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.Id == snapshotId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Workspace snapshot was not found.");
+        var project = await _sessions.FindProjectAsync(row.ProjectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Project was not found.");
+        if (project.TenantId != scope.TenantId || project.WorkspaceId != scope.WorkspaceId)
+            throw new UnauthorizedAccessException("Project is outside the current tenant/workspace.");
+        var manifest = await ReadManifestAsync(row, cancellationToken).ConfigureAwait(false);
+        var provider = ResolveProvider(project.RootPath, manifest.ProviderKind);
+        var current = await provider.CaptureAsync(new WorkspaceSnapshotCaptureRequest(
+            project.RootPath, manifest.IncludeHidden, 100_000, 1024L * 1024 * 1024), cancellationToken).ConfigureAwait(false);
+        var conflicts = new List<string>();
+        if (!FixedEquals(row.WorkspaceHash, current.WorkspaceHash)) conflicts.Add("workspace_hash");
+        if (manifest.Git is { } expectedGit && current.Git is { } actualGit)
+        {
+            if (!string.Equals(expectedGit.Head, actualGit.Head, StringComparison.OrdinalIgnoreCase)) conflicts.Add("git.head");
+            if (!string.Equals(expectedGit.Branch, actualGit.Branch, StringComparison.Ordinal)) conflicts.Add("git.branch");
+            if (!string.Equals(expectedGit.IndexTreeHash, actualGit.IndexTreeHash, StringComparison.OrdinalIgnoreCase)) conflicts.Add("git.index");
+            if (!string.Equals(expectedGit.WorktreeHash, actualGit.WorktreeHash, StringComparison.OrdinalIgnoreCase)) conflicts.Add("git.worktree");
+            if (!expectedGit.ConflictPaths.OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(
+                actualGit.ConflictPaths.OrderBy(x => x, StringComparer.Ordinal), StringComparer.Ordinal)) conflicts.Add("git.conflicts");
+        }
+        else if (manifest.Git is not null || current.Git is not null)
+        {
+            conflicts.Add("git_state_missing");
+        }
+        return new WorkspaceSnapshotValidationResult(
+            conflicts.Count == 0,
+            snapshotId,
+            row.WorkspaceHash,
+            current.WorkspaceHash,
+            conflicts);
     }
 
     /// <inheritdoc />
@@ -276,73 +323,55 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
         if (project.TenantId != scope.TenantId || project.WorkspaceId != scope.WorkspaceId)
             throw new UnauthorizedAccessException("Project is outside the current tenant/workspace.");
         var manifest = await ReadManifestAsync(row, cancellationToken).ConfigureAwait(false);
-        var current = await BuildManifestAsync(project.RootPath, manifest.IncludeHidden, 100_000, DefaultMaxBytes, cancellationToken).ConfigureAwait(false);
-        var expected = string.IsNullOrWhiteSpace(request.ExpectedWorkspaceHash) ? row.WorkspaceHash : request.ExpectedWorkspaceHash.Trim();
-        var conflicts = FixedEquals(expected, current.WorkspaceHash) ? [] : new[] { "workspace_hash" };
-        if (conflicts.Length != 0 && !request.AllowConflicts)
+        var provider = ResolveProvider(project.RootPath, manifest.ProviderKind);
+        WorkspaceSnapshotProviderRestoreResult providerResult;
+        try
+        {
+            providerResult = await provider.RestoreAsync(project.RootPath, manifest,
+                new WorkspaceSnapshotProviderRestoreRequest(request.ExpectedWorkspaceHash, request.AllowConflicts),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (WorkspaceSnapshotConflictException ex)
         {
             row.Status = "conflict";
-            row.ConflictJson = JsonSerializer.Serialize(conflicts, JsonOptions);
+            row.ConflictJson = JsonSerializer.Serialize(ex.Conflicts, JsonOptions);
             row.LastRestoreIdempotencyKey = key;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            throw new WorkspaceSnapshotConflictException("Workspace changed after the snapshot was created.", conflicts);
-        }
-
-        var applied = 0;
-        foreach (var file in manifest.Files)
-        {
-            if (string.IsNullOrWhiteSpace(file.ContentBase64)) continue;
-            var path = SafePath(project.RootPath, file.Path);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var bytes = Convert.FromBase64String(file.ContentBase64);
-            var temporary = path + ".tinadec-restore-" + Guid.NewGuid().ToString("N") + ".tmp";
-            await File.WriteAllBytesAsync(temporary, bytes, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
-            }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
-            applied++;
-        }
-
-        // Restore replaces the captured visibility scope. Files created after
-        // the snapshot are removed only after the conflict guard above has
-        // passed (or the caller explicitly opted into conflicts). Git/Core
-        // metadata and excluded hidden files remain outside that scope.
-        var snapshotPaths = manifest.Files
-            .Select(x => x.Path)
-            .ToHashSet(StringComparer.Ordinal);
-        var root = Path.GetFullPath(project.RootPath);
-        foreach (var currentPath in Directory.EnumerateFiles(root, "*", new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            ReturnSpecialDirectories = false,
-            AttributesToSkip = FileAttributes.System
-        }))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var relative = Path.GetRelativePath(root, currentPath).Replace(Path.DirectorySeparatorChar, '/');
-            if (IsExcluded(relative, manifest.IncludeHidden) || snapshotPaths.Contains(relative)) continue;
-            File.Delete(currentPath);
-            applied++;
+            throw;
         }
 
         var now = DateTimeOffset.UtcNow;
-        row.Status = conflicts.Length == 0 ? "restored" : "restored_with_conflicts";
-        row.ConflictJson = conflicts.Length == 0 ? null : JsonSerializer.Serialize(conflicts, JsonOptions);
-        row.AppliedFileCount = applied;
+        row.Status = providerResult.Status;
+        row.ConflictJson = providerResult.Conflicts.Count == 0
+            ? null
+            : JsonSerializer.Serialize(providerResult.Conflicts, JsonOptions);
+        row.AppliedFileCount = providerResult.AppliedFileCount;
         row.LastRestoreIdempotencyKey = key;
         row.RestoredAt = now;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return new WorkspaceRestoreResult(row.Status, row.Id, row.WorkspaceHash, conflicts, applied, now);
+        return new WorkspaceRestoreResult(row.Status, row.Id, row.WorkspaceHash,
+            providerResult.Conflicts, providerResult.AppliedFileCount, now);
     }
 
-    private async Task<WorkspaceManifest> ReadManifestAsync(WorkspaceSnapshotRecord row, CancellationToken cancellationToken)
+    private IWorkspaceSnapshotProvider ResolveProvider(string workspaceRoot, string? kind = null)
+    {
+        if (!string.IsNullOrWhiteSpace(kind))
+        {
+            var matching = _providers.FirstOrDefault(x => string.Equals(x.Kind, kind, StringComparison.OrdinalIgnoreCase));
+            if (matching is null || !matching.CanHandle(workspaceRoot))
+                throw new InvalidOperationException($"Workspace snapshot provider '{kind}' is unavailable for this workspace.");
+            return matching;
+        }
+
+        return _providers.FirstOrDefault(x => x.CanHandle(workspaceRoot))
+            ?? throw new InvalidOperationException("No workspace snapshot provider can handle this workspace.");
+    }
+
+    private async Task<WorkspaceSnapshotDocument> ReadManifestAsync(WorkspaceSnapshotRecord row, CancellationToken cancellationToken)
     {
         await using var stream = await _content.OpenReadAsync(new ContentReference(
             row.ContentReference, row.ContentHash, row.ContentLength, "application/json"), cancellationToken).ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<WorkspaceManifest>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
+        return await JsonSerializer.DeserializeAsync<WorkspaceSnapshotDocument>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("Workspace snapshot content is invalid.");
     }
 
@@ -363,77 +392,6 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
             row.Id, row.TenantId, row.WorkspaceId, row.SessionId, row.ProjectId,
             row.Kind, row.Source, row.SchemaVersion, row.Revision, row.CapturedAt,
             document.Runs, document.Tasks, document.Events);
-
-    private static async Task<WorkspaceManifest> BuildManifestAsync(
-        string root,
-        bool includeHidden,
-        int maxFiles,
-        long maxBytes,
-        CancellationToken cancellationToken)
-    {
-        var fullRoot = Path.GetFullPath(root);
-        if (!Directory.Exists(fullRoot)) throw new DirectoryNotFoundException("Workspace root was not found.");
-        var files = new List<WorkspaceFile>();
-        long capturedBytes = 0;
-        foreach (var path in Directory.EnumerateFiles(fullRoot, "*", new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            ReturnSpecialDirectories = false,
-            AttributesToSkip = FileAttributes.System
-        }))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var relative = Path.GetRelativePath(fullRoot, path).Replace(Path.DirectorySeparatorChar, '/');
-            if (IsExcluded(relative, includeHidden)) continue;
-            if (files.Count >= maxFiles) throw new InvalidOperationException($"Workspace snapshot exceeds the {maxFiles} file limit.");
-            var info = new FileInfo(path);
-            if (!info.Exists) continue;
-            var hash = await HashFileAsync(path, cancellationToken).ConfigureAwait(false);
-            string? content = null;
-            if (info.Length <= MaxSingleFileBytes && capturedBytes + info.Length <= maxBytes)
-            {
-                content = Convert.ToBase64String(await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false));
-                capturedBytes += info.Length;
-            }
-            files.Add(new WorkspaceFile(relative, info.Length, hash, content));
-        }
-        files.Sort((left, right) => string.CompareOrdinal(left.Path, right.Path));
-        var workspaceHash = ComputeWorkspaceHash(files);
-        var isGit = Directory.Exists(Path.Combine(fullRoot, ".git")) || File.Exists(Path.Combine(fullRoot, ".git"));
-        return new WorkspaceManifest(1, isGit, includeHidden, workspaceHash, files);
-    }
-
-    private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, FileOptions.SequentialScan | FileOptions.Asynchronous);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)).ToLowerInvariant();
-    }
-
-    private static string ComputeWorkspaceHash(IEnumerable<WorkspaceFile> files)
-    {
-        var canonical = string.Join('\n', files.OrderBy(x => x.Path, StringComparer.Ordinal)
-            .Select(x => $"{x.Path}\t{x.Length}\t{x.Sha256}"));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
-    }
-
-    private static bool IsExcluded(string relative, bool includeHidden)
-    {
-        var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Any(x => string.Equals(x, ".git", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(x, ".tinadec", StringComparison.OrdinalIgnoreCase))) return true;
-        return !includeHidden && segments.Any(x => x.Length > 0 && x[0] == '.');
-    }
-
-    private static string SafePath(string root, string relative)
-    {
-        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) throw new InvalidDataException("Snapshot contains an invalid path.");
-        var fullRoot = Path.GetFullPath(root);
-        var path = Path.GetFullPath(Path.Combine(fullRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
-        var prefix = fullRoot.EndsWith(Path.DirectorySeparatorChar) ? fullRoot : fullRoot + Path.DirectorySeparatorChar;
-        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Snapshot path escaped the workspace root.");
-        return path;
-    }
 
     private static string? NormalizeKey(string? value)
     {
@@ -461,9 +419,6 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
             : JsonSerializer.Deserialize<string[]>(row.ConflictJson, JsonOptions) ?? [];
         return new WorkspaceRestoreResult(row.Status, row.Id, row.WorkspaceHash, conflicts, row.AppliedFileCount, row.RestoredAt);
     }
-
-    private sealed record WorkspaceManifest(int SchemaVersion, bool IsGit, bool IncludeHidden, string WorkspaceHash, List<WorkspaceFile> Files);
-    private sealed record WorkspaceFile(string Path, long Length, string Sha256, string? ContentBase64);
 
     private sealed record SessionProjectionDocument(
         string SchemaVersion,

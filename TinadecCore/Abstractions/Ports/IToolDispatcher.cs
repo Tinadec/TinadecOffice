@@ -184,6 +184,11 @@ public interface IToolExecutionCoordinator
         Guid? capabilityLeaseId,
         string status,
         CancellationToken cancellationToken = default);
+    Task<ToolExecutionSnapshot> BindWorkspaceSnapshotAsync(
+        Guid executionId,
+        Guid snapshotId,
+        string snapshotHash,
+        CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
     /// <summary>
     /// Compatibility projection for callers that own an execution coordinator but
@@ -245,7 +250,9 @@ public sealed record ToolExecutionSnapshot(
     Guid? PermissionRequestId = null,
     Guid? AuthorizationDecisionId = null,
     Guid? CapabilityLeaseId = null,
-    int LeaseUses = 1);
+    int LeaseUses = 1,
+    Guid? WorkspaceSnapshotId = null,
+    string? WorkspaceSnapshotHash = null);
 
 /// <summary>
 /// Result of durably admitting one logical tool call. Replaying the same

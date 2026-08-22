@@ -25,6 +25,14 @@ public interface IWorkspaceSnapshotService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Re-captures provider state before a write resumes. A stored snapshot hash
+    /// alone is not an authorization fact if the workspace changed meanwhile.
+    /// </summary>
+    Task<WorkspaceSnapshotValidationResult> ValidateAsync(
+        Guid snapshotId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Returns the durable session runtime projection used by Debug Studio. This
     /// is deliberately separate from filesystem snapshots, conversation context
     /// snapshots, and MAF run checkpoints.
@@ -70,6 +78,13 @@ public sealed record WorkspaceRestoreResult(
     IReadOnlyList<string> Conflicts,
     int AppliedFileCount,
     DateTimeOffset? RestoredAt = null);
+
+public sealed record WorkspaceSnapshotValidationResult(
+    bool IsValid,
+    Guid SnapshotId,
+    string ExpectedWorkspaceHash,
+    string? CurrentWorkspaceHash,
+    IReadOnlyList<string> Conflicts);
 
 public sealed class WorkspaceSnapshotConflictException : InvalidOperationException
 {

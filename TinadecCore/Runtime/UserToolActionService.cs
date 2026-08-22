@@ -262,6 +262,19 @@ public sealed class UserToolActionService : IUserToolActionService
     private async Task<UserToolActionResult> ExecuteAsync(UserToolActionRecord action, ProjectReference project, ToolManifestEntryDto descriptor, CancellationToken cancellationToken)
     {
         var parameters = await ReadContentAsync(action.ParametersReference, action.ParametersHash, action.ParametersLength, "application/json", cancellationToken).ConfigureAwait(false);
+        if (action.MutatesWorkspace && action.SnapshotId is { } snapshotId)
+        {
+            try
+            {
+                var validation = await _snapshots.ValidateAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+                if (!validation.IsValid)
+                    return await BlockAsync(action, "snapshot_changed", "The pre-write workspace snapshot no longer matches the current workspace.", cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or KeyNotFoundException or DirectoryNotFoundException)
+            {
+                return await BlockAsync(action, "snapshot_unavailable", SafeMessage(ex.Message), cancellationToken).ConfigureAwait(false);
+            }
+        }
         action.Status = UserToolActionStatuses.Running;
         action.UpdatedAt = DateTimeOffset.UtcNow;
         await SaveAsync(action, cancellationToken).ConfigureAwait(false);
