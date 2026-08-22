@@ -189,71 +189,14 @@ function openExternal(url: string) {
 }
 
 const activeSection = ref<SettingsSection>('general')
-const PET_CATALOG_PAGE_SIZE = 48
-const petCatalog = ref<PetdexCatalogPet[]>([])
-const downloadedPets = ref<DownloadedPet[]>([])
-const petCatalogQuery = ref('')
-const petCatalogKind = ref('all')
-const petCatalogLimit = ref(PET_CATALOG_PAGE_SIZE)
-const petLoadMoreRef = ref<HTMLElement | null>(null)
-const petCatalogLoading = ref(false)
-const petActionSlug = ref('')
+// Pets section moved to settings/sections/PetsSection.vue (D7.2)
 
-
-const downloadedPetBySlug = computed(() => new Map(downloadedPets.value.map((pet) => [pet.slug, pet])))
-const petCatalogKinds = computed(() => Array.from(new Set(petCatalog.value.map((pet) => pet.kind))).sort())
-const matchingPetCatalog = computed(() => {
-  const query = petCatalogQuery.value.trim().toLowerCase()
-  return petCatalog.value.filter((pet) => {
-    if (petCatalogKind.value !== 'all' && pet.kind !== petCatalogKind.value) return false
-    return !query || [pet.displayName, pet.slug, pet.kind, pet.submittedBy]
-      .some((value) => value.toLowerCase().includes(query))
-  })
-})
-const visiblePetCatalog = computed(() => matchingPetCatalog.value.slice(0, petCatalogLimit.value))
-const canLoadMorePets = computed(() => visiblePetCatalog.value.length < matchingPetCatalog.value.length)
-
-let petLoadMoreObserver: IntersectionObserver | null = null
-// window.tinadec may be absent in a bare vite preview (no preload shim); guard it.
-const stopPetChanged = window.tinadec?.pets?.onChanged?.((pet) => {
-  downloadedPets.value = downloadedPets.value.map((item) => item.slug === pet.slug ? { ...item, enabled: pet.enabled } : item)
-}) ?? null
-
-function loadMorePets() {
-  petCatalogLimit.value = Math.min(matchingPetCatalog.value.length, petCatalogLimit.value + PET_CATALOG_PAGE_SIZE)
+function selectSettingsSection(section: SettingsSection) {
+  activeSection.value = section
 }
-
-async function observePetLoadMore() {
-  petLoadMoreObserver?.disconnect()
-  if (activeSection.value !== 'pets' || !canLoadMorePets.value) return
-  await nextTick()
-  if (!petLoadMoreRef.value) return
-  petLoadMoreObserver = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) loadMorePets()
-  }, { rootMargin: '320px 0px' })
-  petLoadMoreObserver.observe(petLoadMoreRef.value)
-}
-
-watch([petCatalogQuery, petCatalogKind], () => {
-  petCatalogLimit.value = PET_CATALOG_PAGE_SIZE
-})
-watch([activeSection, () => visiblePetCatalog.value.length, canLoadMorePets], () => {
-  void observePetLoadMore()
-})
-onBeforeUnmount(() => {
-  petLoadMoreObserver?.disconnect()
-  stopPetChanged?.()
-})
 
 // Spatial exit animation — declarative, class-driven.
-// Toggling `settingsExiting` applies .settings-exiting on the page root;
-// settings.css keyframes (settings-nav-exit / settings-content-exit) then
-// slide the panels out. No document.querySelector, no inline styles.
-// The entry keyframes' fill-mode is overridden by the exit class rules,
-// eliminating the previous animation:'none' detachment hack.
 const settingsExiting = ref(false)
-
-// Exit duration must match settings.css exit keyframes (0.45s + 0.08s stagger).
 const SETTINGS_EXIT_DURATION_MS = 530
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -264,90 +207,6 @@ onBeforeRouteLeave((_to, _from, next) => {
   settingsExiting.value = true
   setTimeout(() => next(), SETTINGS_EXIT_DURATION_MS)
 })
-
-async function loadPets(force = false) {
-  petCatalogLoading.value = true
-  dismissByKey('pets')
-  try {
-    const [catalog, downloaded] = await Promise.all([
-      window.tinadec.pets.fetchCatalog(force),
-      window.tinadec.pets.listDownloaded(),
-    ])
-    petCatalog.value = catalog
-    downloadedPets.value = downloaded
-    petCatalogLimit.value = PET_CATALOG_PAGE_SIZE
-  } catch (error) {
-    status.error({ key: 'pets', source: 'pets', message: error instanceof Error ? error.message : t('settings.petsLoadFailed') })
-  } finally {
-    petCatalogLoading.value = false
-  }
-}
-
-function selectSettingsSection(section: SettingsSection) {
-  activeSection.value = section
-  if (section === 'pets' && petCatalog.value.length === 0) void loadPets()
-}
-
-async function downloadPet(slug: string) {
-  petActionSlug.value = slug
-  dismissByKey('pets')
-  try {
-    await window.tinadec.pets.download(slug)
-    downloadedPets.value = await window.tinadec.pets.listDownloaded()
-    notify.success(t('settings.petDownloaded'))
-  } catch (error) {
-    notify.error(error, { title: t('settings.petDownloadFailed') })
-  } finally {
-    petActionSlug.value = ''
-  }
-}
-
-async function setPetEnabled(pet: DownloadedPet, enabled: boolean) {
-  petActionSlug.value = pet.slug
-  dismissByKey('pets')
-  try {
-    const updated = await window.tinadec.pets.setEnabled(pet.slug, enabled)
-    downloadedPets.value = downloadedPets.value.map((item) => item.slug === updated.slug ? updated : item)
-    notify.success(`${pet.displayName}: ${enabled ? t('settings.enablePet') : t('settings.disablePet')}`)
-  } catch (error) {
-    notify.error(error, { title: t('settings.petUpdateFailed') })
-  } finally {
-    petActionSlug.value = ''
-  }
-}
-
-async function openPetFolder(pet: DownloadedPet) {
-  petActionSlug.value = pet.slug
-  dismissByKey('pets')
-  try {
-    await window.tinadec.pets.openFolder(pet.slug)
-  } catch (error) {
-    notify.error(error, { title: t('settings.petUpdateFailed') })
-  } finally {
-    petActionSlug.value = ''
-  }
-}
-
-async function removePet(pet: DownloadedPet) {
-  if (!await confirm({
-    title: t('settings.deletePet'),
-    message: t('settings.deletePetConfirmation', { name: pet.displayName }),
-    confirmLabel: t('settings.deletePet'),
-    cancelLabel: t('settings.cancel'),
-    destructive: true
-  })) return
-  petActionSlug.value = pet.slug
-  dismissByKey('pets')
-  try {
-    await window.tinadec.pets.remove(pet.slug)
-    downloadedPets.value = downloadedPets.value.filter((item) => item.slug !== pet.slug)
-    notify.success(`${pet.displayName}: ${t('settings.deletePet')}`)
-  } catch (error) {
-    notify.error(error, { title: t('settings.petUpdateFailed') })
-  } finally {
-    petActionSlug.value = ''
-  }
-}
 
 // ---- About section moved to settings/sections/AboutSection.vue (D7.2) ----
 const modelCenterOverview = ref<ModelCenterOverviewDto | null>(null)
@@ -3395,108 +3254,7 @@ import '../settings/settings.css'
         </template>
 
         <template v-if="activeSection === 'pets'">
-          <div class="pets-heading">
-            <h2>{{ t('settings.pets') }}</h2>
-            <UiButton variant="ghost" size="icon" :title="t('settings.refresh')" :disabled="petCatalogLoading" @click="loadPets(true)">
-              <RefreshCw :size="16" :class="{ spinning: petCatalogLoading }" />
-            </UiButton>
-          </div>
-
-          <section class="pets-section downloaded-pets-section" aria-labelledby="downloaded-pets-title">
-            <div class="pets-section-heading">
-              <h3 id="downloaded-pets-title">{{ t('settings.downloadedPets') }}</h3>
-              <span class="pets-count">{{ downloadedPets.length }}</span>
-            </div>
-            <div v-if="downloadedPets.length === 0" class="pets-empty">{{ t('settings.noDownloadedPets') }}</div>
-            <div v-else class="pet-gallery downloaded-pet-gallery">
-              <article v-for="pet in downloadedPets" :key="pet.slug" class="pet-gallery-card downloaded-pet-card">
-                <div class="pet-gallery-preview">
-                  <PetPreview :src="pet.imageDataUrl" :alt="pet.displayName" loading="eager" />
-                </div>
-                <div class="pet-gallery-body">
-                  <div class="pet-gallery-title-row">
-                    <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
-                    <UiBadge v-if="pet.enabled" variant="secondary" class="pet-card-badge">{{ t('settings.petEnabled') }}</UiBadge>
-                  </div>
-                  <span class="pet-item-meta" :title="[pet.kind, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.kind }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
-                  <div class="pet-gallery-actions">
-                    <UiButton
-                      class="pet-action-button"
-                      size="sm"
-                      :variant="pet.enabled ? 'secondary' : 'outline'"
-                      :disabled="Boolean(petActionSlug)"
-                      @click="setPetEnabled(pet, !pet.enabled)"
-                    >
-                      <span class="pet-action-label">{{ pet.enabled ? t('settings.disablePet') : t('settings.enablePet') }}</span>
-                    </UiButton>
-                    <UiDropdownMenu placement="top">
-                      <template #trigger>
-                        <UiButton variant="ghost" size="icon" :title="t('settings.petMoreActions')" :disabled="Boolean(petActionSlug)">
-                          <MoreHorizontal :size="17" />
-                        </UiButton>
-                      </template>
-                      <button class="pet-menu-action" type="button" @click="openPetFolder(pet)">
-                        <FolderOpen :size="15" />
-                        {{ t('settings.openPetFolder') }}
-                      </button>
-                      <button class="pet-menu-action danger" type="button" @click="removePet(pet)">
-                        <Trash2 :size="15" />
-                        {{ t('settings.deletePet') }}
-                      </button>
-                    </UiDropdownMenu>
-                  </div>
-                </div>
-              </article>
-            </div>
-          </section>
-
-          <section class="pets-section petdex-market-section" aria-labelledby="petdex-catalog-title">
-            <div class="pets-section-heading">
-              <div>
-                <h3 id="petdex-catalog-title">{{ t('settings.petdexCatalog') }}</h3>
-                <span class="pets-count">{{ t('settings.petCatalogCount', { visible: visiblePetCatalog.length, total: matchingPetCatalog.length }) }}</span>
-              </div>
-              <div class="pets-market-filters">
-                <UiInput v-model="petCatalogQuery" :placeholder="t('settings.searchPets')" class="pets-search" />
-                <select v-model="petCatalogKind" class="pets-kind-filter" :aria-label="t('settings.petKindFilter')">
-                  <option value="all">{{ t('settings.allPetKinds') }}</option>
-                  <option v-for="kind in petCatalogKinds" :key="kind" :value="kind">{{ kind }}</option>
-                </select>
-              </div>
-            </div>
-            <div v-if="petCatalogLoading && petCatalog.length === 0" class="pets-empty">{{ t('settings.loadingPets') }}</div>
-            <div v-else-if="matchingPetCatalog.length === 0" class="pets-empty">{{ t('settings.noPetsFound') }}</div>
-            <template v-else>
-              <div class="pet-gallery pet-market-gallery">
-                <article v-for="pet in visiblePetCatalog" :key="pet.slug" class="pet-gallery-card">
-                  <div class="pet-gallery-preview">
-                    <PetPreview :src="pet.previewUrl" :alt="pet.displayName" loading="lazy" />
-                  </div>
-                  <div class="pet-gallery-body">
-                    <div class="pet-gallery-title-row">
-                      <span class="pet-item-name" :title="pet.displayName">{{ pet.displayName }}</span>
-                      <UiBadge variant="outline" class="pet-card-badge" :title="pet.kind">{{ pet.kind }}</UiBadge>
-                    </div>
-                    <span class="pet-item-meta" :title="[pet.slug, pet.submittedBy].filter(Boolean).join(' · ')">{{ pet.slug }}<template v-if="pet.submittedBy"> · {{ pet.submittedBy }}</template></span>
-                    <div class="pet-gallery-actions">
-                      <UiBadge v-if="downloadedPetBySlug.has(pet.slug)" variant="secondary" class="pet-card-badge">{{ t('settings.petDownloaded') }}</UiBadge>
-                      <UiButton v-else class="pet-action-button" size="sm" :disabled="Boolean(petActionSlug)" @click="downloadPet(pet.slug)">
-                        <Download :size="15" />
-                        <span class="pet-action-label">{{ petActionSlug === pet.slug ? t('settings.downloadingPet') : t('settings.downloadPet') }}</span>
-                      </UiButton>
-                    </div>
-                  </div>
-                </article>
-              </div>
-              <div v-if="canLoadMorePets" ref="petLoadMoreRef" class="pets-load-more">
-                <UiButton variant="outline" :disabled="petCatalogLoading" @click="loadMorePets">
-                  {{ t('settings.loadMorePets', { count: Math.min(PET_CATALOG_PAGE_SIZE, matchingPetCatalog.length - visiblePetCatalog.length) }) }}
-                </UiButton>
-              </div>
-              <div v-else class="pets-catalog-end">{{ t('settings.allPetsLoaded') }}</div>
-            </template>
-          </section>
-
+          <PetsSection />
         </template>
 
         <template v-if="activeSection === 'language'">
