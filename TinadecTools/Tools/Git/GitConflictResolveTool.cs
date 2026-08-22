@@ -33,7 +33,7 @@ internal partial class GitConflictResolveToolJsonContext : JsonSerializerContext
 
 internal static class GitConflictResolveTool
 {
-    [ToolFunction("git_conflict_resolve", RequiresApproval = true)]
+    [ToolFunction("git_conflict_resolve", RequiresApproval = true, ConfirmationFields = ["confirm_resolve"])]
     public static async ValueTask<GitConflictResolveResult> ResolveAsync(GitConflictResolveArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmResolve, nameof(args.ConfirmResolve));

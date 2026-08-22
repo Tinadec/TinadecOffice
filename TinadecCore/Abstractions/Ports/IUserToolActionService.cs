@@ -47,6 +47,8 @@ public sealed record UserToolActionResult(
     Guid? ActionApprovalId,
     Guid? SnapshotId,
     string? SnapshotHash,
+    bool SnapshotOverride,
+    string? SnapshotOverrideReason,
     bool NonReversible,
     string? CompensationGuidance,
     string? ResultJson,

@@ -49,14 +49,16 @@ public sealed class GitReadToolsTests
     }
 
     [Fact]
-    public async Task GeneratedRegistry_RequiresApprovalForEveryNewGitReadTool()
+    public void GeneratedRegistry_PublishesGitReadToolsWithoutApproval()
     {
         GeneratedToolRegistry.RegisterAll();
+        var tools = ToolRegistry.ListTools().ToDictionary(tool => tool.Id, StringComparer.OrdinalIgnoreCase);
         foreach (var toolId in new[] { "git_status", "git_push_readiness", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview" })
         {
-            Assert.True(ToolRegistry.TryResolve(toolId, out var handler));
-            var response = await handler(new ToolCallRequest<System.Text.Json.JsonElement> { ToolCallId = 1, ToolId = toolId, Approved = false }, CancellationToken.None);
-            Assert.False(response.IsSuccess);
+            var descriptor = tools[toolId];
+            Assert.False(descriptor.RequiresApproval);
+            Assert.False(descriptor.MutatesWorkspace);
+            Assert.Equal("safe", descriptor.RetrySafety);
         }
     }
 

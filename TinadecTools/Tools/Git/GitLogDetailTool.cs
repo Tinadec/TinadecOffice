@@ -72,13 +72,20 @@ internal static class GitLogDetailTool
 
     private const string LogFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID, RequiresApproval = true)]
+    [ToolFunction(TOOL_ID)]
     public static async ValueTask<GitLogDetailResult> HandleAsync(
         GitLogDetailArgs args,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Rev))
             throw new InvalidOperationException("rev is required.");
+        // CaptureGit-style callers may include a trailing newline in each side
+        // of a range. Git treats that newline as part of the revision, so strip
+        // ASCII whitespace before validation and argument-list execution.
+        args.Rev = string.Concat(args.Rev.Where(ch => !char.IsWhiteSpace(ch)));
+        args.AfterCommit = string.IsNullOrWhiteSpace(args.AfterCommit)
+            ? null
+            : string.Concat(args.AfterCommit.Where(ch => !char.IsWhiteSpace(ch)));
         GitCli.ValidateRevision(args.Rev, "rev");
         if (!string.IsNullOrWhiteSpace(args.AfterCommit))
             GitCli.ValidateRevision(args.AfterCommit, "after_commit");

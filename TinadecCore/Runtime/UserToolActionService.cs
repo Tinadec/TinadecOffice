@@ -544,7 +544,8 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         return new UserToolActionResult(action.Id, action.AuditReference, action.TenantId, action.WorkspaceId, action.ProjectId, action.PrincipalId,
             action.ToolId, action.Status, action.Risk, action.MutatesWorkspace, action.RequiresApproval,
             action.PermissionRequestId, action.AuthorizationDecisionId, action.ActionApprovalId, action.SnapshotId,
-            action.SnapshotHash, action.NonReversible, action.CompensationGuidance, result,
+            action.SnapshotHash, action.SnapshotOverride, action.SnapshotOverrideReason,
+            action.NonReversible, action.CompensationGuidance, result,
             action.ErrorCategory, action.SafeErrorMessage, action.CreatedAt, action.UpdatedAt, action.CompletedAt);
     }
 

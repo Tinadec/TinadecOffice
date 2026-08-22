@@ -56,6 +56,32 @@ public sealed class ToolManifestTests
         Assert.False(byId["read_file"].GetProperty("mutates_workspace").GetBoolean());
         Assert.Equal("safe", byId["read_file"].GetProperty("retry_safety").GetString());
         Assert.True(byId["command_run"].GetProperty("requires_approval").GetBoolean());
+
+        // Git queries and mutations intentionally share the same provider, but
+        // their governance metadata must remain distinct. Desktop uses the
+        // direct transport for queries while Core gates every mutation.
+        Assert.False(byId["git_status"].GetProperty("requires_approval").GetBoolean());
+        Assert.False(byId["git_status"].GetProperty("mutates_workspace").GetBoolean());
+        Assert.Equal("safe", byId["git_status"].GetProperty("retry_safety").GetString());
+        Assert.False(byId["git_diff"].GetProperty("requires_approval").GetBoolean());
+        Assert.False(byId["git_log_list"].GetProperty("mutates_workspace").GetBoolean());
+
+        AssertGitMutation(byId, "git_commit", "confirm_commit");
+        AssertGitMutation(byId, "git_fetch", "confirm_fetch");
+        AssertGitMutation(byId, "git_push", "confirm_push");
+        AssertGitMutation(byId, "git_pull", "confirm_pull");
+        AssertGitMutation(byId, "git_checkout", "confirm_checkout");
+        AssertGitMutation(byId, "git_branch_create", "confirm_branch_create");
+        AssertGitMutation(byId, "git_branch_delete", "confirm_branch_delete");
+        AssertGitMutation(byId, "git_branch_rename", "confirm_branch_rename");
+        AssertGitMutation(byId, "git_merge", "confirm_merge");
+        AssertGitMutation(byId, "git_rebase", "confirm_rebase");
+        AssertGitMutation(byId, "git_conflict_resolve", "confirm_resolve");
+        AssertGitMutation(byId, "git_worktree_create", "confirm_worktree_create");
+        AssertGitMutation(byId, "git_worktree_remove", "confirm_worktree_remove");
+        Assert.True(byId["git_stage"].GetProperty("requires_approval").GetBoolean());
+        Assert.True(byId["git_stage"].GetProperty("mutates_workspace").GetBoolean());
+        Assert.Empty(byId["git_stage"].GetProperty("confirmation_fields").EnumerateArray());
     }
 
     [Fact]
@@ -91,5 +117,20 @@ public sealed class ToolManifestTests
         {
             Assert.True(ToolRegistry.TryResolve(descriptor.Id, out _), $"Manifest lists '{descriptor.Id}' but no handler is registered.");
         }
+    }
+
+    private static void AssertGitMutation(
+        IReadOnlyDictionary<string, JsonElement> tools,
+        string toolId,
+        string confirmationField)
+    {
+        var tool = tools[toolId];
+        Assert.True(tool.GetProperty("requires_approval").GetBoolean());
+        Assert.True(tool.GetProperty("mutates_workspace").GetBoolean());
+        Assert.Equal("unsafe", tool.GetProperty("retry_safety").GetString());
+        Assert.Contains(confirmationField, tool.GetProperty("confirmation_fields")
+            .EnumerateArray().Select(value => value.GetString()));
+        Assert.True(tool.GetProperty("input_schema").GetProperty("properties")
+            .TryGetProperty(confirmationField, out _));
     }
 }

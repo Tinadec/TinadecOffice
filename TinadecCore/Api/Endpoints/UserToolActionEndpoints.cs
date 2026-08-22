@@ -67,6 +67,7 @@ public static class UserToolActionEndpoints
             MutatesWorkspace = value.MutatesWorkspace, RequiresApproval = value.RequiresApproval,
             PermissionRequestId = value.PermissionRequestId, AuthorizationDecisionId = value.AuthorizationDecisionId,
             ActionApprovalId = value.ActionApprovalId, SnapshotId = value.SnapshotId, SnapshotHash = value.SnapshotHash,
+            SnapshotOverride = value.SnapshotOverride, SnapshotOverrideReason = value.SnapshotOverrideReason,
             NonReversible = value.NonReversible, CompensationGuidance = value.CompensationGuidance,
             Result = result, ErrorCategory = value.ErrorCategory, Message = value.Message,
             CreatedAt = value.CreatedAt, UpdatedAt = value.UpdatedAt, CompletedAt = value.CompletedAt

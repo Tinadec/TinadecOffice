@@ -593,6 +593,15 @@
               "string"
             ]
           },
+          "snapshot_override": {
+            "type": "boolean"
+          },
+          "snapshot_override_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "status": {
             "type": "string"
           },
