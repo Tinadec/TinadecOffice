@@ -34,6 +34,11 @@ const router = createRouter({
       component: () => import('./pages/WorkbenchPage.vue'),
     },
     {
+      path: '/recovery/:actionId',
+      name: 'recovery-check',
+      component: () => import('./pages/RecoveryCheckPage.vue'),
+    },
+    {
       path: '/library',
       name: 'library',
       component: () => import('./pages/LibraryPage.vue'),
