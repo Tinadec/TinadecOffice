@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import {
   api,
+  createUserToolActionForPath,
   type ApprovalDto,
   type DoctorReportDto,
   type EventEnvelope,
@@ -20,6 +21,7 @@ import type { AgentMode, PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { DispatchMode } from '@/api'
 import type { SseChunk } from '@/generated/client'
+import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -374,7 +376,25 @@ async function promoteQueued(id: string) {
 
 async function requestShellApproval() {
   await run('request approval', async () => {
-    const approval = await api.createShellApproval(selectedSessionId.value, shellCommand.value, currentProject.value?.path)
+    const projectPath = currentProject.value?.path
+    if (!projectPath) throw new Error('Select a registered project before requesting a shell action.')
+    const command = shellCommand.value.trim()
+    if (!command) throw new Error('Enter a command before requesting a shell action.')
+    const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+    const params = {
+      executable: windows ? 'cmd.exe' : '/bin/sh',
+      arguments: windows ? ['/d', '/c', command] : ['-lc', command],
+      working_directory: projectPath,
+    }
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:home:shell', {
+      project_path: projectPath,
+      command,
+    })
+    const action = await createUserToolActionForPath(projectPath, 'command_run', params, idempotencyKey)
+    const approval = userToolActionToApproval(action, `Run command: ${command}`, {
+      sessionId: selectedSessionId.value,
+      cwd: projectPath,
+    })
     approvals.value = [approval, ...approvals.value]
   })
 }

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
@@ -15,6 +15,7 @@ import OrchestrationTab from '@/components/OrchestrationTab.vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
+import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -139,10 +140,26 @@ let removeThemeListener: (() => void) | null = null
 
 // ---- Shell approval actions (for ApprovalTab) ----
 async function requestShellApproval() {
-  if (!sessionId.value) return
+  if (!projectPath.value) return
   busy.value = true
   try {
-    const approval = await api.createShellApproval(sessionId.value, shellCommand.value, projectPath.value)
+    const command = shellCommand.value.trim()
+    if (!command) throw new Error('Enter a command before requesting a shell action.')
+    const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+    const params = {
+      executable: windows ? 'cmd.exe' : '/bin/sh',
+      arguments: windows ? ['/d', '/c', command] : ['-lc', command],
+      working_directory: projectPath.value,
+    }
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:detached:shell', {
+      project_path: projectPath.value,
+      command,
+    })
+    const action = await createUserToolActionForPath(projectPath.value, 'command_run', params, idempotencyKey)
+    const approval = userToolActionToApproval(action, `Run command: ${command}`, {
+      sessionId: sessionId.value,
+      cwd: projectPath.value,
+    })
     approvals.value = [approval, ...approvals.value]
   } catch (err) {
     notify.error(err, { title: 'Failed to request shell approval' })

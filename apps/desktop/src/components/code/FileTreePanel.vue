@@ -14,15 +14,23 @@ import {
   Trash2,
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
-import { api, type ApprovalDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  userToolActionIdempotencyKey,
+  userToolActionNeedsDecision,
+  userToolActionStatusMessage,
+  userToolActionToApproval,
+  userToolApprovalId,
+} from '@/userToolAction'
 
 interface DirEntry {
   name: string
   is_dir: boolean
   is_file: boolean
   size_bytes: number | null
+  modified_at?: string | null
 }
 
 interface TreeNode {
@@ -30,6 +38,7 @@ interface TreeNode {
   path: string
   isDir: boolean
   size: number | null
+  modifiedAt: string | null
   children: TreeNode[]
   loaded: boolean
   loading: boolean
@@ -62,6 +71,10 @@ const searchResults = ref<TreeNode[] | null>(null)
 const searching = ref(false)
 const contextMenuPath = ref<string | null>(null)
 const showHidden = ref(false)
+const pendingActions = ref<Map<string, UserToolActionDto>>(new Map())
+const pendingActionSummaries = ref<Map<string, string>>(new Map())
+const inFlightIdempotencyKeys = new Set<string>()
+const resumingActions = new Set<string>()
 
 function entryToNode(entry: DirEntry, parentPath: string): TreeNode {
   const path = parentPath === '.' ? entry.name : `${parentPath}/${entry.name}`
@@ -70,6 +83,7 @@ function entryToNode(entry: DirEntry, parentPath: string): TreeNode {
     path,
     isDir: entry.is_dir,
     size: entry.size_bytes ?? null,
+    modifiedAt: typeof entry.modified_at === 'string' ? entry.modified_at : null,
     children: [],
     loaded: false,
     loading: false,
@@ -155,6 +169,7 @@ async function runSearch(): Promise<void> {
       path: m.path,
       isDir: m.is_dir ?? false,
       size: null,
+      modifiedAt: null,
       children: [],
       loaded: false,
       loading: false,
@@ -198,43 +213,171 @@ function closeContextMenu(): void {
 
 async function requestDeleteApproval(node: TreeNode): Promise<void> {
   closeContextMenu()
-  if (!props.selectedSessionId) {
-    notify.error('A session is required to request file deletion approval.', { title: 'Session required', source: 'code', key: 'code-tree-session' })
-    return
-  }
+  const idempotencyKey = await actionIdempotencyKey('delete', node)
+  if (inFlightIdempotencyKeys.has(idempotencyKey)) return
+  inFlightIdempotencyKeys.add(idempotencyKey)
   try {
-    const approval = await api.createApproval({
-      session_id: props.selectedSessionId,
-      kind: 'code',
-      summary: `Delete file: ${node.path}`,
-      command: `rm ${node.path}`,
-      cwd: props.cwd,
-    })
-    emit('approval-created', approval)
+    const action = await createUserToolActionForPath(
+      props.cwd,
+      'command_run',
+      commandParams('delete', node.path),
+      idempotencyKey,
+    )
+    publishAction(action, `Delete file: ${node.path}`)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-tree-delete-approval' })
+    notify.error(err, { title: 'Failed to request file deletion', source: 'code', key: 'code-tree-delete-action' })
+  } finally {
+    inFlightIdempotencyKeys.delete(idempotencyKey)
   }
 }
 
 async function requestRenameApproval(node: TreeNode): Promise<void> {
   closeContextMenu()
-  if (!props.selectedSessionId) {
-    notify.error('A session is required to request file rename approval.', { title: 'Session required', source: 'code', key: 'code-tree-session' })
+  const prompt = globalThis.prompt
+  if (typeof prompt !== 'function') {
+    notify.error('This environment cannot open a rename prompt.', { title: 'Rename unavailable', source: 'code', key: 'code-tree-rename-prompt' })
     return
   }
+  const newName = prompt('New file name', node.name)?.trim()
+  if (!newName || newName === node.name || newName.includes('/') || newName.includes('\\')) return
+  const targetPath = node.path.includes('/')
+    ? `${node.path.slice(0, node.path.lastIndexOf('/') + 1)}${newName}`
+    : newName
+  const idempotencyKey = await actionIdempotencyKey('rename', { node, targetPath })
+  if (inFlightIdempotencyKeys.has(idempotencyKey)) return
+  inFlightIdempotencyKeys.add(idempotencyKey)
   try {
-    const approval = await api.createApproval({
-      session_id: props.selectedSessionId,
-      kind: 'code',
-      summary: `Rename file: ${node.path}`,
-      command: `mv ${node.path} <new_name>`,
-      cwd: props.cwd,
-    })
-    emit('approval-created', approval)
+    const action = await createUserToolActionForPath(
+      props.cwd,
+      'command_run',
+      commandParams('rename', node.path, targetPath),
+      idempotencyKey,
+    )
+    publishAction(action, `Rename file: ${node.path} -> ${targetPath}`)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-tree-rename-approval' })
+    notify.error(err, { title: 'Failed to request file rename', source: 'code', key: 'code-tree-rename-action' })
+  } finally {
+    inFlightIdempotencyKeys.delete(idempotencyKey)
   }
 }
+
+function isWindows(): boolean {
+  return typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+}
+
+function commandParams(operation: 'delete' | 'rename', sourcePath: string, targetPath?: string): Record<string, unknown> {
+  const windows = isWindows()
+  const args = windows
+    ? operation === 'delete'
+      ? ['/d', '/c', 'del', '/f', '/q', sourcePath]
+      : ['/d', '/c', 'move', '/y', sourcePath, targetPath ?? sourcePath]
+    : operation === 'delete'
+      ? ['-f', '--', sourcePath]
+      : ['--', sourcePath, targetPath ?? sourcePath]
+  return {
+    executable: windows ? 'cmd.exe' : operation === 'delete' ? 'rm' : 'mv',
+    arguments: args,
+    working_directory: props.cwd,
+  }
+}
+
+async function actionIdempotencyKey(operation: string, node: TreeNode | { node: TreeNode; targetPath: string }): Promise<string> {
+  const source = 'node' in node ? node.node : node
+  return userToolActionIdempotencyKey('desktop:file-tree', {
+    cwd: props.cwd,
+    operation,
+    source: {
+      path: source.path,
+      is_dir: source.isDir,
+      size: source.size,
+      modified_at: source.modifiedAt,
+    },
+    target: 'targetPath' in node ? node.targetPath : null,
+  })
+}
+
+function publishAction(action: UserToolActionDto, summary: string): void {
+  const next = new Map(pendingActions.value)
+  next.set(action.id, action)
+  pendingActions.value = next
+  const summaries = new Map(pendingActionSummaries.value)
+  summaries.set(action.id, summary)
+  pendingActionSummaries.value = summaries
+  if (action.status === 'completed') {
+    notify.success({ message: `${summary} completed.`, source: 'code' })
+    summaries.delete(action.id)
+    pendingActionSummaries.value = summaries
+    void refresh()
+    return
+  }
+  if (action.status === 'blocked' || action.status === 'failed') {
+    notify.error(action.message ?? action.status, { title: 'File operation blocked', source: 'code', key: `code-tree-action-${action.id}` })
+    return
+  }
+  if (action.status === 'outcome_unknown') {
+    notify.warning({ message: userToolActionStatusMessage(action, summary), source: 'code', key: `code-tree-action-${action.id}` })
+    return
+  }
+  if (userToolActionNeedsDecision(action.status)) {
+    emit('approval-created', userToolActionToApproval(action, summary, {
+      sessionId: props.selectedSessionId,
+      cwd: props.cwd,
+    }))
+  }
+}
+
+async function resumeAction(action: UserToolActionDto, summary: string): Promise<void> {
+  if (resumingActions.has(action.id)) return
+  resumingActions.add(action.id)
+  try {
+    const latest = await api.resumeUserToolAction(action.id)
+    const next = new Map(pendingActions.value)
+    next.set(latest.id, latest)
+    pendingActions.value = next
+    if (latest.status === 'completed') {
+      notify.success({ message: `${summary} completed.`, source: 'code' })
+      const summaries = new Map(pendingActionSummaries.value)
+      summaries.delete(latest.id)
+      pendingActionSummaries.value = summaries
+      await refresh()
+    } else if (userToolActionNeedsDecision(latest.status)) {
+      publishAction(latest, summary)
+    } else if (latest.status === 'blocked' || latest.status === 'failed') {
+      notify.error(latest.message ?? latest.status, { title: 'File operation failed', source: 'code', key: `code-tree-action-${latest.id}` })
+    } else if (latest.status === 'outcome_unknown') {
+      notify.warning({ message: userToolActionStatusMessage(latest, summary), source: 'code', key: `code-tree-action-${latest.id}` })
+    }
+  } catch (err) {
+    notify.error(err, { title: 'Failed to resume file operation', source: 'code', key: 'code-tree-action-resume' })
+  } finally {
+    resumingActions.delete(action.id)
+  }
+}
+
+watch(() => props.approvals, () => {
+  for (const action of pendingActions.value.values()) {
+    const approval = props.approvals?.find((item) => item.id === userToolApprovalId(action))
+    const summary = pendingActionSummaries.value.get(action.id) ?? (action.tool_id === 'command_run' ? `File operation: ${action.id}` : action.tool_id)
+    if (approval?.status === 'approved' && action.action_approval_id) {
+      void resumeAction(action, summary)
+      continue
+    }
+    if (action.permission_request_id && !action.action_approval_id) {
+      void api.getUserToolAction(action.id).then((latest) => {
+        if (latest.status !== action.status || latest.authorization_decision_id !== action.authorization_decision_id) {
+          publishAction(latest, summary)
+        }
+      }).catch(() => undefined)
+    }
+  }
+}, { deep: true })
+
+const pendingActionList = computed(() => Array.from(pendingActions.value.values())
+  .filter((action) => action.status !== 'completed')
+  .map((action) => {
+    const summary = pendingActionSummaries.value.get(action.id) ?? 'File operation'
+    return { action, summary, message: userToolActionStatusMessage(action, summary) }
+  }))
 
 function flattenTree(nodes: TreeNode[], depth: number, acc: FlatNode[]): FlatNode[] {
   for (const node of nodes) {
@@ -279,6 +422,13 @@ watch(() => props.cwd, () => {
       <UiButton variant="ghost" size="icon" class="h-6 w-6 shrink-0" title="Refresh" :disabled="loading" @click="refresh">
         <RefreshCw :size="12" :class="{ 'animate-spin': loading }" />
       </UiButton>
+    </div>
+
+    <div v-if="pendingActionList.length > 0" class="code-tree-actions" aria-live="polite">
+      <div v-for="item in pendingActionList" :key="item.action.id" class="code-tree-action">
+        <span class="truncate">{{ item.summary }}</span>
+        <span class="code-tree-action-status">{{ item.message }}</span>
+      </div>
     </div>
 
     <UiScrollArea class="flex-1">
@@ -351,6 +501,27 @@ watch(() => props.cwd, () => {
 <style scoped>
 .code-tree-row {
   position: relative;
+}
+.code-tree-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-tertiary);
+  font-size: 11px;
+}
+.code-tree-action {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.code-tree-action-status {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .code-tree-item {
   display: flex;

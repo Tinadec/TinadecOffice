@@ -1,5 +1,5 @@
 import { computed, ref, watch, nextTick } from 'vue'
-import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api'
+import { api, createUserToolActionForPath, type ApprovalDto, type CodeToolExecuteResultDto, type UserToolActionDto } from '../api'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from './useNotifications'
 
@@ -201,6 +201,7 @@ export function useGitOperation(
   const renameBranchApprovalId = ref<string | null>(null)
   const worktreeApprovalId = ref<string | null>(null)
   const worktreeOperation = ref<{ action: 'create'; branch: string; path: string } | { action: 'remove'; path: string } | null>(null)
+  const userActions = new Map<string, UserToolActionDto>()
 
   // ---- Computed ----
   const previewData = computed(() => (preview.value?.data ?? {}) as GitPreviewData)
@@ -362,6 +363,42 @@ export function useGitOperation(
     notify.error(err instanceof Error ? err : fallback, { source: 'git' })
   }
 
+  function actionApprovalId(action: UserToolActionDto): string {
+    return action.action_approval_id ?? action.permission_request_id ?? action.id
+  }
+
+  function actionToApproval(action: UserToolActionDto, summary: string): ApprovalDto {
+    const id = actionApprovalId(action)
+    userActions.set(id, action)
+    const status = action.status === 'completed' ? 'approved' : action.status === 'blocked' || action.status === 'failed' ? 'rejected' : 'pending'
+    return { id, kind: 'user_tool', summary, status, governance_status: action.status, command: action.tool_id, cwd: cwd.value, created_at: action.created_at, decided_at: action.completed_at ?? null }
+  }
+
+  async function createGitAction(toolId: string, args: Record<string, unknown>, summary: string): Promise<ApprovalDto> {
+    if (!cwd.value) throw new Error('A project workspace is required.')
+    const action = await createUserToolActionForPath(cwd.value, toolId, args, `desktop:${toolId}:${cwd.value}:${JSON.stringify(args)}`)
+    return actionToApproval(action, summary)
+  }
+
+  async function resumeGitAction(approval: ApprovalDto | null): Promise<UserToolActionDto | null> {
+    if (!approval) return null
+    const current = userActions.get(approval.id)
+    if (!current) return null
+    const action = await api.resumeUserToolAction(current.id)
+    userActions.set(approval.id, action)
+    return action
+  }
+
+  function actionCompleted(action: UserToolActionDto | null): boolean {
+    if (!action) return false
+    if (action.status !== 'completed') {
+      notify.warning({ message: action.message ?? action.status, source: 'git' })
+      return false
+    }
+    notify.success({ message: action.message ?? `${action.tool_id} completed.`, source: 'git' })
+    return true
+  }
+
   // ---- Actions ----
 
   async function loadStatus() {
@@ -464,17 +501,13 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const isStage = action === 'stage'
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: selected.patch
+      const approval = await createGitAction(
+        isStage ? 'git_stage' : 'git_unstage',
+        selected.patch ? { patch: selected.patch } : { paths },
+        selected.patch
           ? `${isStage ? 'Stage' : 'Unstage'} selected text hunks on ${previewData.value.branch ?? 'HEAD'}`
           : `${isStage ? 'Stage' : 'Unstage'} ${paths.length} file${paths.length === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
-        command: selected.patch
-          ? `${isStage ? 'git apply --cached' : 'git apply --cached --reverse'} <approved patch>`
-          : `${isStage ? 'git add' : 'git restore --staged'} -- ${paths.join(' ')}`,
-        cwd: cwd.value,
-      })
+      )
       indexApprovalId.value = approval.id
       indexAction.value = action
       indexSelection.value = selected
@@ -488,18 +521,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedIndexUpdate() {
-    if (!cwd.value || !sid.value || !indexApproval.value || indexApproval.value.status !== 'approved' || !indexAction.value) return
+    if (!cwd.value || !indexApproval.value || !indexAction.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool(indexAction.value === 'stage' ? 'git_stage' : 'git_unstage', {
-        session_id: sid.value,
-        approval_id: indexApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          ...(indexSelection.value?.patch ? { patch: indexSelection.value.patch } : { paths: indexSelection.value?.paths ?? selectedCommitPaths.value }),
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(indexApproval.value)
+      if (!actionCompleted(result)) return
       indexApprovalId.value = null
       indexAction.value = null
       indexSelection.value = null
@@ -516,13 +542,9 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const stagedCount = repoSummary.value.stagedCount
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`,
-        command: `git commit -m "${commitMessage.value.trim()}"`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_commit', {
+        confirm_commit: true, commit_staged_only: true, message: commitMessage.value.trim(),
+      }, `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`)
       commitApprovalId.value = approval.id
       notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -534,20 +556,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedCommit() {
-    if (!cwd.value || !sid.value || !commitApproval.value || commitApproval.value.status !== 'approved') return
+    if (!cwd.value || !commitApproval.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool('git_commit', {
-        session_id: sid.value,
-        approval_id: commitApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_commit: true,
-          commit_staged_only: true,
-          message: commitMessage.value.trim(),
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(commitApproval.value)
+      if (!actionCompleted(result)) return
       commitMessage.value = ''
       commitApprovalId.value = null
       await loadStatus()
@@ -566,13 +579,9 @@ export function useGitOperation(
       const branch = pushData.value.branch ?? 'HEAD'
       const upstream = pushData.value.upstream ?? 'origin'
       const ahead = typeof pushData.value.ahead === 'number' ? pushData.value.ahead : 0
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Push ${branch} to ${upstream} (${ahead} ahead)`,
-        command: pushCommand.value,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_push', {
+        action: 'push', confirm_push: true, set_upstream: noUpstreamOnly.value, remote: 'origin',
+      }, `Push ${branch} to ${upstream} (${ahead} ahead)`)
       pushApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -584,20 +593,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedPush() {
-    if (!cwd.value || !sid.value || !pushApproval.value || pushApproval.value.status !== 'approved') return
+    if (!cwd.value || !pushApproval.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool('git_push', {
-        session_id: sid.value,
-        approval_id: pushApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_push: true,
-          set_upstream: noUpstreamOnly.value,
-          remote: 'origin',
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(pushApproval.value)
+      if (!actionCompleted(result)) return
       pushApprovalId.value = null
       await loadStatus()
     } catch (err) {
@@ -614,13 +614,9 @@ export function useGitOperation(
       const branch = previewData.value.branch ?? 'HEAD'
       const upstream = previewData.value.upstream ?? 'origin'
       const behind = repoSummary.value.behind
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Pull ${branch} from ${upstream} (${behind} behind)`,
-        command: 'git pull',
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_pull', {
+        confirm_pull: true, branch, remote: upstream.split('/')[0] ?? 'origin',
+      }, `Pull ${branch} from ${upstream} (${behind} behind)`)
       pullApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -632,20 +628,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedPull(options?: { rebase?: boolean; ff_only?: boolean }) {
-    if (!cwd.value || !sid.value || !pullApproval.value || pullApproval.value.status !== 'approved') return
+    if (!cwd.value || !pullApproval.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool('git_pull', {
-        session_id: sid.value,
-        approval_id: pullApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_pull: true,
-          branch: previewData.value.branch ?? undefined,
-          remote: previewData.value.upstream?.split('/')[0] ?? 'origin',
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(pullApproval.value)
+      if (!actionCompleted(result)) return
       pullApprovalId.value = null
       await loadStatus()
     } catch (err) {
@@ -659,13 +646,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Checkout branch ${branch}`,
-        command: `git checkout ${branch}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_checkout', { confirm_checkout: true, branch }, `Checkout branch ${branch}`)
       checkoutApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -677,20 +658,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedCheckout() {
-    if (!cwd.value || !sid.value || !checkoutApproval.value || checkoutApproval.value.status !== 'approved') return
+    if (!cwd.value || !checkoutApproval.value) return
     operationLoading.value = true
     try {
-      const branch = checkoutApproval.value.command?.replace('git checkout ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_merge', {
-        session_id: sid.value,
-        approval_id: checkoutApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_checkout: true,
-          branch,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(checkoutApproval.value)
+      if (!actionCompleted(result)) return
       checkoutApprovalId.value = null
       await refreshAll()
     } catch (err) {
@@ -704,13 +676,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branchName.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Create and checkout branch ${branchName}`,
-        command: `git checkout -b ${branchName}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_branch_create', { confirm_create_branch: true, branch: branchName }, `Create and checkout branch ${branchName}`)
       branchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -722,20 +688,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedCreateBranch() {
-    if (!cwd.value || !sid.value || !branchApproval.value || branchApproval.value.status !== 'approved') return
+    if (!cwd.value || !branchApproval.value) return
     operationLoading.value = true
     try {
-      const branchName = branchApproval.value.command?.replace('git checkout -b ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_branch_create', {
-        session_id: sid.value,
-        approval_id: branchApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_create_branch: true,
-          branch: branchName,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(branchApproval.value)
+      if (!actionCompleted(result)) return
       branchApprovalId.value = null
       await refreshAll()
     } catch (err) {
@@ -749,13 +706,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !canRequestFetchApproval.value) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Fetch remote updates for ${previewData.value.branch ?? 'HEAD'}`,
-        command: 'git fetch --all --prune',
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_fetch', { confirm_fetch: true }, `Fetch remote updates for ${previewData.value.branch ?? 'HEAD'}`)
       fetchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -767,18 +718,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedFetch() {
-    if (!cwd.value || !sid.value || !fetchApproval.value || fetchApproval.value.status !== 'approved') return
+    if (!cwd.value || !fetchApproval.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool('git_fetch', {
-        session_id: sid.value,
-        approval_id: fetchApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_fetch: true,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(fetchApproval.value)
+      if (!actionCompleted(result)) return
       fetchApprovalId.value = null
       await loadBranches()
       await loadStatus()
@@ -793,13 +737,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Merge branch ${branch} into ${previewData.value.branch ?? 'HEAD'}`,
-        command: `git merge ${branch}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_merge', { confirm_merge: true, branch }, `Merge branch ${branch} into ${previewData.value.branch ?? 'HEAD'}`)
       mergeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -811,20 +749,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedMerge() {
-    if (!cwd.value || !sid.value || !mergeApproval.value || mergeApproval.value.status !== 'approved') return
+    if (!cwd.value || !mergeApproval.value) return
     operationLoading.value = true
     try {
-      const branch = mergeApproval.value.command?.replace('git merge ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_conflict_resolve', {
-        session_id: sid.value,
-        approval_id: mergeApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_merge: true,
-          branch,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(mergeApproval.value)
+      if (!actionCompleted(result)) return
       mergeApprovalId.value = null
       await refreshAll()
     } catch (err) {
@@ -838,13 +767,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Rebase ${previewData.value.branch ?? 'HEAD'} onto ${branch}`,
-        command: `git rebase ${branch}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_rebase', { confirm_rebase: true, operation: 'start', branch }, `Rebase ${previewData.value.branch ?? 'HEAD'} onto ${branch}`)
       rebaseApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -856,23 +779,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedRebase(operation: 'start' | 'continue' | 'abort' | 'skip' = 'start') {
-    if (!cwd.value || !sid.value || !rebaseApproval.value || rebaseApproval.value.status !== 'approved') return
+    if (!cwd.value || !rebaseApproval.value) return
     operationLoading.value = true
     try {
-      const branch = operation === 'start'
-        ? rebaseApproval.value.command?.replace('git rebase ', '').trim() ?? ''
-        : undefined
-      const result = await api.executeCodeTool('git_rebase', {
-        session_id: sid.value,
-        approval_id: rebaseApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_rebase: true,
-          operation,
-          ...(branch ? { branch } : {}),
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(rebaseApproval.value)
+      if (!actionCompleted(result)) return
       if (operation !== 'start') {
         rebaseApprovalId.value = null
       }
@@ -892,13 +803,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !filePath.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Resolve conflict in ${filePath} using ${strategy}`,
-        command: `git checkout --${strategy} -- ${filePath}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_conflict_resolve', { confirm_resolve: true, path: filePath, strategy }, `Resolve conflict in ${filePath} using ${strategy}`)
       resolveConflictApprovalId.value = approval.id
       resolveConflictPath.value = filePath
       resolveConflictStrategy.value = strategy
@@ -912,21 +817,12 @@ export function useGitOperation(
   }
 
   async function executeApprovedResolveConflict() {
-    if (!cwd.value || !sid.value || !resolveConflictApproval.value || resolveConflictApproval.value.status !== 'approved') return
+    if (!cwd.value || !resolveConflictApproval.value) return
     if (!resolveConflictPath.value || !resolveConflictStrategy.value) return
     operationLoading.value = true
     try {
-      const result = await api.executeCodeTool('git_worktree_manager', {
-        session_id: sid.value,
-        approval_id: resolveConflictApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_resolve: true,
-          path: resolveConflictPath.value,
-          strategy: resolveConflictStrategy.value,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(resolveConflictApproval.value)
+      if (!actionCompleted(result)) return
       resolveConflictApprovalId.value = null
       resolveConflictPath.value = null
       resolveConflictStrategy.value = null
@@ -942,13 +838,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Delete branch ${branch}${force ? ' (force)' : ''}`,
-        command: `git branch ${force ? '-D' : '-d'} ${branch}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_branch_delete', { confirm_delete_branch: true, branch, force }, `Delete branch ${branch}${force ? ' (force)' : ''}`)
       deleteBranchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -960,23 +850,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedDeleteBranch() {
-    if (!cwd.value || !sid.value || !deleteBranchApproval.value || deleteBranchApproval.value.status !== 'approved') return
+    if (!cwd.value || !deleteBranchApproval.value) return
     operationLoading.value = true
     try {
-      const command = deleteBranchApproval.value.command ?? ''
-      const force = command.includes(' -D ')
-      const branch = command.replace(/git branch -[Dd] /, '').trim()
-      const result = await api.executeCodeTool('git_worktree_manager', {
-        session_id: sid.value,
-        approval_id: deleteBranchApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_delete_branch: true,
-          branch,
-          force,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(deleteBranchApproval.value)
+      if (!actionCompleted(result)) return
       deleteBranchApprovalId.value = null
       await loadBranches()
       await loadStatus()
@@ -991,13 +869,7 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !newName.trim()) return
     operationLoading.value = true
     try {
-      const approval = await api.createApproval({
-        session_id: sid.value,
-        kind: 'git',
-        summary: `Rename current branch to ${newName}`,
-        command: `git branch -m ${newName}`,
-        cwd: cwd.value,
-      })
+      const approval = await createGitAction('git_branch_rename', { confirm_rename_branch: true, new_name: newName }, `Rename current branch to ${newName}`)
       renameBranchApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -1009,20 +881,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedRenameBranch() {
-    if (!cwd.value || !sid.value || !renameBranchApproval.value || renameBranchApproval.value.status !== 'approved') return
+    if (!cwd.value || !renameBranchApproval.value) return
     operationLoading.value = true
     try {
-      const newName = renameBranchApproval.value.command?.replace('git branch -m ', '').trim() ?? ''
-      const result = await api.executeCodeTool('git_branch_rename', {
-        session_id: sid.value,
-        approval_id: renameBranchApproval.value.id,
-        cwd: cwd.value,
-        arguments: {
-          confirm_rename_branch: true,
-          new_name: newName,
-        },
-      })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(renameBranchApproval.value)
+      if (!actionCompleted(result)) return
       renameBranchApprovalId.value = null
       await refreshAll()
     } catch (err) {
@@ -1037,7 +900,7 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const operation = { action: 'create' as const, branch: payload.branch.trim(), path: payload.path.trim() }
-      const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Create worktree ${operation.path} for ${operation.branch}`, command: `git worktree add ${operation.path} -b ${operation.branch}`, cwd: cwd.value })
+      const approval = await createGitAction('git_worktree_create', { confirm_create_worktree: true, branch: operation.branch, path: operation.path }, `Create worktree ${operation.path} for ${operation.branch}`)
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
@@ -1051,7 +914,7 @@ export function useGitOperation(
     operationLoading.value = true
     try {
       const operation = { action: 'remove' as const, path: path.trim() }
-      const approval = await api.createApproval({ session_id: sid.value, kind: 'git', summary: `Remove worktree ${operation.path}`, command: `git worktree remove ${operation.path}`, cwd: cwd.value })
+      const approval = await createGitAction('git_worktree_remove', { confirm_remove_worktree: true, path: operation.path }, `Remove worktree ${operation.path}`)
       worktreeOperation.value = operation
       worktreeApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
@@ -1061,14 +924,11 @@ export function useGitOperation(
   }
 
   async function executeApprovedWorktreeOperation() {
-    if (!cwd.value || !sid.value || !worktreeApproval.value || worktreeApproval.value.status !== 'approved' || !worktreeOperation.value) return
+    if (!cwd.value || !worktreeApproval.value || !worktreeOperation.value) return
     operationLoading.value = true
     try {
-      const operation = worktreeOperation.value
-      const result = operation.action === 'create'
-        ? await api.executeCodeTool('git_worktree_create', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { branch: operation.branch, path: operation.path, confirm_create_worktree: true } })
-        : await api.executeCodeTool('git_worktree_remove', { session_id: sid.value, approval_id: worktreeApproval.value.id, cwd: cwd.value, arguments: { path: operation.path, confirm_remove_worktree: true } })
-      if (!mutationCompleted(result)) return
+      const result = await resumeGitAction(worktreeApproval.value)
+      if (!actionCompleted(result)) return
       worktreeApprovalId.value = null
       worktreeOperation.value = null
       await refreshAll()
@@ -1154,7 +1014,7 @@ export function useGitOperation(
 
   function approvalStatusLabel(approval: ApprovalDto | null): string {
     if (!approval) return t('context.gitNoApproval')
-    return `${approval.id} / ${approval.status}`
+    return `${approval.id} / ${approval.governance_status ?? approval.status}`
   }
 
   function decideGitApproval(

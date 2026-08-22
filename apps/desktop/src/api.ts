@@ -30,16 +30,189 @@ export interface ApprovalDto {
   command?: string | null;
   cwd?: string | null;
   status: string;
+  /** Core user-action state kept separate from the approval projection. */
+  governance_status?: string | null;
   created_at: string;
   decided_at?: string | null;
 }
 
-export interface CreateApprovalInput {
-  session_id?: string | null;
-  kind: string;
-  summary: string;
-  command?: string | null;
-  cwd?: string | null;
+export type GovernanceRequestStatus =
+  | 'pending'
+  | 'awaiting_delegate'
+  | 'awaiting_user'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'denied'
+  | 'expired'
+  | 'revoked'
+  | 'blocked'
+  | string;
+
+/** A persisted request for a capability that is not currently available. */
+export interface PermissionRequestDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  parent_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  risk: string;
+  expected_cost: number;
+  status: GovernanceRequestStatus;
+  authorization_decision_id?: string | null;
+  capability_grant_id?: string | null;
+  capability_lease_id?: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthorizationDecisionDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  permission_request_id?: string | null;
+  capability_grant_id?: string | null;
+  capability_lease_id?: string | null;
+  outcome: string;
+  reason_code: string;
+  reason: string;
+  decision_source: string;
+  policy_snapshot_hash: string;
+  decided_by_principal_id: string;
+  decided_by_agent_instance_id?: string | null;
+  created_at: string;
+}
+
+export interface CapabilityGrantDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  parent_grant_id?: string | null;
+  transferable: boolean;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+export interface CapabilityRuleDto {
+  effect: string;
+  capability: string;
+  action: string;
+  resource_pattern: string;
+}
+
+export interface ApprovalDelegationDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  delegated_by_principal_id: string;
+  delegate_agent_version_id: string;
+  delegate_agent_instance_id: string;
+  rules: CapabilityRuleDto[];
+  max_risk: string;
+  max_cost: number;
+  run_id?: string | null;
+  require_user_review: boolean;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+/** Lease responses intentionally do not expose the internal one-time nonce. */
+export interface CapabilityLeaseDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability_grant_id: string;
+  permission_request_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  policy_snapshot_hash: string;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+export interface PermissionResolutionDto {
+  request: PermissionRequestDto;
+  decision: AuthorizationDecisionDto;
+  grant?: CapabilityGrantDto | null;
+  lease?: CapabilityLeaseDto | null;
+}
+
+export interface PermissionDecisionInput {
+  approve: boolean;
+  approver_agent_instance_id?: string | null;
+  approval_delegation_id?: string | null;
+  reason?: string | null;
+}
+
+export interface CreateCapabilityGrantInput {
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  expires_at: string;
+  max_uses?: number;
+  transferable?: boolean;
+  parent_grant_id?: string | null;
+  reason?: string | null;
+}
+
+export interface CreateApprovalDelegationInput {
+  delegate_agent_version_id: string;
+  delegate_agent_instance_id: string;
+  rules?: CapabilityRuleDto[];
+  max_risk?: string | null;
+  max_cost: number;
+  max_uses?: number;
+  expires_at: string;
+  run_id?: string | null;
+  require_user_review?: boolean;
+}
+
+export interface GovernanceRevokeInput {
+  reason?: string | null;
 }
 
 export interface ModelSettingsDto {
@@ -1094,6 +1267,64 @@ export interface CodeToolExecuteRequestDto {
   source?: 'human' | 'agent' | string;
 }
 
+export type UserToolActionStatus =
+  | 'snapshot_required'
+  | 'awaiting_delegate'
+  | 'awaiting_user'
+  | 'awaiting_approval'
+  | 'running'
+  | 'completed'
+  | 'blocked'
+  | 'outcome_unknown'
+  | 'failed'
+  | string;
+
+/** Core-owned user action. Nonces and internal lease material never cross this DTO. */
+export interface UserToolActionDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  project_id: string;
+  principal_id: string;
+  tool_id: string;
+  status: UserToolActionStatus;
+  risk: string;
+  mutates_workspace: boolean;
+  requires_approval: boolean;
+  permission_request_id?: string | null;
+  authorization_decision_id?: string | null;
+  action_approval_id?: string | null;
+  snapshot_id?: string | null;
+  snapshot_hash?: string | null;
+  result?: Record<string, unknown> | null;
+  error_category?: string | null;
+  message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+export interface CreateUserToolActionInput {
+  project_id: string;
+  tool_id: string;
+  params?: Record<string, unknown> | null;
+  idempotency_key?: string | null;
+}
+
+export interface SnapshotDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  project_id: string;
+  kind: string;
+  status: string;
+  is_git: boolean;
+  workspace_hash: string;
+  content_hash: string;
+  file_count: number;
+  created_at: string;
+}
+
 export interface OrchestrationSnapshotDto {
   run?: OrchestrationRunDto | null;
   graph?: TaskGraphDto | null;
@@ -1162,6 +1393,23 @@ export type AgentCatalogItem = { id: string; layer: string; role: string; lifecy
 export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${gatewayUrl}/api/v1/agents/catalog`, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${gatewayUrl}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
+/** Resolve the Core project identity for a desktop workspace path. */
+export async function createUserToolActionForPath(
+  path: string,
+  toolId: string,
+  params?: Record<string, unknown> | null,
+  idempotencyKey?: string,
+): Promise<UserToolActionDto> {
+  const projects = await request<ProjectDto[]>('/api/v1/projects');
+  const normalized = path.replace(/[\\/]+$/, '').toLowerCase();
+  const project = projects.find((item) => item.path.replace(/[\\/]+$/, '').toLowerCase() === normalized);
+  if (!project) throw new Error('The selected workspace is not registered in TinadecCore.');
+  return request<UserToolActionDto>('/api/v1/user/tool-actions', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: project.id, tool_id: toolId, params, idempotency_key: idempotencyKey }),
+  });
+}
+
 export const api = {
   gatewayUrl,
   health: () => request<Record<string, unknown>>('/api/v1/health'),
@@ -1206,23 +1454,41 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`);
   },
-  createApproval: (approval: CreateApprovalInput) => request<ApprovalDto>('/api/v1/approvals', {
+  listPermissionRequests: (params: { status?: string; run_id?: string; task_id?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set('status', params.status);
+    if (params.run_id) search.set('run_id', params.run_id);
+    if (params.task_id) search.set('task_id', params.task_id);
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return request<PermissionRequestDto[]>(`/api/v1/governance/permission-requests${suffix}`);
+  },
+  getPermissionRequest: (requestId: string) => request<PermissionResolutionDto>(`/api/v1/governance/permission-requests/${encodeURIComponent(requestId)}`),
+  decidePermissionRequest: (requestId: string, input: PermissionDecisionInput) => request<PermissionResolutionDto>(`/api/v1/governance/permission-requests/${encodeURIComponent(requestId)}/decision`, {
     method: 'POST',
-    body: JSON.stringify(approval)
+    body: JSON.stringify(input),
+  }),
+  listUserToolActions: (status?: string) => request<UserToolActionDto[]>(`/api/v1/user/tool-actions${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createUserToolAction: (input: CreateUserToolActionInput) => request<UserToolActionDto>('/api/v1/user/tool-actions', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  getUserToolAction: (actionId: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}`),
+  resumeUserToolAction: (actionId: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/resume`, {
+    method: 'POST',
+  }),
+  overrideUserToolActionSnapshot: (actionId: string, reason: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/snapshot-override`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  }),
+  listWorkspaceSnapshots: (projectId: string) => request<SnapshotDto[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/snapshots`),
+  getWorkspaceSnapshot: (snapshotId: string) => request<SnapshotDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}`),
+  restoreWorkspaceSnapshot: (snapshotId: string, input: { idempotency_key?: string; expected_workspace_hash?: string; allow_conflicts?: boolean } = {}) => request<Record<string, unknown>>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   }),
   decideApproval: (approvalId: string, decision: 'approved' | 'rejected') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
     method: 'POST',
     body: JSON.stringify({ decision })
-  }),
-  createShellApproval: (sessionId: string | null, command: string, cwd?: string) => request<ApprovalDto>('/api/v1/tools/shell', {
-    method: 'POST',
-    body: JSON.stringify({
-      session_id: sessionId,
-      kind: 'shell',
-      summary: command,
-      command,
-      cwd
-    })
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
