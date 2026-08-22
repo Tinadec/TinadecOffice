@@ -3,6 +3,7 @@
 > 状态：当前 `/api/v1` 桌面落地契约
 > 适用：`apps/desktop`（Electron + Vue）
 > 权威来源：`docs/tinadec-core-product-definition.zh-CN.md`
+> 本轮范围：只维护 Core-to-App 契约和后续落地清单，不继续修改 Vue 组件
 
 本文是 TinadecCore 能力落到 TinadecApp Desktop 的工作清单。它描述页面、请求方向、状态和验收条件，不复制 Core 的业务规则。Desktop 只保存窗口布局、主题和临时视图状态；租户主体、权限、审批、租约、快照、工具结果和审计事实始终来自 Core。
 
@@ -12,7 +13,7 @@
 - Desktop 默认调用 Gateway；也允许部署配置直连 Core。Gateway 是无状态薄代理，不在 Desktop 与 Core 之间复制审批、PDP、nonce 或快照状态。
 - 用户只读查询可以使用 `/api/v1/code/tools/*` 或 `/api/v1/tool-runtime/*` 直连传输面。它们是正式用户工具传输面，不是兼容路由。
 - 用户写操作使用 Core UserToolAction；智能体写操作使用 `/api/v1/runs/{runId}/tools/{toolId}/execute`。Desktop 不调用 `/api/v1/approvals` 创建审批，不生成参数哈希或 nonce。
-- Electron/Vue 组件使用 TinadecUI 现有控件、surface token 和布局引擎。视觉改动前运行 `opencode run -m oxa/stealth/ox-alpha "..."`，保持现有 TinadecUI 风格。
+- Electron/Vue 组件使用 TinadecUI 现有控件、surface token 和布局引擎。后续客户端实现由负责 Desktop 的 Agent 直接完成，不依赖外部 UI 代码生成命令。
 
 ## 2. 页面与职责
 
@@ -38,7 +39,7 @@ POST /api/v1/user/tool-actions/{id}/resume
 POST /api/v1/user/tool-actions/{id}/snapshot-override
 ```
 
-创建请求只提交 `project_id`、`tool_id`、`params` 和可选 `idempotency_key`。主体、租户、工作区、风险、参数哈希、快照、授权决定和审批均由 Core 生成。响应包含稳定的 `audit_reference`，但永远不包含 nonce、受保护租约材料或内部 secret reference。
+创建请求只提交 `project_id`、`tool_id`、`params` 和可选 `idempotency_key`。主体、租户、工作区、风险、参数哈希、快照、授权决定和审批均由 Core 生成。响应包含稳定的 `audit_reference`、`snapshot_override`、可选 `snapshot_override_reason`、`non_reversible` 和可选 `compensation_guidance`，但永远不包含 nonce、受保护租约材料或内部 secret reference。
 
 Desktop API 封装应至少提供：
 
@@ -101,7 +102,7 @@ UI 映射要求：
 - `awaiting_user`：显示资源、动作、风险、范围和过期时间；决定后刷新同一个 action。
 - `awaiting_approval`：显示动作审批与权限决定是两道门；批准后调用 `resume`。
 - `running`：显示不可重复提交的进行中状态。
-- `completed`：显示结构化结果和审计引用。
+- `completed`：显示结构化结果、审计引用；`non_reversible=true` 时持续显示补偿建议，不能显示“可一键回滚”。
 - `blocked`：显示稳定 reason code，不重试同一个 idempotency key 以绕过拒绝。
 - `outcome_unknown`：禁止自动重放；引导用户先查看当前工作区、快照和恢复决定。
 
@@ -125,7 +126,48 @@ Git status、diff、log、branch、worktree、conflict preview 继续走用户�
 
 CommitPanel 和 `useGitOperation` 不得调用 `createApproval` 或直接执行 Gateway 工具写路由。动作参数中需要包含仓库路径、目标 ref/path、确认字段和可重试的幂等键；参数规范化由 Core/Tool Provider 完成。
 
+每个语义不同的 Git 命令都是一个新 UserToolAction。特别是 `git_rebase start`、`continue`、`skip` 和 `abort` 必须分别创建动作，分别冻结参数、捕获快照并经过治理；禁止用 `resume` 把原 `start` 动作改造成后续命令。`resume` 只推进同一动作已经持久化的状态，绝不改变其 tool id 或 params。
+
 高风险 Git 写操作创建权限请求或 ActionApproval 前必须捕获 Workspace Snapshot。快照 id/hash 绑定 action；恢复或 resume 时若 HEAD、index、worktree、manifest 或参数发生变化，Core 必须阻断并要求重新创建动作。
+
+### 5.1 Git 参数契约
+
+所有 Git 工具都必须提交 `repository_path`，值为当前项目的规范化仓库根路径。Desktop 不提交 `risk`、`approved`、`parameters_hash`、主体或快照 hash。确认字段取自实时 Tool Provider manifest，值必须是非空字符串，不能发送布尔值。当前内置工具映射如下：
+
+| 工具 | 关键参数 | 显式确认字段 |
+| --- | --- | --- |
+| `git_stage` / `git_unstage` | `repository_path`, `paths` | 无；仍需 Core 治理 |
+| `git_commit` | `repository_path`, `message`, `include_all`, `commit_staged_only` | `confirm_commit` |
+| `git_push` | `repository_path`, `remote`, `branch`, `set_upstream` | `confirm_push` |
+| `git_fetch` / `git_pull` | `repository_path`, `remote`, `branch` | `confirm_fetch` / `confirm_pull` |
+| `git_checkout` | `repository_path`, `branch` | `confirm_checkout` |
+| `git_branch_create/delete/rename` | `repository_path` 和目标分支字段 | 对应 `confirm_branch_*` |
+| `git_worktree_create/remove` | `repository_path`, `path`, 可选 `branch` | 对应 `confirm_worktree_*` |
+| `git_merge` | `repository_path`, `branch` | `confirm_merge` |
+| `git_rebase` | `repository_path`, `action`, start 时的目标分支 | `confirm_rebase` |
+| `git_conflict_resolve` | `repository_path`, `path`, `strategy` | `confirm_resolve` |
+
+`git_push` 请求中不要添加 Tool Provider schema 未声明的 `action: "push"`。Core 会在入场时按冻结 schema 拒绝未知字段。`git_push` 的公开 action 投影必须显示 `non_reversible=true` 和 `compensation_guidance`；本地 Workspace Snapshot 不能伪装成远程 ref 的回滚能力。
+
+### 5.2 幂等与动作身份
+
+- 幂等键由“项目 + tool id + 规范化参数 + 用户触发意图”生成稳定 hash，最大 256 字符。
+- 同一按钮因网络重试应复用键；参数、目标分支、提交消息或 rebase action 改变时必须生成新键。
+- 前端状态表使用 `action.id` 作为主键；`permission_request_id` 和 `action_approval_id` 只是阶段引用，会在同一 action 生命周期内先后出现。
+- 相同幂等键配不同参数收到冲突时，UI 必须报错，不能静默生成随机键绕过 Core。
+
+### 5.3 两阶段推进算法
+
+```text
+create UserToolAction
+  -> 保存 action.id 并渲染 Core status
+  -> awaiting_user: 决定 PermissionRequest
+  -> GET action.id，直到出现 action_approval_id 或终态
+  -> awaiting_approval: 决定 ActionApproval
+  -> GET action.id / POST resume，直到 completed、blocked、failed 或 outcome_unknown
+```
+
+`snapshot_required`、`requested`、`running` 和 `outcome_unknown` 都不是可审批记录，不能投影成带“批准/拒绝”按钮的普通 pending approval。轮询采用有上限的退避并在组件卸载、项目切换或终态时停止；Gateway/SSE 重连后始终用 GET action 投影校正本地状态。
 
 ## 6. 审批交互
 
@@ -134,7 +176,7 @@ CommitPanel 和 `useGitOperation` 不得调用 `createApproval` 或直接执行 
 1. `PermissionRequest`：能力是否可以授予；决定入口为治理 decision API。
 2. `ActionApproval`：某一次规范化参数动作是否可以消费；决定入口为 `/api/v1/approvals/{id}/decision`。
 
-二者可以在一个 UI 卡片中串联显示，但不能合并为一个本地状态。审批完成后 UI 必须重新读取 action，不从按钮结果推断执行成功。任何代理决定都必须显示 decision source、范围、TTL 和 reason code。
+二者可以在一个 UI 卡片中串联显示，但不能合并为一个本地状态。PermissionRequest 决定完成后，Core 可能为同一 action 新建一个不同 id 的 ActionApproval；UI 必须以 `action.id` 为稳定身份重新读取 action，再切换到新的 `action_approval_id`。不得继续用旧 `permission_request_id` 查找本地卡片，也不得从决定按钮结果推断工具执行成功。任何代理决定都必须显示 decision source、范围、TTL 和 reason code。
 
 ## 7. 错误、断线与恢复
 
@@ -145,6 +187,8 @@ CommitPanel 和 `useGitOperation` 不得调用 `createApproval` 或直接执行 
 - `429`：保持动作 id 和状态，按 Retry-After 重新查询，不重复创建。
 - `502/503`：保留当前 action、run 或 snapshot 状态；恢复连接后查询 Core，不把断线当成失败。
 - `outcome_unknown`：只允许进入恢复决定流程；不得自动调用 `resume` 反复执行。
+
+当前 Core 只有 Agent ToolExecution 的 `/api/v1/tool-executions/{id}/recovery-decision`；UserToolAction 尚无公开 recovery-decision API。因此 Desktop 对用户动作的 `outcome_unknown` 现阶段必须只读展示，提供 status/diff/snapshot 检查入口，不得错误调用 Agent execution API。待 Core 增加 UserToolAction 恢复决定契约后，再实现“确认已完成、执行补偿、标记失败”等按钮，并同步更新本文和 `/api/v1` OpenAPI。
 
 SSE 断开只停止渲染器读取，不取消 Core run 或 user action。重新连接后按 cursor/事件序号去重，并以 Core 的持久投影校正 UI。
 
@@ -158,7 +202,46 @@ SSE 断开只停止渲染器读取，不取消 Core run 或 user action。重新
 - Gateway 测试证明它不保存 Core 状态、不计算 PDP、不批准动作，并继续原样转发 `/api/v1/code/tools/*` 与 `/api/v1/tool-runtime/*`。
 - Desktop typecheck、定向 user action 测试、Git 面板交互测试通过；完整套件中的历史 Vue/happy-dom 环境失败必须单独标注，不能归因于 Core 治理功能。
 
-## 9. 阶段提交与工具
+### 8.1 Desktop 后续 P0 测试场景
+
+1. PermissionRequest 批准后重新读取相同 `action.id`，界面切换到新 `action_approval_id`，旧权限卡不残留为 pending。
+2. `git_commit`、`git_push` 请求都含 `repository_path` 和 manifest 声明的非空字符串确认字段；没有布尔确认值或额外 `action` 字段。
+3. `git_rebase start/continue/skip/abort` 产生四个不同 action/idempotency key，任何后续命令都不 resume 原 start 动作。
+4. `snapshot_required`、`running`、`outcome_unknown` 不显示批准按钮；`outcome_unknown` 不发生自动重放。
+5. `git_push` 显示不可逆标记和补偿建议；snapshot override 显示用户原因并持续保留不可逆警告。
+6. 决策后断线、Gateway 503 或 Desktop 重启时，按 action id 恢复投影，不重复创建、不重复批准、不重复调用工具。
+7. 切换项目后停止旧项目轮询，旧 action 不进入新项目的 Approval 或 CommitPanel。
+
+## 9. 实现状态与交接顺序
+
+### Core 已提供
+
+- UserToolAction create/list/detail/resume/snapshot-override、稳定审计引用和 tenant/workspace 隔离；
+- 冻结 Tool Provider v2 manifest 与 descriptor，参数/schema/确认字段校验；
+- PermissionRequest、CapabilityLease、ActionApproval、内部 nonce 保护和一次消费；
+- 高风险写前 Git/文件系统快照、manifest/参数/快照漂移 fail-closed；
+- 启动恢复：等待态可重放唤醒，孤立 `running` 转 `outcome_unknown`；
+- `non_reversible` 与 `compensation_guidance` 公开投影。
+
+当前启动恢复只扫描宿主 `ITenantContextAccessor.Current` 对应的 tenant/workspace。这符合本地单工作区部署；OIDC 多租户和多实例版本必须引入全租户恢复调度与分布式 claim 后，才能宣称云端全域恢复完成。
+
+### Desktop 当前已有基础但仍需复核
+
+- `apps/desktop/src/api.ts` 已有 UserToolAction、permission、approval 和 snapshot 基础 client；
+- Git、文件编辑和 shell 的部分写路径已经改用 UserToolAction；
+- `CommitPanel.vue` 与 `useGitOperation.ts` 仍有重复状态编排，后续应抽成单一 composable/store；
+- 当前工作树中有参数确认字段、仓库路径和投影 helper 的在途改动，接手 Agent 必须先审查而非覆盖。
+
+### Desktop 后续实施顺序
+
+1. 更新 `UserToolActionDto`，加入 `non_reversible`、`compensation_guidance`，并以 action id 建立统一 store。
+2. 抽取统一的 create/poll/decide/resume 流程，修复 PermissionRequest 到 ActionApproval 的两阶段切换。
+3. 按 5.1 校验全部 Git mutation 参数，并将每个 rebase 子命令拆成新 action。
+4. 让 CommitPanel、Git 面板、CodeEditor、PatchPreview、FileTree 和 shell 共用状态组件；移除所有生产 `createApproval` 写入路径。
+5. 实现 snapshot override 确认对话框、不可逆警告和 `outcome_unknown` 只读恢复页。
+6. 完成 8.1 的组件/交互测试，再运行 typecheck 和 Desktop 全套测试。
+
+## 10. 阶段提交
 
 每个阶段独立提交，建议提交主题固定为：
 
@@ -169,4 +252,4 @@ SSE 断开只停止渲染器读取，不取消 Core run 或 user action。重新
 5. `feat(desktop): route git mutations through core governance`
 6. `docs(core): publish app-core-ui and v1 governance contract`
 
-Electron/Vue 阶段的设计输入使用 `opencode run -m oxa/stealth/ox-alpha`，但生成的 UI 代码必须遵循 TinadecUI 控件、布局和状态事实源约束。
+Desktop 接手 Agent 应按上述职责拆分提交，不把 Core 契约、Vue 状态编排和纯视觉修改混入同一个提交。

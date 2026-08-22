@@ -641,19 +641,19 @@ run 冻结的 Agent/Mode/Prompt/Policy/Model/Tool 哈希是不可变配置绑定
 
 `snapshot_curator` 只判断时机并提出请求，确定性的 Snapshot Service 负责创建和恢复：
 
-当前工作树已提供 provider-neutral `IWorkspaceSnapshotProvider`、文件系统 provider、Git CLI provider、`IWorkspaceSnapshotService` 与 `WorkspaceSnapshotService`：支持 Git/非 Git 检测、HEAD/分支/ref、index/tree、工作树、binary patch、未跟踪/删除/冲突路径、文件清单哈希、ContentStore 内容保存、创建幂等、租户/工作区隔离、恢复冲突检查、显式允许冲突和恢复幂等。Git CLI 使用参数数组，不拼接 shell 命令；恢复按引用、index、工作树的确定性顺序执行。高风险 UserToolAction 和 Agent ToolDispatcher 写操作在创建权限请求或动作审批前捕获快照，快照失败默认阻断，用户只能以一次性 override 明确接受 `non_reversible` 风险。
+当前工作树已提供 provider-neutral `IWorkspaceSnapshotProvider`、文件系统 provider、Git CLI provider、`IWorkspaceSnapshotService` 与 `WorkspaceSnapshotService`：支持 Git/非 Git 检测、HEAD/分支/ref、index/tree、工作树、binary patch、未跟踪/删除/冲突路径、文件清单哈希、ContentStore 内容保存、创建幂等、租户/工作区隔离、恢复冲突检查、显式允许冲突和恢复幂等。Git CLI 使用参数数组，不拼接 shell 命令；恢复按引用、index、工作树的确定性顺序执行。高风险 UserToolAction 和 Agent ToolDispatcher 写操作在创建权限请求或动作审批前捕获快照，快照失败默认阻断，用户只能以一次性 override 明确接受 `non_reversible` 风险。UserToolAction 将该事实持久化并通过 DTO 返回；`git_push` 等远程副作用即使本地快照成功也必须标记 `non_reversible` 并返回 `compensation_guidance`，不能把本地恢复伪装为远程回滚。
 
 - Git 仓库优先保存 HEAD、index、untracked manifest、diff/blob 和 worktree 标识。
 - 非 Git 目录使用内容寻址的增量文件快照，并设置大小与敏感文件排除策略。
 - 在高风险写操作前、任务里程碑、合并前和用户手动触发时创建；不按每一 token 或每一时刻无限快照。
 - 恢复前先生成 restore plan，检测当前未保存变更，并要求与风险匹配的审批。
-- 外部副作用记录 compensation action；无法补偿时明确标记 `irreversible`。
+- 外部副作用记录 compensation action；无法补偿时明确标记 `non_reversible`。
 
 ### 12.3 Git 治理闭环
 
 `git_steward` 读取 diff 和任务证据，生成变更分组、测试要求、提交说明和风险判断；`worker.git` 经 TinadecTool 执行获批动作。提交、推送、变基、强制更新和删除分支必须分别建模，不能使用一个宽泛的 `git.write` 权限。
 
-Desktop 的 Git 面板遵循同一闭环：查询继续使用用户直连工具传输面；stage、unstage、commit、push、checkout、分支、worktree、merge、rebase 和冲突解决全部创建 Core UserToolAction。界面只展示 Core 返回的 `snapshot_required`、`awaiting_delegate`、`awaiting_user`、`awaiting_approval`、`running`、`completed`、`blocked`、`outcome_unknown`，不本地创建审批、不保存 nonce，也不以 UI 状态替代 Core 事实。
+Desktop 的 Git 面板遵循同一闭环：查询继续使用用户直连工具传输面；stage、unstage、commit、push、checkout、分支、worktree、merge、rebase 和冲突解决全部创建 Core UserToolAction。界面只展示 Core 返回的 `snapshot_required`、`awaiting_delegate`、`awaiting_user`、`awaiting_approval`、`running`、`completed`、`blocked`、`outcome_unknown`，不本地创建审批、不保存 nonce，也不以 UI 状态替代 Core 事实。PermissionRequest 决定后必须按 action id 重新读取新产生的 ActionApproval；rebase 的 start/continue/skip/abort 是四类独立动作，不得通过 resume 改写原动作参数。
 
 ## 13. 智能体演化机制
 
