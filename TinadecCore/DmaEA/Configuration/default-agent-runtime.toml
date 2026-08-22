@@ -106,8 +106,8 @@ direct_answer_allowed = false
 
 [profiles."space.full_duplex"]
 activation_policy = "full_duplex"
-operation_agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution"]
-execution_agents = ["task_planner"]
+operation_agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution", "git_steward"]
+execution_agents = ["task_planner", "worker.git"]
 direct_answer_allowed = false
 
 # Built-in operation-layer roles. Only meeting may emit user-facing messages.
@@ -167,6 +167,18 @@ prompt_profile = "space.full_duplex.evolution"
 triggers = ["task_closed", "user_feedback_received"]
 emits = ["memory.candidate_created", "agent.candidate_created"]
 
+[agents.git_steward]
+layer = "operation"
+role = "git_steward"
+lifecycle = "task"
+capabilities = ["git.review", "git.commit_plan", "approval.request"]
+direct_user_output = false
+context_access = "read"
+allowed_tools = []
+prompt_profile = "space.full_duplex.git_steward"
+triggers = ["git.change_detected", "before_commit", "before_push"]
+emits = ["git.plan_created", "git.approval_requested"]
+
 [agents.task_planner]
 layer = "execution"
 role = "execution_coordinator"
@@ -216,5 +228,17 @@ direct_user_output = false
 context_access = "read"
 allowed_tools = ["shell.execute", "read_file", "mcp_invoke"]
 prompt_profile = "space.full_duplex.testing"
+accepts = ["worker.dispatched"]
+emits = ["worker.progress", "worker.completed", "worker.failed"]
+
+[agents."worker.git"]
+layer = "execution"
+role = "git_specialist"
+lifecycle = "on_demand"
+capabilities = ["tool.git"]
+direct_user_output = false
+context_access = "read_patch"
+allowed_tools = ["git_status", "git_diff", "git_stage", "git_unstage", "git_commit", "git_push", "git_push_readiness", "git_fetch", "git_pull", "git_branch_list", "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_worktree_list", "git_worktree_create", "git_worktree_remove", "git_merge", "git_rebase", "git_conflict_preview", "git_conflict_resolve"]
+prompt_profile = "space.full_duplex.worker.git"
 accepts = ["worker.dispatched"]
 emits = ["worker.progress", "worker.completed", "worker.failed"]
