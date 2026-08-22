@@ -653,7 +653,7 @@ run 冻结的 Agent/Mode/Prompt/Policy/Model/Tool 哈希是不可变配置绑定
 
 `git_steward` 读取 diff 和任务证据，生成变更分组、测试要求、提交说明和风险判断；`worker.git` 经 TinadecTool 执行获批动作。提交、推送、变基、强制更新和删除分支必须分别建模，不能使用一个宽泛的 `git.write` 权限。
 
-Desktop 的 Git 面板遵循同一闭环：查询继续使用用户直连工具传输面；stage、unstage、commit、push、checkout、分支、worktree、merge、rebase 和冲突解决全部创建 Core UserToolAction。界面只展示 Core 返回的 `snapshot_required`、`awaiting_delegate`、`awaiting_user`、`awaiting_approval`、`running`、`completed`、`blocked`、`outcome_unknown`，不本地创建审批、不保存 nonce，也不以 UI 状态替代 Core 事实。PermissionRequest 决定后必须按 action id 重新读取新产生的 ActionApproval；rebase 的 start/continue/skip/abort 是四类独立动作，不得通过 resume 改写原动作参数。
+Desktop 的 Git 面板遵循同一闭环：查询继续使用用户直连工具传输面；stage、unstage、commit、push、checkout、分支、worktree、merge、rebase 和冲突解决全部创建 Core UserToolAction。界面只展示 Core 返回的 `snapshot_required`、`awaiting_delegate`、`awaiting_user`、`awaiting_approval`、`running`、`completed`、`blocked`、`outcome_unknown`，不本地创建审批、不保存 nonce，也不以 UI 状态替代 Core 事实。PermissionRequest 决定后必须按 action id 重新读取新产生的 ActionApproval；rebase 的 start/continue/skip/abort 是四类独立动作，不得通过 resume 改写原动作参数。`outcome_unknown` 通过 `/api/v1/user/tool-actions/{id}/recovery-decision` 由当前用户标记已完成或失败，绝不自动重放。
 
 ## 13. 智能体演化机制
 

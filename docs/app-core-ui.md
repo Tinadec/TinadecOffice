@@ -37,6 +37,7 @@ POST /api/v1/user/tool-actions
 GET  /api/v1/user/tool-actions/{id}
 POST /api/v1/user/tool-actions/{id}/resume
 POST /api/v1/user/tool-actions/{id}/snapshot-override
+POST /api/v1/user/tool-actions/{id}/recovery-decision
 ```
 
 创建请求只提交 `project_id`、`tool_id`、`params` 和可选 `idempotency_key`。主体、租户、工作区、风险、参数哈希、快照、授权决定和审批均由 Core 生成。响应包含稳定的 `audit_reference`、`snapshot_override`、可选 `snapshot_override_reason`、`non_reversible` 和可选 `compensation_guidance`，但永远不包含 nonce、受保护租约材料或内部 secret reference。
@@ -188,7 +189,7 @@ create UserToolAction
 - `502/503`：保留当前 action、run 或 snapshot 状态；恢复连接后查询 Core，不把断线当成失败。
 - `outcome_unknown`：只允许进入恢复决定流程；不得自动调用 `resume` 反复执行。
 
-当前 Core 只有 Agent ToolExecution 的 `/api/v1/tool-executions/{id}/recovery-decision`；UserToolAction 尚无公开 recovery-decision API。因此 Desktop 对用户动作的 `outcome_unknown` 现阶段必须只读展示，提供 status/diff/snapshot 检查入口，不得错误调用 Agent execution API。待 Core 增加 UserToolAction 恢复决定契约后，再实现“确认已完成、执行补偿、标记失败”等按钮，并同步更新本文和 `/api/v1` OpenAPI。
+UserToolAction 的 `outcome_unknown` 使用专用 recovery-decision API。当前只允许当前发起用户提交 `mark_completed` 或 `mark_failed` 与必填 reason；Core 以 CAS 持久化决定，重复同一决定幂等，冲突决定拒绝。该 API 不会重放 Tool Provider；需要再次执行必须创建全新的 UserToolAction，并重新快照、授权和审批。Desktop 仍应先展示 status/diff/snapshot 检查，再让用户确认。
 
 SSE 断开只停止渲染器读取，不取消 Core run 或 user action。重新连接后按 cursor/事件序号去重，并以 Core 的持久投影校正 UI。
 
