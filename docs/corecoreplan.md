@@ -1,5 +1,7 @@
 # TinadecCore：基于 Microsoft Agent Framework 的模块化骨架
 
+> 本文记录最初的模块化骨架方案。TinadecCore 当前产品定位、四产品边界和 DmaEA 目标架构以 [TinadecCore 产品定义与 DmaEA 架构基线](tinadec-core-product-definition.zh-CN.md) 为准。
+
 ## 总结
 
 - 在 `TinadecCore/` 下建立 .NET 10 modular monolith：八个业务模块均为独立类库，可按项目引用裁剪。
@@ -47,14 +49,14 @@ Gateway → Desktop
 ```
 
 - 业务模块之间不直接引用具体实现，通过 `Abstractions` 中的端口协作。
-- 各相关模块可直接使用 MAF 公共类型；MAF 类型不得进入 HTTP DTO 或事件 envelope。
+- 只有 DmaEA 内部适配器可直接使用 MAF 公共类型；其它模块通过 Tinadec 自有端口协作，MAF 类型不得进入 HTTP DTO、事件 envelope、checkpoint schema 或持久化模型。
 - 每个模块提供显式 `AddTinadec...()` 注册入口和 `ModuleDescriptor`，禁止反射扫描。
 - `Runtime` 是默认全量组合；定制宿主可只引用需要的模块，实现编译期裁剪。
 
 ## 模块实现边界
 
 - `DmaEA` 是模块之一，是整个框架的核心多智能体模块。它基于 Microsoft Agent Framework，实现 Tinadec 自有的双层 Agent 模型、动态创建、任务分派、协作通信、调度与结果汇总。
-- `Models`：以 `IChatClient`、`ChatClientAgent` 和 MAF provider 为入口，Tinadec 只实现 provider 实例、凭据引用、模型路由、能力、错误归一化和 readiness，不重写模型 HTTP 客户端。
+- `Models`：以 provider-neutral `IChatClient` 为入口；`ChatClientAgent` 与 MAF provider 的绑定只在 DmaEA adapter 内完成。Tinadec 实现 provider 实例、凭据引用、模型路由、能力、usage/错误归一化和 readiness，不重写模型 HTTP 客户端。
 - `Context`：扩展 `AIContextProvider`，产生带证据、来源和 token 预算的 `ContextPack`；不组装最终 system prompt。
 - `Prompts`：把片段、Agent 指令、Skill 贡献和 ContextPack 确定性组装到 MAF `ChatOptions.Instructions`/`AIContext`；完整提示词只允许出现在受控 preview 和调用内存中。
 - `Memory`：复用 `AgentSession` 序列化、`ChatHistoryProvider`、`ChatHistoryMemoryProvider` 和 `Microsoft.Extensions.VectorData` 抽象；Tinadec 管理作用域、保留策略和 provenance，本轮不选择向量数据库。
@@ -69,10 +71,10 @@ MAF 是技术底座，DmaEA等模块 是建立在其上的 Tinadec 双层多智�
 ## MAF 版本与公共接口
 
 - 集中锁定正式版：
-  - `Microsoft.Agents.AI.Abstractions` `1.15.0`
-  - `Microsoft.Agents.AI` `1.15.0`
-  - `Microsoft.Agents.AI.Workflows` `1.15.0`
-  - `Microsoft.Agents.AI.OpenAI` `1.15.0`
+  - `Microsoft.Agents.AI.Abstractions` `1.18.0`
+  - `Microsoft.Agents.AI` `1.18.0`
+  - `Microsoft.Agents.AI.Workflows` `1.18.0`
+  - `Microsoft.Agents.AI.OpenAI` `1.18.0`
 - 按用户选择允许 RC：建立可选 `Anthropic` provider 项目并锁定 `Microsoft.Agents.AI.Anthropic` `1.1.0-rc1`，默认不启用。
 - 不引入 preview/alpha Hosting、DurableTask、Foundry Hosting、MAF MCP 或独立 Harness 包；API 继续使用标准 ASP.NET Core，MCP 继续沿用官方 `ModelContextProtocol` SDK。
 - OpenAI 初始采用稳定的 `IChatClient`/Chat Completions 路径；Experimental Responses 能力保留 feature gate，不默认注册。

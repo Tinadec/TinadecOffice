@@ -1,7 +1,12 @@
 # Reference Project Map
 
+> This is the earlier workbench-oriented map. The source-backed TinadecCore review of
+> `agent-framework`, `lindexi-agent`, `traycer`, `dify`, `opencode`, `langchain`,
+> `langgraph`, `t3code`, `PlanWeave`, and `grok-build` is maintained in
+> [TinadecCore reference decisions](tinadec-core-reference-decisions.zh-CN.md).
+
 TinadecOffice should continue absorbing ideas from the sibling repositories under
-`D:\github\agent`, while preserving the two-layer agent architecture:
+the current workspace root, while preserving the two-layer agent architecture:
 
 - Core owns state, orchestration, approvals, model routes, policy, audit, and events.
 - Tool layer declares and executes capabilities, but does not own orchestration state.
@@ -28,7 +33,7 @@ TinadecOffice should continue absorbing ideas from the sibling repositories unde
 - Codex/OpenCode inspired tool descriptors are now Core-visible through the harness manifest and tool search APIs.
 - T3 Code/OpenCode timeline and readiness ideas are reflected in the Core-owned tool execution timeline, `/api/v1/readiness` receipts, `/api/v1/tool-layer-readiness` tool/scope receipts, `/api/v1/model-readiness` provider/route receipts, `/api/v1/model-catalog-readiness` catalog/module receipts, and Desktop right rail/settings surfaces.
 - Codex/T3 Code Git/worktree ideas are reflected in `executor_git_manager`, `git_worktree_manager`, and the Desktop Git push readiness panel.
-- OpenHarness-style multi-agent vocabulary is kept inside TinadecOffice's two-layer split: planning agents actively coordinate; execution agents remain task-bound.
+- OpenHarness-style multi-agent vocabulary is kept inside TinadecOffice's two-layer split: operation agents actively coordinate; execution agents remain task-bound.
 
 ## Implementation Priorities
 

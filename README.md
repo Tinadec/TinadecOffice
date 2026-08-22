@@ -4,37 +4,44 @@
 
 # TinadecOffice
 
-TinadecOffice 是面向 AI 智能体协作的 **Agent 工作空间**：Core 提供可复用的通用 agent harness，Tool 层提供审批门控的可执行能力，Desktop 把编排、工具与风险控制呈现为可操作界面。
+TinadecOffice 是面向 AI 智能体协作的产品族，由可独立版本化和部署的 **TinadecCore、TinadecTool、TinadecGateway、TinadecApp** 组成。TinadecCore 提供可复用的智能体治理与协作运行时；其它产品通过公开契约为它提供工具、网络入口或交互体验，也可以被兼容实现替换。
+
+TinadecCore 的权威定位、DmaEA 双层架构、权限与演化方案见 [TinadecCore 产品定义与 DmaEA 架构基线](docs/tinadec-core-product-definition.zh-CN.md)。
 
 ## 当前状态
 
-Core 正在以 .NET 10 + Microsoft Agent Framework (MAF) 1.13 重建为模块化单体：
+Core 当前是 .NET 10 + Microsoft Agent Framework (MAF) 1.18 的模块化单体：
 
-- 已实现：`GET /api/v1/health`、`GET /api/v1/harness/manifest`、`GET /api/v1/readiness`
-- Gateway 代理端点已挂齐 stub（读接口返回空集合，写接口返回 501），便于 Desktop / Gateway 联调
-- 共享数据库抽象已接入（默认 SQLite 本地文件，可选 PostgreSQL）；业务表与完整双层运行时仍在推进中
+- 已实现持久化全双工 run、任务规划、动态 worker、监督、会议汇总、上下文 revision、暂停/恢复/取消和重启恢复。
+- 已实现正式智能体/模式/提示词版本、每智能体模型策略、工具 manifest 冻结、动作审批和演化候选审核的主要链路。
+- MAF 1.18 特定类型只存在于 DmaEA 内部适配器；Core 继续拥有权限、审批、检查点和工具副作用的权威状态，并仅持久化 provider-neutral usage。
+- 动态权限委托、事件驱动的上下文压缩/自动演化、Git 治理、工作区快照和独立 SDK/NuGet 交付仍是目标能力，不能视为已完成。
 
 ## 架构
 
-| 层 | 路径 | 技术栈 | 端口 | 职责 |
+| 产品 | 路径 | 技术栈 | 默认端口 | 职责 |
 |---|------|--------|------|------|
-| **Desktop** | `apps/desktop` | Electron + Vue 3 + Vite + Tailwind | 5173 | UI 呈现：聊天、任务图、审批、可分离面板、Debug Studio |
-| **Gateway** | `TinadecGateway` | Elysia + TypeScript | 48730 | 薄 BFF / 代理；Swagger 位于 `/docs` |
-| **Core** | `TinadecCore` | .NET 10 + ASP.NET Core + MAF | 48731 | 唯一状态权威：编排、工具策略、模型路由、持久化、就绪回执 |
+| **TinadecApp** | `apps/desktop`、`apps/web`、`apps/TinadecUI` | Electron / Vue / Web | 5173 | 客户端体验：对话、任务图、审批、配置和调试 |
+| **TinadecGateway** | `TinadecGateway` | Elysia + TypeScript | 48730 | 可选的 API 门面、身份/协议适配和流转发 |
+| **TinadecCore** | `TinadecCore` | .NET 10 + ASP.NET Core + MAF | 48731 | 唯一业务状态权威：DmaEA、模型、权限、生命周期、审计与演化 |
+| **TinadecTool** | 当前代码名 `TinadecTools` | .NET 10 + MCP SDK | 进程协议 | 独立工具发现与执行；不拥有 Core 编排状态 |
 
 **设计原则**
 
-- Core 是唯一状态权威 — Gateway 与 Desktop 不保存业务状态
-- Desktop 只调用 Gateway，不直接调用 Core
-- 写操作必须经过审批门
+- Core 是唯一业务状态权威；Gateway 与 App 不保存第二套业务状态
+- App 可以直连 Core，也可以通过 Gateway；Gateway 不是 Core 的运行必需项
+- Core 通过 provider 契约连接 TinadecTool 或其它兼容工具服务
+- 权限授权、具体动作审批和结果质量监督是三条独立治理链路
 - API 契约统一 `snake_case`
-- Code 是 Tool 层内置工具套件，不是与 Core / Desktop 并列的独立层
+- 发布配置不可变，每个 run 冻结最终配置和工具清单
 
 ```mermaid
 graph TD
-    A[Desktop] -->|HTTP / SSE / WebSocket| B[Gateway]
-    B -->|Proxy| C[Core]
-    C -->|Tool invocation| D[Tool layer]
+    A[TinadecApp] -->|HTTP / SSE / WebSocket| B[TinadecGateway]
+    A -. Direct .-> C[TinadecCore]
+    B -->|Proxy / protocol adapter| C
+    C -->|Tool provider contract| D[TinadecTool]
+    C -->|Same contract| G[Other tool providers]
     D -->|Structured results| C
     C -->|State| E[DB abstraction SQLite / PG]
     C -->|Events / traces| F[Event stream]
@@ -62,10 +69,10 @@ npm run dev
 
 ```
 TinadecOffice/
-├── TinadecCore/              # MAF 模块化单体（Contracts … Api + Persistence）
-├── TinadecGateway/           # Elysia BFF / 代理
-├── apps/desktop/             # Electron + Vue 渲染器、Debug Studio、可分离面板
-├── TinadecTools/             # 审批感知工具原型（文件 / 命令 / Git / MCP）
+├── TinadecCore/              # MAF + DmaEA 智能体治理运行时
+├── TinadecGateway/           # 可选 Elysia API 门面 / 协议适配
+├── apps/                     # TinadecApp 客户端实现
+├── TinadecTools/             # TinadecTool 当前实现（文件 / 命令 / Git / MCP）
 ├── TinadecTools.Generators/  # [ToolFunction] 静态注册表源生成器
 ├── tests/                    # TinadecTools 测试 + 遗留 Core/契约证据测试
 ├── docs/                     # 产品模型、架构、安全、启动手册
@@ -74,7 +81,7 @@ TinadecOffice/
 
 ## 核心能力
 
-- **双层智能体编排** — 规划层（主动监督）与执行层（任务执行）协同
+- **DmaEA 双层智能体编排** — 治理层 `operation` 负责入口、协调与监督，执行层 `execution` 规划并交付证据
 - **审批门控工具执行** — 写操作需用户明确批准
 - **Model / Agent Center** — Gateway 聚合 Core 资源，提供无状态中心视图
 - **可分离面板窗口** — 侧边栏面板可拖出为独立 Electron 窗口
@@ -108,7 +115,9 @@ dotnet test TinadecCore/TinadecCore.slnx --no-build
 
 | 文档 | 用途 |
 |------|------|
-| [产品模型](docs/agent-harness-product-model.zh-CN.md) | 层次边界与职责（[English](docs/agent-harness-product-model.en.md)） |
+| [TinadecCore 产品定义与 DmaEA 架构基线](docs/tinadec-core-product-definition.zh-CN.md) | Core 定位、DmaEA、权限、配置、演化与路线图（权威基线） |
+| [TinadecCore 参考决策](docs/tinadec-core-reference-decisions.zh-CN.md) | MAF 与九个参考项目的源码证据、采用项和拒绝项 |
+| [Harness 集成模型](docs/agent-harness-product-model.zh-CN.md) | 当前集成部署职责（[English](docs/agent-harness-product-model.en.md)） |
 | [架构](docs/architecture.md) | 技术架构、端口、事件形态 |
 | [参考项目映射](docs/reference-project-map.md) | 同类项目参考与吸收/拒绝决策 |
 | [启动手册](docs/startup.md) | 本地启动与故障排查 |

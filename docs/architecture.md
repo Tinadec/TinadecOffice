@@ -1,14 +1,25 @@
 # TinadecOffice Architecture
 
-TinadecOffice is split into three product responsibilities:
+TinadecOffice is a four-product family. The normative product boundary and target DmaEA architecture are defined in [`tinadec-core-product-definition.zh-CN.md`](tinadec-core-product-definition.zh-CN.md). The current repository uses the following integrated deployment topology:
 
 - `TinadecCore`: portable C# Core framework and runtime. It owns agents, runs, task graphs, context packs, supervision, approvals, model routes, events, secrets, permissions, capability discovery, shared database abstraction (default SQLite, optional PostgreSQL via EF Core), and **Agent Debug Studio tracing**.
-- `gateway`: TinadecOffice Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
-- `apps/desktop`: TinadecOffice Desktop, built with Electron + Vue. The renderer receives only the `window.tinadec.*` preload API and talks to TinadecOffice over HTTP/SSE. Includes the **Agent Debug Studio** as a separate BrowserWindow.
+- `TinadecTool` (current code path `TinadecTools`): tool discovery and execution provider. The current Core-owned child-process adapter is one integration, not a permanent product dependency.
+- `TinadecGateway`: optional Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
+- `TinadecApp` (currently `apps/desktop`, `apps/web`, and `apps/TinadecUI`): client experiences. The desktop renderer receives only the `window.tinadec.*` preload API and talks to Core directly or through Gateway over HTTP/SSE.
 
-Core is the only state authority. Gateway and Desktop must not keep session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
+Core is the only business-state authority. Gateway and App must not keep a second copy of session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
 
-TinadecOffice intentionally studies sibling projects such as VS Code, Codex, t3code, OpenCode, OpenHarness, Open-ClaudeCode, openclaw, pi, DeepSeek-TUI, and The Zeroth Docs. The reference map in [`docs/reference-project-map.md`](reference-project-map.md) records what to absorb and what to reject so those influences strengthen, rather than flatten, the Core/Tool/Desktop split.
+## MAF 1.18 Adapter Boundary
+
+TinadecCore pins the Microsoft Agent Framework package family to `1.18.0`. MAF-specific types and behavior are confined to the internal DmaEA adapter; public contracts, persisted events, checkpoints, permissions, approvals, and tool receipts remain Tinadec-owned.
+
+- MAF compaction operates on atomic function-call/result groups and cannot split a pending tool exchange.
+- Provider/MAF usage is normalized into a provider-neutral Core record before persistence or metrics.
+- Agent and Workflow OpenTelemetry keep sensitive data disabled by default; prompts, user content, credentials, tool arguments, and tool results are not exported.
+- MAF automatic-approval iteration limits are only a ceiling for Core tool-round budgets. They do not grant authority or bypass Core's durable approval and Tool Dispatcher path.
+- MAF session or workflow checkpoints may be opaque sidecars to a Core checkpoint, but Core remains authoritative for scope, event watermarks, leases, approvals, idempotency, side effects, and recovery decisions.
+
+TinadecOffice intentionally studies sibling projects. The source-backed TinadecCore decisions are recorded in [`tinadec-core-reference-decisions.zh-CN.md`](tinadec-core-reference-decisions.zh-CN.md); the earlier workbench-oriented map remains in [`reference-project-map.md`](reference-project-map.md).
 
 ## Default Ports
 
@@ -69,9 +80,9 @@ All runtime events use:
 
 ## Canonical Dual-Layer Runtime Contract
 
-The canonical layers are `operation` and `execution`. `planning` is accepted only as a migration input and must be normalized before new Core contracts, persisted versions, events, or UI payloads are produced. The operation layer includes the meeting entry point, context maintenance, capability advice, supervision, and evolution proposals. The execution layer plans task graphs, schedules task-bound workers, invokes Core-governed tools, and returns evidence.
+The canonical layers are the governance layer (`operation`) and execution layer (`execution`). `planning` is accepted only as a migration input and must be normalized before new Core contracts, persisted versions, events, or UI payloads are produced. The governance layer includes the meeting entry point, context maintenance, capability advice, supervision, and evolution proposals. The execution layer plans task graphs, schedules task-bound workers, invokes Core-governed tools, and returns evidence.
 
-The meeting agent is the only agent allowed to produce a user-facing answer. A run-time child agent is a Core-owned orchestration instance, not a generic tool: every spawn must carry its parent instance, intent (`temporary`/`persistent_candidate`/`persistent_profile`), target and success criteria, selected context, model, scoped tools/resources, and budget. `search`/`programming`/`testing` are execution specialists selected by the task planner — they remain execution workers and never become a third layer. A child cannot enlarge inherited authority or receive `direct_user_output`, formal-memory writes, or promotion authority. Temporary workers release when their run finishes; a reusable design first becomes an auditable candidate and requires human promotion (`agent.create_profile`, operation-layer only) into an immutable profile version.
+The meeting agent is the only agent allowed to produce a user-facing answer. A run-time child agent is a Core-owned orchestration instance, not a generic tool: every spawn must carry its parent instance, intent (`temporary`/`persistent_candidate`/`persistent_profile`), target and success criteria, selected context, model, scoped tools/resources, and budget. `search`/`programming`/`testing` are execution specialists selected by the task planner — they remain execution workers and never become a third layer. A child cannot enlarge inherited authority or receive `direct_user_output`, formal-memory writes, or promotion authority. Temporary workers release when their run finishes; a reusable design first becomes an auditable candidate and requires human promotion (`agent.create_profile`, governance-layer only) into an immutable profile version.
 
 Full duplex is coordinated by Core rather than by the lifetime of one HTTP response. A durable run accepts status queries, supplements, goal changes, new tasks, pause, resume, and cancellation while work continues. Shared state uses monotonically increasing `context_revision`; a patch or result based on an obsolete revision cannot overwrite newer constraints and must be rejected, reconciled safely, or trigger re-planning. The intended run states are `understanding`, `executing`, `replanning`, `awaiting_approval`, `paused`, `reviewing`, `completed`, `failed`, and `cancelled`.
 
@@ -88,7 +99,7 @@ When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads 
 | Surface | Present now | Still required for the full-duplex contract |
 |---|---|---|
 | Runtime configuration | Annotated TOML baseline, validation, aliases, in-process valid-only reload, relational projections for agent instances/candidates/profile overrides, and per-run frozen profile resolution in the full-duplex engine. | Workspace override resolution and readiness diagnostics. |
-| Invocation | `POST /api/v1/sessions/{id}/invoke-stream` runs the durable full-duplex engine: idempotent admission, `context_revision` snapshots/patches, planning→execution→supervision→meeting, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Assistant-message persistence, and Gateway/Desktop normal-chat migration to this contract. |
+| Invocation | `POST /api/v1/sessions/{id}/invoke-stream` runs the durable full-duplex engine: idempotent admission, `context_revision` snapshots/patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Gateway/Desktop normal-chat migration and remaining interaction-contract cleanup. |
 | Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
 | Spawn, lineage, and promotion | `agent_instances` and `agent_candidates` projections plus worker spawn/lineage with budgets and the candidate review APIs (generate/promote/reject). | Immutable promotion workflow and long-term retrieval injection. |
 | Context and memory | Context snapshots/patches with `context_revision`, meeting context patches, and candidate review APIs. | Deterministic prompt assembly, reviewed-memory retrieval, and candidate promotion/revocation persistence. |

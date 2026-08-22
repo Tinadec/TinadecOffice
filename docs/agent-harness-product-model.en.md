@@ -1,4 +1,6 @@
-# TinadecOffice Agent Harness Product Model
+# TinadecOffice Agent Harness Integration Model
+
+> This document preserves the current Desktop -> Gateway -> Core -> Tool-layer integration view. The TinadecOffice four-product matrix, the normative TinadecCore positioning, and the target DmaEA architecture are defined by the [Chinese TinadecCore product definition](tinadec-core-product-definition.zh-CN.md). That definition takes precedence where the documents conflict.
 
 This document defines TinadecOffice's product layers, responsibility boundaries, and long-term direction. It is not a design for a single feature. It is the shared product model that Core, the Tool layer, and the Desktop UI should follow as the system evolves.
 
@@ -22,7 +24,7 @@ Core is the agent operating-system kernel of the product. It defines how work is
 Core owns:
 
 - Authoritative state for projects, sessions, messages, events, and approvals.
-- The dual-layer agent model: an **operation** layer that actively understands, coordinates, maintains context, supervises, and proposes evolution candidates, plus an **execution** layer that works within explicit task, permission, and budget boundaries. `planning` is a legacy input alias only; new Core contracts, configuration, and presentation use `operation`.
+- The dual-layer agent model: a **governance layer** (machine value `operation`) that actively understands, coordinates, maintains context, supervises, and proposes evolution candidates, plus an **execution layer** (`execution`) that works within explicit task, permission, and budget boundaries. `planning` is a legacy input alias only.
 - Task graphs, task nodes, execution assignments, context packs, supervision findings, and step results.
 - Model providers, model routes, agent profiles, agent modes, tool descriptors, and permission policy.
 - Approval gates, risk modeling, traces, debug APIs, and auditable event streams.
@@ -89,12 +91,12 @@ The key boundary is state writeback. Tool outputs from the Tool layer and intera
 
 TinadecOffice's agent model has two layers:
 
-- **Operation layer (`operation`)**: active agents responsible for intent understanding, the meeting entry point, global coordination, context maintenance, capability advice, quality supervision, and evolution proposals.
+- **Governance layer (`operation`)**: active agents responsible for intent understanding, the meeting entry point, global coordination, context maintenance, capability advice, quality supervision, and evolution proposals.
 - **Execution layer (`execution`)**: task planning agents and workers that complete concrete task nodes and deliver evidence under explicit permission boundaries and tool constraints.
 
 `planning` is a compatibility alias for old data and old calls. It is neither a third layer nor a new public layer name. Old values may be normalized to `operation`; new APIs, events, configuration versions, and UI output must use the canonical `operation` value.
 
-The point of this split is to separate understanding, supervision, and authorization from execution, evidence, and mutation. The operation layer creates structured plans and controls risk. The execution layer performs auditable work. Every mutating action should be traceable to a task node, agent assignment, approval record, and tool result.
+The point of this split is to separate understanding, supervision, and authorization from execution, evidence, and mutation. The governance layer creates structured plans and controls risk. The execution layer performs auditable work. Every mutating action should be traceable to a task node, agent assignment, approval record, and tool result.
 
 ### Meeting Entry, Generation, And Memory Boundaries
 
@@ -150,6 +152,6 @@ TinadecOffice is a desktop agent workbench: Core provides the universal agent ha
 
 The preceding sections define the product contract; they do not turn planned behavior into delivered functionality. In the current worktree, `TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` and `AgentRuntimeConfigurationStore` provide a validated TOML baseline, `im`/`hub` aliases, configuration-layer normalization from `planning` to `operation`, and an in-process rule that, once the store is resolved, valid snapshots hot reload while invalid edits retain the previous snapshot. Relational projections for `agent_instances`, `agent_candidates`, and `runtime_profile_overrides` also exist.
 
-Since 2026-08-18 the full-duplex contract is implemented and covered by 80/80 Core tests: `POST /api/v1/sessions/{id}/invoke-stream` runs a durable `FullDuplexRunEngine` with idempotent client-message-id admission, `context_revision` snapshots and meeting context patches, planning→execution→supervision→meeting finalization, worker spawn/lineage with budgets, durable SSE (ack/delta/done/error) with replay/follow, run control (cancel/pause/resume), active-run limits, and restart recovery through leased checkpoints; `agent-evolution/proposals` GET/generate/promote/reject provide candidate review. The tool chain is wired end-to-end: a Core-owned `TinadecToolsProcessManager` hosts a real manifest-v2 child process per workspace root, `ToolManifestSnapshotResolver` freezes the authorized manifest per run, `ToolDispatcher` prepare/resume persists executions with one-time approval consumption, and a real run→approval→resume→`write_file` E2E test proves the path. `GET /api/v1/tool-layer-readiness` reports the real manifest and execution-agent scopes.
+Since 2026-08-18 the full-duplex contract is implemented and covered by the Core test suites: `POST /api/v1/sessions/{id}/invoke-stream` runs a durable `FullDuplexRunEngine` with idempotent client-message-id admission, `context_revision` snapshots and meeting context patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage with budgets, durable SSE (ack/delta/done/error) with replay/follow, run control (cancel/pause/resume), active-run limits, and restart recovery through leased checkpoints; `agent-evolution/proposals` GET/generate/promote/reject provide candidate review. The tool chain is wired end-to-end: a Core-owned `TinadecToolsProcessManager` hosts a real manifest-v2 child process per workspace root, `ToolManifestSnapshotResolver` freezes the authorized manifest per run, `ToolDispatcher` prepare/resume persists executions with one-time approval consumption, and a real run→approval→resume→`write_file` E2E test proves the path. `GET /api/v1/tool-layer-readiness` reports the real manifest and execution-agent scopes.
 
 Still open: long-term retrieval injection (promotion/revocation, reviewed-memory retrieval), workspace runtime-profile overrides plus readiness diagnostics, scheduling and `tools/shell` (501), and Gateway/Desktop have not yet moved ordinary chat to this full-duplex contract.
