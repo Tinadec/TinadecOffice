@@ -9,6 +9,14 @@ TinadecOffice is a four-product family. The normative product boundary and targe
 
 Core is the only business-state authority. Gateway and App must not keep a second copy of session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
 
+## Fixed v1 and Governance Transport
+
+TinadecOffice has not shipped a first formal release. Every public HTTP, OpenAPI, SSE, and WebSocket contract stays under `/api/v1`; there is no `/api/v2`, compatibility alias, migration route, or deprecation window. Breaking changes update v1, DTOs, generated clients, snapshots, tests, and the Chinese product definition together. Domain values such as `AgentVersion`, `ModeVersion`, policy revisions, and content hashes are immutable state bindings, not API versions.
+
+Gateway is a stateless northbound proxy. It forwards Core governance routes and preserves the two explicit user tool transport surfaces (`/api/v1/code/tools/*` and `/api/v1/tool-runtime/*`) without calculating risk, PDP, approvals, leases, hashes, or nonce material. Core user writes use `POST /api/v1/user/tool-actions`; agent writes use the run-scoped Core tool route. A user action is not a synthetic run and has its own durable snapshot, permission, action-approval, result, and audit references.
+
+High-risk user and agent writes capture a provider-neutral workspace snapshot before permission or action approval. Git snapshots come from the safe-argument-list CLI provider and include HEAD/ref, index/tree, worktree, binary patches, untracked/deleted paths, and conflicts. Snapshot mismatch, parameter drift, manifest drift, expired/revoked lease, invalid nonce, and duplicate consumption fail closed. Desktop surfaces the Core action state (`snapshot_required`, `awaiting_delegate`, `awaiting_user`, `awaiting_approval`, `running`, `completed`, `blocked`, `outcome_unknown`) but never treats UI state as authorization fact.
+
 ## MAF 1.18 Adapter Boundary
 
 TinadecCore pins the Microsoft Agent Framework package family to `1.18.0`. MAF-specific types and behavior are confined to the internal DmaEA adapter; public contracts, persisted events, checkpoints, permissions, approvals, and tool receipts remain Tinadec-owned.
@@ -42,6 +50,19 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 | `GET /api/v1/model-readiness` | Core-owned model provider and route readiness receipt covering provider status, credential availability, route coverage, blocked routes, and advisory discovery notes. |
 | `GET /api/v1/model-catalog-readiness` | Core-owned model catalog receipt covering static templates, runtime module coverage, configured instance counts, and advisory live-discovery policy. Static templates stay visible when live discovery is unavailable. |
 
+### User actions, governance, and snapshots
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET/POST /api/v1/user/tool-actions` | List or create a Core-owned user action. The request contains only project, tool, params, and an idempotency key; the response includes a stable `audit_reference` but never nonce material. |
+| `GET /api/v1/user/tool-actions/{id}` | Read the durable action projection without nonce material. |
+| `POST /api/v1/user/tool-actions/{id}/resume` | Re-evaluate the frozen governance state and resume the same action. |
+| `POST /api/v1/user/tool-actions/{id}/snapshot-override` | Current-user-only one-time override for a failed pre-write snapshot, with a non-reversible audit mark. |
+| `GET/POST /api/v1/governance/permission-requests/*` | Query and decide capability permission requests. Delegation and lease endpoints remain thin Core proxies. |
+| `GET/POST /api/v1/workspace-snapshots/*` | Query, restore, and audit provider-neutral workspace snapshots. |
+
+Permission granting and single-action approval remain separate state machines. Core wakes a user action directly after a permission decision; it never creates a run to represent Desktop work.
+
 ## Model And Agent Center BFF APIs
 
 Gateway exposes stateless center-oriented views for Desktop while Core remains the only authority for provider lifecycle, routes, agents, readiness, and secrets.
@@ -57,7 +78,7 @@ The BFF normalizes transport and credential kinds separately, recursively strips
 
 ## Built-In Execution Subagents
 
-`executor_git_manager` is the Git Manager Subagent in the execution layer. Git-related goals such as branch review, commit preparation, push readiness, worktree management, merge/rebase guidance, and user-facing handoff notes can route to it. It can explain repository state, but Git mutation and push flows must remain approval-gated through Core-governed tools such as `git_worktree_manager`.
+`git_steward` is the governance-layer Git change steward. It reviews diffs, prepares commit plans, and coordinates approvals without holding tools. `worker.git` is the execution-layer specialist with the Git manifest (`git_status`, `git_diff`, `git_stage`, `git_commit`, `git_push`, branch/worktree, merge, rebase, and conflict tools). Git mutation and push flows remain approval-gated through Core-governed Tool Provider calls.
 
 ## Event Envelope
 
@@ -94,7 +115,7 @@ Long-term memory and reusable agents follow a candidate-to-promotion path. Sessi
 
 When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads a TOML snapshot in process. A valid edit replaces the snapshot for future consumers; an invalid edit preserves the previous valid snapshot and records an in-memory diagnostic. The target resolution rule is baseline then workspace override, with the resolved version/hash frozen at run creation — the full-duplex engine freezes the resolved profile per run. The legacy orchestrator does not resolve this store yet; workspace override application and readiness diagnostics remain open.
 
-## Current Delivery Status (2026-08-18)
+## Current Delivery Status (2026-08-22, after governance/Git/Desktop closure)
 
 | Surface | Present now | Still required for the full-duplex contract |
 |---|---|---|
@@ -103,8 +124,9 @@ When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads 
 | Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
 | Spawn, lineage, and promotion | `agent_instances` and `agent_candidates` projections plus worker spawn/lineage with budgets and the candidate review APIs (generate/promote/reject). | Immutable promotion workflow and long-term retrieval injection. |
 | Context and memory | Context snapshots/patches with `context_revision`, meeting context patches, and candidate review APIs. | Deterministic prompt assembly, reviewed-memory retrieval, and candidate promotion/revocation persistence. |
-| Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, and `tool-layer-readiness` receipts. | Scheduling and `tools/shell` (501). |
-| Gateway and Desktop | Gateway proxies the current invocation endpoint; Desktop has an SSE helper, but the normal Home chat controller still posts to `/messages`. | Thin proxy coverage for new Core APIs plus normal-chat streaming, modes from Core, controls, lineage, approvals, and candidate-review UI. |
+| Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, `UserToolAction`, governance nonce boundary, and `tool-layer-readiness` receipts. | Scheduling and `tools/shell` (501); ACP permission bridge. |
+| Workspace snapshots | File-system and Git providers capture HEAD/index/worktree/conflicts and use deterministic restore/guard semantics. | Full restore-plan UX and external compensation records. |
+| Gateway and Desktop | Gateway proxies Core governance and preserves direct user tool transport. Desktop routes code/Git writes through UserToolAction and shows the durable action state machine. | Complete action history/recovery UX and normal-chat migration cleanup. |
 
 ## Run Locally
 

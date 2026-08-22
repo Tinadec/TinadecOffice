@@ -133,8 +133,9 @@ Gateway 保留两组用途明确的当前 v1 工具传输入口：
 | Desktop 或其它明确的用户操作 | `POST /api/v1/code/tools/{toolId}/execute` | 原样转发请求、状态码、响应体和必要响应头到 Tool Provider | Tool Provider 负责工具自身校验；用户治理操作如需 Core 决定，调用方应使用 Core 提供的治理接口 |
 | Desktop 或其它需要访问 provider surface 的客户端 | `GET /api/v1/tool-runtime/health`、`/manifest`、`/tools`、`POST /api/v1/tool-runtime/tools/{toolId}/execute` | 原样代理 Tool Runtime 的健康、清单、工具和执行请求 | Tool Runtime/Provider 负责 provider 协议、沙箱和执行结果 |
 | DmaEA 智能体运行 | `POST /api/v1/runs/{runId}/tools/{toolId}/execute` | 仅代理到 Core | Core 负责冻结配置、PDP、租约、ActionApproval、审计和调用 Tool Provider |
+| Desktop 或宿主用户的受治理写操作 | `POST /api/v1/user/tool-actions`、`/{id}/resume`、`/{id}/snapshot-override` | 仅代理到 Core | Core 创建 UserToolAction，负责快照、PDP、租约、ActionApproval、Tool Provider 调用和审计 |
 
-前两组不是旧路由、迁移入口或兼容别名，而是产品设计中专门给用户和 Desktop 使用的直连传输面。Gateway 不读取 `approval_id`、`approved`、`source` 或风险字段来形成授权结论，也不把用户请求改写成智能体 run。需要智能体治理的调用必须显式进入第三组路径。
+前两组不是旧路由、迁移入口或兼容别名，而是产品设计中专门给用户和 Desktop 使用的直连传输面。Gateway 不读取 `approval_id`、`approved`、`source` 或风险字段来形成授权结论，也不把用户请求改写成智能体 run。需要 Core 治理事实的用户写操作必须进入 UserToolAction 路径；需要智能体治理的调用必须进入第三组路径。
 
 ## 4. TinadecCore 的边界与交付形态
 
@@ -640,7 +641,7 @@ run 冻结的 Agent/Mode/Prompt/Policy/Model/Tool 哈希是不可变配置绑定
 
 `snapshot_curator` 只判断时机并提出请求，确定性的 Snapshot Service 负责创建和恢复：
 
-当前工作树已提供 `IWorkspaceSnapshotService` 与 `WorkspaceSnapshotService`：支持 Git/非 Git 检测、文件清单哈希、ContentStore 内容保存、创建幂等、租户/工作区隔离、恢复冲突检查、显式允许冲突和恢复幂等；恢复会删除捕获范围内快照之后新增的文件。完整 Git diff/restore plan、外部副作用补偿和 `snapshot_curator` 事件驱动调度仍属于后续阶段。
+当前工作树已提供 provider-neutral `IWorkspaceSnapshotProvider`、文件系统 provider、Git CLI provider、`IWorkspaceSnapshotService` 与 `WorkspaceSnapshotService`：支持 Git/非 Git 检测、HEAD/分支/ref、index/tree、工作树、binary patch、未跟踪/删除/冲突路径、文件清单哈希、ContentStore 内容保存、创建幂等、租户/工作区隔离、恢复冲突检查、显式允许冲突和恢复幂等。Git CLI 使用参数数组，不拼接 shell 命令；恢复按引用、index、工作树的确定性顺序执行。高风险 UserToolAction 和 Agent ToolDispatcher 写操作在创建权限请求或动作审批前捕获快照，快照失败默认阻断，用户只能以一次性 override 明确接受 `non_reversible` 风险。
 
 - Git 仓库优先保存 HEAD、index、untracked manifest、diff/blob 和 worktree 标识。
 - 非 Git 目录使用内容寻址的增量文件快照，并设置大小与敏感文件排除策略。
@@ -651,6 +652,8 @@ run 冻结的 Agent/Mode/Prompt/Policy/Model/Tool 哈希是不可变配置绑定
 ### 12.3 Git 治理闭环
 
 `git_steward` 读取 diff 和任务证据，生成变更分组、测试要求、提交说明和风险判断；`worker.git` 经 TinadecTool 执行获批动作。提交、推送、变基、强制更新和删除分支必须分别建模，不能使用一个宽泛的 `git.write` 权限。
+
+Desktop 的 Git 面板遵循同一闭环：查询继续使用用户直连工具传输面；stage、unstage、commit、push、checkout、分支、worktree、merge、rebase 和冲突解决全部创建 Core UserToolAction。界面只展示 Core 返回的 `snapshot_required`、`awaiting_delegate`、`awaiting_user`、`awaiting_approval`、`running`、`completed`、`blocked`、`outcome_unknown`，不本地创建审批、不保存 nonce，也不以 UI 状态替代 Core 事实。
 
 ## 13. 智能体演化机制
 
@@ -701,7 +704,7 @@ stateDiagram-v2
 ### 14.1 北向接口
 
 - 管理面：agents、modes、prompts、policies、models、tools、candidates 和 workspace defaults。
-- 运行面：sessions、interactions、runs、controls、events、approvals、context versions 和 snapshots。
+- 运行面：sessions、interactions、runs、controls、events、approvals、permission requests、user tool actions、context versions 和 snapshots。
 - 观测面：readiness、traces、metrics、evaluations 和 audit export。
 - 所有公开 JSON 使用 `snake_case`、RFC 9457 Problem Details、幂等键和并发 revision。
 - 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，也可使用 `invoke-stream` 完成全双工运行；两者都属于当前 `/api/v1` 契约。后续若合并或调整语义，直接更新 `/api/v1`、测试和本文，不保留旧兼容入口。
@@ -765,9 +768,10 @@ stateDiagram-v2
 | 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence | `context_compressor` 尚未作为事件驱动角色进入热路径 |
 | 监督 | 部分实现 | `pass/revise/escalate` 质量门 | 不是委托审批代理；尚无 ApprovalDelegation |
 | 演化 | 部分实现 | 候选生成/晋升/拒绝 API 与临时 agent lineage | 正常 run 不会自动观察并生成候选；缺 eval/canary/revoke 闭环 |
-| Git 智能体 | 未实现 | 仅有部分 Git 工具/UI 概念 | `git_steward`、`worker.git` 与变更治理协议 |
-| 工作区快照 | 已实现主要部分 | 文件清单/哈希、ContentStore、Git 检测、创建与恢复幂等、冲突检查和租户隔离 | 完整 Git restore plan、外部副作用补偿、快照智能体调度 |
-| 动态权限 | 已实现主要部分 | PermissionRequest、PDP 求交、CapabilityGrant/Delegation/Lease、冻结策略和工具授权闭环 | ACP 请求桥接、远程 provider 契约 |
+| Git 智能体 | 已实现基线 | TOML/DevSeed 已包含 `git_steward` 与 `worker.git`，Git worker manifest 交集、Desktop 写操作入口和真实 Git commit 治理 E2E 已收口 | 快照智能体调度与远程 provider |
+| 工作区快照 | 已实现主要部分 | 文件系统/Git provider、HEAD/index/worktree 捕获、ContentStore、创建/恢复幂等、冲突检查和高风险写前 guard | 完整 restore plan 展示、外部副作用补偿和快照智能体调度 |
+| 用户工具动作 | 已实现基线 | `UserToolAction`、权限请求、租约、ActionApproval、快照 override、结果/审计引用和 `/api/v1/user/tool-actions` | 更完整的用户动作历史、恢复决定 UI 和远程 provider |
+| 动态权限 | 已实现主要部分 | PermissionRequest、PDP 求交、CapabilityGrant/Delegation/Lease、冻结策略、Agent/用户工具授权闭环、nonce fail-closed | ACP 请求桥接、远程 provider 契约 |
 | 独立交付 | 工作树升级中 | Contracts、Abstractions、Runtime 可从源码打包，Api 可 `dotnet publish` | 尚未发布包源、稳定 SDK、CLI 和容器 |
 | 四产品解耦 | 部分实现 | 代码目录已分离 | Core 直接托管 TinadecTools；独立 Tool HTTP/WS 服务尚不存在 |
 
@@ -806,6 +810,7 @@ stateDiagram-v2
 - 实现 PolicyBundle、CapabilityGrant、PermissionRequest、ApprovalDelegation、CapabilityLease 和 AuthorizationDecision。
 - 把动作审批、权限授权和质量监督拆为独立持久状态机。
 - 实现 deny/allow/delegated/user escalation 决策路径、撤销和过期。
+- 完成 Agent 与 UserToolAction 共用 PDP/lease/ActionApproval 的闭环；用户动作不创建伪造 run，nonce 只保存在 Core 的受保护材料边界。
 - 将 ACP `permission.request` 接入同一暂停/恢复流程。
 - 加入越权、自批、参数篡改、重复消费和跨租户攻击测试。
 

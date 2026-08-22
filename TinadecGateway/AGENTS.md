@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
 **Last Updated:** 2026-08-22
-**Last Updated By:** Codex (fixed v1 contract and user tool transport boundary)
-**Last Verified Commit:** 1a32062
+**Last Updated By:** Codex (governance nonce, Git snapshots, user actions, and thin proxy closure)
+**Last Verified Commit:** 7d19eef
 **Branch:** DmaEA/MVP
 
 ## OVERVIEW

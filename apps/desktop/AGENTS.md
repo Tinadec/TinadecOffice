@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-08-22
-**Last Updated By:** opencode (Composer 排队模型：默认 queued + 发送框上方排队卡片（引导/并列/编辑/取消）+ 回车偏好移至设置→常规 `src/lib/dispatchPref.ts`；vitest 与改动前基线一致)
-**Last Verified Commit:** a307ede
+**Last Updated By:** Codex (Core UserToolAction Git write path and governance UI contract)
+**Last Verified Commit:** 7d19eef
 **Branch:** DmaEA/MVP
 
 ## OVERVIEW
@@ -45,7 +45,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 | Provider presentation templates | `src/providerTemplates.ts` | Presentation-only metadata (i18n keys, brand colors, placeholders, icons). Brand icons are official `@lobehub/icons-static-svg` SVGs imported via Vite `?raw` (23 drivers); drivers without a lobehub slug (`sglang`, `llamacpp`, `custom`) keep hand-written `currentColor` SVGs. `icon` is an inline `<svg>` string rendered via `v-html` inside `.provider-brand-icon`/`.modal-provider-logo` (24px/32px CSS sizing). || Prompt Context settings | `src/pages/SettingsPage.vue`, `src/api.ts` | Manage/clone custom prompt fragments and preview Core-assembled prompts through Gateway; do not assemble prompts in the renderer. |
 | Tool layer catalog/search | `src/pages/SettingsPage.vue`, `src/toolCatalog.ts`, `src/api.ts` | Settings presents Code-suite tools, Codex primitives, supported runtimes, Core manifest registry governance/design notes, and Core-owned tool search results. |
 | Tool execution visibility | `src/pages/HomePage.vue`, `src/components/ContextPanel.vue`, `src/components/OrchestrationTab.vue`, `src/api.ts` | Right rail presents Core-owned tool execution timeline state, provider layer, duration, checkpoint summary, and step-result evidence. |
-| Git management UI | `src/components/GitPanel.vue`, `src/components/ContextPanel.vue`, `src/gitDiffParser.ts`, `src/gitIndexPatch.ts`, `src/api.ts` | Right rail Git tab calls Gateway previews, builds approved hunk/line text patches for `git_stage` / `git_unstage`, and commits/pushes only through Core-approved tool calls; it never runs Git directly. |
+| Git management UI | `src/components/GitPanel.vue`, `src/components/CommitPanel.vue`, `src/composables/useGitOperation.ts`, `src/components/code/*`, `src/userToolAction.ts`, `src/api.ts` | Right rail Git tab calls Gateway previews for reads. Every stage/unstage/commit/push/checkout/branch/worktree/merge/rebase/conflict write creates a Core UserToolAction with stable idempotency and renders its durable state; it never creates an approval locally or runs Git directly. |
 | Marketplace | `src/pages/MarketPage.vue` | Extension source/catalog/install flow. |
 | Debug Studio | `src/debug/DebugStudio.vue`, `src/debug/**` | Composables/types/components are feature-local. |
 | UI primitives | `src/components/ui/index.ts`, `src/lib/utils.ts` | `Ui*` barrel exports; `cn()` uses clsx + tailwind-merge. |
@@ -84,8 +84,8 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 - Model lists contain only provider defaults and existing route overrides until Core adds live discovery. Refresh controls and ACP probes must follow Gateway capability flags, while Gateway diagnostics remain visible and retryable without hiding usable partial data.
 - Agent Center consumes Gateway-derived effective bindings for cards and topology. It may preview `inherit`, `fixed_model`, `provider_auto`, `cli`, and `acp`, but must keep save disabled while `agent_runtime_binding_write=false`; never persist drafts in Desktop, Gateway, or `localStorage`.
 - Legacy `model_route_purpose` bindings can be shared by multiple agents. Show `LEGACY_SHARED_ROUTE` warnings and never save an agent runtime choice by rewriting the shared model route.
-- Code-suite UI is presentation-only: group/filter tool descriptors and project template summaries from Gateway/Core. Explicit user actions use `api.executeCodeTool()` through the current v1 `/api/v1/code/tools/{toolId}/execute` transport (or `api.executeToolRuntime()` when the provider surface is selected); Gateway forwards the request and Desktop does not mint authorization facts. Agent executions use the Core-owned `/api/v1/runs/{runId}/tools/{toolId}/execute` path instead.
-- Git UI is presentation plus Core-approved execution: request Tool-layer previews from Gateway, use direct approved tools for the complete mutation surface including conflict resolution, and only execute with Core-verified approval ids; do not run Git directly or mint approval ids in Desktop.
+- Code-suite UI is presentation-only: group/filter tool descriptors and project template summaries from Gateway/Core. Read-only explicit user queries may use `/api/v1/code/tools/{toolId}/execute` or `/api/v1/tool-runtime/*`; mutating actions use `api.createUserToolAction()` and `resume`/snapshot override. Agent executions use the Core-owned `/api/v1/runs/{runId}/tools/{toolId}/execute` path instead.
+- Git UI is presentation plus Core UserToolAction execution: request Tool-layer previews from Gateway, route every mutation through `/api/v1/user/tool-actions`, and display `snapshot_required`, `awaiting_delegate`, `awaiting_user`, `awaiting_approval`, `running`, `completed`, `blocked`, and `outcome_unknown`. Desktop never creates `/api/v1/approvals`, computes risk/parameter hashes, or handles nonce material.
 - Tool search UI must consume Core/Gateway `/api/v1/tools/search` results. Do not invent provider-layer, matched-field, or human-checkpoint semantics in the renderer.
 - Tool execution UI must consume Core/Gateway `/api/v1/sessions/{sessionId}/tool-executions` results. Do not reconstruct audit timelines, provider layers, durations, or checkpoint summaries from local event arrays in Desktop.
 - Dev server is pinned: `127.0.0.1:5173`, `strictPort: true`.
