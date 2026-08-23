@@ -207,6 +207,9 @@ public static class AgentConfigurationEndpoints
             CapabilitiesJson = el.TryGetProperty("capabilities", out var c) ? c.GetRawText() : "[]",
             ModelStrategyJson = el.TryGetProperty("model_strategy", out var ms) ? ms.GetRawText() : el.TryGetProperty("model_strategy_json", out var ms2) ? ms2.GetRawText() : null,
             ToolScopeJson = el.TryGetProperty("tool_scope", out var ts) ? ts.GetRawText() : el.TryGetProperty("allowed_tools", out var at) ? at.GetRawText() : "[]",
+            SystemPrompt = el.TryGetProperty("system_prompt", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null,
+            Description = el.TryGetProperty("description", out var de) && de.ValueKind == JsonValueKind.String ? de.GetString() : null,
+            Enabled = !el.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.False,
             Status = "draft", Revision = 1, Version = 0, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow, CreatedByPrincipalId = p, UpdatedByPrincipalId = p
         };
         // single draft invariant via filtered index; catch duplicate
@@ -238,7 +241,10 @@ public static class AgentConfigurationEndpoints
         if (el.TryGetProperty("capabilities", out var c)) rec.CapabilitiesJson = c.GetRawText();
         if (el.TryGetProperty("model_strategy", out var ms)) { var err = ValidateModelStrategy(ms.GetRawText()); if (err is not null) return Results.BadRequest(new { code = "invalid_request", message = err }); rec.ModelStrategyJson = ms.GetRawText(); }
         if (el.TryGetProperty("tool_scope", out var ts)) rec.ToolScopeJson = ts.GetRawText();
-        if (el.TryGetProperty("allowed_tools", out var at)) rec.ToolScopeJson = at.GetRawText();
+        if (el.TryGetProperty("allowed_tools", out var at2)) rec.ToolScopeJson = at2.GetRawText();
+        if (el.TryGetProperty("system_prompt", out var sp)) rec.SystemPrompt = sp.ValueKind == JsonValueKind.String ? sp.GetString() : null;
+        if (el.TryGetProperty("description", out var de)) rec.Description = de.ValueKind == JsonValueKind.String ? de.GetString() : null;
+        if (el.TryGetProperty("enabled", out var en) && en.ValueKind is JsonValueKind.True or JsonValueKind.False) rec.Enabled = en.ValueKind == JsonValueKind.True;
         rec.Revision++; rec.UpdatedAt = DateTimeOffset.UtcNow; rec.UpdatedByPrincipalId = p; rec.Status = "draft";
         try { await db.SaveChangesAsync(ct); } catch (DbUpdateConcurrencyException) { return Results.Json(new { code = "conflict", message = "Concurrent update" }, statusCode: 412); }
         return Results.Ok(ToAgentDto(rec));
@@ -783,6 +789,6 @@ public static class AgentConfigurationEndpoints
         catch (Exception ex) { return "graph invalid: " + ex.Message; }
     }
 
-    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, layer=r.Layer, role=r.Role, capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, layer=r.Layer, role=r.Role, capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
     static object ToModeDto(AgentModeRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, description=r.Description, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
 }

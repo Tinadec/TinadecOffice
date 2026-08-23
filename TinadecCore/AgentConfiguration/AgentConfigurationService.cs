@@ -58,7 +58,7 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
             ValidateLayer(agent.Layer);
             if (string.IsNullOrWhiteSpace(agent.DisplayName)) throw new InvalidDataException("Agent display name is required.");
             var version = (await db.AgentVersions.Where(x => x.AgentDefinitionId == agent.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
-            var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson) });
+            var snapshot = JsonSerializer.Serialize(new { id = agent.Id, slug = agent.Slug, display_name = agent.DisplayName, layer = agent.Layer, role = agent.Role, capabilities = ParseJson(agent.CapabilitiesJson), model_strategy = ParseJson(agent.ModelStrategyJson), tool_scope = ParseJson(agent.ToolScopeJson), system_prompt = agent.SystemPrompt, description = agent.Description, enabled = agent.Enabled });
             var hash = Hash(snapshot);
             db.AgentVersions.Add(new AgentVersionRecord { Id = Guid.NewGuid(), TenantId = agent.TenantId, WorkspaceId = agent.WorkspaceId, AgentDefinitionId = agent.Id, Version = version, Layer = agent.Layer, Role = agent.Role, SnapshotJson = snapshot, ContentHash = hash, ContentLength = Encoding.UTF8.GetByteCount(snapshot), Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
             agent.Version = version; agent.Status = "published"; agent.Revision++; agent.UpdatedAt = now; agent.UpdatedByPrincipalId = scope.PrincipalId;

@@ -160,13 +160,24 @@ public static class DevSeed
                 // Formal space.full_duplex agent set (see docs/双层智能体架构.md + docs/全双工智能体配置文档.md).
                 // Operation: meeting (only user entry), context_compressor, skill_recommender, supervisor, evolution.
                 // Execution: task_planner (coordinator) + worker pool specializations.
-                var meeting = NewAgent("meeting", "会议智能体", "operation", "session_coordinator", "[\"user.respond\",\"task.dispatch\",\"agent.create_temporary\",\"agent.create_persistent\",\"agent.create_profile\"]", "[\"*\"]");
-                var contextCompressor = NewAgent("context_compressor", "上下文压缩智能体", "operation", "context_maintenance", "[\"context.read\",\"context.patch\"]", "[\"*\"]");
-                var skillRecommender = NewAgent("skill_recommender", "技能推荐智能体", "operation", "capability_advisor", "[\"tool.search\",\"agent.propose\"]", "[\"*\"]");
-                var supervisor = NewAgent("supervisor", "监督智能体", "operation", "quality_controller", "[\"supervision.review\"]", "[\"*\"]");
-                var evolution = NewAgent("evolution", "进化智能体", "operation", "experience_curator", "[\"memory.candidate\",\"agent.candidate\",\"agent.create_persistent\"]", "[\"*\"]");
+                var meeting = NewAgent("meeting", "会议智能体", "operation", "session_coordinator", "[\"user.respond\",\"task.dispatch\",\"agent.create_temporary\",\"agent.create_persistent\",\"agent.create_profile\"]", "[\"*\"]",
+                    description: "用户与系统的唯一对话入口，理解意图、拆解任务并派发执行。",
+                    systemPrompt: "你是用户与系统的唯一对话入口。负责理解用户意图、拆解任务并按双层治理派发给执行层；对用户保持简洁、可执行的表达，汇报时先结论后依据。");
+                var contextCompressor = NewAgent("context_compressor", "上下文压缩智能体", "operation", "context_maintenance", "[\"context.read\",\"context.patch\"]", "[\"*\"]",
+                    description: "实时压缩会话上下文，保留任务关键证据。",
+                    systemPrompt: "你擅长长文本提炼。在保留任务目标、已确认事实与未完成事项的前提下，把冗余对话压缩为结构化摘要；绝不丢弃审批与工具调用结论。");
+                var skillRecommender = NewAgent("skill_recommender", "技能推荐智能体", "operation", "capability_advisor", "[\"tool.search\",\"agent.propose\"]", "[\"*\"]",
+                    description: "为任务匹配合适的工具与技能组合。");
+                var supervisor = NewAgent("supervisor", "监督智能体", "operation", "quality_controller", "[\"supervision.review\"]", "[\"*\"]",
+                    description: "质检各智能体的产出，并在授权额度内代批低风险权限请求。",
+                    systemPrompt: "你是质量与合规的把关者。审查执行层智能体的计划与结果，发现偏差即打回并给出修正指令；在用户已授予委托额度时可为低风险权限请求代批，超出额度必须上报用户，绝不越权。");
+                var evolution = NewAgent("evolution", "进化智能体", "operation", "experience_curator", "[\"memory.candidate\",\"agent.candidate\",\"agent.create_persistent\"]", "[\"*\"]",
+                    description: "从运行经验中提出新的智能体配置候选，供用户决定是否持久化。",
+                    systemPrompt: "你负责智能体配置的演化。观察运行中的重复模式与能力缺口，起草新的智能体定义（角色/提示词/工具范围），以临时实例参与验证；只有用户明确确认后才转为持久化配置。");
                 var gitSteward = NewAgent("git_steward", "Git 变更治理智能体", "operation", "git_steward", "[\"git.review\",\"git.commit_plan\",\"approval.request\"]", "[]");
-                var taskPlanner = NewAgent("task_planner", "任务规划智能体", "execution", "execution_coordinator", "[\"task.plan\",\"task.replan\",\"agent.create_temporary\"]", "[\"*\"]");
+                var taskPlanner = NewAgent("task_planner", "任务规划智能体", "execution", "execution_coordinator", "[\"task.plan\",\"task.replan\",\"agent.create_temporary\"]", "[\"*\"]",
+                    description: "执行层协调者：把会议层的任务分解为可派发的详细计划。",
+                    systemPrompt: "你把上层任务拆解为带成功标准与依赖关系的子任务图，按成员专长派发给 worker；规划必须可验证，每步都有明确的完成判据。");
                 var codeWorker = NewAgent("worker.code", "代码执行智能体", "execution", "task_executor", "[\"tool.code\",\"tool.file\"]", "[\"write_file\",\"read_file\",\"shell.execute\",\"mcp_invoke\"]");
                 var documentWorker = NewAgent("worker.document", "文档生成智能体", "execution", "task_executor", "[\"tool.document\"]", "[\"write_file\",\"read_file\"]");
                 var dataWorker = NewAgent("worker.data", "数据处理智能体", "execution", "task_executor", "[\"tool.data\"]", "[\"read_file\",\"shell.execute\"]");
@@ -178,7 +189,7 @@ public static class DevSeed
                 cfgDb.AgentDefinitions.AddRange(agents);
                 foreach (var a in agents)
                 {
-                    var snap = JsonSerializer.Serialize(new
+var snap = JsonSerializer.Serialize(new
                     {
                         id = a.Id,
                         slug = a.Slug,
@@ -187,7 +198,10 @@ public static class DevSeed
                         role = a.Role,
                         capabilities = JsonSerializer.Deserialize<JsonElement>(a.CapabilitiesJson ?? "[]"),
                         tool_scope = JsonSerializer.Deserialize<JsonElement>(a.ToolScopeJson ?? "[]"),
-                        model_strategy = new { kind = "inherit" }
+                        model_strategy = new { kind = "inherit" },
+                        system_prompt = a.SystemPrompt,
+                        description = a.Description,
+                        enabled = a.Enabled
                     });
                     cfgDb.AgentVersions.Add(new AgentConfiguration.AgentVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentDefinitionId = a.Id, Version = 1, Layer = a.Layer, Role = a.Role, SnapshotJson = snap, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(snap))).ToLowerInvariant(), ContentLength = snap.Length, Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
                 }
@@ -215,10 +229,11 @@ public static class DevSeed
                 cfgDb.WorkspaceDefaults.Add(new AgentConfiguration.WorkspaceDefaultsRecord { TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, DefaultAgentDefinitionId = meeting.Id, DefaultAgentModeId = mode.Id, DefaultPromptPipelineId = pipeline.Id, Status = "active", Revision = 1, CreatedAt = now2, UpdatedAt = now2 });
                 await cfgDb.SaveChangesAsync(ct);
 
-                AgentConfiguration.AgentDefinitionRecord NewAgent(string slug, string display, string layer, string role, string caps, string tools) => new()
+                AgentConfiguration.AgentDefinitionRecord NewAgent(string slug, string display, string layer, string role, string caps, string tools, string? description = null, string? systemPrompt = null) => new()
                 {
                     Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, Slug = slug, DisplayName = display, Layer = layer, Role = role,
                     CapabilitiesJson = caps, ModelStrategyJson = "{\"kind\":\"inherit\"}", ToolScopeJson = tools,
+                    SystemPrompt = systemPrompt, Description = description, Enabled = true,
                     Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
                 };
             }

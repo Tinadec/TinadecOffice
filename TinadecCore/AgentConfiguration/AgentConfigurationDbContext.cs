@@ -43,6 +43,8 @@ public sealed class AgentConfigurationDbContext : DbContext
             entity.Property(x => x.CapabilitiesJson).HasMaxLength(4096);
             entity.Property(x => x.ModelStrategyJson).HasMaxLength(4096);
             entity.Property(x => x.ToolScopeJson).HasMaxLength(4096);
+            entity.Property(x => x.SystemPrompt).HasMaxLength(16384);
+            entity.Property(x => x.Description).HasMaxLength(2048);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             // single draft per workspace logical agent
@@ -200,10 +202,13 @@ public sealed class AgentDefinitionRecord
     public string Role { get; set; } = string.Empty;
     public string? CapabilitiesJson { get; set; }
     public Guid? BasePromptPipelineId { get; set; }
-    // json: { kind: inherit|fixed|parent_select, provider_instance_id, model }
+    // json: { kind: inherit|fixed|parent_select|cli|acp, provider_instance_id, model, runtime_id }
     public string? ModelStrategyJson { get; set; }
     // json: { allowed_tools: string[], deny, etc }
     public string? ToolScopeJson { get; set; }
+    public string? SystemPrompt { get; set; }
+    public string? Description { get; set; }
+    public bool Enabled { get; set; } = true;
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }
     public int Version { get; set; }
