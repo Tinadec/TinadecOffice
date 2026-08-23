@@ -2202,6 +2202,15 @@ import '../settings/settings.css'
             </div>
           </div>
 
+          <div v-if="agentViewMode === 'list'" class="agent-list-summary">
+            <PanelRight :size="16" />
+            <span>{{ selectedAgent ? agentTypeLabel(selectedAgent.agent_type) : t('settings.pleaseOpenAgentConfig') }}</span>
+            <UiButton v-if="selectedAgent" variant="outline" size="sm" @click="openAgentConfig(selectedAgent)">
+              <Settings2 :size="14" />
+              {{ t('settings.openAgentConfig') }}
+            </UiButton>
+          </div>
+
           <div class="center-workbench agent-workbench" :class="`view-${agentViewMode}`">
           <aside class="center-resource-rail" :aria-label="t('settings.centerResources')">
             <div class="center-pane-heading">
@@ -2283,15 +2292,6 @@ import '../settings/settings.css'
               @select-agent="openAgentConfigById"
               @configure-agent="openAgentConfigById"
             />
-          </div>
-
-          <div v-if="agentViewMode === 'list'" class="agent-list-summary">
-            <PanelRight :size="16" />
-            <span>{{ selectedAgent ? agentTypeLabel(selectedAgent.agent_type) : t('settings.pleaseOpenAgentConfig') }}</span>
-            <UiButton v-if="selectedAgent" variant="outline" size="sm" @click="openAgentConfig(selectedAgent)">
-              <Settings2 :size="14" />
-              {{ t('settings.openAgentConfig') }}
-            </UiButton>
           </div>
           </main>
 

@@ -11,6 +11,7 @@ const { t } = useI18n()
 const { notify } = useNotifications()
 
 const runtimeInstances = ref<AgentRuntimeInstanceDto[]>([])
+const runtimeLoaded = ref(false)
 const runtimeSessionFilter = ref('')
 const runtimeStatusFilter = ref('all')
 const runtimePage = ref(1)
@@ -50,7 +51,9 @@ function readinessVariant(status?: string): 'default' | 'secondary' | 'destructi
 async function loadRuntimeInstances() {
   try {
     runtimeInstances.value = await api.listRuntimeInstances()
+    runtimeLoaded.value = true
   } catch (e) {
+    runtimeLoaded.value = true
     notify.error(e, { title: t('agentCenter.runtimeLoadFailed') })
   }
 }
@@ -118,7 +121,7 @@ defineExpose({ loadRuntimeInstances })
       <UiButton size="sm" variant="outline" @click="loadRuntimeInstances"><RefreshCw :size="14" />{{ t('settings.queryAction') }}</UiButton>
     </div>
 
-    <div v-if="filteredRuntimeInstances.length === 0" class="model-provider-empty">
+    <div v-if="runtimeLoaded && filteredRuntimeInstances.length === 0" class="model-provider-empty">
       <Info :size="24" />
       <span>{{ t('agentCenter.runtimeInfo.noInstances') }}</span>
     </div>

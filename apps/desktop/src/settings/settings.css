@@ -2973,6 +2973,18 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .center-resource-paths { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .center-resource-paths code { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .center-empty-state { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 100px; color: var(--text-muted); font-size: 12px; }
+.center-empty-state-prominent {
+  flex-direction: column;
+  gap: 6px;
+  min-height: 180px;
+}
+.center-empty-state-prominent strong { color: var(--text-secondary); font-size: 13px; }
+/* Loading skeleton rows — UiSkeleton has no intrinsic height, so the lines must be sized here. */
+.center-loading-state {
+  display: grid;
+  gap: 8px;
+}
+.center-loading-line { height: 56px; }
 .agent-card-main small { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 
 .agent-card-main span,
@@ -3456,10 +3468,25 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 }
 
 .agent-list-summary {
-  min-height: 96px;
-  justify-content: space-between;
-  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-raised);
   color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.agent-list-summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-list-summary > button {
+  margin-left: auto;
 }
 
 .agent-inspector .agent-detail-panel {
@@ -3471,11 +3498,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .agent-inspector .agent-detail-head {
   margin-bottom: 12px;
-}
-
-.settings-page .agent-inspector .agent-config-section {
-  margin-top: 16px;
-  padding-top: 16px;
 }
 
 .runtime-source-grid {
@@ -3557,10 +3579,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
     grid-template-areas: "stage inspector";
   }
 
-  .agent-workbench.view-list .center-resource-stage {
-    display: none;
-  }
-
   .settings-page .agent-workbench.view-list .agent-card [data-slot="badge"],
   .settings-page .agent-workbench.view-list .agent-card-more {
     display: none;
@@ -3597,10 +3615,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
       "rail"
       "stage"
       "inspector";
-  }
-
-  .agent-workbench.view-list .center-resource-stage {
-    display: none;
   }
 
   .center-resource-rail,
@@ -3976,8 +3990,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 }
 /* ---- Agent config: full tool panel (Phase2) ---- */
 .agent-tool-toolbar {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) 130px 130px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin: 10px 0;
@@ -3986,6 +4000,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1 1 160px;
+  min-width: 140px;
 }
 .agent-tool-search > svg {
   position: absolute;
@@ -4212,7 +4228,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 4px;
 }
 
-/* Sectioned inspector cards: title row + hairline separators. */
+/* Sectioned inspector cards: title row + hairline separators between adjacent sections.
+   Adjacent-sibling (not :first-of-type — the detail head precedes the first section). */
 .agent-config-section-title {
   display: flex;
   align-items: center;
@@ -4224,14 +4241,10 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   color: var(--text-primary);
 }
 
-.settings-page .agent-config-section {
+.settings-page .agent-inspector .agent-config-section + .agent-config-section {
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--border-muted);
-}
-
-.settings-page .agent-config-section:first-of-type {
-  border-top: 0;
-  margin-top: 0;
-  padding-top: 0;
 }
 
 .agent-detail-head {

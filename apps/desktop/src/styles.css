@@ -1393,11 +1393,7 @@ box-shadow: var(--shadow-subtle);
 }
 
 .agent-config-section {
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-section);
+  min-width: 0;
 }
 
 .agent-config-section-title {
