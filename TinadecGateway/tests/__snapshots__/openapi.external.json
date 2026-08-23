@@ -1564,28 +1564,6 @@
         ]
       }
     },
-    "/api/v1/model-center/provider-instances/{providerInstanceId}/models/refresh": {
-      "post": {
-        "operationId": "postApiV1Model-centerProvider-instancesByProviderInstanceIdModelsRefresh",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "providerInstanceId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Refresh provider models (model center)",
-        "tags": [
-          "ModelCenter"
-        ]
-      }
-    },
     "/api/v1/model-provider-templates": {
       "get": {
         "operationId": "getApiV1Model-provider-templates",

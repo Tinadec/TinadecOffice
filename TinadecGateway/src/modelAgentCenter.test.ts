@@ -20,6 +20,10 @@ test('removed BFF routes return 404 (no dual-track)', async () => {
 
   const res3 = await app.handle(new Request('http://gateway.local/api/v1/agents/agent-1/runtime-binding', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ selection_kind: 'inherit' }) }));
   assert.equal(res3.status, 404);
+
+  // Deleted model-center refresh alias; canonical path is POST /model-providers/{id}/models/refresh.
+  const res4 = await app.handle(new Request('http://gateway.local/api/v1/model-center/provider-instances/p1/models/refresh', { method: 'POST' }));
+  assert.equal(res4.status, 404);
 });
 
 test('agents thin proxy: CRUD + draft/publish/archive/versions forward path/method/body/query and error mapping', async () => {

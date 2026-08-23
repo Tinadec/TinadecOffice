@@ -1000,14 +1000,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Preview prompt context', tags: ['System'] } })
-  .post('/api/v1/model-center/provider-instances/:providerInstanceId/models/refresh', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/model-providers/${params.providerInstanceId}/models/refresh`, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/model-center/provider-instances/${params.providerInstanceId}/models/refresh`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Refresh provider models (model center)', tags: ['ModelCenter'] } })
   .get('/api/v1/model-provider-templates', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/model-provider-templates', { headers });
