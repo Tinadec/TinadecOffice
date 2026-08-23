@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Info, RefreshCw, Search } from '@lucide/vue'
+import { Info, Search } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSheet } from '@/components/ui'
 import { api, type AgentRuntimeInstanceDto } from '@/api'
 import { generatedApi } from '@/generated/client'
@@ -118,7 +118,6 @@ defineExpose({ loadRuntimeInstances })
           {{ opt === 'all' ? t('settings.allStatuses') : opt }}
         </button>
       </div>
-      <UiButton size="sm" variant="outline" @click="loadRuntimeInstances"><RefreshCw :size="14" />{{ t('settings.queryAction') }}</UiButton>
     </div>
 
     <div v-if="runtimeLoaded && filteredRuntimeInstances.length === 0" class="model-provider-empty">

@@ -35,6 +35,7 @@ const panelSources = import.meta.glob(
     './../settings/sections/PromptEngineeringMerged.vue',
     './../settings/sections/RuntimeInstancesPanel.vue',
     './../components/agentCenter/GovernanceRolesPanel.vue',
+    './../components/AgentEvolutionPanel.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

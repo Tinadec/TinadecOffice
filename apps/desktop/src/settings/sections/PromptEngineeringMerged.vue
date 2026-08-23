@@ -7,8 +7,6 @@ import {
   FileText,
   GitBranch,
   History,
-  Plus,
-  RefreshCw,
   Search,
   ThumbsDown,
   ThumbsUp,
@@ -190,10 +188,6 @@ defineExpose({ refreshAll })
           <span>{{ t('settings.pipelineView') }}</span>
         </button>
       </div>
-      <UiButton size="sm" variant="outline" :disabled="fragLoading" @click="refreshAll">
-        <RefreshCw :size="14" :class="{ 'animate-spin': fragLoading }" />
-        <span>{{ t('settings.refresh') }}</span>
-      </UiButton>
     </div>
 
     <!-- Canvas 视图 -->
@@ -242,8 +236,8 @@ defineExpose({ refreshAll })
         <span class="model-provider-count">{{ filteredFragments.length }} / {{ fragments.length }}</span>
       </div>
 
-      <div class="pe-layout">
-        <div class="pe-fragment-list">
+      <div class="center-workbench workbench-duo">
+        <aside class="center-resource-rail pe-fragment-list">
           <div class="pe-list-header">
             <h3>Fragments</h3>
             <UiBadge variant="outline">{{ filteredFragments.length }}</UiBadge>
@@ -262,9 +256,9 @@ defineExpose({ refreshAll })
             </div>
             <span class="pe-fragment-meta">{{ fragment.scope }} / {{ fragment.category }} · prio {{ fragment.priority }}</span>
           </button>
-        </div>
+        </aside>
 
-        <div class="pe-detail">
+        <main class="center-resource-stage pe-detail">
           <template v-if="selectedFragment">
             <UiCard class="pe-detail-card">
               <template #content>
@@ -317,7 +311,7 @@ defineExpose({ refreshAll })
               </template>
             </UiCard>
           </template>
-        </div>
+        </main>
       </div>
 
       <!-- 上下文预览 -->
@@ -395,19 +389,10 @@ defineExpose({ refreshAll })
 .ac-preview-output {
   margin-top: 10px;
 }
-.pe-layout {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
 .pe-fragment-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 580px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
 .pe-list-header {
   display: flex;
@@ -533,10 +518,5 @@ defineExpose({ refreshAll })
 }
 .quiet {
   color: var(--text-muted);
-}
-@media (max-width: 960px) {
-  .pe-layout {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

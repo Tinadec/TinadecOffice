@@ -130,10 +130,24 @@ type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearan
 
 type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 
+const modePanelRef = ref<InstanceType<typeof AgentModesPanel> | null>(null)
+const promptsPanelRef = ref<InstanceType<typeof PromptEngineeringMerged> | null>(null)
+const evolutionPanelRef = ref<InstanceType<typeof AgentEvolutionPanel> | null>(null)
+
 /** Lazily refresh per-tab data when a tab becomes active. */
 function switchAgentCenterTab(tab: AgentCenterTab) {
   agentCenterTab.value = tab
-  if (tab === 'runtime') runtimePanelRef.value?.loadRuntimeInstances()
+  // RuntimeInstancesPanel does not self-load on mount; wait one tick for its ref.
+  if (tab === 'runtime') void nextTick(() => runtimePanelRef.value?.loadRuntimeInstances())
+}
+
+/** Single refresh entry for the whole Agent Center: reloads the active sub-tab. */
+function refreshAgentCenterTab(tab: AgentCenterTab = agentCenterTab.value) {
+  if (tab === 'modes') void modePanelRef.value?.loadModes()
+  else if (tab === 'prompts') void promptsPanelRef.value?.refreshAll()
+  else if (tab === 'evolution') void evolutionPanelRef.value?.loadProposals()
+  else if (tab === 'runtime') void runtimePanelRef.value?.loadRuntimeInstances()
+  else void loadAgentCenter()
 }
 
 interface ProviderForm {
@@ -2103,7 +2117,7 @@ import '../settings/settings.css'
                 <p>{{ t('settings.agentCenterSubtitle') }}</p>
               </div>
               <div class="center-command-actions">
-                <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">
+                <UiButton variant="outline" size="sm" @click="refreshAgentCenterTab()">
                   <RefreshCw :size="14" />
                   <span>{{ t('settings.refresh') }}</span>
                 </UiButton>
@@ -2140,10 +2154,7 @@ import '../settings/settings.css'
                 <List :size="15" />
               </button>
             </div>
-            <UiButton variant="ghost" size="sm" :disabled="agentCenterLoading || agentRuntimeBusy" @click="loadAgentCenter">
-              <RefreshCw :size="14" />
-              <span>{{ t('settings.refresh') }}</span>
-            </UiButton>
+            <span class="ac-toolbar-readout">{{ t('settings.activeAgents') }} · {{ agents.length }}</span>
           </div>
 
           <section class="center-overview-receipt agent-overview-receipt" :aria-label="t('settings.centerOverview')">
@@ -2662,16 +2673,16 @@ import '../settings/settings.css'
           </div>
         </template>
             <template v-else-if="agentCenterTab === 'prompts'">
-              <PromptEngineeringMerged />
+              <PromptEngineeringMerged ref="promptsPanelRef" />
             </template>
             <template v-else-if="agentCenterTab === 'modes'">
-              <AgentModesPanel />
+              <AgentModesPanel ref="modePanelRef" />
             </template>
             <template v-else-if="agentCenterTab === 'runtime'">
               <RuntimeInstancesPanel ref="runtimePanelRef" />
             </template>
             <template v-else-if="agentCenterTab === 'evolution'">
-              <AgentEvolutionPanel />
+              <AgentEvolutionPanel ref="evolutionPanelRef" />
             </template>
           </div>
         </template>

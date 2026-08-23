@@ -3230,6 +3230,27 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   display: none;
 }
 
+/* ── Shared two-pane workbench for Agent Center sub-panels (modes / prompts).
+   Reuses the .center-workbench material band; panes reuse
+   .center-resource-rail / .center-resource-stage so gutters, surfaces and
+   scroll clamps match the agents tab. */
+.center-workbench.workbench-duo {
+  grid-template-columns: var(--wb-rail, 248px) minmax(0, 1fr);
+  grid-template-areas: "rail stage";
+}
+
+.workbench-duo .center-resource-rail,
+.workbench-duo .center-resource-stage {
+  max-height: clamp(420px, calc(100dvh - 400px), 680px);
+  overflow-y: auto;
+}
+
+/* Search boxes borrowed from the model-center toolbar must fill a narrow rail,
+   not keep the toolbar's capped min(300px, 32vw) width. */
+.center-resource-rail .model-provider-search {
+  width: 100%;
+}
+
 .center-resource-rail,
 .center-resource-stage,
 .center-inspector {
@@ -3620,6 +3641,19 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
       "rail"
       "stage"
       "inspector";
+  }
+
+  .workbench-duo {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "rail"
+      "stage";
+  }
+
+  .workbench-duo .center-resource-rail,
+  .workbench-duo .center-resource-stage {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .center-resource-rail,
@@ -4230,13 +4264,33 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 12px;
 }
 
+.ac-toolbar-readout {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Shared right-sheet body for Agent Center panels (modes node config / version history,
+   evolution promote). */
+.ac-sheet-body {
+  display: grid;
+  gap: 12px;
+  min-width: 280px;
+  padding: 4px 0;
+}
+
+.ac-sheet-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .ac-toolbar-row .agent-view-toggle {
   display: inline-flex;
   gap: 4px;
 }
 
-/* Sectioned inspector cards: title row + hairline separators between adjacent sections.
-   Adjacent-sibling (not :first-of-type — the detail head precedes the first section). */
+/* Sectioned inspector cards: title row + hairline separators. */
 .agent-config-section-title {
   display: flex;
   align-items: center;
@@ -4248,6 +4302,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   color: var(--text-primary);
 }
 
+/* Sectioned inspector cards: title row + hairline separators between adjacent sections.
+   Adjacent-sibling (not :first-of-type — the detail head precedes the first section). */
 .settings-page .agent-inspector .agent-config-section + .agent-config-section {
   margin-top: 12px;
   padding-top: 12px;

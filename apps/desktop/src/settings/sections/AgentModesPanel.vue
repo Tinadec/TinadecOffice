@@ -208,22 +208,21 @@ defineExpose({ loadModes })
       <UiBadge variant="outline">{{ modeNodes.length }} · {{ modeEdges.length }}</UiBadge>
     </div>
 
-    <div class="actions ac-mode-actions">
+    <div class="ac-mode-actions">
       <UiButton size="sm" :disabled="modeBusy" @click="createMode"><Plus :size="14" /><span>{{ t('agentCenter.createMode') }}</span></UiButton>
       <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy" @click="saveModeDraft">{{ t('settings.saveDraftMode') }}</UiButton>
-      <UiButton size="sm" :disabled="!selectedModeId || modeBusy" @click="publishMode">{{ t('settings.publishModeAction') }}</UiButton>
+      <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy" @click="publishMode">{{ t('settings.publishModeAction') }}</UiButton>
       <UiButton size="sm" variant="ghost" :disabled="!selectedModeId" @click="addModeNode"><Plus :size="14" />{{ t('settings.addNodeAction') }}</UiButton>
       <UiButton size="sm" variant="outline" :disabled="!selectedModeId" @click="openVersionDrawer"><History :size="14" />{{ t('agentCenter.versionHistory') }}</UiButton>
-      <UiButton size="sm" variant="outline" @click="loadModes"><RefreshCw :size="14" />{{ t('settings.refresh') }}</UiButton>
     </div>
 
-    <div class="topology-workbench">
-      <div class="topology-rail">
+    <div class="center-workbench workbench-duo">
+      <aside class="center-resource-rail ac-mode-rail">
         <div class="model-provider-search">
           <Search :size="14" />
           <UiInput v-model="modeQuery" :placeholder="t('agentCenter.filter.searchModes')" />
         </div>
-        <div class="model-center-tabs ac-mode-tabs" role="tablist" aria-label="mode-rail">
+        <div class="ac-mode-tabs" role="tablist" :aria-label="t('settings.agentModes')">
           <button
             v-for="m in filteredModes"
             :key="m.id"
@@ -244,9 +243,9 @@ defineExpose({ loadModes })
 
         <!-- Workspace defaults / governance roles -->
         <GovernanceRolesPanel :manifest-tool-ids="[]" />
-      </div>
+      </aside>
 
-      <div class="ac-mode-canvas-col">
+      <main class="center-resource-stage ac-mode-canvas-col">
         <AgentModeCanvas
           :nodes="modeNodes"
           :edges="modeEdges"
@@ -262,7 +261,7 @@ defineExpose({ loadModes })
           <UiButton size="sm" variant="outline" @click="saveEdgeLabel">{{ t('settings.saveLabelAction') }}</UiButton>
           <UiButton size="sm" variant="ghost" class="provider-delete-btn" @click="deleteEdge"><Trash2 :size="14" />{{ t('settings.deleteAction') }}</UiButton>
         </div>
-      </div>
+      </main>
     </div>
 
     <UiSheet :open="Boolean(selectedModeNode)" side="right" @update:open="!$event && (selectedModeNode = null)">
@@ -315,21 +314,6 @@ defineExpose({ loadModes })
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-}
-.topology-workbench {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-.topology-rail {
-  display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
-.topology-rail > * + * {
-  padding-top: 4px;
 }
 .ac-mode-tabs {
   display: grid;
@@ -389,18 +373,6 @@ defineExpose({ loadModes })
   flex: 1;
   min-width: 160px;
 }
-.ac-sheet-body {
-  display: grid;
-  gap: 12px;
-  min-width: 280px;
-  padding: 4px 0;
-}
-.ac-sheet-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 10px;
-}
 .ac-version-list {
   display: grid;
   gap: 8px;
@@ -430,10 +402,5 @@ defineExpose({ loadModes })
 }
 .quiet {
   color: var(--text-muted);
-}
-@media (max-width: 960px) {
-  .topology-workbench {
-    grid-template-columns: 1fr;
-  }
 }
 </style>
