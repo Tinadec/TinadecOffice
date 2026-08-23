@@ -348,7 +348,11 @@ POST /api/v1/agent-evolution/proposals/{id}/promote
 
 当前 `GET /model-readiness`、`GET /model-catalog-readiness` 仍是 skeleton warning 投影，不会读取真实 provider/route；Settings 只能把它们标为占位诊断。真实配置列表来自 provider/route API，不能用 readiness 的零计数覆盖真实数据。
 
-Desktop 仍调用已删除的 `/model-center/overview`、`/agent-center/overview` 和 `/agents/{id}/runtime-binding`；Gateway 对这些入口明确返回 404。下一次 Settings 改造应删除这些 client 和 UI 分支，直接组合 provider/route、正式 Agent/Mode/Prompt 和 runtime instance API。Gateway 中残留的 `/model-center/provider-instances/{id}/models/refresh` 也属于待删除别名，canonical 路径是 `/model-providers/{id}/models/refresh`。
+模型获取职责链路：TinadecApp 负责触发发现与确认持久化——用户在 Settings 触发 `POST /api/v1/model-providers/{id}/models/refresh` 后，由 TinadecCore 持 SecretStore 密钥代理外部 `GET {base_url}/models`（API key 永不出 Core）；前端将发现的模型合并进 provider 配置并经 `PUT /api/v1/model-providers/{id}` 持久化；此后 Gateway 只从 Core 读取已写入的 provider/route/agent 状态（薄代理），不聚合、不发明第二真相源。
+
+智能体模型策略已版本化：Desktop 通过 `PUT /api/v1/agents/{id}/draft` + `POST /api/v1/agents/{id}/publish`（If-Match revision）保存 `model_strategy`，支持 `inherit`、`fixed`（provider_instance_id+model）、`cli`/`acp`（runtime_id 指向 CLI/ACP provider 实例）；`parent_select` 是运行期父协调者行为，不由 Desktop 静态配置。
+
+历史遗留入口 `GET /model-center/overview`、`GET /agent-center/overview`、`PUT /agents/{id}/runtime-binding` 与别名 `POST /model-center/provider-instances/{id}/models/refresh` 已全部删除（无路由即 404），Desktop/Gateway 客户端与 UI 分支均已清理。
 
 **工具中心**：
 
@@ -656,7 +660,7 @@ Desktop Agent 遇到以下缺口时应停止猜测接口，先补 Core/Gateway �
 9. 无 run 的 queued interaction 尚未持久化，且 Gateway 缺 `GET /sessions/{id}/interactions` 代理；需要耐久队列后才能提供跨重启编辑、改派和取消。
 10. Gateway 当前代理 `/sessions/{sessionId}/interactions/{interactionId}/stream`，但 Core 没有该 endpoint。获得 `run_id` 后应以 `/runs/{runId}/stream` 为唯一流；删除或实现悬空代理时直接更新 v1，不保留别名。
 11. Core 同时还映射了旧 flat Agent control-plane 写入口；正式配置服务完成后应删除冲突入口，并同步 Gateway/Desktop，只保留版本化 draft/publish/archive 契约。
-12. Desktop Settings 仍依赖已经 404 的 model-center/agent-center overview 和 runtime-binding；应迁移到正式 provider/route/configuration API，并删除 Gateway 的 model-center refresh 别名。
+12. ~~Desktop Settings 仍依赖已经 404 的 model-center/agent-center overview 和 runtime-binding；应迁移到正式 provider/route/configuration API，并删除 Gateway 的 model-center refresh 别名。~~ 已完成（2026-08-23）：两个中心改读版本化 API（模型中心客户端聚合 providers/templates/routes/acp/readiness；智能体模型策略走 draft/publish），Gateway 别名与废弃客户端已删除。
 13. model readiness/catalog readiness 与 prompt fragment 高级操作仍为 skeleton/501；需要真实 Core 服务后再开放，不在 Desktop 根据空数据生成“健康”或“发布成功”。
 14. Core 当前同时注册了两组 `GET /agents`，请求可能发生 ambiguous match；`agent-candidates` 也存在重复/重叠模板。先收口为版本化配置与候选流水线的唯一 v1 路由，再接 Agent Center，不能在 Desktop 用重试或另一条别名掩盖服务端冲突。
 15. Core 的 run stream、legacy invoke stream 和全局 events 实际返回 SSE，但 OpenAPI 未完整声明 `text/event-stream` 及事件 schema；修复事实源后再生成 Gateway/Desktop 类型。

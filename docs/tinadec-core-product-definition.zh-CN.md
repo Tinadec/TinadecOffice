@@ -536,9 +536,12 @@ spec:
 - `fixed`：合规或可复现任务固定到指定 route/model。
 - `inherit`：继承父实例的已解析模型，但仍重新检查能力和可用性。
 - `parent_select`：父协调者在允许候选中选择，选择过程有最大尝试次数并审计。
+- `cli` / `acp`：绑定到 CLI/ACP provider 实例（`runtime_id` 即 provider instance id），运行期经其 `server_url` 以 ACP/opencode-serve 协议会话；无 API key 参与解析。
 - `capability_select`：目标态由确定性路由器按能力、评测、上下文、价格、延迟、数据驻留和健康度排序。
 
 模型不可用时只能按已发布 fallback 链切换；不得静默换到数据边界不兼容的 provider。
+
+模型获取职责链路（TinadecApp ↔ TinadecCore ↔ TinadecGateway）：TinadecApp 负责触发发现与用户确认——发现请求由 TinadecCore 持 SecretStore 密钥代理外部 `GET {base_url}/models`（API key 不出 Core，App/Gateway 均不见明文）；用户确认后由 App 将发现的模型合并进 provider 配置并持久化到 Core；此后 Gateway 只薄代理读取 Core 已写入的 provider/route/agent 状态。App 与 Gateway 都不得自行拉取外部厂商 API 或形成第二配置真相源。
 
 ### 9.6 Agent Center 契约
 
