@@ -69,9 +69,6 @@ import {
   type ModelReadinessReceiptDto,
   type ModelRouteDto,
   type ModelCenterApiConnectionDto,
-  type PromptContextPreviewDto,
-  type PromptFragmentDto,
-  type SavePromptFragmentInput,
   type SaveModelProviderInstanceInput,
   type HarnessManifestDto,
   type ToolLayerReadinessReceiptDto,
@@ -117,6 +114,7 @@ import PetPreview from '@/components/PetPreview.vue'
 import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDropdownMenu } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
+import PromptContextPanel from '@/settings/sections/PromptContextPanel.vue'
 import PromptEngineeringPanel from '@/components/PromptEngineeringPanel.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
@@ -232,8 +230,6 @@ const availableTools = ref<ToolDescriptorDto[]>([])
 const harnessManifest = ref<HarnessManifestDto | null>(null)
 const toolLayerReadiness = ref<ToolLayerReadinessReceiptDto | null>(null)
 const toolSearchResults = ref<ToolSearchResultDto[]>([])
-const promptFragments = ref<PromptFragmentDto[]>([])
-const promptPreview = ref<PromptContextPreviewDto | null>(null)
 const projectTemplates = ref<ProjectTemplateSummary[]>([])
 const selectedProviderId = ref('')
 const selectedAgentId = ref('')
@@ -274,32 +270,11 @@ const showModal = ref(false)
 const showTemplatePicker = ref(false)
 const templatePickerQuery = ref('')
 const agentViewMode = ref<'topology' | 'list'>('list')
-const promptSelectedFragmentId = ref('')
-const promptFilterScope = ref('all')
-const promptFilterCategory = ref('all')
-const promptFilterAgentId = ref('all')
-const promptFilterEnabled = ref('all')
-const promptPreviewAgentId = ref('agent_meeting')
-const promptPreviewMode = ref('')
-const promptPreviewSessionId = ref('')
-const promptPreviewRunId = ref('')
-const promptPreviewUserContent = ref('')
 const toolDiscoveryQuery = ref('')
 const toolDiscoverySource = ref('all')
 const toolDiscoveryRisk = ref('all')
 const toolDiscoveryLoading = ref(false)
-const promptForm = reactive({
-  id: '',
-  key: '',
-  title: '',
-  scope: 'agent',
-  target_agent_id: 'agent_meeting',
-  category: 'custom',
-  content: '',
-  priority: '500',
-  enabled: true,
-  is_builtin: false
-})
+// promptForm/promptFragments state moved to settings/sections/PromptContextPanel.vue (D7.3)
 
 const providerForm = reactive<ProviderForm>({
   id: '',
@@ -540,17 +515,6 @@ const toolRiskOptions = computed(() =>
   Array.from(new Set(manifestToolList.value.map((tool) => tool.risk))).sort()
 )
 const sortedToolDiscoveryResults = computed(() => sortedToolSearchResults(toolSearchResults.value))
-const promptCategories = computed(() =>
-  Array.from(new Set(promptFragments.value.map((fragment) => fragment.category))).sort()
-)
-const promptFilteredFragments = computed(() => promptFragments.value.filter((fragment) => {
-  if (promptFilterScope.value !== 'all' && fragment.scope !== promptFilterScope.value) return false
-  if (promptFilterCategory.value !== 'all' && fragment.category !== promptFilterCategory.value) return false
-  if (promptFilterAgentId.value !== 'all' && (fragment.target_agent_id ?? '') !== promptFilterAgentId.value) return false
-  if (promptFilterEnabled.value === 'enabled' && !fragment.enabled) return false
-  if (promptFilterEnabled.value === 'disabled' && fragment.enabled) return false
-  return true
-}))
 
 function runtimeQueryMatches(query: string, ...values: Array<string | null | undefined>) {
   const normalized = query.trim().toLocaleLowerCase()
@@ -1009,140 +973,7 @@ async function loadToolDiscovery() {
   }
 }
 
-async function loadPromptContextCenter() {
-  loading.value = true
-  try {
-    const fragments = await api.listPromptFragments()
-    promptFragments.value = fragments
-    if (!promptSelectedFragmentId.value && fragments.length > 0) {
-      selectPromptFragment(fragments[0])
-    } else if (promptSelectedFragmentId.value) {
-      const selected = fragments.find((fragment) => fragment.id === promptSelectedFragmentId.value)
-      if (selected) {
-        selectPromptFragment(selected)
-      }
-    }
-
-    if (!promptPreviewMode.value) {
-      promptPreviewMode.value = agentModes.value.find((mode) => mode.id === 'plan-first')?.id ?? agentModes.value[0]?.id ?? 'plan-first'
-    }
-  } finally {
-    loading.value = false
-  }
-}
-
-function selectPromptFragment(fragment: PromptFragmentDto) {
-  promptSelectedFragmentId.value = fragment.id
-  promptForm.id = fragment.id
-  promptForm.key = fragment.key
-  promptForm.title = fragment.title
-  promptForm.scope = fragment.scope
-  promptForm.target_agent_id = fragment.target_agent_id ?? ''
-  promptForm.category = fragment.category
-  promptForm.content = fragment.content
-  promptForm.priority = String(fragment.priority)
-  promptForm.enabled = fragment.enabled
-  promptForm.is_builtin = fragment.is_builtin
-}
-
-function newPromptFragment() {
-  promptSelectedFragmentId.value = ''
-  promptForm.id = ''
-  promptForm.key = `custom.meeting.${Date.now()}`
-  promptForm.title = 'Custom Meeting Context'
-  promptForm.scope = 'agent'
-  promptForm.target_agent_id = 'agent_meeting'
-  promptForm.category = 'custom'
-  promptForm.content = ''
-  promptForm.priority = '500'
-  promptForm.enabled = true
-  promptForm.is_builtin = false
-}
-
-function promptPayload(): SavePromptFragmentInput {
-  return {
-    key: promptForm.key,
-    title: promptForm.title,
-    scope: promptForm.scope,
-    target_agent_id: promptForm.target_agent_id || null,
-    category: promptForm.category,
-    content: promptForm.content,
-    priority: Number(promptForm.priority) || 0,
-    enabled: promptForm.enabled
-  }
-}
-
-async function savePromptFragment() {
-  busy.value = true
-  try {
-    const saved = promptForm.id
-      ? await api.savePromptFragment(promptForm.id, promptPayload())
-      : await api.createPromptFragment(promptPayload())
-    promptSelectedFragmentId.value = saved.id
-    await loadPromptContextCenter()
-    notify.success(saved.title)
-  } catch (error) {
-    notify.error(error, { title: promptForm.title })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function deletePromptFragment() {
-  if (!promptForm.id || promptForm.is_builtin) return
-  const fragmentId = promptForm.id
-  const fragmentTitle = promptForm.title
-  if (!await confirm({
-    title: t('settings.delete'),
-    message: `${t('settings.confirmDelete')} ${promptForm.title}?`,
-    confirmLabel: t('settings.confirmDelete'),
-    cancelLabel: t('settings.cancel'),
-    destructive: true
-  })) return
-  busy.value = true
-  try {
-    await api.deletePromptFragment(fragmentId)
-    promptSelectedFragmentId.value = ''
-    await loadPromptContextCenter()
-    notify.success(`${fragmentTitle}: ${t('settings.delete')}`)
-  } catch (error) {
-    notify.error(error, { title: fragmentTitle })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function clonePromptFragment(fragmentId = promptForm.id) {
-  if (!fragmentId) return
-  busy.value = true
-  try {
-    const cloned = await api.clonePromptFragment(fragmentId)
-    promptSelectedFragmentId.value = cloned.id
-    await loadPromptContextCenter()
-    notify.success(cloned.title)
-  } catch (error) {
-    notify.error(error)
-  } finally {
-    busy.value = false
-  }
-}
-
-async function generatePromptPreview() {
-  busy.value = true
-  try {
-    promptPreview.value = await api.previewPromptContext({
-      agent_id: promptPreviewAgentId.value || 'agent_meeting',
-      mode: promptPreviewMode.value || null,
-      session_id: promptPreviewSessionId.value || null,
-      run_id: promptPreviewRunId.value || null,
-      user_content: promptPreviewUserContent.value || null
-    })
-  } catch (error) {
-    notify.error(error, { title: t('settings.preview') })
-  } finally {
-    busy.value = false
-  }
-}
+// PromptContext CRUD/preview moved to settings/sections/PromptContextPanel.vue (D7.3)
 
 function agentSaveErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error)
@@ -1546,7 +1377,6 @@ function readinessStatusLabel(status: string) {
 
 loadModelCenter()
 loadAgentCenter()
-loadPromptContextCenter()
 
 import '../settings/settings.css'
 </script>
