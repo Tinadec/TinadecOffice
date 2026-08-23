@@ -125,7 +125,20 @@ import { useNotifications } from '@/composables/useNotifications'
 
 type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
-type AgentCenterTab = 'config' | 'promptContext' | 'promptEngineering' | 'evolution'
+type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
+
+/** Lazily load per-tab data the first time a tab becomes active. */
+function switchAgentCenterTab(tab: AgentCenterTab) {
+  agentCenterTab.value = tab
+  if (tab === 'runtime') void loadRuntimeInstances()
+  if (tab === 'prompts') void loadPromptEngineering()
+  if (tab === 'evolution') void loadEvolutionProposals()
+}
+
+// Per-tab lazy loaders — populated as each merged tab lands (C5).
+function loadRuntimeInstances() { /* fleet list lands with the runtime tab */ }
+function loadPromptEngineering() { /* pipeline canvas + fragment library lands with the prompts tab */ }
+function loadEvolutionProposals() { /* evolution panel self-loads; refresh hook reserved */ }
 
 interface ProviderForm {
   id: string
@@ -196,10 +209,7 @@ function openExternal(url: string) {
 }
 
 const activeSection = ref<SettingsSection>('general')
-const agentCenterTab = ref<AgentCenterTab>('config')
-function openFullWorkbench() {
-  router.push('/agent-center')
-}
+const agentCenterTab = ref<AgentCenterTab>('agents')
 // Pets section moved to settings/sections/PetsSection.vue (D7.2)
 
 function selectSettingsSection(section: SettingsSection) {
@@ -2066,23 +2076,25 @@ import '../settings/settings.css'
           <div class="agent-center-merged">
             <div class="center-command-bar">
               <div>
+                <span class="center-kicker">{{ t('settings.agents') }}</span>
                 <h2>{{ t('settings.agentCenter') }}</h2>
                 <p>{{ t('settings.agentCenterSubtitle') }}</p>
               </div>
               <div class="center-command-actions">
-                <UiButton variant="outline" size="sm" data-testid="open-agent-workbench" @click="openFullWorkbench">
-                  <ExternalLink :size="14" />
-                  <span>{{ t('agentCenter.openWorkbench', '完整工作台') }}</span>
+                <UiButton variant="outline" size="sm" :disabled="agentCenterLoading" @click="loadAgentCenter">
+                  <RefreshCw :size="14" />
+                  <span>{{ t('settings.refresh') }}</span>
                 </UiButton>
               </div>
             </div>
             <div class="ac-subtabs" role="tablist" data-testid="agent-center-subtabs">
-              <button :class="['ac-subtab', { active: agentCenterTab === 'config' }]" role="tab" :aria-selected="agentCenterTab === 'config'" @click="agentCenterTab = 'config'">{{ t('settings.agents') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'promptContext' }]" role="tab" :aria-selected="agentCenterTab === 'promptContext'" @click="agentCenterTab = 'promptContext'">{{ t('settings.promptContext') }}</button>
-              <button :class="['ac-subtab', { active: agentCenterTab === 'promptEngineering' }]" role="tab" :aria-selected="agentCenterTab === 'promptEngineering'" @click="agentCenterTab = 'promptEngineering'">{{ t('settings.promptEngineering') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'agents' }]" role="tab" :aria-selected="agentCenterTab === 'agents'" @click="agentCenterTab = 'agents'">{{ t('settings.agents') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'modes' }]" role="tab" :aria-selected="agentCenterTab === 'modes'" @click="agentCenterTab = 'modes'">{{ t('settings.agentModes') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'prompts' }]" role="tab" :aria-selected="agentCenterTab === 'prompts'" @click="agentCenterTab = 'prompts'">{{ t('settings.promptEngineering') }}</button>
               <button :class="['ac-subtab', { active: agentCenterTab === 'evolution' }]" role="tab" :aria-selected="agentCenterTab === 'evolution'" @click="agentCenterTab = 'evolution'">{{ t('settings.agentEvolution') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'runtime' }]" role="tab" :aria-selected="agentCenterTab === 'runtime'" @click="switchAgentCenterTab('runtime')">{{ t('settings.runtimeInstances') }}</button>
             </div>
-            <template v-if="agentCenterTab === 'config'">
+            <template v-if="agentCenterTab === 'agents'">
 
           <div class="center-page agent-center-page">
           <div class="center-command-bar">
@@ -2583,11 +2595,20 @@ import '../settings/settings.css'
           </div>
           </div>
         </template>
-            <template v-else-if="agentCenterTab === 'promptContext'">
-              <PromptContextPanel />
+            <template v-else-if="agentCenterTab === 'prompts'">
+              <div class="center-tab-placeholder">
+                <p>{{ t('settings.promptEngineeringMigrated') }}</p>
+              </div>
             </template>
-            <template v-else-if="agentCenterTab === 'promptEngineering'">
-              <PromptEngineeringPanel />
+            <template v-else-if="agentCenterTab === 'modes'">
+              <div class="center-tab-placeholder">
+                <p>{{ t('settings.agentModesMigrated') }}</p>
+              </div>
+            </template>
+            <template v-else-if="agentCenterTab === 'runtime'">
+              <div class="center-tab-placeholder">
+                <p>{{ t('settings.runtimeInstancesMigrated') }}</p>
+              </div>
             </template>
             <template v-else-if="agentCenterTab === 'evolution'">
               <AgentEvolutionPanel />

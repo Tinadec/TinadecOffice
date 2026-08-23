@@ -57,12 +57,13 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("t('settings.centerInspector')")
     expect(settingsPage).toContain("t('settings.centerDiagnostics')")
     expect(settingsPage).toContain("label: t('settings.agentCenter')")
-    // Merged Agent Center sub-tabs (D7.3): the four former nav entries are now
-    // sub-tabs inside the single agentCenter section.
+    // Merged Agent Center sub-tabs (D7.4): five tabs — agents / modes / prompts /
+    // evolution / runtime — replace the former four-tab layout.
     expect(settingsPage).toContain('data-testid="agent-center-subtabs"')
-    expect(settingsPage).toContain("t('settings.promptContext')")
+    expect(settingsPage).toContain("t('settings.agentModes')")
     expect(settingsPage).toContain("t('settings.promptEngineering')")
     expect(settingsPage).toContain("t('settings.agentEvolution')")
+    expect(settingsPage).toContain("t('settings.runtimeInstances')")
     expect(settingsPage).toContain("label: t('settings.pets')")
     expect(settingsSources).toContain("t('settings.petdexCatalog')")
     expect(settingsSources).toContain("t('settings.openPetFolder')")

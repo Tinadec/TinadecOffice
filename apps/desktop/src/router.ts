@@ -54,11 +54,6 @@ const router = createRouter({
       component: () => import('./pages/LibraryPage.vue'),
     },
     {
-      path: '/agent-center',
-      name: 'agent-center',
-      component: () => import('./pages/AgentCenterPage.vue'),
-    },
-    {
       path: '/panel',
       name: 'detached-panel',
       component: () => import('./pages/DetachedPanelPage.vue'),
