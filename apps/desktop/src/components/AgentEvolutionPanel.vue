@@ -459,7 +459,7 @@ defineExpose({ loadProposals })
 }
 .evolution-proposal-card.active {
   border-color: var(--accent-brand);
-  background: var(--accent-soft, rgba(46, 196, 182, 0.08));
+  background: var(--surface-selected);
 }
 .evolution-proposal-head {
   display: flex;

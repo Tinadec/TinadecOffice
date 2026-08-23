@@ -4156,8 +4156,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .ac-subtab.active {
   border-color: var(--accent-brand);
-  background: var(--accent-soft, rgba(46, 196, 182, 0.08));
-  color: var(--accent-brand);
+  background: var(--surface-selected);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -4206,17 +4206,29 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   overflow-y: auto;
 }
 
-.agent-version-row {
+/* Shared list-row primitive for version/history rows across Agent Center panels
+   (agents inspector, modes versions, prompts fragment versions). */
+.center-list-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
   border-radius: 8px;
+  border: 1px solid transparent;
   background: var(--surface-chrome);
 }
 
-.agent-version-row.latest {
-  outline: 1px solid var(--accent-brand, rgba(46, 196, 182, 0.5));
+.center-list-row.active,
+.center-list-row.latest {
+  border-color: var(--accent-brand);
+  background: var(--surface-raised);
+}
+
+.center-list-row > time,
+.center-list-row > small {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .agent-version-row strong {
@@ -4228,12 +4240,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   font-family: ui-monospace, monospace;
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.agent-version-row time {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-left: auto;
 }
 
 /* ── L1: merged Agent Center layout rhythm ──
@@ -4287,8 +4293,13 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .ac-toolbar-row .agent-view-toggle {
   display: inline-flex;
-  gap: 4px;
+  background: var(--surface-section);
 }
+
+/* Segmented view toggle: connected group with a hairline divider. */
+.settings-page .agent-view-btn:first-child { border-radius: 5px 0 0 5px; }
+.settings-page .agent-view-btn:last-child { border-radius: 0 5px 5px 0; }
+.settings-page .agent-view-btn + .agent-view-btn { border-left: 1px solid var(--border-muted); }
 
 /* Sectioned inspector cards: title row + hairline separators. */
 .agent-config-section-title {

@@ -2161,28 +2161,28 @@ import '../settings/settings.css'
             <div class="center-receipt-item ready">
               <Settings2 :size="17" />
               <div>
-                <span>{{ t('settings.agentProfilesWritable') }}</span>
-                <strong>{{ t('settings.agentProfilesWritableHint') }}</strong>
+                <strong :title="t('settings.agentProfilesWritable')">{{ t('settings.agentProfilesWritable') }}</strong>
+                <span :title="t('settings.agentProfilesWritableHint')">{{ t('settings.agentProfilesWritableHint') }}</span>
               </div>
               <UiBadge variant="default">{{ t('settings.writable') }}</UiBadge>
             </div>
-            <div class="center-receipt-item preview" :class="{ ready: true }">
+            <div class="center-receipt-item preview">
               <Workflow :size="17" />
               <div>
-                <span>{{ t('settings.runtimePreviewOnly') }}</span>
-                <strong>{{ t('settings.runtimePreviewOnlyHint') }}</strong>
+                <strong :title="t('settings.runtimePreviewOnly')">{{ t('settings.runtimePreviewOnly') }}</strong>
+                <span :title="t('settings.runtimePreviewOnlyHint')">{{ t('settings.runtimePreviewOnlyHint') }}</span>
               </div>
-              <UiBadge variant="default">
-                {{ t('settings.writable') }}
-              </UiBadge>
+              <UiBadge variant="outline">{{ t('settings.previewBadge') }}</UiBadge>
             </div>
             <div class="center-receipt-item configured">
               <Bot :size="17" />
               <div>
-                <span>{{ t('settings.activeAgents') }}</span>
                 <strong>{{ agents.filter(agent => agent.enabled).length }} / {{ agents.length }}</strong>
+                <span :title="t('settings.activeAgents')">{{ t('settings.activeAgents') }}</span>
               </div>
-              <UiBadge variant="outline">{{ planningAgents.length }} + {{ executionAgents.length }}</UiBadge>
+              <UiBadge variant="outline" :title="t('settings.agentLayerCounts', { planning: planningAgents.length, execution: executionAgents.length })">
+                {{ t('settings.agentLayerCounts', { planning: planningAgents.length, execution: executionAgents.length }) }}
+              </UiBadge>
             </div>
           </section>
 
@@ -2624,7 +2624,7 @@ import '../settings/settings.css'
                   <span>{{ t('common.loading') }}</span>
                 </div>
                 <div v-else-if="agentVersionHistory.length > 0" class="agent-version-list">
-                  <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
+                  <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="center-list-row agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
                     <strong>v{{ version.version }}</strong>
                     <span class="agent-version-hash">{{ (version as AgentVersionDto & { content_hash?: string }).content_hash?.slice(0, 8) ?? '—' }}</span>
                     <time>{{ new Date(version.created_at).toLocaleString() }}</time>

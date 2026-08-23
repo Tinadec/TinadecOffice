@@ -291,12 +291,10 @@ defineExpose({ loadModes })
         <UiButton size="sm" variant="outline" :disabled="modeVersionsLoading" @click="loadModeVersions">{{ t('settings.refreshHistory') }}</UiButton>
         <div v-if="modeVersionsLoading" class="quiet">{{ t('common.loading') }}</div>
         <div v-else class="ac-version-list">
-          <div v-for="v in modeVersions" :key="v.id" class="ac-version-row">
-            <span class="ac-version-main">
-              <strong>v{{ v.version }}</strong>
-              <small>{{ v.created_at ? new Date(v.created_at).toLocaleString() : '—' }}</small>
-            </span>
-            <UiBadge :variant="v.is_active ? 'default' : 'secondary'">{{ v.is_active ? 'active' : 'archived' }}</UiBadge>
+          <div v-for="v in modeVersions" :key="v.id" class="center-list-row ac-version-row">
+            <strong>v{{ v.version }}</strong>
+            <small>{{ v.created_at ? new Date(v.created_at).toLocaleString() : '—' }}</small>
+            <UiBadge :variant="v.is_active ? 'default' : 'secondary'">{{ v.is_active ? t('settings.agentVersionCurrent') : t('settings.agentVersionArchived') }}</UiBadge>
           </div>
           <div v-if="modeVersions.length === 0" class="quiet">{{ t('settings.noModeVersions') }}</div>
         </div>
@@ -332,6 +330,7 @@ defineExpose({ loadModes })
 }
 .ac-mode-row.active {
   border-color: var(--accent-brand);
+  background: var(--surface-raised);
 }
 .ac-mode-meta {
   display: grid;
@@ -379,24 +378,10 @@ defineExpose({ loadModes })
   max-height: 60vh;
   overflow: auto;
 }
-.ac-version-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--surface-section);
-}
-.ac-version-main {
-  display: grid;
-  gap: 2px;
-}
-.ac-version-main strong {
+.ac-version-row strong {
   font-size: 12px;
 }
-.ac-version-main small {
+.ac-version-row small {
   color: var(--text-muted);
   font-size: 10px;
 }

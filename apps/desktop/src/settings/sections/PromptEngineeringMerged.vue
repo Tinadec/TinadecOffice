@@ -294,7 +294,7 @@ defineExpose({ refreshAll })
                 </div>
                 <div v-if="fragmentVersions.length === 0" class="quiet pe-empty-sm">{{ t('settings.noFragmentVersions') }}</div>
                 <div v-else class="pe-version-list">
-                  <div v-for="version in sortedVersions" :key="version.id" class="pe-version-row" :class="{ active: version.is_active }">
+                  <div v-for="version in sortedVersions" :key="version.id" class="center-list-row pe-version-row" :class="{ active: version.is_active }">
                     <div class="pe-version-main">
                       <div class="pe-version-head-row">
                         <strong>v{{ version.version }}</strong>
@@ -485,23 +485,13 @@ defineExpose({ refreshAll })
   max-height: 260px;
   overflow-y: auto;
 }
-.pe-version-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border-muted);
-}
-.pe-version-row.active {
-  border-color: var(--accent-brand);
-}
 .pe-version-head-row {
   display: flex;
   gap: 6px;
   align-items: center;
 }
 .pe-version-date {
+  margin-left: auto;
   color: var(--text-muted);
   font-size: 11px;
 }
