@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowLeft,
+  ExternalLink,
   Bot,
   Check,
   ChevronRight,
@@ -121,7 +122,9 @@ import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
 
-type SettingsSection = 'general' | 'model' | 'agents' | 'agentEvolution' | 'promptContext' | 'promptEngineering' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+
+type AgentCenterTab = 'config' | 'promptContext' | 'promptEngineering' | 'evolution'
 
 interface ProviderForm {
   id: string
@@ -192,6 +195,10 @@ function openExternal(url: string) {
 }
 
 const activeSection = ref<SettingsSection>('general')
+const agentCenterTab = ref<AgentCenterTab>('config')
+function openFullWorkbench() {
+  router.push('/agent-center')
+}
 // Pets section moved to settings/sections/PetsSection.vue (D7.2)
 
 function selectSettingsSection(section: SettingsSection) {
@@ -315,10 +322,7 @@ const providerForm = reactive<ProviderForm>({
 const navItems = computed(() => [
   { key: 'general' as const, icon: Settings2, label: t('settings.general') },
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
-  { key: 'agents' as const, icon: Workflow, label: t('settings.agents') },
-  { key: 'agentEvolution' as const, icon: Dna, label: t('settings.agentEvolution') },
-  { key: 'promptContext' as const, icon: Bot, label: t('settings.promptContext') },
-  { key: 'promptEngineering' as const, icon: GitBranch, label: t('settings.promptEngineering') },
+  { key: 'agentCenter' as const, icon: Workflow, label: t('settings.agentCenter') },
   { key: 'tools' as const, icon: Terminal, label: t('settings.toolLayer') },
   { key: 'appearance' as const, icon: Palette, label: t('settings.appearance') },
   { key: 'pets' as const, icon: PawPrint, label: t('settings.pets') },
@@ -2204,7 +2208,28 @@ import '../settings/settings.css'
           </div>
         </template>
 
-        <template v-if="activeSection === 'agents'">
+        <template v-if="activeSection === 'agentCenter'">
+          <div class="agent-center-merged">
+            <div class="center-command-bar">
+              <div>
+                <h2>{{ t('settings.agentCenter') }}</h2>
+                <p>{{ t('settings.agentCenterSubtitle') }}</p>
+              </div>
+              <div class="center-command-actions">
+                <UiButton variant="outline" size="sm" data-testid="open-agent-workbench" @click="openFullWorkbench">
+                  <ExternalLink :size="14" />
+                  <span>{{ t('agentCenter.openWorkbench', '完整工作台') }}</span>
+                </UiButton>
+              </div>
+            </div>
+            <div class="ac-subtabs" role="tablist" data-testid="agent-center-subtabs">
+              <button :class="['ac-subtab', { active: agentCenterTab === 'config' }]" role="tab" :aria-selected="agentCenterTab === 'config'" @click="agentCenterTab = 'config'">{{ t('settings.agents') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'promptContext' }]" role="tab" :aria-selected="agentCenterTab === 'promptContext'" @click="agentCenterTab = 'promptContext'">{{ t('settings.promptContext') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'promptEngineering' }]" role="tab" :aria-selected="agentCenterTab === 'promptEngineering'" @click="agentCenterTab = 'promptEngineering'">{{ t('settings.promptEngineering') }}</button>
+              <button :class="['ac-subtab', { active: agentCenterTab === 'evolution' }]" role="tab" :aria-selected="agentCenterTab === 'evolution'" @click="agentCenterTab = 'evolution'">{{ t('settings.agentEvolution') }}</button>
+            </div>
+            <template v-if="agentCenterTab === 'config'">
+
           <div class="center-page agent-center-page">
           <div class="center-command-bar">
             <div>
@@ -2724,9 +2749,16 @@ import '../settings/settings.css'
           </div>
           </div>
         </template>
-
-        <template v-if="activeSection === 'agentEvolution'">
-          <AgentEvolutionPanel />
+            <template v-else-if="agentCenterTab === 'promptContext'">
+              <PromptContextPanel />
+            </template>
+            <template v-else-if="agentCenterTab === 'promptEngineering'">
+              <PromptEngineeringPanel />
+            </template>
+            <template v-else-if="agentCenterTab === 'evolution'">
+              <AgentEvolutionPanel />
+            </template>
+          </div>
         </template>
 
         <template v-if="activeSection === 'tools'">

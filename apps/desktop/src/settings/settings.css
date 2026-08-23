@@ -4077,3 +4077,32 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .center-resource-stage { background: transparent !important; border: 0 !important; }
 .center-inspector { background: var(--surface-raised) !important; backdrop-filter: var(--material-filter-raised, none) !important; -webkit-backdrop-filter: var(--material-filter-raised, none) !important; border: 0 !important; }
 .center-workbench, .center-resource-rail, .center-resource-stage, .center-inspector { /* material roots only; rows/cards stay filter-free */ }
+
+/* Agent Center merged sub-tabs (settings nav merge, D7.3) */
+.ac-subtabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ac-subtab {
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ac-subtab:hover {
+  color: var(--text-primary);
+}
+
+.ac-subtab.active {
+  border-color: var(--accent-brand);
+  background: var(--accent-soft, rgba(46, 196, 182, 0.08));
+  color: var(--accent-brand);
+  font-weight: 600;
+}
