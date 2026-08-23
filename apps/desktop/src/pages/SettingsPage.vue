@@ -769,6 +769,11 @@ async function fetchDiscoveredModels() {
     const result = await api.refreshProviderModels(modelModalProviderId.value)
     modelModalDiscovered.value = result.models
     modelModalFetched.value = true
+    // Auto-pend models the provider does not persist yet; the user confirms via 保存.
+    const existing = new Set(modelApiProvider(modelModalProviderId.value)?.models ?? [])
+    const fresh = result.models.map((model) => model.id).filter((id) => id && !existing.has(id))
+    for (const id of fresh) addPendingModel(id)
+    if (fresh.length > 0) notify.success(t('settings.discoveredNewModels', { count: fresh.length }))
   } catch (error) {
     modelModalError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -857,9 +862,23 @@ async function putProviderModels(
 async function refreshProviderModels(providerInstanceId: string) {
   modelCenterBusy.value = true
   try {
-    await api.refreshProviderModels(providerInstanceId)
-    await loadModelCenter()
-    notify.success(t('settings.refreshModels'))
+    const result = await api.refreshProviderModels(providerInstanceId)
+    const provider = modelApiProvider(providerInstanceId)
+    const existing = new Set(provider?.models ?? [])
+    const fresh = result.models.map((model) => model.id).filter((id) => id && !existing.has(id))
+    if (!provider || fresh.length === 0) {
+      notify.info(t('settings.noNewModels'))
+      return
+    }
+    const confirmed = await confirm({
+      title: t('settings.mergeDiscoveredTitle'),
+      message: `${t('settings.confirmMergeDiscovered', { count: fresh.length })}\n${fresh.join('\n')}`,
+      confirmLabel: t('settings.confirmSave'),
+      cancelLabel: t('settings.cancel')
+    })
+    if (!confirmed) return
+    const merged = [...new Set([...(provider.models ?? []), ...fresh])]
+    await putProviderModels(provider, merged, provider.model ?? merged[0] ?? null)
   } catch (error) {
     notify.error(error, { title: t('settings.modelDiscoveryUnsupported') })
   } finally {

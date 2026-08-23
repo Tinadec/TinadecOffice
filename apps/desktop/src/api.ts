@@ -1558,7 +1558,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input)
   }),
-  refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
+  refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-providers/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
     method: 'POST'
   }),
   getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),
