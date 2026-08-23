@@ -55,6 +55,7 @@ import {
   api,
   type AgentCandidateDto,
   type AgentCenterOverviewDto,
+  type AgentDefinitionDto,
   type AgentModeDto,
   type AgentProfileDto,
   type AgentRuntimeBindingInput,
@@ -902,59 +903,61 @@ async function connectDiscoveredCli(candidate: CliDiscoveryCandidateDto) {
 async function loadAgentCenter() {
   agentCenterLoading.value = true
   dismissByKey('agent-center')
+  // getAgentCenterOverview is a deleted 404 route (docs/app-core-ui.md §4.8).
+  // Load the versioned catalog directly; overview-only projections degrade.
+  loading.value = true
   try {
-    const [overview, toolReadiness] = await Promise.all([
-      api.getAgentCenterOverview(),
-      api.getToolLayerReadiness().catch(() => null)
-    ])
-    agentCenterOverview.value = overview
-    agentModes.value = overview.modes
-    agents.value = overview.agents
-    agentCandidates.value = overview.candidates
-    const routeMap = new Map<string, ModelRouteDto>()
-    for (const agent of overview.agents) {
-      const binding = agent.runtime_binding
-      if (!binding.provider_instance_id) continue
-      routeMap.set(binding.route_purpose, {
-        purpose: binding.route_purpose,
-        provider_instance_id: binding.provider_instance_id,
-        model: binding.model_id ?? null,
-        updated_at: agent.updated_at ?? ''
-      })
+      const [definitions, modes, candidates, toolReadiness] = await Promise.all([
+        api.listAgents().catch(() => [] as AgentProfileDto[]),
+        api.listAgentModes().catch(() => [] as AgentModeDto[]),
+        api.listAgentCandidates().catch(() => [] as AgentCandidateDto[]),
+        api.getToolLayerReadiness().catch(() => null),
+      ])
+      agentCenterOverview.value = null
+      agentModes.value = modes
+      agents.value = (definitions as Array<AgentProfileDto & Partial<AgentDefinitionDto>>).map((definition) => ({
+        ...definition,
+        name: definition.display_name ?? definition.slug ?? definition.name,
+        agent_type: definition.role ?? definition.agent_type,
+        allowed_tools: definition.tool_scope
+          ? Array.isArray(definition.tool_scope)
+            ? definition.tool_scope
+            : []
+          : (definition as unknown as AgentProfileDto).allowed_tools,
+      }))
+      agentCandidates.value = candidates as unknown as AgentCandidateDto[]
+      toolLayerReadiness.value = toolReadiness
+      // Harness manifest is non-critical: fall back to the legacy tool list for older Core builds.
+      api.getHarnessManifest()
+        .then((manifest) => {
+          harnessManifest.value = manifest
+          availableTools.value = manifest.tools
+          void loadToolDiscovery()
+        })
+        .catch(() => {
+          harnessManifest.value = null
+          api.listTools()
+            .then((tools) => {
+              availableTools.value = tools
+              void loadToolDiscovery()
+            })
+            .catch(() => {
+              availableTools.value = []
+              toolSearchResults.value = []
+            })
+        })
+      const activeAgent = agents.value.find((agent) => agent.id === configuringAgentId.value)
+        ?? agents.value.find((agent) => agent.id === selectedAgentId.value)
+        ?? agents.value[0]
+      if (activeAgent) openAgentConfig(activeAgent)
+      api.executeCodeTool('project_templates')
+        .then((result) => { projectTemplates.value = projectTemplatesFromResult(result) })
+        .catch(() => { projectTemplates.value = [] })
+    } catch (error) {
+      status.error({ key: 'agent-center', source: 'agents', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadAgentCenter } })
+    } finally {
+      agentCenterLoading.value = false
     }
-    routes.value = [...routeMap.values()]
-    toolLayerReadiness.value = toolReadiness
-    // Harness manifest is non-critical: fall back to the legacy tool list for older Core builds.
-    api.getHarnessManifest()
-      .then((manifest) => {
-        harnessManifest.value = manifest
-        availableTools.value = manifest.tools
-        void loadToolDiscovery()
-      })
-      .catch(() => {
-        harnessManifest.value = null
-        api.listTools()
-          .then((tools) => {
-            availableTools.value = tools
-            void loadToolDiscovery()
-          })
-          .catch(() => {
-            availableTools.value = []
-            toolSearchResults.value = []
-          })
-      })
-    api.executeCodeTool('project_templates')
-      .then((result) => { projectTemplates.value = projectTemplatesFromResult(result) })
-      .catch(() => { projectTemplates.value = [] })
-    const activeAgent = overview.agents.find((agent) => agent.id === configuringAgentId.value)
-      ?? overview.agents.find((agent) => agent.id === selectedAgentId.value)
-      ?? overview.agents[0]
-    if (activeAgent) openAgentConfig(activeAgent)
-  } catch (error) {
-    status.error({ key: 'agent-center', source: 'agents', message: error instanceof Error ? error.message : t('settings.centerLoadFailed'), action: { label: t('settings.retry'), run: loadAgentCenter } })
-  } finally {
-    agentCenterLoading.value = false
-  }
 }
 
 async function loadToolDiscovery() {
