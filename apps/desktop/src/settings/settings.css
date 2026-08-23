@@ -4106,3 +4106,151 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   color: var(--accent-brand);
   font-weight: 600;
 }
+
+/* ── C4: agent inspector sectioned cards (identity / governance / versions) ── */
+.agent-status-badge {
+  margin-left: auto;
+}
+
+.agent-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+
+.agent-identity-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-identity-grid span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-identity-grid strong {
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.agent-governance-card {
+  margin-top: 12px;
+}
+
+.agent-governance-card > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.agent-version-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-chrome);
+}
+
+.agent-version-row.latest {
+  outline: 1px solid var(--accent-brand, rgba(46, 196, 182, 0.5));
+}
+
+.agent-version-row strong {
+  font-size: 13px;
+  min-width: 30px;
+}
+
+.agent-version-hash {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.agent-version-row time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+/* ── L1: merged Agent Center layout rhythm ── */
+.agent-center-merged {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-center-merged .ac-subtabs {
+  margin-bottom: 0;
+}
+
+/* Restore the grid layout lost with the standalone page deletion. */
+.center-page.agent-center-page {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+
+/* Lightweight toolbar row under the single merged command bar. */
+.ac-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ac-toolbar-row .agent-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* Sectioned inspector cards: title row + hairline separators. */
+.agent-config-section-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-page .agent-config-section {
+  border-top: 1px solid var(--border-muted);
+}
+
+.settings-page .agent-config-section:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.agent-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-detail-head > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-detail-head h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-source-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}

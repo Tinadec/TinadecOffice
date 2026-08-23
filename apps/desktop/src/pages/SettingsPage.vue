@@ -2121,38 +2121,31 @@ import '../settings/settings.css'
             <template v-if="agentCenterTab === 'agents'">
 
           <div class="center-page agent-center-page">
-          <div class="center-command-bar">
-            <div>
-              <span class="center-kicker">{{ t('settings.agents') }}</span>
-              <h2>{{ t('settings.agentCenter') }}</h2>
-              <p>{{ t('settings.agentCenterSubtitle') }}</p>
+          <div class="ac-toolbar-row">
+            <div class="agent-view-toggle">
+              <button
+                :class="['agent-view-btn', { active: agentViewMode === 'topology' }]"
+                :title="t('settings.topologyView')"
+                :aria-label="t('settings.topologyView')"
+                :aria-pressed="agentViewMode === 'topology'"
+                @click="agentViewMode = 'topology'"
+              >
+                <LayoutGrid :size="15" />
+              </button>
+              <button
+                :class="['agent-view-btn', { active: agentViewMode === 'list' }]"
+                :title="t('settings.listView')"
+                :aria-label="t('settings.listView')"
+                :aria-pressed="agentViewMode === 'list'"
+                @click="agentViewMode = 'list'"
+              >
+                <List :size="15" />
+              </button>
             </div>
-            <div class="center-command-actions">
-              <div class="agent-view-toggle">
-                <button
-                  :class="['agent-view-btn', { active: agentViewMode === 'topology' }]"
-                  :title="t('settings.topologyView')"
-                  :aria-label="t('settings.topologyView')"
-                  :aria-pressed="agentViewMode === 'topology'"
-                  @click="agentViewMode = 'topology'"
-                >
-                  <LayoutGrid :size="15" />
-                </button>
-                <button
-                  :class="['agent-view-btn', { active: agentViewMode === 'list' }]"
-                  :title="t('settings.listView')"
-                  :aria-label="t('settings.listView')"
-                  :aria-pressed="agentViewMode === 'list'"
-                  @click="agentViewMode = 'list'"
-                >
-                  <List :size="15" />
-                </button>
-              </div>
-              <UiButton variant="outline" size="sm" :disabled="agentCenterLoading || agentRuntimeBusy" @click="loadAgentCenter">
-                <RefreshCw :size="14" />
-                <span>{{ t('settings.refresh') }}</span>
-              </UiButton>
-            </div>
+            <UiButton variant="ghost" size="sm" :disabled="agentCenterLoading || agentRuntimeBusy" @click="loadAgentCenter">
+              <RefreshCw :size="14" />
+              <span>{{ t('settings.refresh') }}</span>
+            </UiButton>
           </div>
 
           <section class="center-overview-receipt agent-overview-receipt" :aria-label="t('settings.centerOverview')">

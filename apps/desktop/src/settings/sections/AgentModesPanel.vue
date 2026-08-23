@@ -325,6 +325,11 @@ defineExpose({ loadModes })
 .topology-rail {
   display: grid;
   gap: 10px;
+  align-content: start;
+}
+
+.topology-rail > * + * {
+  padding-top: 4px;
 }
 .ac-mode-tabs {
   display: grid;
