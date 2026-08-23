@@ -49,14 +49,6 @@ export const VAPOR_EXEMPTIONS: readonly VaporExemptionEntry[] = [
     reason: 'Teleport-based tooltip with dynamic positioning. Verify under Vapor.',
   },
   {
-    file: 'src/settings/createAsyncSettingsComponent.ts',
-    reason: 'defineComponent render-function wrapper (setup + h()). Must be runtime-verified under Vapor interop.',
-  },
-  {
-    file: 'src/settings/components/SettingsModuleBoundary.vue',
-    reason: 'defineComponent render-function error boundary. Must be runtime-verified under Vapor interop.',
-  },
-  {
     file: 'src/components/AppSplash.vue',
     reason: 'Wrapped by the root splash-exit <Transition> in App.vue. A classic Transition wrapping a Vapor SFC exercises the classic↔Vapor interop leave path (getInteropTransitionElement / vaporInteropImpl.unmount) that crashed on Ctrl+R reload — the same pattern commit 46a5988 removed the other root Transitions for. De-vapored so the Transition is classic-around-classic, the well-tested path. Zero visual change (markup/CSS untouched).',
     verdict: 'exempt',
