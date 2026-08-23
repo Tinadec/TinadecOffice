@@ -346,7 +346,7 @@ defineExpose({ loadModes })
 }
 .ac-mode-meta small {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .ac-mode-empty {
   font-size: 11px;
@@ -383,7 +383,7 @@ defineExpose({ loadModes })
 }
 .ac-version-row small {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .quiet {
   color: var(--text-muted);

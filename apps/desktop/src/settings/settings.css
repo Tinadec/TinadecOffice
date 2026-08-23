@@ -2998,8 +2998,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   overflow-wrap: anywhere;
 }
 .runtime-source-grid {
+  /* Columns come from the single auto-fit definition at the end of this file. */
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
@@ -3025,7 +3025,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 62%, transparent);
 }
 
-.runtime-source-grid > button span { color: var(--text-muted); font-size: 10px; line-height: 1.35; }
+.runtime-source-grid > button span { color: var(--text-muted); font-size: 11px; line-height: 1.35; }
 .runtime-source-picker { margin-top: 12px; }
 .runtime-source-search { position: relative; width: 100%; }
 .runtime-source-search > svg {
@@ -3061,8 +3061,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .runtime-binding-readonly span { color: var(--text-muted); }
 
 @media (max-width: 980px) {
-  .model-center-tabs,
-  .runtime-source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .model-center-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .center-resource-grid { grid-template-columns: 1fr; }
   .center-resource-list-row { grid-template-columns: 1fr; }
 }
@@ -3526,10 +3525,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   margin-bottom: 12px;
 }
 
-.runtime-source-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .runtime-source-grid > button {
   min-height: 76px;
 }
@@ -3664,6 +3659,17 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
     overflow-y: visible;
   }
 
+  /* Narrow screens: sub-tabs become a swipeable strip instead of wrapping. */
+  .ac-subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .ac-subtab {
+    white-space: nowrap;
+  }
+
   .model-center-tabs {
     display: flex;
     overflow-x: auto;
@@ -3674,8 +3680,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
     min-height: 40px;
   }
 
-  .center-resource-grid,
-  .runtime-source-grid {
+  .center-resource-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3794,9 +3799,20 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .settings-page .model-provider-card:focus-visible,
 .settings-page .model-provider-identity:focus-visible,
 .settings-page .model-provider-filters button:focus-visible,
-.settings-page .tool-discovery-card:focus-visible {
+.settings-page .tool-discovery-card:focus-visible,
+.settings-page .ac-subtab:focus-visible,
+.settings-page .agent-view-btn:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
+}
+
+.runtime-source-grid > button:hover {
+  background: var(--surface-hover);
+}
+
+.settings-page .agent-tool-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .settings-page .agent-tool-chip.active {
@@ -4115,8 +4131,11 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .agent-save-bar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-muted);
 }
 .settings-page .agent-mode-card.disabled {
   opacity: 0.55;
@@ -4333,9 +4352,17 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 }
 
 .agent-detail-head h3 {
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-detail-head p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .runtime-source-grid {

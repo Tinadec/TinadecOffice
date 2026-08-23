@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-08-23
-**Last Updated By:** opencode (D7 settings closure: model discovery auto-persist, versioned agent model strategy inherit/fixed/cli/acp, legacy overview/runtime-binding clients deleted)
-**Last Verified Commit:** HEAD of DmaEA/MVP after model-strategy commit
+**Last Updated:** 2026-08-24
+**Last Updated By:** opencode (智能体中心排版统一改版: workbench-duo 双栏骨架 / Refresh 单一入口 / evolution 归化 UiSheet+i18n)
+**Last Verified Commit:** HEAD of DmaEA/MVP during agent-center layout unification
 **Branch:** DmaEA/MVP
 
 ## OVERVIEW
@@ -59,6 +59,7 @@ apps/TinadecUI/        # TinadecUI — UI engineering suite; import as '@tinadec
 | Vapor mode | `src/lib/vue-shim.ts`, `src/vapor/**`, `src/main.ts` | Vue 3.6 RC Vapor per-SFC via `<template vapor>`; root `overrides` pin `vue`/`@vue/compiler-sfc` to `3.6.0-rc.2`. `vue-shim.ts` re-exports runtime-dom + runtime-vapor so vapor SFCs resolve in build and vitest; `main.ts` installs `vaporInteropPlugin`. Rollout batched in `vaporBatch.ts`; exemptions in `VaporExemptions.ts`. `AppSplash.vue` is exempt (not vapor): the root `splash-exit <Transition>` must be classic-around-classic, since a classic Transition wrapping a Vapor SFC exercises the classic↔Vapor interop leave path that crashed on Ctrl+R reload. |
 
 ## CONVENTIONS
+- Agent Center sub-panels share the `workbench-duo` two-pane skeleton: `.center-workbench.workbench-duo` with `.center-resource-rail` / `.center-resource-stage` children (geometry and 1100/700 breakpoints live in `settings/settings.css`). Each center has exactly ONE Refresh button, in the shell command bar, dispatched by `refreshAgentCenterTab()`; panels expose their loader instead (`loadModes`/`refreshAll`/`loadProposals`/`loadRuntimeInstances`) and never render their own refresh buttons. Version/history rows use the shared `.center-list-row` primitive (settings.css), not per-panel chrome.
 - Use `@/*` for imports from `src/*` when it improves clarity.
 - Windows system surfaces use `public/tinadec.ico`: main, Debug Studio, and detached `BrowserWindow` instances must reference it in both dev and built `dist`; keep `app.setAppUserModelId('com.tinadec.office')` for taskbar grouping.
 - Main and Debug Studio windows use `titleBarStyle: 'hidden'` without `titleBarOverlay`, preserving the custom controls while leaving the native frame available for Windows DWM corners and shadows. Detached panels remain frameless because their drag and window-control hit testing depends on the custom title bar; pet windows remain transparent and frameless.
