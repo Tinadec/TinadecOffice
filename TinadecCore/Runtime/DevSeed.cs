@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
 using TinadecCore.Models;
@@ -20,7 +21,11 @@ public static class DevSeed
 {
     public static async Task SeedIfMissingAsync(IServiceProvider services, CancellationToken ct)
     {
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("TinadecCore.Runtime.DevSeed");
         var tenant = services.GetRequiredService<ITenantContextAccessor>().Current;
+        var seededChatRoute = false;
+        var seededAgentProfiles = false;
+        var seededFormalConfig = false;
         await using (var models = await services.GetRequiredService<IDbContextFactory<ModelControlDbContext>>().CreateDbContextAsync(ct))
         {
             var chatRoute = await models.Routes.AsNoTracking().SingleOrDefaultAsync(r => r.Purpose == "chat" && r.TenantId == tenant.TenantId && r.WorkspaceId == tenant.WorkspaceId && r.DeletedAt == null, ct);
@@ -86,6 +91,7 @@ public static class DevSeed
                 models.Routes.Add(route);
                 models.RouteVersions.Add(routeVersion);
                 await models.SaveChangesAsync(ct);
+                seededChatRoute = true;
             }
         }
 
@@ -146,6 +152,7 @@ public static class DevSeed
                     }
                 }
                 await agentsDb.SaveChangesAsync(ct);
+                seededAgentProfiles = true;
             }
         }
 
@@ -228,6 +235,7 @@ var snap = JsonSerializer.Serialize(new
                 cfgDb.ModeVersions.Add(new AgentConfiguration.ModeVersionRecord { Id = Guid.NewGuid(), TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, AgentModeId = mode.Id, Version = 1, SnapshotJson = modeSnap, TopologyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(modeSnap))).ToLowerInvariant(), Status = "published", Revision = 1, CreatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId });
                 cfgDb.WorkspaceDefaults.Add(new AgentConfiguration.WorkspaceDefaultsRecord { TenantId = tenant.TenantId, WorkspaceId = tenant.WorkspaceId, DefaultAgentDefinitionId = meeting.Id, DefaultAgentModeId = mode.Id, DefaultPromptPipelineId = pipeline.Id, Status = "active", Revision = 1, CreatedAt = now2, UpdatedAt = now2 });
                 await cfgDb.SaveChangesAsync(ct);
+                seededFormalConfig = true;
 
                 AgentConfiguration.AgentDefinitionRecord NewAgent(string slug, string display, string layer, string role, string caps, string tools, string? description = null, string? systemPrompt = null) => new()
                 {
@@ -237,6 +245,13 @@ var snap = JsonSerializer.Serialize(new
                     Status = "published", Revision = 1, Version = 1, CreatedAt = now2, UpdatedAt = now2, CreatedByPrincipalId = tenant.PrincipalId, UpdatedByPrincipalId = tenant.PrincipalId
                 };
             }
+        }
+
+        if (seededChatRoute || seededAgentProfiles || seededFormalConfig)
+        {
+            logger.LogInformation(
+                "DevSeed baseline seeded (chat_route={ChatRoute}, agent_profiles={Agents}, formal_config={Formal}).",
+                seededChatRoute, seededAgentProfiles, seededFormalConfig);
         }
     }
 }
