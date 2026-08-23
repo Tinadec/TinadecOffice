@@ -1011,6 +1011,19 @@ function agentSaveErrorMessage(error: unknown): string {
   return msg
 }
 
+/** Shared versioned write path: update draft (If-Match revision) then publish a new immutable version. */
+async function publishAgentDraft(
+  agent: AgentProfileDto,
+  body: Partial<AgentDefinitionDto>,
+  revision: number | null | undefined,
+  successTitle: string
+) {
+  const draft = await api.updateAgentDraft(agent.id, body, revision != null ? String(revision) : null)
+  await api.publishAgent(agent.id, draft.revision != null ? String(draft.revision) : null)
+  await loadAgentCenter()
+  notify.success(successTitle)
+}
+
 async function updateAgentMode(agent: AgentProfileDto, mode: string) {
   if (agent.is_built_in) {
     status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
@@ -1018,20 +1031,18 @@ async function updateAgentMode(agent: AgentProfileDto, mode: string) {
   }
   busy.value = true
   try {
-    await api.saveAgent(agent.id, {
-      name: agent.name,
+    // Legacy flat `mode` has no versioned column; the operation/execution layer is the
+    // versioned identity. Keep the call surface but persist nothing beyond the current profile.
+    await publishAgentDraft(agent, {
+      display_name: agent.name,
       layer: agent.layer,
-      agent_type: agent.agent_type,
-      mode,
-      description: agent.description,
-      model_route_purpose: agent.model_route_purpose,
-      allowed_tools: agent.allowed_tools,
+      role: agent.agent_type,
+      tool_scope: agent.allowed_tools,
       capabilities: agent.capabilities,
-      system_prompt: agent.system_prompt,
+      system_prompt: agent.system_prompt ?? null,
+      description: agent.description || null,
       enabled: agent.enabled
-    }, { revision: agent.revision ?? null })
-    await loadAgentCenter()
-    notify.success(agent.name)
+    }, agent.revision, agent.name)
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
@@ -1046,20 +1057,7 @@ async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
   }
   busy.value = true
   try {
-    await api.saveAgent(agent.id, {
-      name: agent.name,
-      layer: agent.layer,
-      agent_type: agent.agent_type,
-      mode: agent.mode,
-      description: agent.description,
-      model_route_purpose: agent.model_route_purpose,
-      allowed_tools: agent.allowed_tools,
-      capabilities: agent.capabilities,
-      system_prompt: agent.system_prompt,
-      enabled
-    }, { revision: agent.revision ?? null })
-    await loadAgentCenter()
-    notify.success(agent.name)
+    await publishAgentDraft(agent, { enabled }, agent.revision, agent.name)
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
@@ -1072,22 +1070,22 @@ async function cloneAgentProfile() {
   if (!agent) return
   agentCloneBusy.value = true
   try {
-    const newId = crypto.randomUUID()
     const newName = `${agent.name} (copy)`
-    await api.saveAgent(newId, {
-      name: newName,
-      layer: agent.layer,
-      agent_type: agent.agent_type,
-      mode: agent.mode,
-      description: agentEditDescription.value || agent.description,
-      model_route_purpose: agent.model_route_purpose,
-      allowed_tools: agentEditTools.value,
+    await api.createAgentDraft({
+      slug: `${agent.id}-copy-${Date.now()}`,
+      display_name: newName,
+      layer: agent.layer as AgentDefinitionDto['layer'],
+      role: agent.agent_type,
       capabilities: agentEditCapabilities.value,
+      tool_scope: agentEditTools.value,
       system_prompt: agentEditSystemPrompt.value || agent.system_prompt || null,
+      description: agentEditDescription.value || agent.description || null,
+      model_strategy: bindingFromModelStrategy(agent).selection_kind === 'inherit' ? { kind: 'inherit' } : undefined,
       enabled: true
     })
     await loadAgentCenter()
-    const cloned = agents.value.find((a) => a.id === newId) ?? agents.value.find((a) => a.name === newName)
+    const cloned = agents.value.find((a) => (a as AgentProfileDto & { display_name?: string }).display_name === newName)
+      ?? agents.value.find((a) => a.name === newName)
     if (cloned) openAgentConfig(cloned)
     notify.success(newName)
   } catch (error) {
@@ -1106,29 +1104,25 @@ async function saveAgentProfile() {
   }
   busy.value = true
   try {
-    await api.saveAgent(agent.id, {
-      name: agent.name,
+    await publishAgentDraft(agent, {
+      display_name: agent.name,
       layer: agent.layer,
-      agent_type: agent.agent_type,
-      mode: agent.mode,
-      description: agentEditDescription.value,
-      model_route_purpose: agent.model_route_purpose,
-      allowed_tools: agentEditTools.value,
+      role: agent.agent_type,
+      tool_scope: agentEditTools.value,
       capabilities: agentEditCapabilities.value,
       system_prompt: agentEditSystemPrompt.value || null,
+      description: agentEditDescription.value || null,
       enabled: agent.enabled
-    }, { revision: agentEditRevision.value ?? agent.revision ?? null })
-    await loadAgentCenter()
-    // Re-sync edit state from the saved agent
+    }, agentEditRevision.value ?? agent.revision, agent.name)
+    // Re-sync edit state from the published agent
     const updated = agents.value.find((a) => a.id === configuringAgentId.value)
     if (updated) {
-      agentEditTools.value = [...updated.allowed_tools]
-      agentEditCapabilities.value = [...updated.capabilities]
+      agentEditTools.value = [...(updated.allowed_tools ?? [])]
+      agentEditCapabilities.value = [...(updated.capabilities ?? [])]
       agentEditSystemPrompt.value = updated.system_prompt ?? ''
-      agentEditDescription.value = updated.description
+      agentEditDescription.value = updated.description ?? ''
       agentEditRevision.value = updated.revision ?? null
     }
-    notify.success(agent.name)
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
