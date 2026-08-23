@@ -119,8 +119,9 @@ import PetPreview from '@/components/PetPreview.vue'
 import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDropdownMenu } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
-import PromptContextPanel from '@/settings/sections/PromptContextPanel.vue'
-import PromptEngineeringPanel from '@/components/PromptEngineeringPanel.vue'
+import AgentModesPanel from '@/settings/sections/AgentModesPanel.vue'
+import PromptEngineeringMerged from '@/settings/sections/PromptEngineeringMerged.vue'
+import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
@@ -129,18 +130,11 @@ type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearan
 
 type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 
-/** Lazily load per-tab data the first time a tab becomes active. */
+/** Lazily refresh per-tab data when a tab becomes active. */
 function switchAgentCenterTab(tab: AgentCenterTab) {
   agentCenterTab.value = tab
-  if (tab === 'runtime') void loadRuntimeInstances()
-  if (tab === 'prompts') void loadPromptEngineering()
-  if (tab === 'evolution') void loadEvolutionProposals()
+  if (tab === 'runtime') runtimePanelRef.value?.loadRuntimeInstances()
 }
-
-// Per-tab lazy loaders — populated as each merged tab lands (C5).
-function loadRuntimeInstances() { /* fleet list lands with the runtime tab */ }
-function loadPromptEngineering() { /* pipeline canvas + fragment library lands with the prompts tab */ }
-function loadEvolutionProposals() { /* evolution panel self-loads; refresh hook reserved */ }
 
 interface ProviderForm {
   id: string
@@ -271,6 +265,7 @@ const agentCloneBusy = ref(false)
 const agentVersionHistory = ref<AgentVersionDto[]>([])
 const agentVersionsLoading = ref(false)
 const agentPermissionRequests = ref<PermissionRequestDto[]>([])
+const runtimePanelRef = ref<InstanceType<typeof RuntimeInstancesPanel> | null>(null)
 const pendingGovernanceCount = computed(() =>
   agentPermissionRequests.value.filter((request) => ['pending', 'awaiting_delegate', 'awaiting_user', 'awaiting_approval'].includes(request.status)).length
 )
@@ -2678,19 +2673,13 @@ import '../settings/settings.css'
           </div>
         </template>
             <template v-else-if="agentCenterTab === 'prompts'">
-              <div class="center-tab-placeholder">
-                <p>{{ t('settings.promptEngineeringMigrated') }}</p>
-              </div>
+              <PromptEngineeringMerged />
             </template>
             <template v-else-if="agentCenterTab === 'modes'">
-              <div class="center-tab-placeholder">
-                <p>{{ t('settings.agentModesMigrated') }}</p>
-              </div>
+              <AgentModesPanel />
             </template>
             <template v-else-if="agentCenterTab === 'runtime'">
-              <div class="center-tab-placeholder">
-                <p>{{ t('settings.runtimeInstancesMigrated') }}</p>
-              </div>
+              <RuntimeInstancesPanel ref="runtimePanelRef" />
             </template>
             <template v-else-if="agentCenterTab === 'evolution'">
               <AgentEvolutionPanel />
