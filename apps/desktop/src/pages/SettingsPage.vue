@@ -289,7 +289,6 @@ const toolDiscoveryQuery = ref('')
 const toolDiscoverySource = ref('all')
 const toolDiscoveryRisk = ref('all')
 const toolDiscoveryLoading = ref(false)
-// promptForm/promptFragments state moved to settings/sections/PromptContextPanel.vue (D7.3)
 
 const providerForm = reactive<ProviderForm>({
   id: '',
@@ -1016,7 +1015,6 @@ async function loadToolDiscovery() {
   }
 }
 
-// PromptContext CRUD/preview moved to settings/sections/PromptContextPanel.vue (D7.3)
 
 function agentSaveErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error)
