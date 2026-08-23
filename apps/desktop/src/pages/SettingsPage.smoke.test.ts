@@ -44,6 +44,7 @@ vi.mock('vue-i18n', () => ({
 }))
 
 import SettingsPage from './SettingsPage.vue'
+import settingsPageSource from './SettingsPage.vue?raw'
 
 describe('SettingsPage smoke (D7 safety net)', () => {
   beforeEach(() => {
@@ -96,5 +97,23 @@ describe('SettingsPage smoke (D7 safety net)', () => {
 
     expect(wrapper.find('.settings-page').text()).toContain('settings.general')
     wrapper.unmount()
+  })
+
+  it('imports every section component it renders (regression: unresolved components render empty)', () => {
+    // vue-tsc cannot catch unresolved components in templates — they silently
+    // render nothing at runtime. Pin the import/usage pairing at source level.
+    const sections = [
+      'GeneralSection',
+      'LanguageSection',
+      'ApiDocsSection',
+      'AboutSection',
+      'AppearanceSection',
+      'PetsSection',
+      'ToolCenterSection',
+    ]
+    for (const name of sections) {
+      expect(settingsPageSource).toContain(`import ${name} from '@/settings/sections/${name}.vue'`)
+      expect(settingsPageSource).toContain(`<${name} />`)
+    }
   })
 })

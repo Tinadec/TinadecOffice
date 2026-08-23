@@ -47,6 +47,9 @@ import AboutSection from '@/settings/sections/AboutSection.vue'
 import GeneralSection from '@/settings/sections/GeneralSection.vue'
 import LanguageSection from '@/settings/sections/LanguageSection.vue'
 import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
+import AppearanceSection from '@/settings/sections/AppearanceSection.vue'
+import PetsSection from '@/settings/sections/PetsSection.vue'
+import ToolCenterSection from '@/settings/sections/ToolCenterSection.vue'
 import {
   api,
   type AgentCandidateDto,
