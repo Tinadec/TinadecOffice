@@ -51,7 +51,7 @@ async function loadRuntimeInstances() {
   try {
     runtimeInstances.value = await api.listRuntimeInstances()
   } catch (e) {
-    notify.error(e, { title: t('agentCenter.runtimeLoadFailed', '运行实例加载失败') })
+    notify.error(e, { title: t('agentCenter.runtimeLoadFailed') })
   }
 }
 

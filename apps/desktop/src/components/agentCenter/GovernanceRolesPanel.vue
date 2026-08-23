@@ -91,16 +91,16 @@ onMounted(load)
 <template>
   <div class="gov-roles" data-testid="gov-roles">
     <header class="gov-roles__head">
-      <h2><ShieldCheck class="size-4" /> {{ t('agentCenter.governanceRoles', 'Git governance roles') }}</h2>
+      <h2><ShieldCheck class="size-4" /> {{ t('agentCenter.governanceRoles') }}</h2>
       <span v-if="defaults?.status" class="gov-roles__defaults" data-testid="workspace-defaults-status">
-        {{ t('agentCenter.defaultsActive', 'defaults') }}: {{ defaults.status }}
+        {{ t('agentCenter.defaultsActive') }}: {{ defaults.status }}
         <span v-if="defaults.revision != null">· rev {{ defaults.revision }}</span>
       </span>
     </header>
 
     <div v-if="loadError" class="gov-roles__error">{{ loadError }}</div>
     <p v-else-if="!loading && !roleAgents.length" class="gov-roles__empty" data-testid="gov-roles-empty">
-      {{ t('agentCenter.governanceRolesMissing', 'Baseline governance roles are not seeded yet.') }}
+      {{ t('agentCenter.governanceRolesMissing') }}
     </p>
 
     <div class="gov-roles__grid">
@@ -114,7 +114,7 @@ onMounted(load)
         </div>
 
         <p v-if="agent.layer === 'operation' && !(agent.allowed_tools ?? []).length" class="gov-role-card__note" data-testid="steward-no-tools">
-          {{ t('agentCenter.stewardNoTools', 'No direct tools — this is a design decision, not a configuration error. It reviews diffs and proposes commit plans; execution happens through approved user/worker actions.') }}
+          {{ t('agentCenter.stewardNoTools') }}
         </p>
 
         <dl class="gov-role-card__facts">
@@ -123,13 +123,13 @@ onMounted(load)
         </dl>
 
         <div class="gov-role-card__tools">
-          <h4>{{ t('agentCenter.effectiveTools', 'Effective tools (declared ∩ manifest)') }}</h4>
+          <h4>{{ t('agentCenter.effectiveTools') }}</h4>
           <ul data-testid="effective-tools">
             <li v-for="row in effectiveTools(agent)" :key="row.tool" :class="{ 'tool-unavailable': !row.available }">
               <code>{{ row.tool }}</code>
-              <span v-if="!row.available" class="tool-unavailable-label">{{ t('agentCenter.providerUnavailable', 'provider unavailable') }}</span>
+              <span v-if="!row.available" class="tool-unavailable-label">{{ t('agentCenter.providerUnavailable') }}</span>
             </li>
-            <li v-if="!effectiveTools(agent).length" class="tool-none">{{ t('common.none', 'None') }}</li>
+            <li v-if="!effectiveTools(agent).length" class="tool-none">{{ t('common.none') }}</li>
           </ul>
         </div>
       </section>

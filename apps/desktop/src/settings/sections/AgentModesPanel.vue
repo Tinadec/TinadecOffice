@@ -51,7 +51,7 @@ async function loadModes() {
     modes.value = Array.isArray(list) ? list : []
     if (!selectedModeId.value && modes.value[0]) void selectMode(modes.value[0].id)
   } catch (e) {
-    notify.error(e, { title: t('agentCenter.loadModesFailed', '模式拓扑加载失败') })
+    notify.error(e, { title: t('agentCenter.loadModesFailed') })
   }
 }
 
@@ -202,7 +202,7 @@ defineExpose({ loadModes })
   <section class="center-resource-section agent-modes-panel">
     <div class="center-resource-heading">
       <div>
-        <h3>{{ t('agentCenter.tabs.topology', '模式拓扑') }}</h3>
+        <h3>{{ t('agentCenter.tabs.topology') }}</h3>
         <p>{{ t('settings.agentModesHint') }}</p>
       </div>
       <UiBadge variant="outline">{{ modeNodes.length }} · {{ modeEdges.length }}</UiBadge>
@@ -290,7 +290,7 @@ defineExpose({ loadModes })
       <div class="ac-sheet-body">
         <h3>{{ t('settings.modeVersionHistory', { name: selectedMode?.display_name ?? '—' }) }}</h3>
         <UiButton size="sm" variant="outline" :disabled="modeVersionsLoading" @click="loadModeVersions">{{ t('settings.refreshHistory') }}</UiButton>
-        <div v-if="modeVersionsLoading" class="quiet">{{ t('common.loading', '加载中…') }}</div>
+        <div v-if="modeVersionsLoading" class="quiet">{{ t('common.loading') }}</div>
         <div v-else class="ac-version-list">
           <div v-for="v in modeVersions" :key="v.id" class="ac-version-row">
             <span class="ac-version-main">
