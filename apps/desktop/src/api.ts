@@ -770,6 +770,14 @@ export interface AgentProfileDto {
   is_built_in: boolean;
   revision?: number | null;
   updated_at: string | null;
+  /** Versioned projection (Core ToAgentDto) — present on GET /agents since D7.4. */
+  slug?: string;
+  display_name?: string;
+  role?: string;
+  tool_scope?: string[] | string | null;
+  model_strategy?: Record<string, unknown> | string | null;
+  status?: string;
+  version?: number | null;
 }
 
 export interface AgentModeDto {

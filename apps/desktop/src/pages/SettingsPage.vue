@@ -59,6 +59,8 @@ import {
   type AgentModeDto,
   type AgentProfileDto,
   type AgentRuntimeSelectionKind,
+  type AgentVersionDto,
+  type PermissionRequestDto,
   type CenterDiagnosticDto,
   type CliDiscoveryCandidateDto,
   type AcpAdapterDto,
@@ -265,6 +267,13 @@ const agentToolQuery = ref('')
 const agentToolSourceFilter = ref('all')
 const agentToolRiskFilter = ref('all')
 const agentCloneBusy = ref(false)
+// Versioned profile surface: published version timeline + pending permission requests.
+const agentVersionHistory = ref<AgentVersionDto[]>([])
+const agentVersionsLoading = ref(false)
+const agentPermissionRequests = ref<PermissionRequestDto[]>([])
+const pendingGovernanceCount = computed(() =>
+  agentPermissionRequests.value.filter((request) => ['pending', 'awaiting_delegate', 'awaiting_user', 'awaiting_approval'].includes(request.status)).length
+)
 const selectedProviderDetailId = ref('')
 const modelProviderFilter = ref<ModelCenterFilter>('all')
 const modelProviderQuery = ref('')
@@ -1188,11 +1197,33 @@ function openAgentConfig(agent: AgentProfileDto) {
   agentRuntimeModelQuery.value = ''
   agentRuntimeCliQuery.value = ''
   agentRuntimeAcpQuery.value = ''
+  void loadAgentVersionHistory(agent.id)
   nextTick(() => {
     if (!window.matchMedia('(max-width: 760px)').matches) return
     const panel = document.querySelector('.agent-detail-panel')
     panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
+}
+
+/** Published version timeline for the configured agent (immutable snapshots). */
+async function loadAgentVersionHistory(agentId: string) {
+  agentVersionsLoading.value = true
+  try {
+    agentVersionHistory.value = await api.listAgentVersions(agentId)
+  } catch {
+    agentVersionHistory.value = []
+  } finally {
+    agentVersionsLoading.value = false
+  }
+}
+
+/** Pending governance requests surfaced in the inspector (approval visibility). */
+async function loadAgentPermissionRequests() {
+  try {
+    agentPermissionRequests.value = await api.listPermissionRequests()
+  } catch {
+    agentPermissionRequests.value = []
+  }
 }
 
 function closeAgentConfig() {
@@ -2289,29 +2320,45 @@ import '../settings/settings.css'
             <div v-if="configuringAgent" class="agent-detail-panel">
               <div class="agent-detail-head">
                 <div class="agent-card-icon" :class="{ execution: configuringAgent.layer === 'execution' }">
-                  <component :is="configuringAgent.layer === 'planning' ? Workflow : Cpu" :size="20" />
+                  <component :is="configuringAgent.layer === 'operation' ? Workflow : Cpu" :size="20" />
                 </div>
                 <div>
-                  <h3>{{ agentTypeLabel(configuringAgent.agent_type) }}</h3>
+                  <h3>{{ configuringAgent.name }}</h3>
                   <p>{{ agentTypeLabel(configuringAgent.agent_type) }} · {{ agentLayerLabel(configuringAgent.layer) }}</p>
                 </div>
+                <UiBadge :variant="configuringAgent.status === 'published' ? 'default' : 'secondary'" class="agent-status-badge">
+                  {{ configuringAgent.status === 'published' ? t('settings.agentStatusPublished', { version: configuringAgent.version ?? 1 }) : t('settings.agentStatusDraft') }}
+                </UiBadge>
                 <UiButton variant="ghost" size="icon" :title="t('settings.closeConfig')" @click="closeAgentConfig">
                   <X :size="16" />
                 </UiButton>
               </div>
 
-              <!-- 启用开关 — 内置只读 -->
-              <div class="agent-config-switch">
-                <div>
-                  <strong>{{ t('settings.agentEnabled') }}</strong>
-                  <span>{{ configuringAgent.is_built_in ? t('settings.builtInAgent') : configuringAgent.id }}</span>
-                  <small v-if="configuringAgent.is_built_in" class="agent-builtin-label">{{ t('settings.builtInCloneHint') }}</small>
+              <!-- 身份与状态 — 启用开关 + 标识 -->
+              <div class="agent-config-section">
+                <div class="agent-config-section-title">{{ t('settings.agentIdentitySection') }}</div>
+                <div class="agent-identity-grid">
+                  <div>
+                    <span>{{ t('settings.agentSlugLabel') }}</span>
+                    <strong>{{ (configuringAgent as AgentProfileDto & { slug?: string }).slug ?? configuringAgent.id.slice(0, 8) }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ t('settings.routePurpose') }}</span>
+                    <strong>{{ configuringRuntimeBinding?.route_purpose ?? configuringAgent.model_route_purpose ?? '—' }}</strong>
+                  </div>
                 </div>
-                <UiSwitch
-                  :model-value="configuringAgent.enabled"
-                  :disabled="busy || configuringAgent.is_built_in"
-                  @update:model-value="setAgentEnabled(configuringAgent, $event)"
-                />
+                <div class="agent-config-switch">
+                  <div>
+                    <strong>{{ t('settings.agentEnabled') }}</strong>
+                    <span>{{ configuringAgent.is_built_in ? t('settings.builtInAgent') : t('settings.agentEnabledHint') }}</span>
+                    <small v-if="configuringAgent.is_built_in" class="agent-builtin-label">{{ t('settings.builtInCloneHint') }}</small>
+                  </div>
+                  <UiSwitch
+                    :model-value="configuringAgent.enabled"
+                    :disabled="busy || configuringAgent.is_built_in"
+                    @update:model-value="setAgentEnabled(configuringAgent, $event)"
+                  />
+                </div>
               </div>
 
               <!-- 运行模式 — 统一走 PUT /agents -->
@@ -2467,7 +2514,7 @@ import '../settings/settings.css'
               <!-- 工具绑定 — 完整面板（分组/风险/审批） -->
               <div class="agent-config-section">
                 <div class="agent-config-section-title">
-                  {{ t('settings.agentTools') }}
+                  {{ t('settings.agentToolsPermissions') }}
                   <UiBadge variant="outline">{{ agentToolSelectionSummary.selected }}/{{ agentToolSelectionSummary.total }}</UiBadge>
                   <UiBadge v-if="agentToolSelectionSummary.approval > 0" variant="secondary">{{ t('settings.approvalRequired') }} {{ agentToolSelectionSummary.approval }}</UiBadge>
                 </div>
@@ -2520,7 +2567,21 @@ import '../settings/settings.css'
                 <p v-if="groupedAgentTools.length === 0" class="quiet">{{ t('settings.noTools') }}</p>
                 <div class="agent-tool-bulk">
                   <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.filter(t => !t.requires_approval).map(t => t.id)">{{ t('settings.selectReadOnlyTools') }}</UiButton>
+                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.map(t => t.id)">{{ t('settings.selectAllReadWrite') }}</UiButton>
+                  <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = manifestToolList.filter(t => !t.requires_approval).map(t => t.id), agentEditTools.push('*')">{{ t('settings.allowAllTools') }}</UiButton>
                   <UiButton variant="ghost" size="sm" :disabled="configuringAgent.is_built_in" @click="agentEditTools = []">{{ t('settings.clearSelection') }}</UiButton>
+                </div>
+
+                <!-- 治理可见性：审批升级路径说明 + 待处理授权 -->
+                <div class="runtime-binding-readonly agent-governance-card">
+                  <ShieldCheck :size="16" />
+                  <div>
+                    <strong>{{ t('settings.agentGovernanceTitle') }}</strong>
+                    <span>{{ t('settings.agentGovernanceHint') }}</span>
+                  </div>
+                  <UiBadge :variant="pendingGovernanceCount > 0 ? 'default' : 'outline'">
+                    {{ t('settings.pendingGovernance', { count: pendingGovernanceCount }) }}
+                  </UiBadge>
                 </div>
               </div>
 
@@ -2555,6 +2616,27 @@ import '../settings/settings.css'
                     :placeholder="t('settings.agentSystemPromptPlaceholder')"
                   ></textarea>
                 </div>
+              </div>
+
+              <!-- 版本历史 — 不可变发布快照 -->
+              <div class="agent-config-section">
+                <div class="agent-config-section-title">
+                  {{ t('settings.agentVersionHistory') }}
+                  <UiBadge variant="outline">{{ agentVersionHistory.length }}</UiBadge>
+                </div>
+                <p class="agent-config-hint">{{ t('settings.agentVersionHistoryHint') }}</p>
+                <div v-if="agentVersionsLoading" class="center-loading-state">
+                  <span>{{ t('common.loading') }}</span>
+                </div>
+                <div v-else-if="agentVersionHistory.length > 0" class="agent-version-list">
+                  <div v-for="version in [...agentVersionHistory].reverse()" :key="version.id" class="agent-version-row" :class="{ latest: version.version === configuringAgent.version }">
+                    <strong>v{{ version.version }}</strong>
+                    <span class="agent-version-hash">{{ (version as AgentVersionDto & { content_hash?: string }).content_hash?.slice(0, 8) ?? '—' }}</span>
+                    <time>{{ new Date(version.created_at).toLocaleString() }}</time>
+                    <UiBadge v-if="version.version === configuringAgent.version" variant="default">{{ t('settings.agentVersionCurrent') }}</UiBadge>
+                  </div>
+                </div>
+                <p v-else class="quiet">{{ t('settings.noVersionsPublished') }}</p>
               </div>
 
               <!-- 保存按钮 — 克隆后编辑 -->
