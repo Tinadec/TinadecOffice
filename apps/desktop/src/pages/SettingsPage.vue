@@ -62,11 +62,13 @@ import {
   type AgentRuntimeSelectionKind,
   type CenterDiagnosticDto,
   type CliDiscoveryCandidateDto,
+  type AcpAdapterDto,
   type ModelCatalogReadinessReceiptDto,
   type ModelCenterAcpRuntimeDto,
   type ModelCenterOverviewDto,
   type ModelProviderReadinessDto,
   type ModelProviderInstanceDto,
+  type ModelProviderTemplateDto,
   type ModelReadinessReceiptDto,
   type ModelRouteDto,
   type ModelCenterApiConnectionDto,
@@ -93,6 +95,7 @@ import {
   type ModelCenterFilter
 } from '../modelCenterView'
 import {
+  aggregateModelCenterOverview,
   bindingForAgent,
   legacyRouteWarning,
   modelOptionKey,
@@ -698,7 +701,23 @@ async function loadModelCenter() {
   modelCenterLoading.value = true
   dismissByKey('model-center')
   try {
-    const overview = await api.getModelCenterOverview()
+    // model-center/overview BFF was deleted; derive the same projection from versioned APIs.
+    const [providerRows, templates, routes, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt] = await Promise.all([
+      api.listModelProviders().catch(() => [] as ModelProviderInstanceDto[]),
+      api.listModelProviderTemplates().catch(() => [] as ModelProviderTemplateDto[]),
+      api.listModelRoutes().catch(() => [] as ModelRouteDto[]),
+      api.listAcpAdapters().catch(() => [] as AcpAdapterDto[]),
+      api.getModelReadiness().catch(() => null),
+      api.getModelCatalogReadiness().catch(() => null)
+    ])
+    const overview = aggregateModelCenterOverview({
+      providers: providerRows,
+      templates,
+      routes,
+      acp_adapters: acpAdapters,
+      model_readiness: modelReadinessReceipt,
+      catalog_readiness: catalogReadinessReceipt
+    })
     modelCenterOverview.value = overview
     const instances = providersFromOverview(overview)
     providers.value = instances
