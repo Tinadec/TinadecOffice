@@ -169,9 +169,6 @@ defineExpose({ loadRuntimeInstances })
   display: grid;
   gap: 12px;
 }
-.ac-runtime-toolbar {
-  margin-bottom: 4px;
-}
 .ac-runtime-list {
   display: grid;
   gap: 8px;

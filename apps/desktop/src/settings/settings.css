@@ -1015,7 +1015,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color) 72%, transparent);
 
 .model-section-header h3 {
   margin: 0;
-  font-size: 14px;
+  /* Group header sits BELOW its parent pane title (.center-pane-heading strong = 14px). */
+  font-size: 13px;
   color: var(--text-primary);
 }
 .model-provider-grid {
@@ -2925,6 +2926,8 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .center-resource-heading h3,
 .center-resource-heading p { margin: 0; }
+/* Explicit pane-title size — previously fell through to browser default (~15px). */
+.center-resource-heading h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .center-resource-heading p { margin-top: 4px; color: var(--text-muted); font-size: 12px; }
 
 .center-resource-grid {
@@ -3079,9 +3082,12 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 .center-command-bar h2 {
   margin-top: 2px;
   color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.2;
+  /* Match the section-title ladder (.settings-content h2) so switching
+     centers never reflows the page top. */
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .center-command-bar p {
@@ -3091,7 +3097,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   line-height: 1.45;
 }
 
-.center-kicker,
 .center-pane-heading span {
   color: var(--text-muted);
   font-size: 11px;
@@ -3279,7 +3284,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
 
 .center-pane-heading strong {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -4099,7 +4104,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
 }
 
 .ac-subtab {
@@ -4198,20 +4202,23 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   margin-left: auto;
 }
 
-/* ── L1: merged Agent Center layout rhythm ── */
+/* ── L1: merged Agent Center layout rhythm ──
+   The merged container's grid gap (12px) is the ONLY vertical rhythm —
+   command bar / receipt margins are a model-center leftover and would double here. */
 .agent-center-merged {
   display: grid;
   gap: 12px;
 }
 
-.agent-center-merged .ac-subtabs {
+.agent-center-merged .center-command-bar,
+.agent-center-merged .center-overview-receipt {
   margin-bottom: 0;
 }
 
 /* Restore the grid layout lost with the standalone page deletion. */
 .center-page.agent-center-page {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-items: start;
 }
 

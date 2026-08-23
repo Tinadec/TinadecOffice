@@ -1491,7 +1491,6 @@ import '../settings/settings.css'
           <div class="center-page model-center-page">
           <div class="center-command-bar">
             <div>
-              <span class="center-kicker">{{ t('settings.model') }}</span>
               <h2>{{ t('settings.modelCenter') }}</h2>
               <p>{{ t('settings.modelCenterSubtitle') }}</p>
             </div>
@@ -2100,7 +2099,6 @@ import '../settings/settings.css'
           <div class="agent-center-merged">
             <div class="center-command-bar">
               <div>
-                <span class="center-kicker">{{ t('settings.agents') }}</span>
                 <h2>{{ t('settings.agentCenter') }}</h2>
                 <p>{{ t('settings.agentCenterSubtitle') }}</p>
               </div>
