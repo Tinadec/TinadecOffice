@@ -683,14 +683,21 @@ public static class AgentConfigurationEndpoints
             string? kind = null;
             if (root.TryGetProperty("kind", out var k)) kind = k.GetString()?.Trim().ToLowerInvariant();
             else if (root.TryGetProperty("selection_kind", out var sk)) kind = sk.GetString()?.Trim().ToLowerInvariant();
-            if (kind is not ("inherit" or "fixed" or "parent_select"))
-                return "model_strategy.kind must be inherit|fixed|parent_select";
+            if (kind is not ("inherit" or "fixed" or "parent_select" or "cli" or "acp"))
+                return "model_strategy.kind must be inherit|fixed|parent_select|cli|acp";
             if (kind == "fixed")
             {
                 if (!root.TryGetProperty("provider_instance_id", out var pid) || string.IsNullOrWhiteSpace(pid.GetString()))
                     return "fixed model_strategy requires provider_instance_id";
                 if (!root.TryGetProperty("model", out var m) && !root.TryGetProperty("model_id", out m) || string.IsNullOrWhiteSpace(m.GetString()))
                     return "fixed model_strategy requires model";
+            }
+            if (kind is "cli" or "acp")
+            {
+                var hasRuntime = (root.TryGetProperty("runtime_id", out var rid) && !string.IsNullOrWhiteSpace(rid.GetString()))
+                    || (root.TryGetProperty("provider_instance_id", out var cpid) && !string.IsNullOrWhiteSpace(cpid.GetString()));
+                if (!hasRuntime)
+                    return $"{kind} model_strategy requires runtime_id";
             }
             return null;
         }

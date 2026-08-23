@@ -712,13 +712,6 @@ export interface ModelCenterOverviewDto {
 
 export type AgentRuntimeSelectionKind = 'inherit' | 'fixed_model' | 'provider_auto' | 'cli' | 'acp';
 
-export type AgentRuntimeBindingInput =
-  | { selection_kind: 'inherit' }
-  | { selection_kind: 'fixed_model'; provider_instance_id: string; model_id: string }
-  | { selection_kind: 'provider_auto'; provider_instance_id: string }
-  | { selection_kind: 'cli'; runtime_id: string }
-  | { selection_kind: 'acp'; runtime_id: string };
-
 export interface AgentRuntimeBindingWarningDto {
   code: 'LEGACY_SHARED_ROUTE' | string;
   message: string;
@@ -1619,20 +1612,13 @@ export const api = {
   connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
-  /** @deprecated legacy center overview — use new 5-tab endpoints */
-  getAgentCenterOverview: () => request<AgentCenterOverviewDto>('/api/v1/agent-center/overview'),
-  /** @deprecated legacy binding — mode_version controls routing now */
-  saveAgentRuntimeBinding: (agentId: string, binding: AgentRuntimeBindingInput) => request<AgentRuntimeBindingDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/runtime-binding`, {
-    method: 'PUT',
-    body: JSON.stringify(binding)
-  }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
   listAgents: () => request<AgentProfileDto[]>('/api/v1/agents'),
   // ── New 5-tab config objects (snake_case, If-Match via etag) ──
   listAgentDefinitions: () => request<AgentDefinitionDto[]>('/api/v1/agents'),
   createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
   updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
-  publishAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
   archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   getWorkspaceDefaults: () => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults'),
   listAgentVersions: (id: string) => request<AgentVersionDto[]>(`/api/v1/agents/${encodeURIComponent(id)}/versions`),

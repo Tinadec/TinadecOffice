@@ -159,6 +159,77 @@ export function bindingForAgent(overview: AgentCenterOverviewDto | null, agentId
   return overview?.agents.find((agent) => agent.id === agentId)?.runtime_binding ?? null
 }
 
+/**
+ * Derive the runtime-binding view from the versioned AgentDefinition.model_strategy.
+ * Core kinds: inherit | fixed | parent_select | cli | acp. parent_select is a
+ * runtime-only behavior and renders as inherit.
+ */
+export function bindingFromModelStrategy(
+  agent: { id: string; model_route_purpose?: string | null; model_strategy?: unknown }
+): AgentRuntimeBindingDto {
+  const strategy = (agent.model_strategy && typeof agent.model_strategy === 'object')
+    ? agent.model_strategy as Record<string, unknown>
+    : typeof agent.model_strategy === 'string' ? { kind: agent.model_strategy } : null
+  const rawKind = strategy && typeof strategy.kind === 'string'
+    ? strategy.kind.toLowerCase()
+    : strategy && typeof strategy.selection_kind === 'string' ? String(strategy.selection_kind).toLowerCase() : 'inherit'
+  const routePurpose = agent.model_route_purpose ?? ''
+
+  if (rawKind === 'fixed') {
+    const fixedStrategy = (strategy ?? {}) as Record<string, unknown>
+    return {
+      selection_kind: 'fixed_model',
+      source: 'agent_binding',
+      writable: true,
+      route_purpose: routePurpose,
+      runtime_kind: 'model',
+      runtime_id: typeof fixedStrategy.provider_instance_id === 'string' ? fixedStrategy.provider_instance_id : null,
+      provider_instance_id: typeof fixedStrategy.provider_instance_id === 'string' ? fixedStrategy.provider_instance_id : null,
+      model_id: typeof fixedStrategy.model === 'string'
+        ? fixedStrategy.model
+        : typeof fixedStrategy.model_id === 'string' ? fixedStrategy.model_id : null,
+      model_source: fixedStrategy.model || fixedStrategy.model_id ? 'route_override' : 'unset',
+      shared_agent_ids: [],
+      warnings: []
+    }
+  }
+
+  if ((rawKind === 'cli' || rawKind === 'acp') && strategy) {
+    const rawRuntime = typeof strategy.runtime_id === 'string'
+      ? strategy.runtime_id
+      : typeof strategy.provider_instance_id === 'string' ? strategy.provider_instance_id : null
+    const legacy = rawRuntime?.startsWith('legacy_provider:') ?? false
+    const providerId = legacy ? rawRuntime!.slice('legacy_provider:'.length) : rawRuntime
+    return {
+      selection_kind: rawKind,
+      source: 'agent_binding',
+      writable: true,
+      route_purpose: routePurpose,
+      runtime_kind: rawKind,
+      runtime_id: rawRuntime,
+      provider_instance_id: providerId,
+      model_id: null,
+      model_source: 'unset',
+      shared_agent_ids: [],
+      warnings: []
+    }
+  }
+
+  return {
+    selection_kind: 'inherit',
+    source: rawKind === 'parent_select' ? 'runtime_parent_select' : 'agent_binding',
+    writable: true,
+    route_purpose: routePurpose,
+    runtime_kind: 'unresolved',
+    runtime_id: null,
+    provider_instance_id: null,
+    model_id: null,
+    model_source: 'unset',
+    shared_agent_ids: [],
+    warnings: []
+  }
+}
+
 export function runtimeSourceSummary(binding?: AgentRuntimeBindingDto | null) {
   if (!binding || binding.runtime_kind === 'unresolved') return ''
   const name = binding.provider_display_name ?? binding.runtime_id ?? binding.route_purpose

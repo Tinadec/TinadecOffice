@@ -118,7 +118,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             JsonElement strat;
             try { strat = JsonDocument.Parse(agent.ModelStrategyJson).RootElement; } catch { return null; }
             var kind = strat.TryGetProperty("kind", out var k) ? k.GetString()?.Trim().ToLowerInvariant() : strat.TryGetProperty("selection_kind", out var sk) ? sk.GetString()?.Trim().ToLowerInvariant() : "inherit";
-            if (kind is not ("inherit" or "fixed" or "parent_select")) kind = "inherit";
+            if (kind is not ("inherit" or "fixed" or "parent_select" or "cli" or "acp")) kind = "inherit";
             string? resolvedModel = null;
             string? resolvedProvider = null;
             string log = kind;
@@ -131,6 +131,24 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 log = $"fixed:{provIdStr}:{model}";
                 if (Guid.TryParse(provIdStr, out var provId))
                     resolved = await TryBuildResolutionFromProviderAsync(provId, model, ct).ConfigureAwait(false);
+            }
+            else if (kind is "cli" or "acp")
+            {
+                var runtimeId = strat.TryGetProperty("runtime_id", out var rt) ? rt.GetString() : strat.TryGetProperty("provider_instance_id", out var rp) ? rp.GetString() : null;
+                // Legacy ACP runtimes carry a "legacy_provider:" prefix; strip to the provider instance id.
+                if (runtimeId is not null && runtimeId.StartsWith("legacy_provider:", StringComparison.OrdinalIgnoreCase))
+                    runtimeId = runtimeId["legacy_provider:".Length..];
+                if (Guid.TryParse(runtimeId, out var runtimeProviderId))
+                {
+                    resolved = await TryBuildResolutionFromProviderAsync(runtimeProviderId, null, ct).ConfigureAwait(false);
+                    resolvedModel = resolved?.Model;
+                    resolvedProvider = runtimeId;
+                    log = $"{kind}:{runtimeId}";
+                }
+                else
+                {
+                    log = $"{kind}: runtime_id '{runtimeId}' is not a provider instance id";
+                }
             }
             else if (kind == "parent_select")
             {

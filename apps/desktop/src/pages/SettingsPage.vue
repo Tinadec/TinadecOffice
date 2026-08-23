@@ -58,7 +58,6 @@ import {
   type AgentDefinitionDto,
   type AgentModeDto,
   type AgentProfileDto,
-  type AgentRuntimeBindingInput,
   type AgentRuntimeSelectionKind,
   type CenterDiagnosticDto,
   type CliDiscoveryCandidateDto,
@@ -96,7 +95,7 @@ import {
 } from '../modelCenterView'
 import {
   aggregateModelCenterOverview,
-  bindingForAgent,
+  bindingFromModelStrategy,
   legacyRouteWarning,
   modelOptionKey,
   providersFromOverview,
@@ -240,12 +239,10 @@ const selectedAgentId = ref('')
 const configuringAgentId = ref('')
 const modelCenterSection = ref<ModelCenterSection>('api')
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
-const agentRuntimeProviderId = ref('')
 const agentRuntimeModelKey = ref('')
 const agentRuntimeCliId = ref('')
 const agentRuntimeAcpId = ref('')
 const agentRuntimeModelQuery = ref('')
-const agentRuntimeProviderQuery = ref('')
 const agentRuntimeCliQuery = ref('')
 const agentRuntimeAcpQuery = ref('')
 const agentEditTools = ref<string[]>([])
@@ -396,7 +393,7 @@ const firstNeedsKeyProvider = computed(() =>
 )
 
 const agentRuntimeBindings = computed(() =>
-  Object.fromEntries((agentCenterOverview.value?.agents ?? []).map((agent) => [agent.id, agent.runtime_binding]))
+  Object.fromEntries(agents.value.map((agent) => [agent.id, bindingFromModelStrategy(agent)]))
 )
 const topologyAgentLabels = computed(() => Object.fromEntries(
   agents.value.map((agent) => [agent.id, agentTypeLabel(agent.agent_type)])
@@ -405,14 +402,12 @@ const topologyCandidateLabels = computed(() => Object.fromEntries(
   agentCandidates.value.map((candidate) => [candidate.id, agentTypeLabel(candidate.agent_type)])
 ))
 const configuringRuntimeBinding = computed(() =>
-  bindingForAgent(agentCenterOverview.value, configuringAgentId.value)
+  agents.value.find((agent) => agent.id === configuringAgentId.value)
+    ? bindingFromModelStrategy(agents.value.find((agent) => agent.id === configuringAgentId.value)!)
+    : null
 )
 const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
-const runtimeBindingWritable = computed(() =>
-  Boolean(agentCenterOverview.value?.capabilities.agent_runtime_binding_write && configuringRuntimeBinding.value?.writable)
-)
 const runtimeModels = computed(() => agentCenterOverview.value?.runtime_sources.models ?? modelCenterOverview.value?.models ?? [])
-const runtimeProviders = computed(() => agentCenterOverview.value?.runtime_sources.providers ?? modelCenterOverview.value?.api_connections ?? [])
 const runtimeCliOptions = computed(() => agentCenterOverview.value?.runtime_sources.cli_runtimes ?? modelCenterOverview.value?.cli_runtimes ?? [])
 const runtimeAcpOptions = computed(() => agentCenterOverview.value?.runtime_sources.acp_runtimes ?? modelCenterOverview.value?.acp_runtimes ?? [])
 const modelCenterDiagnostics = computed(() => modelCenterOverview.value?.diagnostics ?? [])
@@ -426,14 +421,7 @@ const filteredRuntimeModels = computed(() => runtimeModels.value.filter((model) 
   ...model.configuration_sources,
   ...model.route_purposes
 )))
-const filteredRuntimeProviders = computed(() => runtimeProviders.value.filter((provider) => runtimeQueryMatches(
-  agentRuntimeProviderQuery.value,
-  provider.display_name,
-  provider.provider_instance_id,
-  provider.driver,
-  provider.status,
-  provider.model
-)))
+
 const filteredRuntimeCliOptions = computed(() => runtimeCliOptions.value.filter((runtime) => runtimeQueryMatches(
   agentRuntimeCliQuery.value,
   runtime.display_name,
@@ -1184,18 +1172,16 @@ function openAgentConfig(agent: AgentProfileDto) {
   agentToolQuery.value = ''
   agentToolSourceFilter.value = 'all'
   agentToolRiskFilter.value = 'all'
-  const binding = bindingForAgent(agentCenterOverview.value, agent.id)
+  const binding = bindingFromModelStrategy(agent)
   agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
-  agentRuntimeProviderId.value = binding?.provider_instance_id ?? runtimeProviders.value[0]?.provider_instance_id ?? ''
   agentRuntimeModelKey.value = binding?.provider_instance_id && binding.model_id
     ? modelOptionKey(binding.provider_instance_id, binding.model_id)
     : runtimeModels.value[0]
       ? modelOptionKey(runtimeModels.value[0].provider_instance_id, runtimeModels.value[0].model_id)
       : ''
-  agentRuntimeCliId.value = binding?.runtime_kind === 'cli' ? binding.runtime_id ?? '' : runtimeCliOptions.value[0]?.runtime_id ?? ''
-  agentRuntimeAcpId.value = binding?.runtime_kind === 'acp' ? binding.runtime_id ?? '' : runtimeAcpOptions.value[0]?.runtime_id ?? ''
+  agentRuntimeCliId.value = binding?.runtime_kind === 'cli' ? binding.provider_instance_id ?? '' : runtimeCliOptions.value[0]?.runtime_id ?? ''
+  agentRuntimeAcpId.value = binding?.runtime_kind === 'acp' ? binding.provider_instance_id ?? '' : runtimeAcpOptions.value[0]?.runtime_id ?? ''
   agentRuntimeModelQuery.value = ''
-  agentRuntimeProviderQuery.value = ''
   agentRuntimeCliQuery.value = ''
   agentRuntimeAcpQuery.value = ''
   nextTick(() => {
@@ -1215,38 +1201,41 @@ function openAgentConfigById(agentId: string) {
   if (agent) openAgentConfig(agent)
 }
 
-function runtimeBindingInput(): AgentRuntimeBindingInput | null {
-  if (agentRuntimeSelection.value === 'inherit') return { selection_kind: 'inherit' }
-  if (agentRuntimeSelection.value === 'provider_auto') {
-    return agentRuntimeProviderId.value
-      ? { selection_kind: 'provider_auto', provider_instance_id: agentRuntimeProviderId.value }
-      : null
-  }
+/** Build the Core model_strategy JSON from the current runtime-source selection. */
+function agentModelStrategy(): Record<string, unknown> | null {
   if (agentRuntimeSelection.value === 'cli') {
-    return agentRuntimeCliId.value ? { selection_kind: 'cli', runtime_id: agentRuntimeCliId.value } : null
+    return agentRuntimeCliId.value ? { kind: 'cli', runtime_id: agentRuntimeCliId.value } : null
   }
   if (agentRuntimeSelection.value === 'acp') {
-    return agentRuntimeAcpId.value ? { selection_kind: 'acp', runtime_id: agentRuntimeAcpId.value } : null
+    return agentRuntimeAcpId.value ? { kind: 'acp', runtime_id: agentRuntimeAcpId.value } : null
   }
-
-  const selected = runtimeModels.value.find((model) =>
-    modelOptionKey(model.provider_instance_id, model.model_id) === agentRuntimeModelKey.value
-  )
-  return selected
-    ? { selection_kind: 'fixed_model', provider_instance_id: selected.provider_instance_id, model_id: selected.model_id }
-    : null
+  if (agentRuntimeSelection.value === 'fixed_model') {
+    const selected = runtimeModels.value.find((model) =>
+      modelOptionKey(model.provider_instance_id, model.model_id) === agentRuntimeModelKey.value
+    )
+    return selected
+      ? { kind: 'fixed', provider_instance_id: selected.provider_instance_id, model: selected.model_id }
+      : null
+  }
+  // provider_auto has no Core persistence; inherit covers it.
+  return { kind: 'inherit' }
 }
 
-async function saveAgentRuntimeBinding(agent: AgentProfileDto) {
-  const binding = runtimeBindingInput()
-  if (!binding) return
+function agentStrategySaveable(): boolean {
+  return agentModelStrategy() !== null
+}
+
+async function saveAgentModelStrategy(agent: AgentProfileDto) {
+  const strategy = agentModelStrategy()
+  if (!strategy) return
   agentRuntimeBusy.value = true
   try {
-    await api.saveAgentRuntimeBinding(agent.id, binding)
+    const draft = await api.updateAgentDraft(agent.id, { model_strategy: strategy } as Partial<AgentDefinitionDto>, agent.revision != null ? String(agent.revision) : null)
+    await api.publishAgent(agent.id, draft.revision != null ? String(draft.revision) : null)
     await loadAgentCenter()
-    notify.success(agent.name)
+    notify.success(t('settings.agentModelStrategyPublished', { name: agent.name }))
   } catch (error) {
-    notify.error(error, { title: agent.name })
+    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
     agentRuntimeBusy.value = false
   }
@@ -2145,14 +2134,14 @@ import '../settings/settings.css'
               </div>
               <UiBadge variant="default">{{ t('settings.writable') }}</UiBadge>
             </div>
-            <div class="center-receipt-item preview" :class="{ ready: agentCenterOverview?.capabilities.agent_runtime_binding_write }">
+            <div class="center-receipt-item preview" :class="{ ready: true }">
               <Workflow :size="17" />
               <div>
                 <span>{{ t('settings.runtimePreviewOnly') }}</span>
                 <strong>{{ t('settings.runtimePreviewOnlyHint') }}</strong>
               </div>
-              <UiBadge :variant="agentCenterOverview?.capabilities.agent_runtime_binding_write ? 'default' : 'secondary'">
-                {{ agentCenterOverview?.capabilities.agent_runtime_binding_write ? t('settings.writable') : t('settings.previewOnly') }}
+              <UiBadge variant="default">
+                {{ t('settings.writable') }}
               </UiBadge>
             </div>
             <div class="center-receipt-item configured">
@@ -2165,7 +2154,7 @@ import '../settings/settings.css'
             </div>
           </section>
 
-          <div v-if="agentCenterLoading && !agentCenterOverview" class="center-loading-state" aria-live="polite">
+          <div v-if="agentCenterLoading && agents.length === 0" class="center-loading-state" aria-live="polite">
             <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
           </div>
 
@@ -2382,11 +2371,6 @@ import '../settings/settings.css'
                     <strong>{{ t('settings.runtimeFixedModel') }}</strong>
                     <span>{{ t('settings.runtimeFixedModelHint') }}</span>
                   </button>
-                  <button :class="{ active: agentRuntimeSelection === 'provider_auto' }" :aria-pressed="agentRuntimeSelection === 'provider_auto'" @click="agentRuntimeSelection = 'provider_auto'">
-                    <Server :size="16" />
-                    <strong>{{ t('settings.runtimeProviderAuto') }}</strong>
-                    <span>{{ t('settings.runtimeProviderAutoHint') }}</span>
-                  </button>
                   <button :class="{ active: agentRuntimeSelection === 'cli' }" :aria-pressed="agentRuntimeSelection === 'cli'" @click="agentRuntimeSelection = 'cli'">
                     <Terminal :size="16" />
                     <strong>CLI</strong>
@@ -2417,21 +2401,6 @@ import '../settings/settings.css'
                   </select>
                   <p v-if="filteredRuntimeModels.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
                 </div>
-                <div v-else-if="agentRuntimeSelection === 'provider_auto'" class="settings-field runtime-source-picker">
-                  <UiLabel>{{ t('settings.routeProvider') }}</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeProviderQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: t('settings.centerApiConnections') })" />
-                  </div>
-                  <select v-model="agentRuntimeProviderId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectProvider') }}</option>
-                    <option v-for="provider in filteredRuntimeProviders" :key="provider.provider_instance_id" :value="provider.provider_instance_id">
-                      {{ provider.display_name }} · {{ statusLabel(provider.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeProviders.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                  <p class="agent-config-hint">{{ t('settings.providerAutoOwnedByCore') }}</p>
-                </div>
                 <div v-else-if="agentRuntimeSelection === 'cli'" class="settings-field runtime-source-picker">
                   <UiLabel>CLI</UiLabel>
                   <div class="runtime-source-search">
@@ -2461,15 +2430,15 @@ import '../settings/settings.css'
                   <p v-if="filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
                 </div>
 
-                <div v-if="!runtimeBindingWritable" class="runtime-binding-readonly">
+                <div class="runtime-binding-readonly">
                   <Info :size="16" />
                   <div>
-                    <strong>{{ t('settings.runtimeBindingPendingCore') }}</strong>
-                    <span>{{ t('settings.runtimeBindingPendingCoreHint') }}</span>
+                    <strong>{{ t('settings.agentStrategyVersioned') }}</strong>
+                    <span>{{ t('settings.agentStrategyVersionedHint') }}</span>
                   </div>
                 </div>
                 <div class="modal-actions compact">
-                  <UiButton :disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()" size="sm" @click="saveAgentRuntimeBinding(configuringAgent)">
+                  <UiButton :disabled="agentRuntimeBusy || !agentStrategySaveable()" size="sm" @click="saveAgentModelStrategy(configuringAgent)">
                     <Save :size="14" />
                     <span>{{ t('settings.saveRuntimeBinding') }}</span>
                   </UiButton>

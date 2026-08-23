@@ -34,7 +34,7 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("t('settings.agentProfilesWritable')")
     expect(settingsPage).toContain("t('settings.runtimePreviewOnly')")
     expect(settingsPage).toContain('v-if="!agentCenterLoading && agents.length === 0"')
-    expect(settingsPage).toContain(':disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()"')
+    expect(settingsPage).toContain(':disabled="agentRuntimeBusy || !agentStrategySaveable()"')
     expect(settingsPage).toContain('<PanelRight')
     expect(settingsPage).toContain("const agentViewMode = ref<'topology' | 'list'>('list')")
     expect(settingsPage).toContain(':class="`view-${agentViewMode}`"')
