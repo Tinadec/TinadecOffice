@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('tinadec', {
   // --- Background File Selection API ---
   selectBackgroundFile: (type) => ipcRenderer.invoke('tinadec:select-background-file', type),
 
+  // --- Background Image Read API (Monet color extraction) ---
+  readImageAsDataUrl: (source) => ipcRenderer.invoke('tinadec:read-image-data-url', source),
+
   // --- Terminal API ---
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

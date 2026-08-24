@@ -255,6 +255,36 @@ ipcMain.handle('tinadec:select-background-file', async (event, type) => {
   return result.filePaths[0];
 });
 
+// --- Background Image Read IPC (for Monet color extraction) ---
+// The renderer runs on an http origin in dev, so canvas getImageData() on a
+// file:// image would be tainted; the main process reads the bytes instead.
+const IMAGE_MIME = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+  gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml'
+};
+const MAX_BACKGROUND_IMAGE_BYTES = 50 * 1024 * 1024;
+
+ipcMain.handle('tinadec:read-image-data-url', async (_event, source) => {
+  try {
+    let filePath = String(source || '');
+    if (filePath.startsWith('file:///')) {
+      filePath = decodeURIComponent(filePath.slice('file:///'.length));
+    } else if (filePath.startsWith('file://')) {
+      filePath = decodeURIComponent(filePath.slice('file://'.length));
+    }
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const mime = IMAGE_MIME[ext];
+    if (!mime) return null;
+    const fs = require('node:fs/promises');
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || stat.size > MAX_BACKGROUND_IMAGE_BYTES) return null;
+    const data = await fs.readFile(filePath);
+    return `data:${mime};base64,${data.toString('base64')}`;
+  } catch {
+    return null;
+  }
+});
+
 // --- Detached Panel Window IPC ---
 
 // Detach a tab into a new floating window

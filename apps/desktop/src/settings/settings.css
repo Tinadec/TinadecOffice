@@ -664,6 +664,38 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color) 72%, transparent);
   right: 6px;
   color: var(--swatch-color);
 }
+
+/* Dynamic (Monet "follow background") swatch: quadrant preview strip */
+.accent-color-swatch--dynamic {
+  --swatch-color: var(--accent-primary);
+}
+
+.accent-color-dot--dynamic {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  background: none;
+}
+
+.dynamic-strip-cell {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.accent-color-swatch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.accent-color-swatch:disabled:hover {
+  background: var(--surface-button);
+}
+
+.accent-color-swatch:disabled:hover .accent-color-dot {
+  transform: none;
+}
 .lang-options {
   display: flex;
   gap: 8px;

@@ -7,6 +7,7 @@ import App from './App.vue'
 import router from './router'
 import i18n from './i18n'
 import { useTheme } from './composables/useTheme'
+import { useDynamicPalette } from './composables/useDynamicPalette'
 import { setNotificationFallbackText } from './composables/useNotifications'
 import { installPreviewShimIfNeeded } from './lib/previewShim'
 import { installRendererErrorFallback } from './lib/rendererErrorFallback'
@@ -39,6 +40,8 @@ const { applyInitialTheme } = useTheme()
 if (applyInitialTheme) {
   applyInitialTheme()
 }
+// Arm the Monet background-extraction watcher (idempotent singleton).
+useDynamicPalette()
 
 // Global error containment: logs every uncaught error and, on the first fatal
 // one, swaps the stuck splash for a recoverable DOM fallback instead of leaving

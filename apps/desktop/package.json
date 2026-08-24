@@ -21,6 +21,7 @@
     "@fontsource-variable/geist": "^5.2.9",
     "@lobehub/icons-static-svg": "^1.94.0",
     "@lucide/vue": "^1.16.0",
+    "@material/material-color-utilities": "^0.3.0",
     "@monaco-editor/loader": "^1.7.0",
     "@types/dompurify": "^3.0.5",
     "@vitejs/plugin-vue": "^6.0.2",

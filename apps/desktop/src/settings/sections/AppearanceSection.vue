@@ -5,7 +5,8 @@ import { Check, Moon, Monitor, Sun } from '@lucide/vue'
 import { UiButton, UiInput, UiLabel } from '@/components/ui'
 import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
-import { useTheme } from '@/composables/useTheme'
+import { DYNAMIC_ACCENT_KEY, useTheme } from '@/composables/useTheme'
+import { getDynamicPaletteRef } from '@/composables/useDynamicPalette'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 
@@ -38,6 +39,34 @@ const {
   updatePanelStyle,
   resetPanelStyle,
 } = usePanelStyles()
+
+// Monet "follow background" accent: palette is extracted by the global
+// watcher armed at startup; this section only renders its current state.
+const dynamicPalette = getDynamicPaletteRef()
+const hasPalette = computed(() => dynamicPalette.value !== null)
+const resolvedTheme = computed<'dark' | 'light'>(() => {
+  if (theme.value === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return theme.value
+})
+const dynamicVars = computed(() =>
+  dynamicPalette.value?.[resolvedTheme.value] ?? null,
+)
+// Four-cell preview strip: vivid dark/light accents plus both surface ends.
+const dynamicStrip = computed(() => {
+  const p = dynamicPalette.value
+  if (!p) return []
+  return [
+    p.dark['--accent-primary'] ?? '#888',
+    p.light['--accent-primary'] ?? '#ccc',
+    p.dark['--bg-secondary'] ?? '#111',
+    p.light['--bg-secondary'] ?? '#eee',
+  ]
+})
+const isFrozen = computed(
+  () => accentColor.value === DYNAMIC_ACCENT_KEY && backgroundSettings.value.type !== 'image',
+)
 
 const backgroundSource = computed({
   get: () => backgroundSettings.value.source,
@@ -90,7 +119,29 @@ function changeAccentColor(key: string): void {
         <span class="accent-color-label">{{ t(color.labelKey) }}</span>
         <Check v-if="accentColor === color.key" :size="14" class="accent-color-check" />
       </button>
+      <button
+        :class="['accent-color-swatch', 'accent-color-swatch--dynamic', { active: accentColor === DYNAMIC_ACCENT_KEY }]"
+        :disabled="!hasPalette"
+        :style="dynamicVars ? { '--swatch-color': dynamicVars['--accent-primary'] } : undefined"
+        data-testid="accent-dynamic"
+        :title="t('settings.accentFollowBackground')"
+        @click="changeAccentColor(DYNAMIC_ACCENT_KEY)"
+      >
+        <span class="accent-color-dot accent-color-dot--dynamic">
+          <span
+            v-for="(cell, i) in dynamicStrip"
+            :key="i"
+            class="dynamic-strip-cell"
+            :style="{ background: cell }"
+          ></span>
+        </span>
+        <span class="accent-color-label">{{ t('settings.accentFollowBackground') }}</span>
+        <Check v-if="accentColor === DYNAMIC_ACCENT_KEY" :size="14" class="accent-color-check" />
+      </button>
     </div>
+    <p v-if="isFrozen" class="accent-color-hint" data-testid="dynamic-frozen-hint">
+      {{ t('settings.accentDynamicFrozen') }}
+    </p>
 
     <!-- Global panel material + background manager -->
     <h3>{{ t('settings.globalMaterial') }}</h3>

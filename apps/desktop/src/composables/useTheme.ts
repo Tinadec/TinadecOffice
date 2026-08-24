@@ -1,7 +1,12 @@
 import { useStorage } from '@vueuse/core'
 import { ref, watch, type Ref } from 'vue'
+import { DYNAMIC_VAR_NAMES, type DynamicPalette } from '../lib/monetExtract'
+import { getDynamicPaletteRef } from './useDynamicPalette'
 
 export type Theme = 'dark' | 'light' | 'system'
+
+/** Pseudo accent key: colors derived from the image background (Monet). */
+export const DYNAMIC_ACCENT_KEY = 'dynamic'
 
 export interface AccentColor {
   key: string
@@ -202,16 +207,34 @@ function applyTheme(theme: Theme) {
 }
 
 function applyAccentColor(colorKey: string) {
-  const color = getAccentColor(colorKey)
   const resolved = document.documentElement.getAttribute('data-theme') as 'dark' | 'light' ?? 'dark'
+  const root = document.documentElement
+
+  if (colorKey === DYNAMIC_ACCENT_KEY) {
+    removeDynamicVars(root)
+    const vars = getDynamicPaletteRef().value?.[resolved]
+    if (!vars) return
+    for (const [name, value] of Object.entries(vars)) {
+      root.style.setProperty(name, value)
+    }
+    return
+  }
+
+  removeDynamicVars(root)
+  const color = getAccentColor(colorKey)
   const vars = resolved === 'dark' ? color.dark : color.light
 
-  const root = document.documentElement
   root.style.setProperty('--accent-primary', vars.accentPrimary)
   root.style.setProperty('--accent-brand', vars.accentBrand)
   root.style.setProperty('--text-brand', vars.textBrand)
   root.style.setProperty('--border-input-focus', vars.borderInputFocus)
   root.style.setProperty('--shadow-focus', vars.shadowFocus)
+}
+
+function removeDynamicVars(root: HTMLElement) {
+  for (const name of DYNAMIC_VAR_NAMES) {
+    root.style.removeProperty(name)
+  }
 }
 
 export function useTheme() {
@@ -233,6 +256,13 @@ export function useTheme() {
 
   watch(accentColorRef, (val) => {
     applyAccentColor(val)
+  })
+
+  // Re-apply when a new extraction lands while "follow background" is on.
+  watch(getDynamicPaletteRef(), () => {
+    if (accentColorRef.value === DYNAMIC_ACCENT_KEY) {
+      applyAccentColor(DYNAMIC_ACCENT_KEY)
+    }
   })
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

@@ -180,6 +180,8 @@ declare global {
       getMainBounds: () => Promise<WindowBounds | null>;
       /** Broadcast theme change to all panel windows */
       broadcastTheme: (theme: string, accentColor: string) => void;
+      /** Read a local background image as a data URL (Monet color extraction; file:// is canvas-tainted in dev) */
+      readImageAsDataUrl?: (source: string) => Promise<string | null>;
       /** Broadcast a status notification to all windows (main, panels, debug studio) */
       broadcastStatusNotification: (payload: StatusBroadcast) => void;
       /** Listen for status notification broadcasts from any window */
