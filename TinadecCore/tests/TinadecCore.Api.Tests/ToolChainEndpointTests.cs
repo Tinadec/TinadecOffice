@@ -47,7 +47,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [RequiresTinadecToolsFact]
     public async Task WorkerWriteFile_RequestsApproval_ApprovedThenExecuted_RunCompletes()
     {
         var workspace = Path.Combine(_root, "workspace");

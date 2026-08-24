@@ -273,7 +273,7 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
     }
 
-    [Fact]
+    [RequiresTinadecToolsFact]
     public async Task UserToolAction_WriteFile_UsesPermissionApprovalLeaseAndProvider()
     {
         var client = _factory!.CreateClient();
@@ -316,7 +316,7 @@ public sealed class ApprovalFlowTests : IAsyncLifetime
         Assert.StartsWith("user-tool-action:", fetched.GetProperty("audit_reference").GetString(), StringComparison.Ordinal);
     }
 
-    [Fact]
+    [RequiresTinadecToolsFact]
     public async Task UserToolAction_GitCommit_UsesGitSnapshotAndGovernanceChain()
     {
         var client = _factory!.CreateClient();
