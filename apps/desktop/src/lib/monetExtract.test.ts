@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  argbFromHex,
   buildDynamicVars,
   DYNAMIC_VAR_NAMES,
   extractSourceColor,
+  previewSwatches,
 } from './monetExtract'
 
-/** Pack an opaque ARGB int. */
+/** Pack an opaque ARGB int (unsigned). */
 function argb(r: number, g: number, b: number): number {
-  return (0xff << 24) | (r << 16) | (g << 8) | b
+  return ((0xff << 24) | (r << 16) | (g << 8) | b) >>> 0
 }
 
 describe('extractSourceColor', () => {
@@ -96,5 +98,54 @@ describe('buildDynamicVars', () => {
     expect(Object.keys(buildDynamicVars(teal, 'dark')).sort()).toEqual(
       Object.keys(buildDynamicVars(teal, 'light')).sort(),
     )
+  })
+
+  it('emits the shadcn token family as HSL triplets', () => {
+    const hexHue = (hex: string): number => {
+      const n = Number.parseInt(hex.slice(1), 16)
+      const r = (n >> 16 & 0xff) / 255
+      const g = (n >> 8 & 0xff) / 255
+      const b = (n & 0xff) / 255
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const d = max - min
+      if (d === 0) return 0
+      if (max === r) return ((g - b) / d + 6) % 6 * 60
+      if (max === g) return (b - r) / d * 60 + 120
+      return (r - g) / d * 60 + 240
+    }
+    for (const theme of ['dark', 'light'] as const) {
+      const vars = buildDynamicVars(teal, theme)
+      for (const name of ['--background', '--foreground', '--card', '--popover', '--primary', '--secondary', '--muted', '--accent', '--border', '--input', '--ring']) {
+        expect(vars[name]!, `${theme} ${name}`).toMatch(/^-?\d+(\.\d+)? \d+(\.\d+)?% \d+(\.\d+)?%$/)
+      }
+      // Primary follows the source hue family, not a fixed blue. The H
+      // component of an "H S% L%" triplet IS its hue; compare against the
+      // source color's RGB-space hue (~174° for the teal fixture).
+      const primaryHue = Number.parseFloat(vars['--primary']!.split(' ')[0]!)
+      const srcHue = hexHue('#2ec4b6')
+      const delta = Math.abs(primaryHue - srcHue)
+      expect(Math.min(delta, 360 - delta)).toBeLessThan(45)
+    }
+  })
+
+  it('argbFromHex parses opaque colors', () => {
+    expect(argbFromHex('#2ec4b6')).toBe(argb(46, 196, 182))
+    expect(argbFromHex('ffffff')).toBe(0xffffffff)
+  })
+
+  it('previewSwatches returns five distinct role circles', () => {
+    const swatches = previewSwatches(teal)
+    expect(swatches).toHaveLength(5)
+    for (const s of swatches) expect(s).toMatch(/^#[0-9a-f]{6}$/i)
+    // Dark accent (tone 80) is lighter than the light-theme accent (tone 40).
+    const lum = (hex: string): number => {
+      const n = Number.parseInt(hex.slice(1), 16)
+      return ((n >> 16 & 255) + (n >> 8 & 255) + (n & 255)) / 3
+    }
+    expect(lum(swatches[0]!)).toBeGreaterThan(lum(swatches[1]!))
+    // Surfaces span both extremes.
+    expect(lum(swatches[3]!)).toBeLessThan(30)
+    expect(lum(swatches[4]!)).toBeGreaterThan(220)
   })
 })

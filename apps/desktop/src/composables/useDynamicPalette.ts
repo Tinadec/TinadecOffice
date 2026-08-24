@@ -52,6 +52,7 @@ export function getDynamicPaletteRef(): Ref<DynamicPalette | null> {
       cachedRef.value !== null &&
       (typeof cachedRef.value !== 'object' ||
         typeof cachedRef.value.source !== 'string' ||
+        typeof cachedRef.value.sourceColor !== 'number' ||
         !cachedRef.value.dark ||
         !cachedRef.value.light)
     ) {
@@ -104,6 +105,7 @@ async function extract(source: string): Promise<void> {
     }
     palette.value = {
       source,
+      sourceColor,
       dark: buildDynamicVars(sourceColor, 'dark'),
       light: buildDynamicVars(sourceColor, 'light'),
     }

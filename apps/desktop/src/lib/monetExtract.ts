@@ -15,6 +15,10 @@
  * - Accent identity (--accent-primary/brand/success, --text-brand,
  *   primary buttons, selection, focus ring) comes from the Monet "primary"
  *   palette at M3 tones (dark: 80, light: 40) with guaranteed contrast.
+ * - shadcn/Tailwind tokens (--background/--primary/--card/--popover/...)
+ *   are emitted as "H S% L%" triplets from the same palettes so the body
+ *   base, UI primitives, and bg-card/bg-popover/bg-accent utilities join
+ *   the one color system instead of a fixed hue.
  * - Semantic solids stay untouched: error/warning/danger/info/recovery
  *   accents, status backgrounds, --text-error/--text-reject/--text-link
  *   and scrollbar colors keep their styles.css values.
@@ -35,6 +39,8 @@ export type DynamicVars = Record<string, string>
 export interface DynamicPalette {
   /** Background source string the palette was extracted from. */
   source: string
+  /** Winning source color (ARGB) — seeds previews and preset-style reuse. */
+  sourceColor: number
   dark: DynamicVars
   light: DynamicVars
 }
@@ -158,6 +164,22 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
       '--bg-input-rgb': rgbTriplet(neutral.tone(6)),
       '--bg-button-rgb': rgbTriplet(neutral.tone(15)),
       '--bg-button-hover-rgb': rgbTriplet(neutral.tone(20)),
+
+      // shadcn/Tailwind family — consumed as hsl(var(--token)) triplets.
+      '--background': hslTriplet(neutral.tone(6)),
+      '--foreground': hslTriplet(variant.tone(90)),
+      '--card': hslTriplet(neutral.tone(9)),
+      '--card-foreground': hslTriplet(variant.tone(90)),
+      '--popover': hslTriplet(neutral.tone(12)),
+      '--popover-foreground': hslTriplet(variant.tone(90)),
+      '--primary': hslTriplet(primary.tone(80)),
+      '--primary-foreground': hslTriplet(primary.tone(20)),
+      '--secondary': hslTriplet(neutral.tone(15)),
+      '--muted': hslTriplet(neutral.tone(15)),
+      '--accent': hslTriplet(neutral.tone(18)),
+      '--border': hslTriplet(variant.tone(25)),
+      '--input': hslTriplet(variant.tone(25)),
+      '--ring': hslTriplet(primary.tone(70)),
     }
   }
 
@@ -212,11 +234,77 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
     '--bg-input-rgb': rgbTriplet(neutral.tone(99)),
     '--bg-button-rgb': rgbTriplet(neutral.tone(94)),
     '--bg-button-hover-rgb': rgbTriplet(variant.tone(88)),
+
+    // shadcn/Tailwind family — consumed as hsl(var(--token)) triplets.
+    '--background': hslTriplet(neutral.tone(100)),
+    '--foreground': hslTriplet(variant.tone(15)),
+    '--card': hslTriplet(neutral.tone(99)),
+    '--card-foreground': hslTriplet(variant.tone(15)),
+    '--popover': hslTriplet(neutral.tone(100)),
+    '--popover-foreground': hslTriplet(variant.tone(15)),
+    '--primary': hslTriplet(primary.tone(40)),
+    '--primary-foreground': hslTriplet(primary.tone(100)),
+    '--secondary': hslTriplet(neutral.tone(94)),
+    '--muted': hslTriplet(neutral.tone(94)),
+    '--accent': hslTriplet(neutral.tone(92)),
+    '--border': hslTriplet(variant.tone(85)),
+    '--input': hslTriplet(variant.tone(82)),
+    '--ring': hslTriplet(primary.tone(40)),
   }
 }
 
 function rgbTriplet(color: number): string {
   return `${(color >> 16) & 0xff}, ${(color >> 8) & 0xff}, ${color & 0xff}`
+}
+
+/** Parse `#rrggbb` into an opaque ARGB int (unsigned). */
+export function argbFromHex(hex: string): number {
+  const n = Number.parseInt(hex.replace('#', ''), 16)
+  return ((0xff << 24) | (n & 0xffffff)) >>> 0
+}
+
+/**
+ * shadcn/Tailwind token family consumed as `hsl(var(--token))` — emit
+ * "H S% L%" triplets derived from the same tonal palettes so primitives
+ * (buttons, switches, badges, bg-card/bg-popover utilities, the body base)
+ * follow the active color system instead of a fixed hue.
+ */
+function hslTriplet(color: number): string {
+  const r = ((color >> 16) & 0xff) / 255
+  const g = ((color >> 8) & 0xff) / 255
+  const b = (color & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+  if (max !== min) {
+    const d = max - min
+    s = d / (1 - Math.abs(2 * l - 1))
+    if (max === r) h = ((g - b) / d + 6) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+  }
+  return `${h.toFixed(1)} ${(s * 100).toFixed(1)}% ${(l * 100).toFixed(1)}%`
+}
+
+/**
+ * The five preview circles for the "follow background" option:
+ * dark accent / light accent / primary button / dark surface / light surface.
+ */
+export function previewSwatches(source: number): string[] {
+  const hct = Hct.fromInt(source)
+  const chroma = Math.min(Math.max(hct.chroma, PRIMARY_MIN_CHROMA), PRIMARY_MAX_CHROMA)
+  const primary = TonalPalette.fromHueAndChroma(hct.hue, chroma)
+  const neutral = TonalPalette.fromHueAndChroma(hct.hue, 8)
+  return [
+    hexFromArgb(primary.tone(80)),
+    hexFromArgb(primary.tone(40)),
+    hexFromArgb(primary.tone(45)),
+    hexFromArgb(neutral.tone(6)),
+    hexFromArgb(neutral.tone(96)),
+  ]
 }
 
 /** Every property buildDynamicVars may emit — used to strip injected values. */

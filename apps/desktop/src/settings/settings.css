@@ -665,36 +665,69 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--swatch-color) 72%, transparent);
   color: var(--swatch-color);
 }
 
-/* Dynamic (Monet "follow background") swatch: quadrant preview strip */
-.accent-color-swatch--dynamic {
-  --swatch-color: var(--accent-primary);
+/* Dynamic (Monet "follow background") option: spans the full preset row.
+   Label sits left; the extracted color roles render as standalone circles. */
+.accent-dynamic-option {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-button);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+  position: relative;
 }
 
-.accent-color-dot--dynamic {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  overflow: hidden;
-  background: none;
+.accent-dynamic-option:hover:not(:disabled) {
+  background: var(--surface-button-hover);
 }
 
-.dynamic-strip-cell {
-  display: block;
-  width: 100%;
-  height: 100%;
+.accent-dynamic-option.active {
+  background: var(--surface-selected);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent);
 }
 
-.accent-color-swatch:disabled {
+.accent-dynamic-option:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.accent-dynamic-option:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.accent-color-swatch:disabled:hover {
-  background: var(--surface-button);
+.accent-dynamic-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.accent-color-swatch:disabled:hover .accent-color-dot {
-  transform: none;
+.accent-dynamic-check {
+  color: var(--accent-primary);
+}
+
+.accent-dynamic-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.accent-dynamic-circles {
+  display: flex;
+  gap: 8px;
+}
+
+.accent-dynamic-circle {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 .lang-options {
   display: flex;

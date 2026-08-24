@@ -1,6 +1,11 @@
 import { useStorage } from '@vueuse/core'
 import { ref, watch, type Ref } from 'vue'
-import { DYNAMIC_VAR_NAMES, type DynamicPalette } from '../lib/monetExtract'
+import {
+  argbFromHex,
+  buildDynamicVars,
+  DYNAMIC_VAR_NAMES,
+  type DynamicVars,
+} from '../lib/monetExtract'
 import { getDynamicPaletteRef } from './useDynamicPalette'
 
 export type Theme = 'dark' | 'light' | 'system'
@@ -192,8 +197,32 @@ function getStoredAccentColor(): Ref<string> {
   return storedAccentColor
 }
 
-function getAccentColor(key: string): AccentColor {
-  return ACCENT_COLORS.find((c) => c.key === key) ?? ACCENT_COLORS[0]
+/**
+ * Unified color pipeline: every accent — 8 presets and the extracted
+ * wallpaper color alike — seeds the same Monet tonal builder and injects
+ * the same full-surface token set. One parameter, one code path.
+ */
+const PRESET_SEEDS: Record<string, number> = Object.fromEntries(
+  ACCENT_COLORS.map((c) => [c.key, argbFromHex(c.dark.accentPrimary)]),
+)
+const FALLBACK_SEED = PRESET_SEEDS.blue!
+
+/** Presets are pure functions of (seed, theme) — build each combo once. */
+const presetVarsCache = new Map<string, DynamicVars>()
+
+function resolveAccentVars(key: string, theme: 'dark' | 'light'): DynamicVars | null {
+  if (key === DYNAMIC_ACCENT_KEY) {
+    // Not memoized: a fresh extraction must take effect immediately.
+    const sourceColor = getDynamicPaletteRef().value?.sourceColor
+    return typeof sourceColor === 'number' ? buildDynamicVars(sourceColor >>> 0, theme) : null
+  }
+  const cacheKey = `${key}:${theme}`
+  let vars = presetVarsCache.get(cacheKey)
+  if (!vars) {
+    vars = buildDynamicVars(PRESET_SEEDS[key] ?? FALLBACK_SEED, theme)
+    presetVarsCache.set(cacheKey, vars)
+  }
+  return vars
 }
 
 function applyTheme(theme: Theme) {
@@ -210,25 +239,12 @@ function applyAccentColor(colorKey: string) {
   const resolved = document.documentElement.getAttribute('data-theme') as 'dark' | 'light' ?? 'dark'
   const root = document.documentElement
 
-  if (colorKey === DYNAMIC_ACCENT_KEY) {
-    removeDynamicVars(root)
-    const vars = getDynamicPaletteRef().value?.[resolved]
-    if (!vars) return
-    for (const [name, value] of Object.entries(vars)) {
-      root.style.setProperty(name, value)
-    }
-    return
-  }
-
   removeDynamicVars(root)
-  const color = getAccentColor(colorKey)
-  const vars = resolved === 'dark' ? color.dark : color.light
-
-  root.style.setProperty('--accent-primary', vars.accentPrimary)
-  root.style.setProperty('--accent-brand', vars.accentBrand)
-  root.style.setProperty('--text-brand', vars.textBrand)
-  root.style.setProperty('--border-input-focus', vars.borderInputFocus)
-  root.style.setProperty('--shadow-focus', vars.shadowFocus)
+  const vars = resolveAccentVars(colorKey, resolved)
+  if (!vars) return
+  for (const [name, value] of Object.entries(vars)) {
+    root.style.setProperty(name, value)
+  }
 }
 
 function removeDynamicVars(root: HTMLElement) {

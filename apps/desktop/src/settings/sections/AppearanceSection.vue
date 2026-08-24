@@ -7,6 +7,7 @@ import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { DYNAMIC_ACCENT_KEY, useTheme } from '@/composables/useTheme'
 import { getDynamicPaletteRef } from '@/composables/useDynamicPalette'
+import { previewSwatches } from '@/lib/monetExtract'
 import { useBackground } from '@/composables/useBackground'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 
@@ -50,20 +51,11 @@ const resolvedTheme = computed<'dark' | 'light'>(() => {
   }
   return theme.value
 })
-const dynamicVars = computed(() =>
-  dynamicPalette.value?.[resolvedTheme.value] ?? null,
+// Five standalone circles: dark accent / light accent / primary button /
+// dark surface / light surface — the roles the extraction drives.
+const dynamicCircles = computed(() =>
+  dynamicPalette.value ? previewSwatches(dynamicPalette.value.sourceColor) : [],
 )
-// Four-cell preview strip: vivid dark/light accents plus both surface ends.
-const dynamicStrip = computed(() => {
-  const p = dynamicPalette.value
-  if (!p) return []
-  return [
-    p.dark['--accent-primary'] ?? '#888',
-    p.light['--accent-primary'] ?? '#ccc',
-    p.dark['--bg-secondary'] ?? '#111',
-    p.light['--bg-secondary'] ?? '#eee',
-  ]
-})
 const isFrozen = computed(
   () => accentColor.value === DYNAMIC_ACCENT_KEY && backgroundSettings.value.type !== 'image',
 )
@@ -120,23 +112,24 @@ function changeAccentColor(key: string): void {
         <Check v-if="accentColor === color.key" :size="14" class="accent-color-check" />
       </button>
       <button
-        :class="['accent-color-swatch', 'accent-color-swatch--dynamic', { active: accentColor === DYNAMIC_ACCENT_KEY }]"
+        :class="['accent-dynamic-option', { active: accentColor === DYNAMIC_ACCENT_KEY }]"
         :disabled="!hasPalette"
-        :style="dynamicVars ? { '--swatch-color': dynamicVars['--accent-primary'] } : undefined"
         data-testid="accent-dynamic"
         :title="t('settings.accentFollowBackground')"
         @click="changeAccentColor(DYNAMIC_ACCENT_KEY)"
       >
-        <span class="accent-color-dot accent-color-dot--dynamic">
+        <span class="accent-dynamic-info">
+          <Check v-if="accentColor === DYNAMIC_ACCENT_KEY" :size="14" class="accent-dynamic-check" />
+          <span class="accent-dynamic-label">{{ t('settings.accentFollowBackground') }}</span>
+        </span>
+        <span class="accent-dynamic-circles">
           <span
-            v-for="(cell, i) in dynamicStrip"
+            v-for="(circle, i) in dynamicCircles"
             :key="i"
-            class="dynamic-strip-cell"
-            :style="{ background: cell }"
+            class="accent-dynamic-circle"
+            :style="{ background: circle }"
           ></span>
         </span>
-        <span class="accent-color-label">{{ t('settings.accentFollowBackground') }}</span>
-        <Check v-if="accentColor === DYNAMIC_ACCENT_KEY" :size="14" class="accent-color-check" />
       </button>
     </div>
     <p v-if="isFrozen" class="accent-color-hint" data-testid="dynamic-frozen-hint">
