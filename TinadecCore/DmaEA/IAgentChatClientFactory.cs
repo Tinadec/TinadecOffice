@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenAI;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA.CliRuntime;
 
@@ -66,9 +67,7 @@ public sealed class AgentChatClientFactory : IAgentChatClientFactory
 
     /// <summary>OpenAI-compatible <c>/chat/completions</c> client.</summary>
     public static IChatClient CreateOpenAiChatClient(ChatResolution resolution)
-        => new OpenAIClient(new ApiKeyCredential(resolution.ApiKey!), new OpenAIClientOptions { Endpoint = new Uri(resolution.BaseUrl!) })
-            .GetChatClient(resolution.Model!)
-            .AsIChatClient();
+        => CreateBrandedOpenAiClient(resolution).GetChatClient(resolution.Model!).AsIChatClient();
 
     /// <summary>OpenAI Responses API client.</summary>
     public static IChatClient CreateResponsesClient(ChatResolution resolution)
@@ -76,10 +75,18 @@ public sealed class AgentChatClientFactory : IAgentChatClientFactory
         // OPENAI001: the Responses IChatClient adapter is marked experimental by the
         // OpenAI SDK; we accept the surface deliberately and pin the SDK version centrally.
 #pragma warning disable OPENAI001
-        return new OpenAIClient(new ApiKeyCredential(resolution.ApiKey!), new OpenAIClientOptions { Endpoint = new Uri(resolution.BaseUrl!) })
-            .GetResponsesClient()
-            .AsIChatClient(resolution.Model!);
+        return CreateBrandedOpenAiClient(resolution).GetResponsesClient().AsIChatClient(resolution.Model!);
 #pragma warning restore OPENAI001
+    }
+
+    private static OpenAIClient CreateBrandedOpenAiClient(ChatResolution resolution)
+    {
+        var options = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(resolution.BaseUrl!),
+            UserAgentApplicationId = TinadecBranding.Name
+        };
+        return new OpenAIClient(new ApiKeyCredential(resolution.ApiKey!), options);
     }
 
     /// <summary>
@@ -89,7 +96,8 @@ public sealed class AgentChatClientFactory : IAgentChatClientFactory
     /// </summary>
     public static IChatClient CreateAnthropicClient(ChatResolution resolution)
     {
-        var client = new AnthropicClient(new APIAuthentication(resolution.ApiKey!))
+        var http = TinadecBranding.CreateClient();
+        var client = new AnthropicClient(new APIAuthentication(resolution.ApiKey!), http, null)
         {
             ApiUrlFormat = NormalizeAnthropicApiUrlFormat(resolution.BaseUrl!)
         };

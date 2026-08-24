@@ -181,7 +181,7 @@ internal sealed class EmbeddingProvider : IEmbeddingProvider
         var resolved = await ResolveAsync(request.TenantId, request.WorkspaceId, cancellationToken).ConfigureAwait(false);
         if (resolved.Error is not null) return Unavailable(resolved.Error);
 
-        var options = new OpenAIClientOptions();
+        var options = new OpenAIClientOptions { UserAgentApplicationId = TinadecCore.Abstractions.TinadecBranding.Name };
         if (!string.IsNullOrWhiteSpace(resolved.BaseUrl)) options.Endpoint = new Uri(resolved.BaseUrl);
 
         var client = new OpenAIClient(new ApiKeyCredential(resolved.ApiKey!), options);
