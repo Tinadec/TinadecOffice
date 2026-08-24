@@ -2982,6 +2982,11 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   min-height: 180px;
 }
 .center-empty-state-prominent strong { color: var(--text-secondary); font-size: 13px; }
+.center-empty-state-prominent > div {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+}
 /* Loading skeleton rows — UiSkeleton has no intrinsic height, so the lines must be sized here. */
 .center-loading-state {
   display: grid;
