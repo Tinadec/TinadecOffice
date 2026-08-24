@@ -81,9 +81,8 @@ public static class StorageEndpoints
                 }
                 else if (session is null)
                 {
-                    // no mode fields, just title was empty? fallback to fetch
-                    var all = await store.ListSessionsAsync(null, ct).ConfigureAwait(false);
-                    session = all.FirstOrDefault(x => x.Id == id);
+                    // no mode fields and no title change: fetch the session directly
+                    session = await store.GetSessionAsync(id, ct).ConfigureAwait(false);
                     if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 }
                 return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
@@ -139,27 +138,37 @@ public static class StorageEndpoints
             context.Response.Headers["X-Accel-Buffering"] = "no";
             try
             {
-                // Event sequences are allocated per run. Keep the long-lived session
-                // feed correct when a new run starts at sequence one by de-duplicating
-                // durable event ids instead of treating a run-local sequence as a
-                // session-wide high-water mark.
-                var observedEventIds = new HashSet<string>(StringComparer.Ordinal);
+                // Event sequences are allocated per run, so the client-facing
+                // Last-Event-ID cursor cannot be used as a database key once a
+                // new run restarts at sequence one. The initial replay honors
+                // the cursor; follow cycles poll a timestamp watermark and
+                // de-duplicate by per-run sequence instead of rescanning the
+                // whole journal on every tick.
+                var lastSequenceByRun = new Dictionary<string, long>(StringComparer.Ordinal);
+                var unsequencedSeenIds = new HashSet<string>(StringComparer.Ordinal);
                 var lastHeartbeat = DateTimeOffset.UtcNow;
                 var initialReplay = true;
+                var followSince = DateTimeOffset.MinValue;
 
                 while (!ct.IsCancellationRequested)
                 {
-                    // Read the durable journal on every follow cycle. The requested
-                    // after_seq applies only to the initial replay; later scans emit
-                    // new event ids even if they belong to a new run with sequence 1.
-                    var events = await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false);
+                    var events = initialReplay
+                        ? await lifecycle.ReplayEventsAsync(selectedSessionId, 0, ct).ConfigureAwait(false)
+                        : await lifecycle.FollowEventsAsync(selectedSessionId, followSince, ct).ConfigureAwait(false);
                     var wrote = false;
                     foreach (var item in events)
                     {
-                        if (!observedEventIds.Add(item.EventId)) continue;
+                        if (item.Timestamp > followSince) followSince = item.Timestamp - EventFollowOverlap;
                         var sequence = GetEventSequence(item);
-                        if (initialReplay && sequence is not null && sequence.Value <= cursor) continue;
-                        if (sequence is not null) cursor = Math.Max(cursor, sequence.Value);
+                        var runKey = item.RunId ?? string.Empty;
+                        if (sequence is not null)
+                        {
+                            if (lastSequenceByRun.TryGetValue(runKey, out var seen) && sequence.Value <= seen) continue;
+                            lastSequenceByRun[runKey] = sequence.Value;
+                            if (initialReplay && sequence.Value <= cursor) continue;
+                            if (sequence.Value > cursor) cursor = sequence.Value;
+                        }
+                        else if (!unsequencedSeenIds.Add(item.EventId)) continue;
                         await WriteEventAsync(context, item, sequence, ct).ConfigureAwait(false);
                         wrote = true;
                     }
@@ -212,6 +221,7 @@ public static class StorageEndpoints
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 
     private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan EventFollowOverlap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EventHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 

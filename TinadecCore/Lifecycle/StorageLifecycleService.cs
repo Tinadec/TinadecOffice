@@ -268,6 +268,40 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
         }
         var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(rows, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Incremental follow query for long-lived SSE loops. The watermark is a
+    /// wall-clock lower bound on the event index, so each call reads only rows
+    /// committed at or after that instant instead of rescanning the whole
+    /// session journal. Callers keep a small overlap window and de-duplicate
+    /// by per-run sequence because sequences are allocated per run.
+    /// ponytail: timestamp watermark suits the local single-host store; a global
+    /// monotonic sequence column is the upgrade path if a multi-host PostgreSQL
+    /// deployment ever needs strict cursor semantics.
+    /// </summary>
+    public async Task<IReadOnlyList<EventEnvelope>> FollowEventsAsync(Guid? sessionId, DateTimeOffset sinceUtc, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var query = db.EventIndex.AsNoTracking().AsQueryable();
+        if (sessionId is { } id)
+        {
+            var session = await _sessions.FindAsync(id, cancellationToken).ConfigureAwait(false);
+            if (session is null) return [];
+            query = query.Where(x => x.SessionId == id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId);
+        }
+        // ponytail: EF Core SQLite cannot translate DateTimeOffset comparisons
+        // (see ListLeaseEligibleRunsAsync), so the watermark filters in memory
+        // over slim index projections; file bodies are read only for surviving rows.
+        var candidates = await query
+            .Select(x => new EventIndexRecord { RunId = x.RunId, Sequence = x.Sequence, Timestamp = x.Timestamp, ByteOffset = x.ByteOffset, ByteLength = x.ByteLength })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await MaterializeAsync(candidates.Where(x => x.Timestamp >= sinceUtc).ToList(), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<EventEnvelope>> MaterializeAsync(List<EventIndexRecord> rows, CancellationToken cancellationToken)
+    {
         rows = rows.OrderBy(x => x.Timestamp).ThenBy(x => x.Sequence).ToList();
         var events = new List<EventEnvelope>(rows.Count);
         foreach (var row in rows)

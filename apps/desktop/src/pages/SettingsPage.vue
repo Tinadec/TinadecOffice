@@ -1037,15 +1037,52 @@ function agentSaveErrorMessage(error: unknown): string {
   return msg
 }
 
-/** Shared versioned write path: update draft (If-Match revision) then publish a new immutable version. */
+function isRevisionConflict(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error)
+  return msg.includes('412') || msg.toLowerCase().includes('revision') || msg.includes('Precondition')
+}
+
+/** One versioned write attempt: update draft (If-Match revision) then publish a new immutable version. */
+async function writeAgentDraft(body: Partial<AgentDefinitionDto>, agentId: string, revision: number | null | undefined) {
+  const draft = await api.updateAgentDraft(agentId, body, revision != null ? String(revision) : null)
+  await api.publishAgent(agentId, draft.revision != null ? String(draft.revision) : null)
+}
+
+/** 412 resolution dialog: reload the latest state, or force-overwrite on a fresh revision. */
+async function resolveAgentConflict(agentId: string, body: Partial<AgentDefinitionDto>) {
+  const overwrite = await confirm({
+    title: t('settings.agentConflictTitle'),
+    message: t('settings.agentConflictMessage'),
+    confirmLabel: t('settings.agentConflictOverwrite'),
+    cancelLabel: t('settings.agentConflictRefresh')
+  })
+  await loadAgentCenter()
+  if (!overwrite) return
+  const latest = agents.value.find((item) => item.id === agentId)
+  if (!latest) return
+  try {
+    await writeAgentDraft(body, latest.id, latest.revision)
+    await loadAgentCenter()
+    notify.success(latest.name)
+  } catch (retryError) {
+    notify.error(new Error(isRevisionConflict(retryError) ? t('settings.agentConflict') : agentSaveErrorMessage(retryError)), { title: latest.name })
+  }
+}
+
+/** Shared versioned write path; 412 revision conflicts open the conflict dialog instead of a generic toast. */
 async function publishAgentDraft(
   agent: AgentProfileDto,
   body: Partial<AgentDefinitionDto>,
   revision: number | null | undefined,
   successTitle: string
 ) {
-  const draft = await api.updateAgentDraft(agent.id, body, revision != null ? String(revision) : null)
-  await api.publishAgent(agent.id, draft.revision != null ? String(draft.revision) : null)
+  try {
+    await writeAgentDraft(body, agent.id, revision)
+  } catch (error) {
+    if (!isRevisionConflict(error)) throw error
+    await resolveAgentConflict(agent.id, body)
+    return
+  }
   await loadAgentCenter()
   notify.success(successTitle)
 }
@@ -1272,10 +1309,7 @@ async function saveAgentModelStrategy(agent: AgentProfileDto) {
   if (!strategy) return
   agentRuntimeBusy.value = true
   try {
-    const draft = await api.updateAgentDraft(agent.id, { model_strategy: strategy } as Partial<AgentDefinitionDto>, agent.revision != null ? String(agent.revision) : null)
-    await api.publishAgent(agent.id, draft.revision != null ? String(draft.revision) : null)
-    await loadAgentCenter()
-    notify.success(t('settings.agentModelStrategyPublished', { name: agent.name }))
+    await publishAgentDraft(agent, { model_strategy: strategy } as Partial<AgentDefinitionDto>, agent.revision, t('settings.agentModelStrategyPublished', { name: agent.name }))
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {

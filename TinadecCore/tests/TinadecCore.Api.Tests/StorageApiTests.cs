@@ -316,6 +316,28 @@ public sealed class StorageApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FollowEventsAsync_ReturnsOnlyEventsAtOrAfterWatermark()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Follow test", path = Path.Combine(_root, "workspace-follow") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Follow session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Follow trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        var first = await lifecycle.AppendEventAsync(run.Id, "run.started", new { source = "follow-test" }, "Run started");
+
+        // A measurable wall-clock gap lets the watermark sit strictly between events.
+        await Task.Delay(60);
+        var second = await lifecycle.AppendEventAsync(run.Id, "task.assigned", new { source = "follow-test" }, "Task assigned");
+
+        Assert.Equal("task.assigned", Assert.Single(await lifecycle.FollowEventsAsync(sessionId, first.Timestamp.AddMilliseconds(20))).EventType);
+        Assert.Equal(2, (await lifecycle.FollowEventsAsync(sessionId, DateTimeOffset.MinValue)).Count);
+        Assert.Empty(await lifecycle.FollowEventsAsync(sessionId, second.Timestamp.AddMilliseconds(1)));
+        Assert.Empty(await lifecycle.FollowEventsAsync(Guid.NewGuid(), DateTimeOffset.MinValue));
+    }
+
+    [Fact]
     public async Task DurableRunPrimitives_FreezeCheckpointLeaseAndReplayStream()
     {
         var client = _factory!.CreateClient();

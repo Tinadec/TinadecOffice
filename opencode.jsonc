@@ -46,8 +46,7 @@
         "electron-mcp-server"
       ],
       "env": {
-        "SECURITY_LEVEL": "balanced",
-        "SCREENSHOT_ENCRYPTION_KEY": "a5e12db109ad3a1f061246984b9e35badf168c164eb205340234de762bad93ce"
+        "SECURITY_LEVEL": "balanced"
       }
     }
   }

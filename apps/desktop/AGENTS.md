@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-08-24
-**Last Updated By:** opencode (智能体中心排版统一改版: workbench-duo 双栏骨架 / Refresh 单一入口 / evolution 归化 UiSheet+i18n)
-**Last Verified Commit:** HEAD of DmaEA/MVP during agent-center layout unification
+**Last Updated By:** opencode (412 revision conflicts in agent writes open a reload/overwrite conflict dialog centralized in publishAgentDraft; /agent-center redirects to /settings)
+**Last Verified Commit:** HEAD of DmaEA/MVP after review-fix batch
 **Branch:** DmaEA/MVP
 
 ## OVERVIEW

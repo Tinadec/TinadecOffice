@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import('./pages/SettingsPage.vue'),
     },
     {
+      // Legacy standalone agent-center page was merged into Settings (agents tab).
+      path: '/agent-center',
+      redirect: '/settings',
+    },
+    {
       path: '/market',
       name: 'market',
       component: () => import('./pages/MarketPage.vue'),

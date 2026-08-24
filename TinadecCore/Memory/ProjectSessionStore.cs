@@ -95,6 +95,13 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         return sessions.OrderByDescending(x => x.UpdatedAt).ToList();
     }
 
+    public async Task<SessionRecord?> GetSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Sessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<SessionRecord?> UpdateTitleAsync(Guid sessionId, string title, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("Session title is required.");
