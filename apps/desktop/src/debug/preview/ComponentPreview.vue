@@ -12,9 +12,10 @@ import ToolCatalogBrowser from '@/components/tools/ToolCatalogBrowser.vue'
 import ToolStatsDashboard from '@/components/tools/ToolStatsDashboard.vue'
 import DiffViewer from '@/components/git/DiffViewer.vue'
 import CommitMessageEditor from '@/components/git/CommitMessageEditor.vue'
-import type { AgentActivity, AgentState, ToolCall, ThinkingStep } from '@/composables/useAgentActivity'
+import type { AgentActivity, AgentState } from '@/composables/useAgentActivity'
 import type { ToolExecutionTimelineItemDto, ToolDescriptorDto } from '@/api'
 import type { MockDataBundle } from './mockData'
+import { mockThinkingSteps, mockToolCalls } from './mockData'
 
 const props = defineProps<{
   componentName: string
@@ -69,119 +70,6 @@ const mockAgentStates = computed<Record<string, AgentState>>(() => {
     }
   }
   return states
-})
-
-// ---- ToolCallCard mock 数据 ----
-const mockToolCall = computed<ToolCall>(() => {
-  const te = props.data.toolExecutions[0]
-  if (!te) {
-    return {
-      id: 'tc-mock-001',
-      toolId: 'apply_patch',
-      toolName: 'Apply Patch',
-      status: 'waiting_approval',
-      startedAt: new Date().toISOString(),
-      completedAt: null,
-      durationMs: null,
-      argsSummary: 'path=src/orchestrator.ts lines=12-24',
-      resultSummary: null,
-      requiresApproval: true,
-      approvalId: 'appr-003',
-      evidence: ['src/orchestrator.ts'],
-      seq: 7,
-      risk: 'high',
-    }
-  }
-  return {
-    id: te.id,
-    toolId: te.tool_id,
-    toolName: te.tool_display_name || te.tool_id,
-    status: te.status === 'completed' ? 'completed' : te.status === 'failed' || te.status === 'error' ? 'failed' : te.status === 'running' ? 'running' : te.status === 'waiting_approval' || te.status === 'approval_required' ? 'waiting_approval' : 'pending',
-    startedAt: te.requested_at,
-    completedAt: te.status === 'completed' || te.status === 'failed' ? te.updated_at : null,
-    durationMs: te.duration_ms || null,
-    argsSummary: te.checkpoint_summary || te.summary,
-    resultSummary: te.summary,
-    requiresApproval: te.requires_approval,
-    approvalId: te.approval_id ?? null,
-    evidence: te.evidence,
-    seq: te.requested_seq,
-    risk: te.risk,
-  }
-})
-
-// ---- ThinkingProcess mock 数据 ----
-const mockThinkingSteps = computed<ThinkingStep[]>(() => {
-  const orch = props.data.orchestration
-  if (!orch?.run) return []
-  const steps: ThinkingStep[] = []
-  let seq = 0
-  steps.push({
-    id: `step-${seq++}`,
-    type: 'run_started',
-    title: '编排运行已启动',
-    description: orch.run.summary ?? '智能体开始分析用户意图',
-    timestamp: orch.run.created_at,
-    durationMs: null,
-  })
-  if (orch.graph) {
-    steps.push({
-      id: `step-${seq++}`,
-      type: 'task_graph',
-      title: '任务图已创建',
-      description: `${orch.graph.title}（${orch.nodes.length} 个任务节点）`,
-      timestamp: orch.graph.created_at,
-      durationMs: null,
-      details: { nodeCount: orch.nodes.length },
-    })
-  }
-  for (const a of orch.assignments) {
-    steps.push({
-      id: `step-${seq++}`,
-      type: 'agent_assignment',
-      title: `${a.agent_name} 已分配任务`,
-      description: orch.nodes.find((n) => n.id === a.task_node_id)?.title ?? '开始执行任务',
-      timestamp: a.created_at,
-      durationMs: null,
-      details: { agentId: a.agent_id, agentLayer: a.agent_layer },
-    })
-  }
-  for (const sr of orch.step_results) {
-    steps.push({
-      id: `step-${seq++}`,
-      type: 'step_result',
-      title: `${orch.assignments.find((a) => a.agent_id === sr.agent_id)?.agent_name ?? 'Agent'} 完成步骤`,
-      description: sr.summary,
-      timestamp: sr.created_at,
-      durationMs: null,
-      details: { status: sr.status },
-    })
-  }
-  for (const sf of orch.supervision_findings) {
-    steps.push({
-      id: `step-${seq++}`,
-      type: 'supervision',
-      title: `监督发现 · ${sf.severity}`,
-      description: sf.summary,
-      timestamp: sf.created_at,
-      durationMs: null,
-      severity: sf.severity,
-      category: sf.category,
-      details: { recommendation: sf.recommendation },
-    })
-  }
-  for (const cp of orch.context_packs) {
-    steps.push({
-      id: `step-${seq++}`,
-      type: 'context_pack',
-      title: '上下文包已创建',
-      description: `${cp.summary}（压缩比 ${cp.compression_ratio.toFixed(2)}x）`,
-      timestamp: cp.created_at,
-      durationMs: null,
-      details: { tokenBudget: cp.token_budget, compressionRatio: cp.compression_ratio },
-    })
-  }
-  return steps
 })
 
 // ---- DiffViewer mock 数据 ----
@@ -258,36 +146,20 @@ function filePath(entry: { name: string; depth: number }): string {
       <div v-if="!data.orchestration?.run" class="preview-empty-hint">当前场景无编排运行数据，切换到「正常填充」或「智能体工作中」场景查看效果。</div>
     </div>
 
-    <!-- ToolCallCard -->
+    <!-- ToolCallCard：共享 mock 全量展示五种状态 -->
     <div v-else-if="componentName === 'ToolCallCard'" class="preview-frame">
       <div class="preview-card-list">
         <ToolCallCard
-          v-for="te in data.toolExecutions.slice(0, 4)"
-          :key="te.id"
-          :tool-call="{
-            id: te.id,
-            toolId: te.tool_id,
-            toolName: te.tool_display_name || te.tool_id,
-            status: te.status === 'completed' ? 'completed' : te.status === 'failed' || te.status === 'error' ? 'failed' : te.status === 'running' ? 'running' : te.status === 'waiting_approval' || te.status === 'approval_required' ? 'waiting_approval' : 'pending',
-            startedAt: te.requested_at,
-            completedAt: te.status === 'completed' || te.status === 'failed' ? te.updated_at : null,
-            durationMs: te.duration_ms || null,
-            argsSummary: te.checkpoint_summary || te.summary,
-            resultSummary: te.summary,
-            requiresApproval: te.requires_approval,
-            approvalId: te.approval_id ?? null,
-            evidence: te.evidence,
-            seq: te.requested_seq,
-            risk: te.risk,
-          }"
+          v-for="call in mockToolCalls()"
+          :key="call.id"
+          :tool-call="call"
         />
       </div>
     </div>
 
-    <!-- ThinkingProcess -->
+    <!-- ThinkingProcess：共享 mock，不依赖编排场景 -->
     <div v-else-if="componentName === 'ThinkingProcess'" class="preview-frame">
-      <ThinkingProcess :steps="mockThinkingSteps" />
-      <div v-if="mockThinkingSteps.length === 0" class="preview-empty-hint">当前场景无编排数据。</div>
+      <ThinkingProcess :steps="mockThinkingSteps()" />
     </div>
 
     <!-- ToolExecutionTimeline -->

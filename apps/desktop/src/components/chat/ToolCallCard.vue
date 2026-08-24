@@ -1,12 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
-  FileText,
-  Search,
-  FilePen,
-  GitBranch,
-  Terminal,
-  FolderSearch,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -14,7 +8,6 @@ import {
   ShieldAlert,
   ChevronDown,
   ChevronRight,
-  Wrench,
 } from '@lucide/vue'
 import type { ToolCall } from '@/composables/useAgentActivity'
 
@@ -27,31 +20,61 @@ const emit = defineEmits<{
   reject: [approvalId: string]
 }>()
 
-const expanded = ref(false)
+/* Auto-disclosure model (Codex fold bias + OpenCodeUI): open while the tool is
+   active or awaiting approval, fold again shortly after it settles. Once the
+   user toggles manually we stop touching their choice. */
+const isActiveStatus = (status: ToolCall['status']) =>
+  status === 'running' || status === 'waiting_approval'
 
-const toolIcon = computed(() => {
-  const id = props.toolCall.toolId.toLowerCase()
-  if (id.includes('read') || id.includes('file')) return FileText
-  if (id.includes('search') || id.includes('grep') || id.includes('glob')) return Search
-  if (id.includes('patch') || id.includes('write') || id.includes('edit')) return FilePen
-  if (id.includes('git')) return GitBranch
-  if (id.includes('shell') || id.includes('exec') || id.includes('sandbox')) return Terminal
-  if (id.includes('list') || id.includes('directory') || id.includes('find')) return FolderSearch
-  return Wrench
+const expanded = ref(isActiveStatus(props.toolCall.status))
+const touched = ref(false)
+let collapseTimer: ReturnType<typeof setTimeout> | null = null
+
+function toggle(): void {
+  touched.value = true
+  if (collapseTimer !== null) {
+    clearTimeout(collapseTimer)
+    collapseTimer = null
+  }
+  expanded.value = !expanded.value
+}
+
+watch(
+  () => props.toolCall.status,
+  (next) => {
+    if (isActiveStatus(next)) {
+      if (collapseTimer !== null) {
+        clearTimeout(collapseTimer)
+        collapseTimer = null
+      }
+      if (!touched.value) expanded.value = true
+      return
+    }
+    if (!touched.value && expanded.value) {
+      collapseTimer = setTimeout(() => {
+        expanded.value = false
+        collapseTimer = null
+      }, 800)
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  if (collapseTimer !== null) clearTimeout(collapseTimer)
 })
 
 const statusConfig = computed(() => {
   switch (props.toolCall.status) {
     case 'running':
-      return { icon: Loader2, label: '执行中', color: 'tool-running', spin: true }
+      return { icon: Loader2, key: 'running', spin: true, glow: true }
     case 'completed':
-      return { icon: CheckCircle2, label: '已完成', color: 'tool-completed', spin: false }
+      return { icon: CheckCircle2, key: 'completed', spin: false, glow: false }
     case 'failed':
-      return { icon: XCircle, label: '失败', color: 'tool-failed', spin: false }
+      return { icon: XCircle, key: 'failed', spin: false, glow: false }
     case 'waiting_approval':
-      return { icon: ShieldAlert, label: '等待审批', color: 'tool-waiting', spin: false }
+      return { icon: ShieldAlert, key: 'waiting', spin: false, glow: true }
     default:
-      return { icon: Clock, label: '待执行', color: 'tool-pending', spin: false }
+      return { icon: Clock, key: 'pending', spin: false, glow: false }
   }
 })
 
@@ -73,36 +96,42 @@ const isRisky = computed(
 </script>
 
 <template>
-  <article class="tool-call-card" :class="statusConfig.color">
-    <div class="tool-call-head" @click="expanded = !expanded">
-      <div class="tool-call-icon-wrap" :class="{ risky: isRisky }">
-        <component :is="toolIcon" :size="14" />
-      </div>
+  <article class="tool-call-card" :class="[`tool-${statusConfig.key}`]">
+    <div class="tool-call-head" @click="hasDetails ? toggle() : undefined">
+      <component
+        :is="statusConfig.icon"
+        :size="13"
+        class="tool-status-glyph"
+        :class="{ 'activity-glow-icon': statusConfig.glow, 'tool-icon-spin': statusConfig.spin }"
+      />
 
       <div class="tool-call-main">
         <div class="tool-call-title-row">
           <strong>{{ toolCall.toolName }}</strong>
           <span v-if="isRisky" class="tool-call-risk-tag">高风险</span>
         </div>
-        <p v-if="toolCall.argsSummary" class="tool-call-args">{{ toolCall.argsSummary }}</p>
+        <p
+          v-if="toolCall.argsSummary"
+          class="tool-call-args"
+          :class="{ 'chat-shimmer': toolCall.status === 'running' }"
+        >
+          {{ toolCall.argsSummary }}
+        </p>
       </div>
 
-      <div class="tool-call-status-wrap">
-        <div class="tool-call-status-badge">
-          <component
-            :is="statusConfig.icon"
-            :size="11"
-            :class="{ 'tool-icon-spin': statusConfig.spin }"
-          />
-          <span>{{ statusConfig.label }}</span>
-        </div>
+      <div :key="toolCall.status" class="tool-call-meta chat-status-rise">
         <span v-if="durationLabel" class="tool-call-duration">{{ durationLabel }}</span>
+        <button
+          v-if="hasDetails"
+          class="tool-call-toggle"
+          type="button"
+          :aria-expanded="expanded"
+          @click.stop="toggle"
+        >
+          <ChevronDown v-if="expanded" :size="12" />
+          <ChevronRight v-else :size="12" />
+        </button>
       </div>
-
-      <button v-if="hasDetails" class="tool-call-toggle" type="button" @click.stop="expanded = !expanded">
-        <ChevronDown v-if="expanded" :size="12" />
-        <ChevronRight v-else :size="12" />
-      </button>
     </div>
 
     <div v-if="toolCall.status === 'waiting_approval' && toolCall.approvalId" class="tool-call-approval">
@@ -119,77 +148,91 @@ const isRisky = computed(
       </div>
     </div>
 
-    <Transition name="tool-expand">
-      <div v-if="expanded && hasDetails" class="tool-call-details">
-        <div v-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary" class="tool-call-section">
-          <span class="tool-call-section-title">结果摘要</span>
-          <p class="tool-call-section-text">{{ toolCall.resultSummary }}</p>
-        </div>
-        <div v-if="toolCall.evidence.length > 0" class="tool-call-section">
-          <span class="tool-call-section-title">证据 ({{ toolCall.evidence.length }})</span>
-          <ul class="tool-call-evidence-list">
-            <li v-for="(item, idx) in toolCall.evidence" :key="idx">{{ item }}</li>
-          </ul>
+    <!-- Keep details mounted so the grid-rows collapse transition can play. -->
+    <div v-if="hasDetails" class="tool-details-collapse chat-collapse" :class="{ open: expanded }">
+      <div>
+        <div class="tool-call-details">
+          <div v-if="toolCall.resultSummary && toolCall.resultSummary !== toolCall.argsSummary" class="tool-call-section">
+            <span class="tool-call-section-title">结果摘要</span>
+            <p class="tool-call-section-text">{{ toolCall.resultSummary }}</p>
+          </div>
+          <div v-if="toolCall.evidence.length > 0" class="tool-call-section">
+            <span class="tool-call-section-title">证据 ({{ toolCall.evidence.length }})</span>
+            <ul class="tool-call-evidence-list">
+              <li v-for="(item, idx) in toolCall.evidence" :key="idx">{{ item }}</li>
+            </ul>
+          </div>
         </div>
       </div>
-    </Transition>
+    </div>
   </article>
 </template>
 
 <style scoped>
 .tool-call-card {
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-  transition: border-color 0.15s;
-}
-
-.tool-call-card.tool-running {
-  border-color: rgba(88, 166, 255, 0.3);
-}
-
-.tool-call-card.tool-completed {
-  border-color: rgba(63, 185, 80, 0.25);
-}
-
-.tool-call-card.tool-failed {
-  border-color: rgba(248, 81, 73, 0.3);
+  border-radius: 6px;
 }
 
 .tool-call-card.tool-waiting {
-  border-color: rgba(210, 153, 34, 0.35);
-  background: rgba(210, 153, 34, 0.04);
+  /* Quiet amber wash keeps the approval gate visible without a border. */
+  background: rgba(210, 153, 34, 0.07);
 }
 
 .tool-call-head {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 7px;
+  min-width: 0;
+  padding: 3px 4px;
+  border-radius: 5px;
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.tool-call-card:has(.tool-call-toggle) .tool-call-head {
   cursor: pointer;
 }
 
-.tool-call-icon-wrap {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
+.tool-call-head:hover {
+  background: var(--bg-hover);
+}
+
+.tool-status-glyph {
   flex-shrink: 0;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.tool-running .tool-status-glyph {
   color: var(--accent-primary);
 }
 
-.tool-call-icon-wrap.risky {
-  background: rgba(248, 81, 73, 0.12);
+.tool-completed .tool-status-glyph {
+  color: var(--accent-success);
+}
+
+.tool-failed .tool-status-glyph {
   color: var(--accent-danger);
+}
+
+.tool-waiting .tool-status-glyph {
+  color: var(--accent-warning);
+}
+
+.tool-icon-spin {
+  animation: tool-spin 1s linear infinite;
+}
+
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tool-call-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
   flex: 1;
 }
@@ -202,7 +245,12 @@ const isRisky = computed(
 
 .tool-call-title-row strong {
   font-size: 12px;
-  color: var(--text-primary);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.tool-failed .tool-call-title-row strong {
+  color: var(--accent-danger);
 }
 
 .tool-call-risk-tag {
@@ -217,62 +265,21 @@ const isRisky = computed(
 .tool-call-args {
   margin: 0;
   overflow: hidden;
+  max-width: 100%;
   font-size: 11px;
   line-height: 1.4;
-  color: var(--text-secondary);
+  color: var(--text-chat-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
 }
 
-.tool-call-status-wrap {
+.tool-call-meta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
-.tool-call-status-badge {
-  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.tool-running .tool-call-status-badge {
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-primary);
-}
-
-.tool-completed .tool-call-status-badge {
-  background: rgba(63, 185, 80, 0.12);
-  color: var(--accent-success);
-}
-
-.tool-failed .tool-call-status-badge {
-  background: rgba(248, 81, 73, 0.12);
-  color: var(--accent-danger);
-}
-
-.tool-waiting .tool-call-status-badge {
-  background: rgba(210, 153, 34, 0.14);
-  color: var(--accent-warning);
-}
-
-.tool-icon-spin {
-  animation: tool-spin 1s linear infinite;
-}
-
-@keyframes tool-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  gap: 2px;
+  flex-shrink: 0;
+  align-self: flex-start;
 }
 
 .tool-call-duration {
@@ -289,7 +296,13 @@ const isRisky = computed(
   background: transparent;
   border: none;
   cursor: pointer;
-  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.1s;
+}
+
+.tool-call-card:hover .tool-call-toggle,
+.tool-call-toggle:focus-visible {
+  opacity: 1;
 }
 
 .tool-call-toggle:hover {
@@ -302,8 +315,8 @@ const isRisky = computed(
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border-top: 1px solid var(--border-muted);
-  background: rgba(210, 153, 34, 0.06);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
 }
 
 .tool-call-approval-text {
@@ -351,13 +364,18 @@ const isRisky = computed(
   border-color: var(--accent-danger);
 }
 
+.tool-details-collapse {
+  will-change: grid-template-rows;
+}
+
 .tool-call-details {
+  /* Proma-style left hairline indent instead of boxed separators. */
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 10px 10px;
-  border-top: 1px solid var(--border-muted);
-  padding-top: 8px;
+  margin: 2px 8px 6px 20px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--border-muted);
 }
 
 .tool-call-section {
@@ -395,18 +413,5 @@ const isRisky = computed(
   line-height: 1.4;
   color: var(--text-secondary);
   word-break: break-word;
-}
-
-.tool-expand-enter-active,
-.tool-expand-leave-active {
-  transition: opacity 0.2s ease, max-height 0.25s ease;
-  overflow: hidden;
-  max-height: 400px;
-}
-
-.tool-expand-enter-from,
-.tool-expand-leave-to {
-  opacity: 0;
-  max-height: 0;
 }
 </style>

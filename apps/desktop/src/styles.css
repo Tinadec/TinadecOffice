@@ -121,8 +121,7 @@
   --bg-hover: #1a1f29;
   --bg-selected: #0d2e2a;
   --bg-selected-outline: #2ec4b6;
-  --bg-user-msg: #0d2e2a;
-  --bg-user-msg-border: #2ec4b6;
+  --bg-user-msg: color-mix(in srgb, var(--text-brand) 9%, var(--bg-secondary));
   --bg-assistant-msg: #11151c;
   --bg-assistant-msg-border: #1a1f29;
   --bg-avatar: #1a1f29;
@@ -162,6 +161,8 @@
   --text-error: #f85149;
   --text-approve: #2ec4b6;
   --text-reject: #f85149;
+  /* Chat muted layer derived like Codex's description color: text at reduced alpha */
+  --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
   --accent-primary: #2ec4b6;
   --accent-success: #2ec4b6;
@@ -176,6 +177,8 @@
   --shadow-panel: 0 4px 16px rgba(0, 0, 0, 0.32);
   --shadow-elevated: 0 8px 28px rgba(0, 0, 0, 0.42);
   --shadow-focus: 0 0 0 2px rgba(46, 196, 182, 0.3);
+  --shadow-user-msg: 0 1px 2px rgba(0, 0, 0, 0.35),
+                     0 2px 8px rgba(0, 0, 0, 0.22);
 
   /* Card boundary & subtle elevation */
   --border-card: rgba(0, 0, 0, 0.08);
@@ -198,8 +201,7 @@
   --bg-hover: #eef4f2;
   --bg-selected: #dff1ec;
   --bg-selected-outline: #1f8f80;
-  --bg-user-msg: #dff1ec;
-  --bg-user-msg-border: #1f8f80;
+  --bg-user-msg: color-mix(in srgb, var(--text-brand) 10%, #f6f8fa);
   --bg-assistant-msg: #ffffff;
   --bg-assistant-msg-border: #d8dfdd;
   --bg-avatar: #edf4f1;
@@ -239,6 +241,7 @@
   --text-error: #8f2525;
   --text-approve: #106348;
   --text-reject: #8f2525;
+  --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
   --accent-primary: #1f8f80;
   --accent-success: #1f8f80;
@@ -253,6 +256,8 @@
   --shadow-panel: 0 4px 16px rgba(26, 37, 38, 0.07);
   --shadow-elevated: 0 8px 28px rgba(26, 37, 38, 0.12);
   --shadow-focus: 0 0 0 2px rgba(31, 143, 128, 0.18);
+  --shadow-user-msg: 0 1px 2px rgba(26, 37, 38, 0.06),
+                     0 2px 6px rgba(26, 37, 38, 0.05);
 
   /* Card boundary & subtle elevation */
   --border-card: rgba(0, 0, 0, 0.08);
@@ -3450,21 +3455,39 @@ transition: left 0.2s ease, right 0.2s ease;
 
 .message-content.user p {
   margin: 0;
-  padding: 7px 11px;
+  padding: 8px 12px;
   white-space: pre-wrap;
-  border: 1px solid var(--bg-user-msg-border);
-  border-radius: 6px;
+  /* Borderless soft fill: tint + shadow carries the bubble shape (Codex-style
+     low-alpha mix instead of a saturated block). */
+  border-radius: 10px;
   background: var(--bg-user-msg);
+  box-shadow: var(--shadow-user-msg);
   font-size: 13px;
   line-height: 1.45;
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--text-primary) 92%, transparent);
+  max-height: 12rem;
+  overflow-y: auto;
+  animation: user-msg-in 0.2s ease-out;
+}
+
+@keyframes user-msg-in {
+  from {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-content.user p {
+    animation: none;
+  }
 }
 
 .edit-textarea {
   width: 100%;
-  padding: 7px 11px;
+  padding: 8px 12px;
   border: 1px solid var(--accent-primary);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 13px;
@@ -4952,33 +4975,21 @@ transform: translateX(30px);
 
 /* --- Settings section switch transition --- */
 
-/* Agent Activity Visualization Styles */
-.assistant-meta-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 5px;
-  flex-wrap: wrap;
-}
-
-.assistant-agent-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 3px;
+/* Assistant meta (timestamp only, no agent name) sits at the END of the
+   message and is revealed on message hover — OpenCodeUI / Codex pattern. */
+.assistant-message-meta {
+  margin-top: 4px;
   font-size: 10px;
-  font-weight: 600;
-  background: var(--accent-soft);
-  color: var(--accent-primary);
-}
-
-.assistant-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
+  line-height: 1.4;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message-wrapper.assistant:hover .assistant-message-meta,
+.message-wrapper.assistant:focus-within .assistant-message-meta {
+  opacity: 1;
 }
 
 .assistant-tool-calls {
@@ -4996,6 +5007,102 @@ transform: translateX(30px);
   font-size: 10px;
   color: var(--text-muted);
   justify-content: flex-end;
+}
+
+/* --- Chat activity micro-interactions -------------------------------------
+   Shared by ThinkingProcess / ToolCallCard. Extracted from installed refs:
+   Codex `.loading-shimmer` (text-clipped sweep that freezes on hover) and
+   Claude `timeline-status-rise` / `timeline-reveal` (rise-in label, 0fr↔1fr
+   grid-row collapse). ------------------------------------------------------------------ */
+.chat-shimmer {
+  --chat-shimmer-base: var(--text-chat-muted);
+  --chat-shimmer-hi: color-mix(in srgb, var(--text-primary) 55%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    var(--chat-shimmer-base) 0%,
+    var(--chat-shimmer-base) 35%,
+    var(--chat-shimmer-hi) 50%,
+    var(--chat-shimmer-base) 65%,
+    var(--chat-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: chat-shimmer-sweep 2.4s linear infinite;
+}
+
+/* Hover freezes the sweep into solid readable text (Codex behaviour). */
+.chat-shimmer:hover {
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: var(--text-primary);
+}
+
+@keyframes chat-shimmer-sweep {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes chat-status-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.chat-status-rise {
+  animation: chat-status-rise 0.24s cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+
+/* Borderless expand/collapse: animate grid-template-rows 0fr↔1fr instead of
+   max-height hacks. Collapsing gets a short delay like Claude's reveal. */
+.chat-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.2s cubic-bezier(0.19, 1, 0.22, 1),
+              opacity 0.2s cubic-bezier(0.19, 1, 0.22, 1);
+  transition-delay: 0.15s, 0.15s;
+}
+
+.chat-collapse.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition-delay: 0s, 0s;
+}
+
+.chat-collapse > * {
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  align-self: start;
+}
+
+.activity-glow-icon {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 90%, transparent))
+          drop-shadow(0 0 10px color-mix(in srgb, currentColor 48%, transparent));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: var(--text-chat-muted);
+  }
+
+  .chat-status-rise {
+    animation: none;
+  }
+
+  .chat-collapse {
+    transition: none;
+  }
 }
 
 /* ========================================================================

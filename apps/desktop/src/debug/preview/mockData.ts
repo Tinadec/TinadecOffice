@@ -27,6 +27,7 @@ import type {
   AcpAdapterDto,
   CodeToolExecuteResultDto,
 } from '@/api'
+import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 // ============================================================
 // 基础工具函数
@@ -39,6 +40,191 @@ function iso(offsetMinutes: number = 0): string {
 
 function id(prefix: string, n: number): string {
   return `${prefix}-${n.toString().padStart(4, '0')}`
+}
+
+// ============================================================
+// 消息活动 mock（ThinkingStep / ToolCall）
+// 供页面预览、组件预览、对话消息流预览复用；固定时间戳保证确定性。
+// ============================================================
+
+/** 基准时刻，仅用于 mock 展示。 */
+const MOCK_TS_BASE = '2026-08-24T10:00:00'
+
+function mockTs(offsetSeconds: number): string {
+  return new Date(new Date(`${MOCK_TS_BASE}Z`).getTime() + offsetSeconds * 1000).toISOString()
+}
+
+/**
+ * 覆盖全部 6 种步骤类型（含 warning / critical 严重度各一条）。
+ */
+export function mockThinkingSteps(): ThinkingStep[] {
+  return [
+    {
+      id: 'mstep-001',
+      type: 'run_started',
+      title: '编排运行已启动',
+      description: '解析用户意图，规划任务图与执行策略',
+      timestamp: mockTs(0),
+      durationMs: null,
+    },
+    {
+      id: 'mstep-002',
+      type: 'task_graph',
+      title: '任务图已创建',
+      description: '「重构编排引擎」共 4 个任务节点，依赖解析完成',
+      timestamp: mockTs(2),
+      durationMs: 480,
+    },
+    {
+      id: 'mstep-003',
+      type: 'context_pack',
+      title: '上下文包已注入',
+      description: '压缩历史会话与仓库摘要（压缩比 3.2x）',
+      timestamp: mockTs(4),
+      durationMs: 210,
+    },
+    {
+      id: 'mstep-004',
+      type: 'agent_assignment',
+      title: 'Code Writer 已分配任务',
+      description: '重写 TaskGraphBuilder 的依赖解析模块',
+      timestamp: mockTs(6),
+      durationMs: null,
+    },
+    {
+      id: 'mstep-005',
+      type: 'supervision',
+      title: '监督发现 · warning',
+      description: '检测到 execute_graph 存在未捕获的循环依赖风险',
+      timestamp: mockTs(18),
+      durationMs: null,
+      severity: 'warning',
+      category: 'correctness',
+    },
+    {
+      id: 'mstep-006',
+      type: 'step_result',
+      title: 'Code Writer 完成步骤',
+      description: '依赖解析模块重构完成，12 个用例全部通过',
+      timestamp: mockTs(26),
+      durationMs: 8600,
+    },
+    {
+      id: 'mstep-007',
+      type: 'supervision',
+      title: '监督发现 · critical',
+      description: '补丁与主干冲突，需要重新变基后再应用',
+      timestamp: mockTs(30),
+      durationMs: null,
+      severity: 'critical',
+      category: 'conflict',
+    },
+  ]
+}
+
+/**
+ * 覆盖全部 5 种状态（pending / running / completed / failed / waiting_approval），
+ * waiting_approval 项带高风险标记与审批 id，用于展示审批行。
+ */
+export function mockToolCalls(): ToolCall[] {
+  return [
+    {
+      id: 'mtc-001',
+      toolId: 'list_directory',
+      toolName: 'List Directory',
+      status: 'completed',
+      startedAt: mockTs(6),
+      completedAt: mockTs(7),
+      durationMs: 420,
+      argsSummary: 'path=src/core/dmaea depth=2',
+      resultSummary: '12 个文件，3 个目录',
+      requiresApproval: false,
+      approvalId: null,
+      evidence: ['src/core/dmaea/TaskGraphBuilder.ts', 'src/core/dmaea/graph.ts'],
+      seq: 1,
+      risk: 'low',
+    },
+    {
+      id: 'mtc-002',
+      toolId: 'grep_search',
+      toolName: 'Grep Search',
+      status: 'completed',
+      startedAt: mockTs(8),
+      completedAt: mockTs(9),
+      durationMs: 86,
+      argsSummary: 'pattern="resolveDependencies" include="*.ts"',
+      resultSummary: '命中 9 处，分布于 4 个文件',
+      requiresApproval: false,
+      approvalId: null,
+      evidence: ['graph.ts:112', 'TaskGraphBuilder.ts:47'],
+      seq: 2,
+      risk: 'low',
+    },
+    {
+      id: 'mtc-003',
+      toolId: 'run_tests',
+      toolName: 'Run Tests',
+      status: 'failed',
+      startedAt: mockTs(20),
+      completedAt: mockTs(24),
+      durationMs: 3120,
+      argsSummary: 'filter=TaskGraphBuilder --watch=false',
+      resultSummary: '2 个用例失败：cycle_detection / topo_order',
+      requiresApproval: false,
+      approvalId: null,
+      evidence: ['✗ 应检测自环依赖', '✗ 拓扑排序应保持稳定序'],
+      seq: 3,
+      risk: 'low',
+    },
+    {
+      id: 'mtc-004',
+      toolId: 'apply_patch',
+      toolName: 'Apply Patch',
+      status: 'running',
+      startedAt: mockTs(31),
+      completedAt: null,
+      durationMs: null,
+      argsSummary: 'target=src/core/dmaea/TaskGraphBuilder.ts +48 −12',
+      resultSummary: null,
+      requiresApproval: false,
+      approvalId: null,
+      evidence: [],
+      seq: 4,
+      risk: 'medium',
+    },
+    {
+      id: 'mtc-005',
+      toolId: 'write_file',
+      toolName: 'Write File',
+      status: 'waiting_approval',
+      startedAt: mockTs(33),
+      completedAt: null,
+      durationMs: null,
+      argsSummary: 'path=src/core/dmaea/cycleGuard.ts bytes=1840',
+      resultSummary: null,
+      requiresApproval: true,
+      approvalId: 'appr-mtc-005',
+      evidence: ['新建文件超出工作区白名单，需要用户批准'],
+      seq: 5,
+      risk: 'high',
+    },
+    {
+      id: 'mtc-006',
+      toolId: 'read_file',
+      toolName: 'Read File',
+      status: 'pending',
+      startedAt: mockTs(34),
+      completedAt: null,
+      durationMs: null,
+      argsSummary: 'path=docs/architecture.md',
+      resultSummary: null,
+      requiresApproval: false,
+      approvalId: null,
+      evidence: [],
+      seq: 6,
+      risk: 'low',
+    },
+  ]
 }
 
 // ============================================================

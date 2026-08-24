@@ -21,7 +21,6 @@ const c = homeController
     :permission="c.currentPermission.value"
     :thinking-steps="c.agentThinkingSteps.value"
     :tool-calls="c.agentToolCalls.value"
-    :agent-label="c.agentLabel.value"
     :runs-for-composer="c.runs.value"
     @update:draft="c.updateDraft($event)"
     @update:permission="c.updatePermission($event)"

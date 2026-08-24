@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, Check, Pencil, Bot, Clock } from '@lucide/vue'
+import { Copy, Check, Pencil, Clock } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { UiButton } from '@/components/ui'
 import MarkdownRender from './MarkdownRender.vue'
@@ -13,7 +13,6 @@ const props = defineProps<{
   index: number
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
-  agentLabel?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -65,22 +64,10 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
 
 <template>
   <article class="message-wrapper" :class="message.role">
-    <!-- AI 消息：Markdown 渲染，无头像无对话框 -->
+    <!-- AI 消息：Markdown 渲染，无头像无对话框；元信息在消息末尾 hover 揭示 -->
     <template v-if="message.role === 'assistant'">
       <div class="assistant-message-row">
         <div class="message-content assistant">
-          <!-- Agent 标签和时间戳 -->
-          <div v-if="agentLabel || timeLabel" class="assistant-meta-row">
-            <div class="assistant-agent-tag">
-              <Bot :size="10" />
-              <span>{{ agentLabel ?? '智能体' }}</span>
-            </div>
-            <span v-if="timeLabel" class="assistant-time">
-              <Clock :size="9" />
-              {{ timeLabel }}
-            </span>
-          </div>
-
           <!-- 思考过程 -->
           <ThinkingProcess v-if="hasThinking" :steps="messageThinkingSteps" />
 
@@ -96,6 +83,9 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
           </div>
 
           <MarkdownRender :content="message.content" />
+
+          <!-- 元信息：消息末尾，hover 消息时揭示（OpenCodeUI / Codex 式） -->
+          <div v-if="timeLabel" class="assistant-message-meta">{{ timeLabel }}</div>
         </div>
       </div>
     </template>

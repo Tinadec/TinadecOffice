@@ -12,7 +12,8 @@ defineProps<{
   messages: MessageDto[]
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
-  agentLabel?: string | null
+  /** Per-message activity override; falls back to the shared arrays. */
+  activityByMessage?: Record<string, { thinkingSteps?: ThinkingStep[]; toolCalls?: ToolCall[] }>
 }>()
 
 const emit = defineEmits<{
@@ -30,9 +31,8 @@ const emit = defineEmits<{
           :key="message.id"
           :message="message"
           :index="index"
-          :thinking-steps="message.role === 'assistant' ? thinkingSteps : undefined"
-          :tool-calls="message.role === 'assistant' ? toolCalls : undefined"
-          :agent-label="message.role === 'assistant' ? agentLabel : null"
+          :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps ?? (message.role === 'assistant' ? thinkingSteps : undefined)"
+          :tool-calls="activityByMessage?.[message.id]?.toolCalls ?? (message.role === 'assistant' ? toolCalls : undefined)"
           @approve="emit('approve', $event)"
           @reject="emit('reject', $event)"
         />

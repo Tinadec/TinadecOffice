@@ -26,7 +26,6 @@ const props = defineProps<{
   /** Agent activity data — now owned by HomePage, passed down for per-message rendering */
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
-  agentLabel?: string | null
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
   // new: pass runs for insert picker
@@ -101,7 +100,6 @@ function handleReject(approvalId: string) {
             :messages="messages"
             :thinking-steps="thinkingSteps"
             :tool-calls="toolCalls"
-            :agent-label="agentLabel"
             @approve="handleApprove"
             @reject="handleReject"
           />

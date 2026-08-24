@@ -11,6 +11,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import ContextPanel from '@/components/ContextPanel.vue'
+import ConversationPreview from './ConversationPreview.vue'
 import DiffViewer from '@/components/git/DiffViewer.vue'
 import CommitMessageEditor from '@/components/git/CommitMessageEditor.vue'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSwitch } from '@/components/ui'
@@ -39,7 +40,7 @@ import {
 } from '@lucide/vue'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 import type { MockDataBundle } from './mockData'
-import { mockCodeContent } from './mockData'
+import { mockCodeContent, mockThinkingSteps, mockToolCalls } from './mockData'
 
 const props = defineProps<{
   pageName: string
@@ -69,8 +70,9 @@ const mockAgentActivity: AgentActivity = {
   lastUpdated: null,
 }
 const mockAgentStates: Record<string, AgentState> = {}
-const mockThinkingSteps: never[] = []
 const mockProgressEvents: never[] = []
+const previewThinkingSteps = mockThinkingSteps()
+const previewToolCalls = mockToolCalls()
 
 // 初始化选中项
 function ensureSelection() {
@@ -170,6 +172,8 @@ const filteredCatalog = computed(() => {
           :draft="draft"
           :mode="currentMode"
           :permission="currentPermission"
+          :thinking-steps="previewThinkingSteps"
+          :tool-calls="previewToolCalls"
           @update:draft="draft = $event"
           @update:mode="currentMode = $event"
           @update:permission="currentPermission = $event"
@@ -198,7 +202,7 @@ const filteredCatalog = computed(() => {
           :current-project-path="currentProject?.path"
           :agent-activity="mockAgentActivity"
           :agent-states="mockAgentStates"
-          :thinking-steps="mockThinkingSteps"
+          :thinking-steps="previewThinkingSteps"
           :progress-events="mockProgressEvents"
           @update:shell-command="shellCommand = $event"
         />
@@ -220,10 +224,17 @@ const filteredCatalog = computed(() => {
         :draft="draft"
         :mode="currentMode"
         :permission="currentPermission"
+        :thinking-steps="previewThinkingSteps"
+        :tool-calls="previewToolCalls"
         @update:draft="draft = $event"
         @update:mode="currentMode = $event"
         @update:permission="currentPermission = $event"
       />
+    </div>
+
+    <!-- ==================== ConversationFlow 对话消息流预览 ==================== -->
+    <div v-else-if="pageName === 'ConversationFlow'" class="conversation-flow-preview">
+      <ConversationPreview />
     </div>
 
     <!-- ==================== ContextPanel 预览 ==================== -->
@@ -243,7 +254,7 @@ const filteredCatalog = computed(() => {
         :current-project-path="currentProject?.path"
         :agent-activity="mockAgentActivity"
         :agent-states="mockAgentStates"
-        :thinking-steps="mockThinkingSteps"
+        :thinking-steps="previewThinkingSteps"
         :progress-events="mockProgressEvents"
         @update:shell-command="shellCommand = $event"
       />
@@ -649,6 +660,15 @@ const filteredCatalog = computed(() => {
 /* ---- ChatPanel 预览 ---- */
 .chat-preview {
   height: 100%;
+}
+
+/* ---- ConversationFlow 对话消息流预览 ---- */
+.conversation-flow-preview {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-primary, #0d1117);
 }
 
 /* ---- ContextPanel 预览 ---- */

@@ -72,8 +72,6 @@ const {
   progressEvents: agentProgressEvents,
 } = useAgentActivity(sessionIdRef, orchestration)
 
-const agentLabel = computed(() => agentActivity.value.activeAgentName ?? null)
-
 const { notify, banner, dismissByKey } = useNotifications()
 
 function generateTitle(content: string): string {
@@ -434,7 +432,6 @@ export const homeController = {
   agentThinkingSteps,
   agentStatesMap,
   agentProgressEvents,
-  agentLabel,
   streamingText,
   invokeError,
   lastCursor,

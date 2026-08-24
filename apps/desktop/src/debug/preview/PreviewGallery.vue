@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Home,
   MessageSquare,
+  MessagesSquare,
   PanelRight,
   GitBranch,
   Code2,
@@ -50,6 +51,7 @@ interface TreeItem {
 const PAGES: TreeItem[] = [
   { id: 'HomePage', name: 'HomePage', label: '首页（三栏布局）', type: 'page', icon: Home },
   { id: 'ChatPanel', name: 'ChatPanel', label: '聊天面板', type: 'page', icon: MessageSquare },
+  { id: 'ConversationFlow', name: 'ConversationFlow', label: '对话消息流', type: 'page', icon: MessagesSquare },
   { id: 'ContextPanel', name: 'ContextPanel', label: '上下文面板', type: 'page', icon: PanelRight },
   { id: 'GitPanel', name: 'GitPanel', label: 'Git 管理', type: 'page', icon: GitBranch },
   { id: 'CodePage', name: 'CodePage', label: '代码编辑器', type: 'page', icon: Code2 },

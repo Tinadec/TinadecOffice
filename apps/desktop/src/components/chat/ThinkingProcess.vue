@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   Brain,
   Network,
@@ -23,19 +23,19 @@ const stepConfig = computed(() => {
   return (type: ThinkingStep['type']) => {
     switch (type) {
       case 'run_started':
-        return { icon: Brain, color: 'step-run', label: '运行启动' }
+        return { icon: Brain, color: 'step-run' }
       case 'task_graph':
-        return { icon: Network, color: 'step-graph', label: '任务图' }
+        return { icon: Network, color: 'step-graph' }
       case 'agent_assignment':
-        return { icon: UserCheck, color: 'step-assign', label: '任务分配' }
+        return { icon: UserCheck, color: 'step-assign' }
       case 'supervision':
-        return { icon: ShieldCheck, color: 'step-supervision', label: '监督' }
+        return { icon: ShieldCheck, color: 'step-supervision' }
       case 'context_pack':
-        return { icon: Package, color: 'step-context', label: '上下文' }
+        return { icon: Package, color: 'step-context' }
       case 'step_result':
-        return { icon: CheckCircle2, color: 'step-result', label: '步骤结果' }
+        return { icon: CheckCircle2, color: 'step-result' }
       default:
-        return { icon: Brain, color: 'step-default', label: '思考' }
+        return { icon: Brain, color: 'step-default' }
     }
   }
 })
@@ -65,116 +65,141 @@ function formatDuration(ms: number | null): string | null {
 const hasSteps = computed(() => props.steps.length > 0)
 
 const stepCount = computed(() => props.steps.length)
+
+/* Latest-step preview drives the collapsed row; re-keying it replays the
+   rise animation each time the agent advances. */
+const lastStep = computed(() => props.steps[props.steps.length - 1])
+const lastStepKey = computed(() => lastStep.value?.id ?? 'none')
+const lastPreview = computed(() => {
+  const step = lastStep.value
+  if (!step) return ''
+  return step.description || step.title || ''
+})
+
+/* Shimmer only while steps keep advancing; settles back to static muted. */
+const advancing = ref(false)
+let advanceTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => props.steps.length,
+  () => {
+    advancing.value = true
+    if (advanceTimer !== null) clearTimeout(advanceTimer)
+    advanceTimer = setTimeout(() => {
+      advancing.value = false
+    }, 2500)
+  },
+)
+onBeforeUnmount(() => {
+  if (advanceTimer !== null) clearTimeout(advanceTimer)
+})
+
+function stepMetaSuffix(step: ThinkingStep): string {
+  const parts = [formatTime(step.timestamp), formatDuration(step.durationMs)].filter(Boolean)
+  return parts.join(' · ')
+}
 </script>
 
 <template>
   <section v-if="hasSteps" class="thinking-process">
-    <button class="thinking-header" type="button" @click="expanded = !expanded">
-      <div class="thinking-header-left">
-        <Brain :size="14" class="thinking-icon" />
-        <span class="thinking-title">思考过程</span>
-        <span class="thinking-count">{{ stepCount }} 步</span>
-      </div>
-      <component
-        :is="expanded ? ChevronDown : ChevronRight"
-        :size="14"
-        class="thinking-chevron"
-      />
+    <button class="thinking-row" type="button" @click="expanded = !expanded">
+      <Brain :size="14" class="thinking-icon" />
+      <span class="thinking-title">已思考 · {{ stepCount }} 步</span>
+      <span v-if="lastPreview" class="thinking-sep" aria-hidden="true" />
+      <!-- Rise plays on the keyed outer span; shimmer lives on an inner span so
+           the two `animation` declarations never fight for the property. -->
+      <span :key="lastStepKey" class="thinking-preview chat-status-rise">
+        <span :class="{ 'chat-shimmer': advancing }">{{ lastPreview }}</span>
+      </span>
+      <component :is="expanded ? ChevronDown : ChevronRight" :size="13" class="thinking-chevron" />
     </button>
 
-    <Transition name="thinking-expand">
-      <div v-if="expanded" class="thinking-steps">
-        <div
-          v-for="(step, idx) in steps"
-          :key="step.id"
-          class="thinking-step"
-          :class="stepConfig(step.type).color"
-        >
-          <div class="thinking-step-line" v-if="idx < steps.length - 1" />
-          <div class="thinking-step-icon-wrap">
-            <component :is="stepConfig(step.type).icon" :size="12" />
-          </div>
-          <div class="thinking-step-body">
-            <div class="thinking-step-head">
-              <strong>{{ step.title }}</strong>
-              <span class="thinking-step-type-tag">{{ stepConfig(step.type).label }}</span>
+    <div class="thinking-collapse chat-collapse" :class="{ open: expanded }">
+      <div>
+        <div class="thinking-steps">
+          <div
+            v-for="(step, idx) in steps"
+            :key="step.id"
+            class="thinking-step"
+          >
+            <div class="thinking-step-line" v-if="idx < steps.length - 1" />
+            <div
+              class="thinking-step-icon-wrap"
+              :class="[stepConfig(step.type).color, step.severity ? `severity-${step.severity}` : null]"
+            >
+              <component :is="stepConfig(step.type).icon" :size="12" />
             </div>
-            <p v-if="step.description" class="thinking-step-desc">{{ step.description }}</p>
-            <div class="thinking-step-meta">
-              <span class="thinking-step-time">
-                <Clock :size="10" />
-                {{ formatTime(step.timestamp) }}
-              </span>
-              <span v-if="formatDuration(step.durationMs)" class="thinking-step-duration">
-                {{ formatDuration(step.durationMs) }}
-              </span>
-              <span
-                v-if="step.severity"
-                class="thinking-step-severity"
-                :class="`severity-${step.severity}`"
-              >
-                {{ step.severity }}
-              </span>
+            <div class="thinking-step-body">
+              <div class="thinking-step-head">
+                <strong>{{ step.title }}</strong>
+                <span class="thinking-step-suffix">{{ stepMetaSuffix(step) }}</span>
+              </div>
+              <p v-if="step.description" class="thinking-step-desc">{{ step.description }}</p>
             </div>
           </div>
         </div>
       </div>
-    </Transition>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .thinking-process {
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  overflow: hidden;
   margin-bottom: 8px;
 }
 
-.thinking-header {
+.thinking-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   width: 100%;
-  padding: 8px 10px;
-  background: transparent;
+  min-width: 0;
+  padding: 4px 8px;
   border: none;
+  border-radius: 6px;
+  background: transparent;
   cursor: pointer;
   text-align: left;
   transition: background 0.15s;
 }
 
-.thinking-header:hover {
+.thinking-row:hover {
   background: var(--bg-hover);
 }
 
-.thinking-header-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .thinking-icon {
+  flex-shrink: 0;
   color: #bc8cff;
 }
 
 .thinking-title {
+  flex-shrink: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
-.thinking-count {
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
+.thinking-sep {
+  flex-shrink: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  opacity: 0.7;
+}
+
+.thinking-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-chat-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thinking-chevron {
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
@@ -199,7 +224,7 @@ const stepCount = computed(() => props.steps.length)
   top: 24px;
   bottom: -6px;
   width: 1px;
-  background: var(--border-muted);
+  background: color-mix(in srgb, var(--border-muted) 60%, transparent);
 }
 
 .thinking-step:last-child .thinking-step-line {
@@ -218,34 +243,47 @@ const stepCount = computed(() => props.steps.length)
   z-index: 1;
 }
 
-.step-run .thinking-step-icon-wrap {
+.step-run .thinking-step-icon-wrap,
+.thinking-step-icon-wrap.step-run {
   background: rgba(188, 140, 255, 0.12);
   color: #bc8cff;
 }
 
-.step-graph .thinking-step-icon-wrap {
+.thinking-step-icon-wrap.step-graph {
   background: rgba(88, 166, 255, 0.12);
   color: var(--accent-primary);
 }
 
-.step-assign .thinking-step-icon-wrap {
+.thinking-step-icon-wrap.step-assign {
   background: rgba(63, 185, 80, 0.12);
   color: var(--accent-success);
 }
 
-.step-supervision .thinking-step-icon-wrap {
+.thinking-step-icon-wrap.step-supervision {
   background: rgba(210, 153, 34, 0.12);
   color: var(--accent-warning);
 }
 
-.step-context .thinking-step-icon-wrap {
+.thinking-step-icon-wrap.step-context {
   background: rgba(86, 212, 221, 0.12);
   color: #56d4dd;
 }
 
-.step-result .thinking-step-icon-wrap {
+.thinking-step-icon-wrap.step-result {
   background: rgba(63, 185, 80, 0.12);
   color: var(--accent-success);
+}
+
+/* Severity tints the glyph itself — no badge pill anymore. */
+.thinking-step-icon-wrap.severity-warning {
+  background: transparent;
+  color: var(--accent-warning);
+}
+
+.thinking-step-icon-wrap.severity-critical,
+.thinking-step-icon-wrap.severity-error {
+  background: transparent;
+  color: var(--accent-danger);
 }
 
 .thinking-step-body {
@@ -257,22 +295,19 @@ const stepCount = computed(() => props.steps.length)
 
 .thinking-step-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   flex-wrap: wrap;
 }
 
 .thinking-step-head strong {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.thinking-step-type-tag {
-  padding: 1px 5px;
-  border-radius: 4px;
+.thinking-step-suffix {
   font-size: 10px;
-  font-weight: 600;
-  background: var(--bg-tertiary);
   color: var(--text-muted);
 }
 
@@ -280,63 +315,7 @@ const stepCount = computed(() => props.steps.length)
   margin: 0;
   font-size: 11px;
   line-height: 1.4;
-  color: var(--text-secondary);
+  color: var(--text-chat-muted);
   word-break: break-word;
-}
-
-.thinking-step-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.thinking-step-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.thinking-step-duration {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.thinking-step-severity {
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.severity-info {
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-primary);
-}
-
-.severity-warning {
-  background: rgba(210, 153, 34, 0.14);
-  color: var(--accent-warning);
-}
-
-.severity-critical,
-.severity-error {
-  background: rgba(248, 81, 73, 0.14);
-  color: var(--accent-danger);
-}
-
-.thinking-expand-enter-active,
-.thinking-expand-leave-active {
-  transition: opacity 0.2s ease, max-height 0.25s ease;
-  overflow: hidden;
-  max-height: 600px;
-}
-
-.thinking-expand-enter-from,
-.thinking-expand-leave-to {
-  opacity: 0;
-  max-height: 0;
 }
 </style>
