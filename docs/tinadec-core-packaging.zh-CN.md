@@ -10,7 +10,7 @@
 - `TinadecCore.Abstractions`：Core 端口和模块注册抽象；不暴露 MAF 类型。
 - `TinadecCore.Runtime`：完整 Core 组合入口，MAF 1.18 仅通过 DmaEA 适配层接入。
 
-三个项目显式启用 `IsPackable=true`，是唯一面向宿主承诺的包面。Runtime 依赖的 Core 内部模块也启用实现包，以便 NuGet 正确还原；这些包不属于稳定业务 API，应与 Runtime 一起从同一 feed 发布。测试项目和 API 项目继续不可打包。包版本沿用 `TinadecCore/Directory.Build.props` 的 `PackageVersion`，发布前应由 CI 注入正式 SemVer。
+三个项目显式启用 `IsPackable=true`，是唯一面向宿主承诺的包面。`TinadecCore` 全部模块（含 Contracts/Abstractions/Runtime 及内部实现包）均以 `MIT` 开源（`TinadecCore/LICENSE`，`Copyright (c) 2026 Lincube`，`PackageLicenseExpression=MIT` 集中于 `TinadecCore/Directory.Build.props`）。Runtime 依赖的 Core 内部模块也启用实现包，以便 NuGet 正确还原；这些包不属于稳定业务 API，应与 Runtime 一起从同一 feed 发布。测试项目和 API 项目继续不可打包。包版本沿用 `TinadecCore/Directory.Build.props` 的 `PackageVersion`，发布前应由 CI 注入正式 SemVer。
 
 ```powershell
 dotnet pack TinadecCore/Contracts/TinadecCore.Contracts.csproj -c Release --no-restore

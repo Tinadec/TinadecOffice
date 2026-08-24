@@ -7,6 +7,10 @@
     <Nullable>enable</Nullable>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+    <Authors>Lincube</Authors>
+    <Copyright>Copyright (c) 2026 Lincube</Copyright>
+    <RepositoryUrl>https://github.com/agent/TinadecOffice</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

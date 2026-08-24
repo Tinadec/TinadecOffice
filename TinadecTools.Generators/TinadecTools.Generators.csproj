@@ -10,6 +10,10 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+    <Authors>Lincube</Authors>
+    <Copyright>Copyright (c) 2026 Lincube</Copyright>
+    <RepositoryUrl>https://github.com/agent/TinadecOffice</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

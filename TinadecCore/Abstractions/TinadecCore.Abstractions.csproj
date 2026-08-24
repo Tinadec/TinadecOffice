@@ -7,7 +7,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>TinadecCore.Abstractions</PackageId>
     <PackageTags>tinadec;agent;abstractions;dmaea</PackageTags>
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
   </PropertyGroup>
 

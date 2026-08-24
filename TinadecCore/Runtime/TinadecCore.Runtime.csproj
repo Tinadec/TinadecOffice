@@ -7,7 +7,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>TinadecCore.Runtime</PackageId>
     <PackageTags>tinadec;agent;runtime;dmaea;maf</PackageTags>
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
   </PropertyGroup>
 

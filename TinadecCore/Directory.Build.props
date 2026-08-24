@@ -18,6 +18,9 @@
     <FileVersion>0.1.0.0</FileVersion>
     <RepositoryUrl>https://github.com/agent/TinadecOffice</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>Lincube</Authors>
+    <Copyright>Copyright (c) 2026 Lincube</Copyright>
   </PropertyGroup>
 
 </Project>
