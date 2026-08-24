@@ -16,9 +16,10 @@ public sealed class DbContextMigrationParticipant<TContext> : IStorageMigrationP
         if (migrations.Length != 0)
         {
             await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
-            return;
         }
-
+        // Some module control-plane schemas predate provider migration assemblies.
+        // The idempotent model bootstrap fills only missing tables while migrations
+        // remain authoritative for changes to existing tables.
         await DbContextSchemaBootstrapper.EnsureTablesAsync(db, cancellationToken).ConfigureAwait(false);
     }
 }

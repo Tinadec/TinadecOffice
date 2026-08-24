@@ -28,9 +28,9 @@ internal static class CommandSandboxRuntime
 
     internal static void ValidateTimeout(int timeoutMs)
     {
-        if (timeoutMs < 1)
+        if (timeoutMs < SandboxRequestValidator.MinTimeoutMs)
             throw new ArgumentOutOfRangeException(nameof(timeoutMs), "timeout_ms must be >= 1.");
-        if (timeoutMs > 1_800_000)
+        if (timeoutMs > SandboxRequestValidator.MaxTimeoutMs)
             throw new ArgumentOutOfRangeException(nameof(timeoutMs), "timeout_ms must be <= 1800000 (30 minutes).");
     }
 
@@ -69,8 +69,9 @@ internal static class CommandSandboxRuntime
             foreach (var name in environmentVariableNames)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(name);
-                if (SandboxEnvironment.IsEnvironmentVariableNameValid(name))
-                    envVars.Add(name);
+                if (!SandboxEnvironment.IsEnvironmentVariableNameValid(name))
+                    throw new ArgumentException($"Invalid environment variable name '{name}'.", nameof(environmentVariableNames));
+                envVars.Add(name);
             }
         }
 
@@ -103,7 +104,7 @@ internal static class CommandSandboxRuntime
         bool persistGrants,
         CancellationToken ct)
     {
-        ValidateTimeout(timeoutMs);
+        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs);
 
         var fullWorkDir = SandboxPaths.ValidateWorkingDirectory(workingDirectory);
 

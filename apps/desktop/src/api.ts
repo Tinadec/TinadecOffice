@@ -30,16 +30,189 @@ export interface ApprovalDto {
   command?: string | null;
   cwd?: string | null;
   status: string;
+  /** Core user-action state kept separate from the approval projection. */
+  governance_status?: string | null;
   created_at: string;
   decided_at?: string | null;
 }
 
-export interface CreateApprovalInput {
-  session_id?: string | null;
-  kind: string;
-  summary: string;
-  command?: string | null;
-  cwd?: string | null;
+export type GovernanceRequestStatus =
+  | 'pending'
+  | 'awaiting_delegate'
+  | 'awaiting_user'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'denied'
+  | 'expired'
+  | 'revoked'
+  | 'blocked'
+  | string;
+
+/** A persisted request for a capability that is not currently available. */
+export interface PermissionRequestDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  parent_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  risk: string;
+  expected_cost: number;
+  status: GovernanceRequestStatus;
+  authorization_decision_id?: string | null;
+  capability_grant_id?: string | null;
+  capability_lease_id?: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthorizationDecisionDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  permission_request_id?: string | null;
+  capability_grant_id?: string | null;
+  capability_lease_id?: string | null;
+  outcome: string;
+  reason_code: string;
+  reason: string;
+  decision_source: string;
+  policy_snapshot_hash: string;
+  decided_by_principal_id: string;
+  decided_by_agent_instance_id?: string | null;
+  created_at: string;
+}
+
+export interface CapabilityGrantDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  parent_grant_id?: string | null;
+  transferable: boolean;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+export interface CapabilityRuleDto {
+  effect: string;
+  capability: string;
+  action: string;
+  resource_pattern: string;
+}
+
+export interface ApprovalDelegationDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  delegated_by_principal_id: string;
+  delegate_agent_version_id: string;
+  delegate_agent_instance_id: string;
+  rules: CapabilityRuleDto[];
+  max_risk: string;
+  max_cost: number;
+  run_id?: string | null;
+  require_user_review: boolean;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+/** Lease responses intentionally do not expose the internal one-time nonce. */
+export interface CapabilityLeaseDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability_grant_id: string;
+  permission_request_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  policy_snapshot_hash: string;
+  status: string;
+  max_uses: number;
+  use_count: number;
+  starts_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+}
+
+export interface PermissionResolutionDto {
+  request: PermissionRequestDto;
+  decision: AuthorizationDecisionDto;
+  grant?: CapabilityGrantDto | null;
+  lease?: CapabilityLeaseDto | null;
+}
+
+export interface PermissionDecisionInput {
+  approve: boolean;
+  approver_agent_instance_id?: string | null;
+  approval_delegation_id?: string | null;
+  reason?: string | null;
+}
+
+export interface CreateCapabilityGrantInput {
+  subject_principal_id: string;
+  subject_agent_instance_id?: string | null;
+  capability: string;
+  action: string;
+  resource: string;
+  run_id?: string | null;
+  task_id?: string | null;
+  expires_at: string;
+  max_uses?: number;
+  transferable?: boolean;
+  parent_grant_id?: string | null;
+  reason?: string | null;
+}
+
+export interface CreateApprovalDelegationInput {
+  delegate_agent_version_id: string;
+  delegate_agent_instance_id: string;
+  rules?: CapabilityRuleDto[];
+  max_risk?: string | null;
+  max_cost: number;
+  max_uses?: number;
+  expires_at: string;
+  run_id?: string | null;
+  require_user_review?: boolean;
+}
+
+export interface GovernanceRevokeInput {
+  reason?: string | null;
 }
 
 export interface ModelSettingsDto {
@@ -52,6 +225,7 @@ export interface ModelSettingsDto {
 export interface ModelProviderTemplateDto {
   provider_family: string;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: 'api-key' | 'cli' | 'local-server' | string;
   credential_kind: string;
@@ -77,10 +251,12 @@ export interface ProviderCapabilityDto {
 export interface ModelProviderInstanceDto {
   id: string;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: 'api-key' | 'cli' | 'local-server' | string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   has_api_key: boolean;
   binary_path?: string | null;
   home_path?: string | null;
@@ -100,6 +276,10 @@ export interface ModelRouteDto {
   provider_instance_id: string;
   model?: string | null;
   updated_at: string;
+}
+
+export interface ModelDiscoveryResultDto {
+  models: Array<{ id: string; display_name: string }>;
 }
 
 export interface ModelProviderReadinessDto {
@@ -177,10 +357,12 @@ export interface ModelCatalogReadinessReceiptDto {
 export interface SaveModelProviderInstanceInput {
   id?: string | null;
   driver: string;
+  protocol?: string | null;
   display_name: string;
   connection_kind: string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   api_key?: string | null;
   clear_api_key?: boolean;
   binary_path?: string | null;
@@ -422,6 +604,7 @@ export interface ModelCenterApiConnectionDto {
   credential_kind: string;
   base_url?: string | null;
   model?: string | null;
+  models?: string[];
   has_api_key: boolean;
   server_url?: string | null;
   capabilities: string[];
@@ -469,6 +652,29 @@ export interface ModelCenterCliRuntimeDto {
   readiness?: Record<string, unknown> | null;
 }
 
+export interface CliDiscoveryCandidateDto {
+  driver: string;
+  display_name: string;
+  binary_path: string | null;
+  home_path?: string | null;
+  server_url?: string | null;
+  launch_args?: string | null;
+  status: 'found' | 'missing' | 'configured';
+}
+
+export interface ConnectCliRuntimeInput {
+  driver: string
+  binary_path: string
+  display_name?: string
+  home_path?: string | null
+  server_url?: string | null
+  launch_args?: string | null
+}
+
+export interface CliDiscoveryResultDto {
+  cli_runtimes: CliDiscoveryCandidateDto[];
+}
+
 export interface ModelCenterAcpRuntimeDto {
   id: string;
   runtime_id: string;
@@ -505,13 +711,6 @@ export interface ModelCenterOverviewDto {
 }
 
 export type AgentRuntimeSelectionKind = 'inherit' | 'fixed_model' | 'provider_auto' | 'cli' | 'acp';
-
-export type AgentRuntimeBindingInput =
-  | { selection_kind: 'inherit' }
-  | { selection_kind: 'fixed_model'; provider_instance_id: string; model_id: string }
-  | { selection_kind: 'provider_auto'; provider_instance_id: string }
-  | { selection_kind: 'cli'; runtime_id: string }
-  | { selection_kind: 'acp'; runtime_id: string };
 
 export interface AgentRuntimeBindingWarningDto {
   code: 'LEGACY_SHARED_ROUTE' | string;
@@ -569,7 +768,16 @@ export interface AgentProfileDto {
   system_prompt?: string | null;
   enabled: boolean;
   is_built_in: boolean;
+  revision?: number | null;
   updated_at: string | null;
+  /** Versioned projection (Core ToAgentDto) — present on GET /agents since D7.4. */
+  slug?: string;
+  display_name?: string;
+  role?: string;
+  tool_scope?: string[] | string | null;
+  model_strategy?: Record<string, unknown> | string | null;
+  status?: string;
+  version?: number | null;
 }
 
 export interface AgentModeDto {
@@ -594,6 +802,155 @@ export interface AgentCandidateDto {
   status: string;
   created_at: string;
 }
+
+// ── New config objects (snake_case, If-Match via etag/revision) ──
+export interface AgentDefinitionDto {
+  id: string;
+  /** Legacy flat shape (old AgentProfile projection). */
+  name?: string;
+  /** Versioned AgentDefinition shape (Core ToAgentDto). */
+  slug?: string;
+  display_name?: string;
+  layer: 'operation' | 'execution' | string;
+  /** Legacy flat shape. */
+  agent_type?: string;
+  /** Versioned shape. */
+  role?: string;
+  model_route_purpose?: string | null;
+  /** Versioned shape: { kind: inherit|fixed|parent_select, ... }. */
+  model_strategy?: Record<string, unknown> | 'inherit' | 'fixed' | 'parent_select' | string | null;
+  /** Legacy flat shape. */
+  allowed_tools?: string[];
+  /** Versioned shape: string[] or "*". */
+  tool_scope?: string[] | string | null;
+  capabilities?: string[];
+  system_prompt?: string | null;
+  description?: string | null;
+  enabled?: boolean;
+  is_built_in?: boolean;
+  status?: string;
+  revision?: number | null;
+  version?: number | null;
+  etag?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface WorkspaceDefaultsDto {
+  id?: string;
+  default_agent_id?: string | null;
+  default_agent_mode_id?: string | null;
+  default_prompt_pipeline_id?: string | null;
+  status?: string;
+  revision?: number | null;
+  etag?: string | null;
+}
+
+export interface AgentVersionDto {
+  id: string;
+  agent_id: string;
+  version: number;
+  content?: Record<string, unknown> | null;
+  change_summary?: string | null;
+  is_active?: boolean;
+  created_at: string;
+}
+
+export interface AgentModeNodeDto {
+  id: string;
+  agent_id: string;
+  lane: 'operation' | 'execution';
+  position: { x: number; y: number };
+  label?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+export interface AgentModeEdgeDto {
+  id: string;
+  source: string;
+  target: string;
+  label?: string | null;
+}
+
+export interface AgentModeTopologyDto {
+  id: string;
+  display_name: string;
+  summary?: string | null;
+  nodes: AgentModeNodeDto[];
+  edges: AgentModeEdgeDto[];
+  canvas_layout?: Record<string, unknown> | null;
+  status?: string;
+  revision?: number | null;
+  etag?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ModeVersionDto {
+  id: string;
+  mode_id: string;
+  version: number;
+  nodes?: AgentModeNodeDto[] | null;
+  edges?: AgentModeEdgeDto[] | null;
+  canvas_layout?: Record<string, unknown> | null;
+  created_at: string;
+  is_active?: boolean;
+}
+
+export interface PromptPipelineDto {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  key?: string | null;
+  description?: string | null;
+  scope?: string | null;
+  status?: string;
+  version?: number | null;
+  revision?: number | null;
+  etag?: string | null;
+  nodes?: unknown[] | null;
+  edges?: unknown[] | null;
+  canvas_layout?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PromptPipelineVersionDto {
+  id: string;
+  pipeline_id: string;
+  version: number;
+  content?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AgentRuntimeInstanceDto {
+  id: string;
+  run_id: string;
+  session_id?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  status: string;
+  lane?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SessionInteractionDto {
+  id: string;
+  session_id: string;
+  run_id?: string | null;
+  content: string;
+  client_message_id: string;
+  mode_version_id?: string | null;
+  dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
+  target_run_id?: string | null;
+  meeting_model?: string | null;
+  status: string;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export type DispatchMode = 'queued' | 'insert' | 'parallel';
 
 export interface AgentEvolutionProposalDto {
   id: string;
@@ -928,6 +1285,96 @@ export interface CodeToolExecuteRequestDto {
   approval_id?: string | null;
   cwd?: string | null;
   arguments?: Record<string, unknown> | null;
+  /** User intent fields are passed through to the Tool Provider; Desktop does not decide authorization. */
+  approval?: boolean;
+  confirmation?: boolean;
+  source?: 'human' | 'agent' | string;
+}
+
+export type UserToolActionStatus =
+  | 'snapshot_required'
+  | 'awaiting_delegate'
+  | 'awaiting_user'
+  | 'awaiting_approval'
+  | 'running'
+  | 'completed'
+  | 'blocked'
+  | 'outcome_unknown'
+  | 'failed'
+  | string;
+
+/** Core-owned user action. Nonces and internal lease material never cross this DTO. */
+export interface UserToolActionDto {
+  id: string;
+  audit_reference: string;
+  tenant_id: string;
+  workspace_id: string;
+  project_id: string;
+  principal_id: string;
+  tool_id: string;
+  status: UserToolActionStatus;
+  risk: string;
+  mutates_workspace: boolean;
+  requires_approval: boolean;
+  permission_request_id?: string | null;
+  authorization_decision_id?: string | null;
+  action_approval_id?: string | null;
+  snapshot_id?: string | null;
+  snapshot_hash?: string | null;
+  snapshot_override?: boolean;
+  snapshot_override_reason?: string | null;
+  non_reversible?: boolean;
+  compensation_guidance?: string | null;
+  recovery_decision?: string | null;
+  recovery_reason?: string | null;
+  recovered_at?: string | null;
+  result?: Record<string, unknown> | null;
+  error_category?: string | null;
+  message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+export type UserToolActionRecoveryDecision = 'mark_completed' | 'mark_failed';
+
+export interface RecoveryDecisionInput {
+  decision: UserToolActionRecoveryDecision;
+  reason?: string | null;
+}
+
+export interface CreateUserToolActionInput {
+  project_id: string;
+  tool_id: string;
+  params?: Record<string, unknown> | null;
+  idempotency_key?: string | null;
+}
+
+export interface SnapshotDto {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  project_id: string;
+  kind: string;
+  status: string;
+  is_git: boolean;
+  workspace_hash: string;
+  content_hash: string;
+  file_count: number;
+  created_at: string;
+}
+
+export interface AgentLineageEntryDto {
+  id: string;
+  run_id: string;
+  parent_instance_id?: string | null;
+  task_id?: string | null;
+  layer: string;
+  role: string;
+  generation_depth: number;
+  generated: boolean;
+  status: string;
+  capabilities?: string[] | null;
 }
 
 export interface OrchestrationSnapshotDto {
@@ -972,7 +1419,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const message = extractErrorMessage(data, response.statusText);
-    throw new Error(message);
+    const code = data && typeof data === 'object' && typeof (data as Record<string, unknown>).code === 'string'
+      ? (data as Record<string, unknown>).code
+      : null;
+    // Coded errors let callers branch on machine codes (e.g. context_conflict)
+    // instead of parsing human messages.
+    throw Object.assign(new Error(message), { code, status: response.status });
   }
 
   return data as T;
@@ -992,6 +1444,27 @@ function extractErrorMessage(data: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+export type AgentCatalogItem = { id: string; layer: string; role: string; lifecycle: string; prompt_profile: string; capabilities: string[]; allowed_tools: string[]; context_access: string; direct_user_output: boolean; triggers: string[]; accepts: string[]; emits: string[]; decisions: string[]; memory_write_policy: string };
+export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${gatewayUrl}/api/v1/agents/catalog`, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${gatewayUrl}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+/** Resolve the Core project identity for a desktop workspace path. */
+export async function createUserToolActionForPath(
+  path: string,
+  toolId: string,
+  params?: Record<string, unknown> | null,
+  idempotencyKey?: string,
+): Promise<UserToolActionDto> {
+  const projects = await request<ProjectDto[]>('/api/v1/projects');
+  const normalized = path.replace(/[\\/]+$/, '').toLowerCase();
+  const project = projects.find((item) => item.path.replace(/[\\/]+$/, '').toLowerCase() === normalized);
+  if (!project) throw new Error('The selected workspace is not registered in TinadecCore.');
+  return request<UserToolActionDto>('/api/v1/user/tool-actions', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: project.id, tool_id: toolId, params, idempotency_key: idempotencyKey }),
+  });
 }
 
 export const api = {
@@ -1038,28 +1511,55 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`);
   },
-  createApproval: (approval: CreateApprovalInput) => request<ApprovalDto>('/api/v1/approvals', {
+  listPermissionRequests: (params: { status?: string; run_id?: string; task_id?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.status) search.set('status', params.status);
+    if (params.run_id) search.set('run_id', params.run_id);
+    if (params.task_id) search.set('task_id', params.task_id);
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return request<PermissionRequestDto[]>(`/api/v1/governance/permission-requests${suffix}`);
+  },
+  getPermissionRequest: (requestId: string) => request<PermissionResolutionDto>(`/api/v1/governance/permission-requests/${encodeURIComponent(requestId)}`),
+  decidePermissionRequest: (requestId: string, input: PermissionDecisionInput) => request<PermissionResolutionDto>(`/api/v1/governance/permission-requests/${encodeURIComponent(requestId)}/decision`, {
     method: 'POST',
-    body: JSON.stringify(approval)
+    body: JSON.stringify(input),
   }),
-  decideApproval: (approvalId: string, decision: 'approved' | 'rejected') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+  listUserToolActions: (status?: string) => request<UserToolActionDto[]>(`/api/v1/user/tool-actions${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createUserToolAction: (input: CreateUserToolActionInput) => request<UserToolActionDto>('/api/v1/user/tool-actions', {
     method: 'POST',
-    body: JSON.stringify({ decision })
+    body: JSON.stringify(input),
   }),
-  createShellApproval: (sessionId: string | null, command: string, cwd?: string) => request<ApprovalDto>('/api/v1/tools/shell', {
+  getUserToolAction: (actionId: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}`),
+  resumeUserToolAction: (actionId: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/resume`, {
     method: 'POST',
-    body: JSON.stringify({
-      session_id: sessionId,
-      kind: 'shell',
-      summary: command,
-      command,
-      cwd
-    })
+  }),
+  overrideUserToolActionSnapshot: (actionId: string, reason: string) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/snapshot-override`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  }),
+  decideUserToolActionRecovery: (actionId: string, input: RecoveryDecisionInput) => request<UserToolActionDto>(`/api/v1/user/tool-actions/${encodeURIComponent(actionId)}/recovery-decision`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  getRunAgentLineage: (runId: string) => request<AgentLineageEntryDto[]>(`/api/v1/runs/${encodeURIComponent(runId)}/agent-lineage`),
+  listWorkspaceSnapshots: (projectId: string) => request<SnapshotDto[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/snapshots`),
+  getWorkspaceSnapshot: (snapshotId: string) => request<SnapshotDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}`),
+  restoreWorkspaceSnapshot: (snapshotId: string, input: { idempotency_key?: string; expected_workspace_hash?: string; allow_conflicts?: boolean } = {}) => request<Record<string, unknown>>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null) => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+    method: 'POST',
+    body: JSON.stringify(reason ? { decision, reason } : { decision })
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),
-  getModelCenterOverview: () => request<ModelCenterOverviewDto>('/api/v1/model-center/overview'),
-  refreshProviderModels: (providerInstanceId: string) => request<ModelCenterOverviewDto>(`/api/v1/model-center/provider-instances/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
+  discoverCliRuntimes: () => request<CliDiscoveryResultDto>('/api/v1/model-providers/cli/discover'),
+  connectCliRuntime: (input: ConnectCliRuntimeInput) => request<ModelProviderInstanceDto>('/api/v1/model-providers/cli/connect', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  }),
+  refreshProviderModels: (providerInstanceId: string) => request<ModelDiscoveryResultDto>(`/api/v1/model-providers/${encodeURIComponent(providerInstanceId)}/models/refresh`, {
     method: 'POST'
   }),
   getModelReadiness: () => request<ModelReadinessReceiptDto>('/api/v1/model-readiness'),
@@ -1120,13 +1620,46 @@ export const api = {
   connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
-  getAgentCenterOverview: () => request<AgentCenterOverviewDto>('/api/v1/agent-center/overview'),
-  saveAgentRuntimeBinding: (agentId: string, binding: AgentRuntimeBindingInput) => request<AgentRuntimeBindingDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/runtime-binding`, {
-    method: 'PUT',
-    body: JSON.stringify(binding)
-  }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
   listAgents: () => request<AgentProfileDto[]>('/api/v1/agents'),
+  // ── New 5-tab config objects (snake_case, If-Match via etag) ──
+  listAgentDefinitions: () => request<AgentDefinitionDto[]>('/api/v1/agents'),
+  createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
+  updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
+  archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  getWorkspaceDefaults: () => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults'),
+  listAgentVersions: (id: string) => request<AgentVersionDto[]>(`/api/v1/agents/${encodeURIComponent(id)}/versions`),
+  getAgentVersion: (id: string, versionId: string) => request<AgentVersionDto>(`/api/v1/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`),
+  // agent-modes topology
+  listAgentModeTopologies: () => request<AgentModeTopologyDto[]>('/api/v1/agent-modes'),
+  createAgentModeDraft: (body: Partial<AgentModeTopologyDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
+  getAgentModeTopology: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}`),
+  updateAgentModeDraft: (id: string, body: { nodes: AgentModeNodeDto[]; edges: AgentModeEdgeDto[]; canvas_layout?: Record<string, unknown> | null }, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  archiveAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listAgentModeVersions: (id: string) => request<ModeVersionDto[]>(`/api/v1/agent-modes/${encodeURIComponent(id)}/versions`),
+  // prompt pipelines
+  listPromptPipelines: () => request<PromptPipelineDto[]>('/api/v1/prompt-pipelines'),
+  createPromptPipelineDraft: (body: Partial<PromptPipelineDto>) => request<PromptPipelineDto>('/api/v1/prompt-pipelines', { method: 'POST', body: JSON.stringify(body) }),
+  getPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}`),
+  updatePromptPipelineDraft: (id: string, body: Partial<PromptPipelineDto>, etag?: string | null) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  publishPromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  archivePromptPipeline: (id: string) => request<PromptPipelineDto>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  listPromptPipelineVersions: (id: string) => request<PromptPipelineVersionDto[]>(`/api/v1/prompt-pipelines/${encodeURIComponent(id)}/versions`),
+  // candidates
+  listCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
+  promoteCandidate: (candidateId: string, body: { target_mode_draft_id: string }) => request<AgentDefinitionDto>(`/api/v1/agent-candidates/${encodeURIComponent(candidateId)}/promote`, { method: 'POST', body: JSON.stringify(body) }),
+  rejectCandidate: (candidateId: string, reason?: string) => request<{ status: string }>(`/api/v1/agent-candidates/${encodeURIComponent(candidateId)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  // runtime instances
+  listRuntimeInstances: (runId?: string) => {
+    const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+    return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
+  },
+  // interactions (queued/insert/parallel)
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
+  cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
   searchTools: (params: { query?: string; domain?: string; source?: string; risk?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
@@ -1166,7 +1699,13 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input)
   }),
-  executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${toolId}/execute`, {
+  /** Current v1 user tool transport. Gateway forwards this request to the Tool Provider. */
+  executeCodeTool: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/code/tools/${encodeURIComponent(toolId)}/execute`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  /** Explicit provider transport alias for clients that use the Tool Runtime surface. */
+  executeToolRuntime: (toolId: string, payload: CodeToolExecuteRequestDto = {}) => request<CodeToolExecuteResultDto>(`/api/v1/tool-runtime/tools/${encodeURIComponent(toolId)}/execute`, {
     method: 'POST',
     body: JSON.stringify(payload)
   }),
@@ -1194,25 +1733,6 @@ export const api = {
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
-  saveAgent: (agentId: string, agent: {
-    name: string;
-    layer: string;
-    agent_type: string;
-    mode: string;
-    description: string;
-    model_route_purpose: string;
-    allowed_tools?: string[];
-    capabilities?: string[];
-    system_prompt?: string | null;
-    enabled: boolean;
-  }) => request<AgentProfileDto>(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(agent)
-  }),
-  updateAgentMode: (agentId: string, mode: string) => request<AgentProfileDto>(`/api/v1/agents/${encodeURIComponent(agentId)}/mode`, {
-    method: 'PUT',
-    body: JSON.stringify({ mode })
-  }),
   listAgentCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
 
   // --- Agent Evolution ---
@@ -1254,57 +1774,79 @@ export const api = {
     body: JSON.stringify({ version_a: versionA, version_b: versionB })
   }),
 
-  // --- Streaming Invoke (SSE) ---
-  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
-    const controller = new AbortController();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    (async () => {
+  // --- Streaming Invoke (SSE) — external contract: 5 required + 2 optional, 8 kinds, fixed fields ---
+  // Canonical DTO lives in src/generated/client.ts (openapi-typescript target); this file remains compat alias only.
+  invokeStreamWithAdmission: (
+    sessionId: string,
+    body: { content: string; client_message_id: string; application_mode: string; agent_mode: string; permission_mode: string; target_run_id?: string | null; expected_context_revision?: number | null },
+    onChunk: (chunk: { run_id: string; turn_id: string | null; message_id: string | null; seq: number; kind: string; occurred_at: string; payload: Record<string, unknown> }) => void,
+    onError?: (error: Error) => void,
+  ): AbortController => {
+    const controller = new AbortController()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    ;(async () => {
       try {
         const response = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/invoke-stream`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-          body: JSON.stringify({ content }),
-          signal: controller.signal
-        });
-
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
         if (!response.ok) {
-          const text = await response.text();
-          throw new Error(extractErrorMessage(text.length > 0 ? JSON.parse(text) : null, response.statusText));
+          const text = await response.text()
+          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
+          throw new Error(extractErrorMessage(parsed, response.statusText) || text || `HTTP ${response.status}`)
         }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body for streaming');
-
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error('No response body for streaming')
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const json = line.slice(6).trim();
-              if (json) {
-                try {
-                  onChunk(JSON.parse(json));
-                } catch {
-                  // Skip malformed JSON
-                }
-              }
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let idx: number
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, idx); buffer = buffer.slice(idx + 2)
+            if (!block.trim() || block.startsWith(':')) continue
+            let id: string | null = null, ev: string | null = null, data = ''
+            for (const line of block.split('\n')) {
+              if (line.startsWith('id:')) id = line.slice(3).trim()
+              else if (line.startsWith('event:')) ev = line.slice(7).trim()
+              else if (line.startsWith('data:')) data += line.slice(5).trim()
             }
+            if (!data) continue
+            try {
+              const obj = JSON.parse(data) as Record<string, unknown>
+              const chunk = {
+                run_id: String((obj.run_id as string) ?? ''),
+                turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
+                message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
+                seq: Number((obj.seq as number) ?? id ?? 0),
+                kind: String((obj.kind as string) ?? ev ?? 'delta'),
+                occurred_at: (obj.occurred_at as string) ?? (obj.occurredAt as string) ?? new Date().toISOString(),
+                payload: (obj.payload as Record<string, unknown>) ?? obj,
+              }
+              if (chunk.kind === 'heartbeat') continue
+              onChunk(chunk as never)
+            } catch {}
           }
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        onError?.(err instanceof Error ? err : new Error(String(err)));
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        onError?.(err instanceof Error ? err : new Error(String(err)))
       }
-    })();
-
-    return controller;
+    })()
+    return controller
+  },
+  // compat: old single-arg signature delegates to admission variant
+  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
+    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return (api as unknown as { invokeStreamWithAdmission: typeof api.invokeStreamWithAdmission }).invokeStreamWithAdmission(
+      sessionId,
+      { content, client_message_id: clientMessageId, application_mode: 'conversation', agent_mode: 'auto', permission_mode: 'default' },
+      onChunk as unknown as never,
+      onError,
+    )
   },
 
   connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {

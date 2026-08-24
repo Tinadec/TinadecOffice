@@ -4,6 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TinadecCore.Abstractions</RootNamespace>
     <Description>TinadecCore port interfaces and module registration abstractions.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>TinadecCore.Abstractions</PackageId>
+    <PackageTags>tinadec;agent;abstractions;dmaea</PackageTags>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -11,9 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
   </ItemGroup>
 
 </Project>

@@ -22,12 +22,29 @@
     "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@tinadec/ui": ["../TinadecUI/src/index.ts"]
+      "@/*": [
+        "src/*"
+      ],
+      "@tinadec/ui": [
+        "../TinadecUI/src/index.ts"
+      ],
+      "vue": [
+        "../../node_modules/vue/dist/vue.d.ts"
+      ],
+      "@vue/reactivity": [
+        "../../node_modules/@vue/reactivity/dist/reactivity.d.ts"
+      ],
+      "@vue/runtime-dom": [
+        "../../node_modules/@vue/runtime-dom/dist/runtime-dom.d.ts"
+      ],
+      "@vue/runtime-vapor": [
+        "../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.d.ts"
+      ]
     }
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.vue"
+    "src/**/*.vue",
+    "../TinadecUI/src/**/*"
   ]
 }

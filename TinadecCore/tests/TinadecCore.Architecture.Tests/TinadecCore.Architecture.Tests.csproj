@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\Skills\TinadecCore.Skills.csproj" />
     <ProjectReference Include="..\..\LoopGuard\TinadecCore.LoopGuard.csproj" />
     <ProjectReference Include="..\..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\..\Runtime\TinadecCore.Runtime.csproj" />
     <ProjectReference Include="..\..\Api\TinadecCore.Api.csproj" />
   </ItemGroup>

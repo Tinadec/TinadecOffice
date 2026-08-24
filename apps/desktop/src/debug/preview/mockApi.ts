@@ -29,7 +29,6 @@ import type {
   CodeToolExecuteResultDto,
   CodeToolExecuteRequestDto,
   EventEnvelope,
-  CreateApprovalInput,
   SaveModelProviderInstanceInput,
   SavePromptFragmentInput,
   PromptContextPreviewInput,
@@ -197,21 +196,6 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         }),
         scenario.value,
       ) as Promise<ApprovalDto[]>,
-    createApproval: (approval: CreateApprovalInput) =>
-      delay(
-        {
-          id: `appr-new-${Date.now()}`,
-          session_id: approval.session_id ?? null,
-          kind: approval.kind,
-          summary: approval.summary,
-          command: approval.command ?? null,
-          cwd: approval.cwd ?? null,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          decided_at: null,
-        } as ApprovalDto,
-        scenario.value,
-      ),
     decideApproval: (approvalId: string, decision: 'approved' | 'rejected') =>
       delay(
         {
@@ -222,22 +206,6 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         } as ApprovalDto,
         scenario.value,
       ),
-    createShellApproval: (sessionId: string | null, command: string, cwd?: string) =>
-      delay(
-        {
-          id: `appr-shell-${Date.now()}`,
-          session_id: sessionId,
-          kind: 'shell',
-          summary: command,
-          command,
-          cwd: cwd ?? null,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          decided_at: null,
-        } as ApprovalDto,
-        scenario.value,
-      ),
-
     listModelProviderTemplates: () =>
       delay(
         [

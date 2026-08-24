@@ -5,6 +5,7 @@
  */
 
 import { getConfig } from './config.js';
+import { PRINCIPAL_VALUE, ensureRequestId } from './headers.js';
 
 export type ProxyBody = Record<string, unknown> | string | undefined;
 
@@ -17,6 +18,19 @@ export interface ProxyOptions {
 export interface ProxyResult {
   status: number;
   data: unknown;
+  headers?: Headers;
+}
+
+function proxyBaseHeaders(incoming?: HeadersInit): Record<string, string> {
+  let incomingRequestId: string | null = null;
+  if (incoming) {
+    const h = new Headers(incoming as HeadersInit);
+    incomingRequestId = h.get('x-request-id') ?? h.get('X-Request-Id');
+  }
+  return {
+    'x-request-id': ensureRequestId(incomingRequestId),
+    'x-tinadec-principal': PRINCIPAL_VALUE,
+  };
 }
 
 /** Core 服务 URL（从配置读取） */
@@ -42,6 +56,7 @@ export async function proxyJson(path: string, options: ProxyOptions = {}): Promi
       ? undefined
       : JSON.stringify(options.body);
 
+  const baseHeaders = proxyBaseHeaders(options.headers);
   let response: Response;
   try {
     response = await fetch(coreEndpoint(path), {
@@ -49,6 +64,7 @@ export async function proxyJson(path: string, options: ProxyOptions = {}): Promi
       headers: {
         accept: 'application/json',
         ...(body ? { 'content-type': 'application/json' } : {}),
+        ...baseHeaders,
         ...options.headers
       },
       body
@@ -82,20 +98,50 @@ export async function proxyJson(path: string, options: ProxyOptions = {}): Promi
 
   return {
     status: response.status,
-    data
+    data,
+    headers: response.headers
   };
 }
 
 /**
  * 代理 SSE 请求到 Core。
- * 返回原始 Response，调用方可读取 body 流。
+ * 保留 id/event/retry/heartbeat 顺序；支持 Last-Event-ID / ?cursor= 续接
+ * 注入 X-Request-Id + X-Tinadec-Principal
  */
 export async function proxySse(path: string, init?: RequestInit): Promise<Response> {
+  const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
   return fetch(coreEndpoint(path), {
     ...init,
     headers: {
       accept: 'text/event-stream',
+      ...baseHeaders,
       ...(init?.headers ?? {})
+    }
+  });
+}
+
+export async function proxySseWithCursor(
+  path: string,
+  cursor: string | null,
+  incomingHeaders?: HeadersInit,
+  extraInit?: RequestInit
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    accept: 'text/event-stream',
+    ...proxyBaseHeaders(incomingHeaders),
+  };
+  if (cursor) headers['last-event-id'] = cursor;
+  // also forward as query if path doesn't already contain cursor
+  let url = path;
+  if (cursor && !path.includes('cursor=') && !path.includes('after_seq') && !path.includes('afterSeq')) {
+    const sep = path.includes('?') ? '&' : '?';
+    url = `${path}${sep}cursor=${encodeURIComponent(cursor)}`;
+  }
+  return fetch(coreEndpoint(url), {
+    ...extraInit,
+    headers: {
+      ...headers,
+      ...(extraInit?.headers as Record<string, string> | undefined)
     }
   });
 }
@@ -105,5 +151,12 @@ export async function proxySse(path: string, init?: RequestInit): Promise<Respon
  * 用于大文件和日志的流式传输。
  */
 export async function proxyStream(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(coreEndpoint(path), init);
+  const baseHeaders = proxyBaseHeaders(init?.headers as HeadersInit | undefined);
+  return fetch(coreEndpoint(path), {
+    ...init,
+    headers: {
+      ...baseHeaders,
+      ...(init?.headers as Record<string, string> | undefined)
+    }
+  });
 }

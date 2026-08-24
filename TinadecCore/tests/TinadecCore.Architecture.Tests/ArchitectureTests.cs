@@ -18,6 +18,7 @@ public sealed class ArchitectureTests
     private static readonly Assembly SkillsAssembly = typeof(Skills.SkillsModuleRegistrar).Assembly;
     private static readonly Assembly LoopGuardAssembly = typeof(LoopGuard.LoopGuardModuleRegistrar).Assembly;
     private static readonly Assembly LifecycleAssembly = typeof(Lifecycle.LifecycleModuleRegistrar).Assembly;
+    private static readonly Assembly GovernanceAssembly = typeof(Governance.GovernanceModuleRegistrar).Assembly;
     private static readonly Assembly RuntimeAssembly = typeof(Runtime.TinadecCoreBuilder).Assembly;
     private static readonly Assembly ApiAssembly = typeof(Program).Assembly;
 
@@ -25,7 +26,7 @@ public sealed class ArchitectureTests
     [
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
-        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
+        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
         RuntimeAssembly, ApiAssembly
     ];
 
@@ -33,7 +34,7 @@ public sealed class ArchitectureTests
     [
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
-        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly,
+        MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
         RuntimeAssembly
     ];
 
@@ -83,6 +84,7 @@ public sealed class ArchitectureTests
             ("Skills", SkillsAssembly),
             ("LoopGuard", LoopGuardAssembly),
             ("Lifecycle", LifecycleAssembly),
+            ("Governance", GovernanceAssembly),
         };
 
         foreach (var (name, asm) in businessModules)
@@ -129,6 +131,29 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void MafAssembliesAreReferencedOnlyByTheDmaeaAdapterModule()
+    {
+        var unexpected = AllModuleAssemblies
+            .Where(assembly => assembly != DmaEAAssembly)
+            .SelectMany(assembly => assembly.GetReferencedAssemblies()
+                .Where(reference => reference.Name?.StartsWith("Microsoft.Agents.AI", StringComparison.Ordinal) == true)
+                .Select(reference => $"{assembly.GetName().Name} -> {reference.Name}"))
+            .ToArray();
+
+        Assert.Empty(unexpected);
+
+        var mafReferences = DmaEAAssembly.GetReferencedAssemblies()
+            .Where(reference => reference.Name?.StartsWith("Microsoft.Agents.AI", StringComparison.Ordinal) == true)
+            .ToDictionary(reference => reference.Name!, reference => reference.Version!);
+        Assert.Equal(4, mafReferences.Count);
+        Assert.All(mafReferences.Values, version =>
+        {
+            Assert.Equal(1, version.Major);
+            Assert.Equal(18, version.Minor);
+        });
+    }
+
+    [Fact]
     public void PersistenceDoesNotDependOnBusinessModulesOrApi()
     {
         var forbidden = new[]
@@ -141,6 +166,7 @@ public sealed class ArchitectureTests
             "TinadecCore.Skills",
             "TinadecCore.LoopGuard",
             "TinadecCore.Lifecycle",
+            "TinadecCore.Governance",
             "TinadecCore.Runtime",
             "TinadecCore.Api",
             "TinadecGateway",

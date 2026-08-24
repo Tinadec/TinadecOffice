@@ -4,6 +4,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TinadecCore.Contracts</RootNamespace>
     <Description>TinadecCore public DTOs and event envelopes. No MAF, ASP.NET, or F# dependencies.</Description>
+    <!-- Contracts are the stable northbound package. Internal implementation
+         packages are only published as Runtime's dependency graph. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>TinadecCore.Contracts</PackageId>
+    <PackageTags>tinadec;agent;contracts;dmaea</PackageTags>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
+  </ItemGroup>
 
 </Project>

@@ -10,6 +10,9 @@
     <Version>0.1.0</Version>
     <PackageVersion>0.1.0</PackageVersion>
     <IsPackable>false</IsPackable>
+    <!-- API and test projects intentionally stay non-packable; solution-level
+         pack should not turn that boundary into a warning. -->
+    <WarnOnPackingNonPackableProject>false</WarnOnPackingNonPackableProject>
     <!-- Override system env var Version=V7.24.42SP3 set by Android SDK -->
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>

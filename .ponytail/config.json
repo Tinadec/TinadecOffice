@@ -15,7 +15,8 @@
       "principles": [
         "prefer-composition-api",
         "avoid-options-api",
-        "reuse-existing-components"
+        "reuse-existing-components",
+        "versioned-write-path"
       ]
     },
     "gatewayLayer": {
@@ -23,7 +24,8 @@
       "principles": [
         "thin-proxy-mode",
         "no-business-logic",
-        "proxy-only"
+        "proxy-only",
+        "mapper-only-transforms"
       ]
     },
     "coreLayer": {
@@ -31,7 +33,8 @@
       "principles": [
         "minimal-api",
         "interface-governance",
-        "no-hardcoded-tools"
+        "no-hardcoded-tools",
+        "snake_case-contract"
       ]
     }
   },
@@ -42,5 +45,5 @@
     "obj/"
   ],
   "created": "2026-06-29",
-  "lastUpdated": "2026-06-29"
+  "lastUpdated": "2026-08-23"
 }

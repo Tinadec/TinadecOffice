@@ -12,7 +12,7 @@ import {
   ToggleRight,
   Trash2,
 } from '@lucide/vue'
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton, UiInput } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'

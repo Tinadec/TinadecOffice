@@ -39,7 +39,7 @@ internal partial class GitRemoteMutationToolsJsonContext : JsonSerializerContext
 
 internal static class GitRemoteMutationTools
 {
-    [ToolFunction("git_fetch", RequiresApproval = true)]
+    [ToolFunction("git_fetch", RequiresApproval = true, ConfirmationFields = ["confirm_fetch"])]
     public static async ValueTask<GitRemoteMutationResult> FetchAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmFetch, nameof(args.ConfirmFetch));
@@ -57,7 +57,7 @@ internal static class GitRemoteMutationTools
         return new GitRemoteMutationResult { Success = true, Action = "fetch", Remote = remote ?? "--all", Changed = true, Output = JoinOutput(execution), Status = status, Branch = status.Branch, Branches = branches.Branches };
     }
 
-    [ToolFunction("git_push", RequiresApproval = true)]
+    [ToolFunction("git_push", RequiresApproval = true, ConfirmationFields = ["confirm_push"])]
     public static async ValueTask<GitRemoteMutationResult> PushAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmPush, nameof(args.ConfirmPush));
@@ -84,7 +84,7 @@ internal static class GitRemoteMutationTools
         return new GitRemoteMutationResult { Success = true, Action = "push", Remote = remote, Branch = branch, Changed = true, SetUpstream = string.IsNullOrWhiteSpace(status.Upstream), Output = JoinOutput(execution), Status = after };
     }
 
-    [ToolFunction("git_pull", RequiresApproval = true)]
+    [ToolFunction("git_pull", RequiresApproval = true, ConfirmationFields = ["confirm_pull"])]
     public static async ValueTask<GitRemoteMutationResult> PullAsync(GitRemoteMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmPull, nameof(args.ConfirmPull));

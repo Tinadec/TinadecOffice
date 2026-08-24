@@ -14,6 +14,11 @@ const router = createRouter({
       component: () => import('./pages/SettingsPage.vue'),
     },
     {
+      // Legacy standalone agent-center page was merged into Settings (agents tab).
+      path: '/agent-center',
+      redirect: '/settings',
+    },
+    {
       path: '/market',
       name: 'market',
       component: () => import('./pages/MarketPage.vue'),
@@ -27,6 +32,31 @@ const router = createRouter({
       path: '/code-editor',
       name: 'code-editor',
       component: () => import('./pages/CodePage.vue'),
+    },
+    {
+      path: '/workbench',
+      name: 'workbench',
+      component: () => import('./pages/WorkbenchPage.vue'),
+    },
+    {
+      path: '/recovery/:actionId',
+      name: 'recovery-check',
+      component: () => import('./pages/RecoveryCheckPage.vue'),
+    },
+    {
+      path: '/governance',
+      name: 'governance-board',
+      component: () => import('./pages/GovernanceBoardPage.vue'),
+    },
+    {
+      path: '/snapshots',
+      name: 'snapshots',
+      component: () => import('./pages/SnapshotsPage.vue'),
+    },
+    {
+      path: '/library',
+      name: 'library',
+      component: () => import('./pages/LibraryPage.vue'),
     },
     {
       path: '/panel',

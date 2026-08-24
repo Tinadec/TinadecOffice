@@ -36,19 +36,19 @@ internal partial class GitBranchToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitBranchTools
 {
-    [ToolFunction("git_checkout", RequiresApproval = true)]
+    [ToolFunction("git_checkout", RequiresApproval = true, ConfirmationFields = ["confirm_checkout"])]
     public static ValueTask<GitBranchMutationResult> CheckoutAsync(GitBranchMutationArgs args, CancellationToken ct) =>
         ExecuteAsync(args, "checkout", ct);
 
-    [ToolFunction("git_branch_create", RequiresApproval = true)]
+    [ToolFunction("git_branch_create", RequiresApproval = true, ConfirmationFields = ["confirm_branch_create"])]
     public static ValueTask<GitBranchMutationResult> CreateAsync(GitBranchMutationArgs args, CancellationToken ct) =>
         ExecuteAsync(args, "create", ct);
 
-    [ToolFunction("git_branch_delete", RequiresApproval = true)]
+    [ToolFunction("git_branch_delete", RequiresApproval = true, ConfirmationFields = ["confirm_branch_delete"])]
     public static ValueTask<GitBranchMutationResult> DeleteAsync(GitBranchMutationArgs args, CancellationToken ct) =>
         ExecuteAsync(args, "delete", ct);
 
-    [ToolFunction("git_branch_rename", RequiresApproval = true)]
+    [ToolFunction("git_branch_rename", RequiresApproval = true, ConfirmationFields = ["confirm_branch_rename"])]
     public static ValueTask<GitBranchMutationResult> RenameAsync(GitBranchMutationArgs args, CancellationToken ct) =>
         ExecuteAsync(args, "rename", ct);
 

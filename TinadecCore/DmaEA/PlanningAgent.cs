@@ -1,9 +1,7 @@
-using System.ClientModel;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using OpenAI;
 using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.DmaEA;
@@ -16,31 +14,37 @@ namespace TinadecCore.DmaEA;
 public sealed class PlanningAgent
 {
     private const string PlanningInstructions =
-        "你是规划层 agent。将用户目标分解为可执行的子任务列表。仅输出 JSON 数组，每个元素必须包含 title、description、success_criteria、dependencies、required_capabilities、priority、risk 字段。不要输出其他文字。";
+        "你是规划层执行规划 agent。将用户目标分解为可执行的有向无环任务列表。仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
 
     private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
 
-    private readonly IChatResolver _chatResolver;
+    private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger? _logger;
-    private readonly Func<ChatResolution, IChatClient>? _chatClientFactory;
 
-    public PlanningAgent(IChatResolver chatResolver, ILogger? logger = null, Func<ChatResolution, IChatClient>? chatClientFactory = null)
+    public ModelUsage? LastUsage { get; private set; }
+
+    public PlanningAgent(IAgentChatClientFactory chatClients, ILogger? logger = null)
     {
-        _chatResolver = chatResolver;
+        _chatClients = chatClients;
         _logger = logger;
-        _chatClientFactory = chatClientFactory;
     }
 
     public async Task<PlannedTask[]> PlanAsync(DmaeaRunContext ctx, IReadOnlyList<AgentDefinition> agents, CancellationToken ct)
     {
-        var resolved = await _chatResolver.ResolveChatAsync("chat", ct).ConfigureAwait(false);
+        var resolved = await _chatClients.ResolveChatAsync("chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable) throw new InvalidOperationException(resolved.Error);
 
-        var chatClient = _chatClientFactory is not null ? _chatClientFactory(resolved) : DefaultChatClient(resolved);
+        var chatClient = await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false);
         var options = new ChatOptions { Instructions = PlanningInstructions };
-        var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions { Name = "planning", ChatOptions = options });
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            chatClient,
+            "operation.task_planner",
+            "task_planner",
+            "Creates the execution task graph without performing side effects.",
+            options);
 
         var response = await agent.RunAsync(ctx.UserGoal, cancellationToken: ct).ConfigureAwait(false);
+        LastUsage = Maf18RuntimeAdapter.NormalizeUsage(response.Usage);
         var tasks = TryParseTasks(response.Text);
         if (tasks.Length == 0)
         {
@@ -61,9 +65,7 @@ public sealed class PlanningAgent
 
     /// <summary>Default real chat client factory: OpenAI-compatible endpoint from the resolution.</summary>
     internal static IChatClient DefaultChatClient(ChatResolution resolved)
-        => new OpenAIClient(new ApiKeyCredential(resolved.ApiKey!), new OpenAIClientOptions { Endpoint = new Uri(resolved.BaseUrl!) })
-            .GetChatClient(resolved.Model!)
-            .AsIChatClient();
+        => AgentChatClientFactory.CreateOpenAiChatClient(resolved);
 
     private static PlannedTask[] TryParseTasks(string? text)
     {

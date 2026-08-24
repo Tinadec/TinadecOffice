@@ -6,16 +6,19 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Microsoft Agent Framework (MAF) – locked to 1.15.0 stable -->
-    <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.15.0" />
-    <PackageVersion Include="Microsoft.Agents.AI" Version="1.15.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.15.0" />
-    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.15.0" />
+    <!-- Microsoft Agent Framework (MAF) - keep the adapter package family on one stable baseline. -->
+    <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.18.0" />
 
     <!-- Microsoft.Extensions.AI – stable -->
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.8.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.8.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.8.0" />
+
+    <!-- Anthropic Messages protocol client (community SDK; MessagesEndpoint implements IChatClient) -->
+    <PackageVersion Include="Anthropic.SDK" Version="5.10.0" />
 
     <!-- ASP.NET Core -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
@@ -23,8 +26,11 @@
     <!-- Microsoft.Extensions (runtime packages use 10.0.x versioning, separate from AI packages) -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.11" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.8" />
+    <PackageVersion Include="Tomlyn" Version="2.10.1" />
 
     <!-- Database abstraction (EF Core + SQLite default + PostgreSQL optional) -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />

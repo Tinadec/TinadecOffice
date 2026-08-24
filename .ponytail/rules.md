@@ -47,8 +47,33 @@ Before writing code, follow this decision ladder:
 - Use minimal API patterns
 - Prefer framework built-in logging (ILogger<T>)
 - Use dependency injection, avoid service locators
-- Leverage existing services from `src/TinadecCore/Services/`
+- Reuse services from `TinadecCore/<Module>/` (Runtime, Lifecycle, Memory, AgentConfiguration, ...); HTTP endpoints live in `TinadecCore/Api/Endpoints/`
 - Avoid over-abstraction
+
+## Current Architecture Rules (verified 2026-08-23)
+
+### API Contract
+- Public JSON is `snake_case`; errors are RFC9457 `ProblemDetails` with `code` + `trace_id`
+- Core exposes internal OpenAPI at `/openapi/core.json`; Gateway publishes external at `/docs`
+- Both OpenAPI snapshots are drift gates (`openapi.snapshot.test.ts`): changing routes requires regenerating snapshots in the same change
+- Canonical agent layers are `operation` / `execution`; accept legacy `planning` only when migrating old inputs
+
+### Gateway (thin mappers)
+- Route handlers stay thin: explicit `CoreDto -> ExternalDto` mapping lives in `TinadecGateway/src/mappers/*`
+- Do not resurrect deleted aggregations (legacy model-center / agent-center / runtime-binding routes return 404 by design)
+- SSE proxying goes through `proxySseWithCursor` (`Last-Event-ID` / `?cursor`); no business logic, no persisted state in Gateway
+- Only forward tool calls that Core has approved
+
+### Desktop (versioned writes)
+- Agent/model write paths are fully versioned: `updateAgentDraft` then `publishAgent`; the legacy `saveAgent` client was deleted — do not reintroduce unversioned saves
+- Renderer reuses `src/generated/client.ts` typed client + Pinia stores (project/session/run/workbench); do not mirror state locally
+- Settings page hosts the agent center as five sub-tabs (agents/modes/prompts/evolution/runtime); the standalone `/agent-center` route was removed — extend tabs instead of adding top-level pages
+- Run streaming uses `useRunStream` with `run_id+seq` dedup; keep transport seams (`src/transport/`) for the future WS upgrade
+
+### Tools (approval gates)
+- Approval gate and `confirm_*` fields are AND-composed double gates; never relax either
+- TinadecTools mutating tools require approval plus their explicit confirmation field; Gateway only forwards approved calls (e.g. `command_run`)
+- Core owns policy/approval/audit/dispatch; tool implementations must not bypass it
 
 ## Common Patterns
 

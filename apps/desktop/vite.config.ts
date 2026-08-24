@@ -18,7 +18,14 @@ export default defineConfig({
       // shim re-exporting both runtime-dom and runtime-vapor so the emitted import
       // resolves under both build and vitest.
       vue: path.resolve(__dirname, './src/lib/vue-shim.ts'),
+      // ponytail: dedupe vue reactivity — desktop nested 3.5.41 vs root 3.6.0-rc.2 caused
+      // dual @vue/reactivity Ref brands (TS2345). Force all @vue/* to the single
+      // root install so vue-tsc sees one Ref identity.
+      '@vue/reactivity': path.resolve(__dirname, '../../node_modules/@vue/reactivity/dist/reactivity.esm-bundler.js'),
+      '@vue/runtime-dom': path.resolve(__dirname, '../../node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
+      '@vue/runtime-vapor': path.resolve(__dirname, '../../node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js'),
     },
+    dedupe: ['vue', '@vue/reactivity', '@vue/runtime-dom', '@vue/runtime-vapor'],
   },
   server: {
     host: '127.0.0.1',

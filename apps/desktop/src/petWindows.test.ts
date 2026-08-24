@@ -8,6 +8,7 @@ import petPreview from './components/PetPreview.vue?raw'
 import desktopPetPage from './pages/DesktopPetPage.vue?raw'
 import router from './router.ts?raw'
 import settingsPage from './pages/SettingsPage.vue?raw'
+import petsSection from './settings/sections/PetsSection.vue?raw'
 import settingsCss from './settings/settings.css?raw'
 
 describe('local pet window shell', () => {
@@ -55,20 +56,23 @@ describe('local pet window shell', () => {
   })
 
   it('keeps downloaded pets above a lazy, incrementally rendered market gallery', () => {
-    const downloadedSection = settingsPage.indexOf('class="pets-section downloaded-pets-section"')
-    const marketSection = settingsPage.indexOf('class="pets-section petdex-market-section"')
+    // D7.2 moved the pets UI into PetsSection.vue; assert against the union.
+    const source = settingsPage + petsSection
+    const downloadedSection = source.indexOf('class="pets-section downloaded-pets-section"')
+    const marketSection = source.indexOf('class="pets-section petdex-market-section"')
     expect(downloadedSection).toBeGreaterThan(-1)
     expect(marketSection).toBeGreaterThan(downloadedSection)
-    expect(settingsPage).toContain('const PET_CATALOG_PAGE_SIZE = 48')
-    expect(settingsPage).toContain('new IntersectionObserver')
-    expect(settingsPage).toContain('ref="petLoadMoreRef"')
-    expect(settingsPage).toContain("t('settings.loadMorePets'")
-    expect(settingsPage).toContain('loading="lazy"')
+    expect(source).toContain('const PET_CATALOG_PAGE_SIZE = 48')
+    expect(source).toContain('new IntersectionObserver')
+    expect(source).toContain('ref="petLoadMoreRef"')
+    expect(source).toContain("t('settings.loadMorePets'")
+    expect(source).toContain('loading="lazy"')
   })
 
   it('shows stable preview loading states and constrains card content', () => {
-    expect(settingsPage).toContain('<PetPreview')
-    expect(settingsPage).toContain('class="pet-action-label"')
+    const source = settingsPage + petsSection
+    expect(source).toContain('<PetPreview')
+    expect(source).toContain('class="pet-action-label"')
     expect(petPreview).toContain('<UiSkeleton v-if="!loaded"')
     expect(petPreview).toContain('@error="markFailed"')
     expect(petPreview).toContain('setTimeout(() =>')

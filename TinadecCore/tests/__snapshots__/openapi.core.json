@@ -1,0 +1,4316 @@
+{
+  "components": {
+    "schemas": {
+      "ApprovalDecisionRequestDto": {
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CapabilityRuleDto": {
+        "properties": {
+          "action": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "capability": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "effect": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_pattern": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CreateApprovalDelegationRequestDto": {
+        "properties": {
+          "delegate_agent_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "delegate_agent_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "max_cost": {
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "max_risk": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "max_uses": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "require_user_review": {
+            "type": "boolean"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityRuleDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CreateMessageRequest": {
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CreatePolicyBundleRequestDto": {
+        "properties": {
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityRuleDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tenant_wide": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "CreateProjectRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CreateSessionRequest": {
+        "properties": {
+          "meeting_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "meeting_provider_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "GrantCapabilityRequestDto": {
+        "properties": {
+          "action": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "capability": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "max_uses": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "parent_grant_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "subject_agent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "subject_principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "transferable": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "InvokeStreamRequest": {
+        "properties": {
+          "agent_mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "application_mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "client_message_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "expected_context_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "permission_mode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "target_run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "JsonElement": {},
+      "PermissionDecisionRequestDto": {
+        "properties": {
+          "approval_delegation_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "approve": {
+            "type": "boolean"
+          },
+          "approver_agent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PublishPolicyVersionRequestDto": {
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityRuleDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ReviewDecisionRequest": {
+        "properties": {
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RevokeRequestDto": {
+        "properties": {
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RunControlRequest": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "client_control_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expected_context_revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ToolDispatchRequestDto": {
+        "properties": {
+          "agent_instance_id": {
+            "type": "string"
+          },
+          "params": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "tool_call_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ToolExecutionRecoveryDecisionRequestDto": {
+        "properties": {
+          "decision": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateSessionRequest": {
+        "properties": {
+          "meeting_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "meeting_provider_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UserToolActionCreateRequestDto": {
+        "properties": {
+          "idempotency_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "params": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserToolActionDto": {
+        "properties": {
+          "action_approval_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "audit_reference": {
+            "type": "string"
+          },
+          "authorization_decision_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "compensation_guidance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error_category": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mutates_workspace": {
+            "type": "boolean"
+          },
+          "non_reversible": {
+            "type": "boolean"
+          },
+          "permission_request_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recovered_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_decision": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "recovery_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "requires_approval": {
+            "type": "boolean"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "risk": {
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "snapshot_override": {
+            "type": "boolean"
+          },
+          "snapshot_override_reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserToolActionRecoveryDecisionRequestDto": {
+        "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UserToolActionSnapshotOverrideRequestDto": {
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "WorkspaceDefaultsRequestDto": {
+        "properties": {
+          "default_agent_definition_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "default_agent_mode_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "default_prompt_pipeline_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "WorkspaceRestoreRequestDto": {
+        "properties": {
+          "allow_conflicts": {
+            "type": "boolean"
+          },
+          "expected_workspace_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "idempotency_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "WorkspaceSnapshotCreateRequestDto": {
+        "properties": {
+          "expected_workspace_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "idempotency_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "include_hidden": {
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "max_files": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "TinadecCore.Api | v1",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.1",
+  "paths": {
+    "/api/v1/acp/adapters": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/acp/adapters/{adapterId}/probe": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{candidateId}/promote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{candidateId}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{id}/promote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{id}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/generate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals/{candidateId}/promote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals/{candidateId}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agent-modes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agent-runtime-instances": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/catalog": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/mode": {
+      "put": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/application-modes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/approvals/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/approvals/{id}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/breakpoints": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/breakpoints/{id}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/diagnostics": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/metrics": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/processes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/approval-decision": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/message": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/model-response": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/state-patch": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/tool-result": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/snapshot/{sessionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/spans": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/traces": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/debug/traces/{traceId}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/doctor": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sessionId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "afterSeq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/install": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/install-preview": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/installed": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/disable": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/enable": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/update": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreateApprovalDelegationRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations/{id}/revoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RevokeRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GrantCapabilityRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants/{id}/revoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RevokeRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-leases/{id}/revoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RevokeRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{id}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PermissionDecisionRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreatePolicyBundleRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RevokeRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{id}/versions": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PublishPolicyVersionRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/harness/manifest": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Harness manifest",
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Legacy-compatible health probe.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Health probe",
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/market/catalog": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/market/catalog/{catalogId}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/market/sources": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{sourceId}/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/reload": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/tools": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates/{candidateId}/promote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates/{candidateId}/reject": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/memory-items": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/memory-items/{itemId}/revoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "itemId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-catalog-readiness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-provider-templates": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-providers": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-providers/cli/connect": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-providers/cli/discover": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-providers/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-providers/{id}/models/refresh": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-readiness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-routes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-routes/{purpose}": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/model-settings": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/snapshots": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkspaceSnapshotCreateRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-context/preview": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/effectiveness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/clone": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/compare": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/effectiveness": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/rollback": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/signals": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{id}/versions": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/archive": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/draft": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/publish": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions/{versionId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/readiness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Readiness probe",
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agent-lineage": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agents/spawn": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/control": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RunControlRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/orchestration": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/stream": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "turn_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "schema": {
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/tools/{toolId}/execute": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "toolId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToolDispatchRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "projectId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}": {
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/context-packs": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/context-versions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "runId",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "InteractionsEndpoints"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/invoke-stream": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeStreamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/orchestration": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/runs": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/supervision-findings": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/task-nodes": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/tool-executions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tool-executions/{id}/recovery-decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolExecutionRecoveryDecisionRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tool-layer-readiness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools/shell": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserToolActionDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UserToolActionCreateRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Bad Request"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{id}/recovery-decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UserToolActionRecoveryDecisionRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "409": {
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{id}/resume": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{id}/snapshot-override": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UserToolActionSnapshotOverrideRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserToolActionDto"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/archive": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/draft": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkspaceDefaultsRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/publish": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/restore": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkspaceRestoreRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "TinadecCore.Api"
+    },
+    {
+      "name": "AgentConfigurationEndpoints"
+    },
+    {
+      "name": "InteractionsEndpoints"
+    }
+  ]
+}

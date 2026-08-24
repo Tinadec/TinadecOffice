@@ -30,6 +30,9 @@ const props = defineProps<Props>()
   border-bottom: 1px solid var(--border-default, rgba(255,255,255,0.08));
 }
 .card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 16px 20px;
 }
 .card-footer {

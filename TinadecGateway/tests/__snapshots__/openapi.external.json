@@ -1,0 +1,3588 @@
+{
+  "components": {
+    "schemas": {}
+  },
+  "info": {
+    "description": "Stateless gateway facade – all snake_case, RFC9457 ProblemDetails, full-duplex SSE",
+    "title": "Tinadec Gateway External API",
+    "version": "v1"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/api/v1/acp/adapters": {
+      "get": {
+        "operationId": "getApiV1AcpAdapters",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List ACP adapters",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/acp/adapters/{adapterId}/probe": {
+      "post": {
+        "operationId": "postApiV1AcpAdaptersByAdapterIdProbe",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "adapterId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Probe ACP adapter",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates": {
+      "get": {
+        "operationId": "getApiV1Agent-candidates",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent candidates",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{candidateId}/promote": {
+      "post": {
+        "operationId": "postApiV1Agent-candidatesByCandidateIdPromote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Promote agent candidate",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-candidates/{candidateId}/reject": {
+      "post": {
+        "operationId": "postApiV1Agent-candidatesByCandidateIdReject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reject agent candidate",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/generate": {
+      "post": {
+        "operationId": "postApiV1Agent-evolutionGenerate",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Generate evolution proposals",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals": {
+      "get": {
+        "operationId": "getApiV1Agent-evolutionProposals",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List evolution proposals",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals/{candidateId}/promote": {
+      "post": {
+        "operationId": "postApiV1Agent-evolutionProposalsByCandidateIdPromote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Promote evolution proposal",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-evolution/proposals/{candidateId}/reject": {
+      "post": {
+        "operationId": "postApiV1Agent-evolutionProposalsByCandidateIdReject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reject evolution proposal",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes": {
+      "get": {
+        "operationId": "getApiV1Agent-modes",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent modes for application mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Agent-modes",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}": {
+      "get": {
+        "operationId": "getApiV1Agent-modesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/archive": {
+      "post": {
+        "operationId": "postApiV1Agent-modesByIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/draft": {
+      "put": {
+        "operationId": "putApiV1Agent-modesByIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent mode draft (nodes/edges/layout in body)",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/publish": {
+      "post": {
+        "operationId": "postApiV1Agent-modesByIdPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish agent mode",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions": {
+      "get": {
+        "operationId": "getApiV1Agent-modesByIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent mode versions",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-modes/{id}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1Agent-modesByIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent mode version",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agent-runtime-instances": {
+      "get": {
+        "operationId": "getApiV1Agent-runtime-instances",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent runtime instances",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents": {
+      "get": {
+        "operationId": "getApiV1Agents",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agents",
+        "tags": [
+          "Agents"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Agents",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/catalog": {
+      "get": {
+        "operationId": "getApiV1AgentsCatalog",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Agent catalog (dual-layer)",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent",
+        "tags": [
+          "Agents"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1AgentsByAgentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/archive": {
+      "post": {
+        "operationId": "postApiV1AgentsByAgentIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/draft": {
+      "put": {
+        "operationId": "putApiV1AgentsByAgentIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent draft",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/mode": {
+      "put": {
+        "operationId": "putApiV1AgentsByAgentIdMode",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update agent mode (501)",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/publish": {
+      "post": {
+        "operationId": "postApiV1AgentsByAgentIdPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/versions": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List agent versions",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1AgentsByAgentIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get agent version",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/application-modes": {
+      "get": {
+        "operationId": "getApiV1Application-modes",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List application modes (TOML baseline)",
+        "tags": [
+          "AgentCenter"
+        ]
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "operationId": "getApiV1Approvals",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List approvals",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approvalId}/decision": {
+      "post": {
+        "operationId": "postApiV1ApprovalsByApprovalIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approvalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Decide approval",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/code/tools": {
+      "get": {
+        "description": "Core/Tool Provider-owned catalog. Gateway does not maintain tool risk or approval facts.",
+        "operationId": "getApiV1CodeTools",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Code tool catalog (Core registry)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/code/tools/{toolId}/execute": {
+      "post": {
+        "description": "Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.",
+        "operationId": "postApiV1CodeToolsByToolIdExecute",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "toolId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Execute user tool (direct transport)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/debug/breakpoints": {
+      "get": {
+        "operationId": "getApiV1DebugBreakpoints",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List breakpoints",
+        "tags": [
+          "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1DebugBreakpoints",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create breakpoint",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/breakpoints/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1DebugBreakpointsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete breakpoint",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/diagnostics": {
+      "get": {
+        "operationId": "getApiV1DebugDiagnostics",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get diagnostics",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/metrics": {
+      "get": {
+        "operationId": "getApiV1DebugMetrics",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get metrics",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/processes": {
+      "get": {
+        "operationId": "getApiV1DebugProcesses",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List processes",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/approval-decision": {
+      "post": {
+        "operationId": "postApiV1DebugSimulateApproval-decision",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Simulate approval decision",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/message": {
+      "post": {
+        "operationId": "postApiV1DebugSimulateMessage",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Simulate message",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/model-response": {
+      "post": {
+        "operationId": "postApiV1DebugSimulateModel-response",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Simulate model response",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/state-patch": {
+      "post": {
+        "operationId": "postApiV1DebugSimulateState-patch",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Simulate state patch",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/simulate/tool-result": {
+      "post": {
+        "operationId": "postApiV1DebugSimulateTool-result",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Simulate tool result",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/snapshot/{sessionId}": {
+      "get": {
+        "operationId": "getApiV1DebugSnapshotBySessionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get debug snapshot",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/spans": {
+      "get": {
+        "operationId": "getApiV1DebugSpans",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List spans",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/traces": {
+      "get": {
+        "operationId": "getApiV1DebugTraces",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List debug traces",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/debug/traces/{traceId}": {
+      "get": {
+        "operationId": "getApiV1DebugTracesByTraceId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "traceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get trace",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/doctor": {
+      "get": {
+        "operationId": "getApiV1Doctor",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Doctor checks",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "description": "SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, id=seq, Last-Event-ID / ?cursor resume",
+        "operationId": "getApiV1Events",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session events SSE",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/install": {
+      "post": {
+        "operationId": "postApiV1ExtensionsInstall",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Install extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/install-preview": {
+      "post": {
+        "operationId": "postApiV1ExtensionsInstall-preview",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Preview extension install",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/installed": {
+      "get": {
+        "operationId": "getApiV1ExtensionsInstalled",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List installed extensions",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}": {
+      "delete": {
+        "operationId": "deleteApiV1ExtensionsByExtensionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "extensionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/disable": {
+      "post": {
+        "operationId": "postApiV1ExtensionsByExtensionIdDisable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "extensionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Disable extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/enable": {
+      "post": {
+        "operationId": "postApiV1ExtensionsByExtensionIdEnable",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "extensionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Enable extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/extensions/{extensionId}/update": {
+      "post": {
+        "operationId": "postApiV1ExtensionsByExtensionIdUpdate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "extensionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update extension",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations": {
+      "post": {
+        "operationId": "postApiV1GovernanceApproval-delegations",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create approval delegation",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/approval-delegations/{delegationId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceApproval-delegationsByDelegationIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke approval delegation",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-grants",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create capability grant",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-grants/{grantId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-grantsByGrantIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grantId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke capability grant",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/capability-leases/{leaseId}/revoke": {
+      "post": {
+        "operationId": "postApiV1GovernanceCapability-leasesByLeaseIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "leaseId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke capability lease",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests": {
+      "get": {
+        "operationId": "getApiV1GovernancePermission-requests",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List permission requests",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{requestId}": {
+      "get": {
+        "operationId": "getApiV1GovernancePermission-requestsByRequestId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get permission request",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/permission-requests/{requestId}/decision": {
+      "post": {
+        "operationId": "postApiV1GovernancePermission-requestsByRequestIdDecision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Decide permission request",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundles",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create policy bundle",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{bundleId}/archive": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundlesByBundleIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive policy bundle",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/governance/policy-bundles/{bundleId}/versions": {
+      "post": {
+        "operationId": "postApiV1GovernancePolicy-bundlesByBundleIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish policy version",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/harness/manifest": {
+      "get": {
+        "operationId": "getApiV1HarnessManifest",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Harness manifest (Core-owned)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "getApiV1Health",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Health probe",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/market/catalog": {
+      "get": {
+        "operationId": "getApiV1MarketCatalog",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get market catalog",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/catalog/{catalogId}": {
+      "get": {
+        "operationId": "getApiV1MarketCatalogByCatalogId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get catalog item",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/sources": {
+      "get": {
+        "operationId": "getApiV1MarketSources",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List market sources",
+        "tags": [
+          "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1MarketSources",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create market source",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{sourceId}/refresh": {
+      "post": {
+        "operationId": "postApiV1MarketSourcesBySourceIdRefresh",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Refresh market source",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers": {
+      "get": {
+        "operationId": "getApiV1McpServers",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List MCP servers (Core-owned)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/connect": {
+      "post": {
+        "operationId": "postApiV1McpServersByServerIdConnect",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "MCP connect (proxy to Core)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/disconnect": {
+      "post": {
+        "operationId": "postApiV1McpServersByServerIdDisconnect",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "MCP disconnect (proxy to Core)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/reload": {
+      "post": {
+        "operationId": "postApiV1McpServersByServerIdReload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reload MCP server",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/status": {
+      "get": {
+        "operationId": "getApiV1McpServersByServerIdStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "MCP status (proxy to Core)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/tools": {
+      "get": {
+        "operationId": "getApiV1McpServersByServerIdTools",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List MCP server tools",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers/{serverId}/tools/{toolName}/call": {
+      "post": {
+        "operationId": "postApiV1McpServersByServerIdToolsByToolNameCall",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "toolName",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "arguments": {
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "arguments": {
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "properties": {
+                  "arguments": {
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "MCP tool call (proxy to Core)",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates": {
+      "get": {
+        "operationId": "getApiV1Memory-candidates",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List memory candidates",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates/{candidateId}/promote": {
+      "post": {
+        "operationId": "postApiV1Memory-candidatesByCandidateIdPromote",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Promote memory candidate",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/memory-candidates/{candidateId}/reject": {
+      "post": {
+        "operationId": "postApiV1Memory-candidatesByCandidateIdReject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reject memory candidate",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/model-catalog-readiness": {
+      "get": {
+        "operationId": "getApiV1Model-catalog-readiness",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Model catalog readiness",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/model-provider-templates": {
+      "get": {
+        "operationId": "getApiV1Model-provider-templates",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List provider templates (incl. protocol)",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-providers": {
+      "get": {
+        "operationId": "getApiV1Model-providers",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List model providers",
+        "tags": [
+          "ModelCenter"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Model-providers",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create model provider",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-providers/cli/connect": {
+      "post": {
+        "operationId": "postApiV1Model-providersCliConnect",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Connect a discovered CLI runtime as a provider",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-providers/cli/discover": {
+      "get": {
+        "operationId": "getApiV1Model-providersCliDiscover",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Discover CLI runtimes",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-providers/{providerInstanceId}": {
+      "delete": {
+        "operationId": "deleteApiV1Model-providersByProviderInstanceId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "providerInstanceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete model provider",
+        "tags": [
+          "ModelCenter"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Model-providersByProviderInstanceId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "providerInstanceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update model provider",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-readiness": {
+      "get": {
+        "operationId": "getApiV1Model-readiness",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Model readiness",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/model-routes": {
+      "get": {
+        "operationId": "getApiV1Model-routes",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List model routes",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-routes/{purpose}": {
+      "put": {
+        "operationId": "putApiV1Model-routesByPurpose",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Upsert model route",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-settings": {
+      "get": {
+        "operationId": "getApiV1Model-settings",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get model settings",
+        "tags": [
+          "ModelCenter"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Model-settings",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update model settings",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "getApiV1Projects",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List projects",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Projects",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "path"
+                ],
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "path"
+                ],
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "path"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/snapshots": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdSnapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List workspace snapshots",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdSnapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  },
+                  "include_hidden": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "number"
+                  },
+                  "max_files": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create workspace snapshot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/prompt-context/preview": {
+      "post": {
+        "operationId": "postApiV1Prompt-contextPreview",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Preview prompt context",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments": {
+      "get": {
+        "operationId": "getApiV1Prompt-fragments",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt fragments",
+        "tags": [
+          "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Prompt-fragments",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create prompt fragment",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/effectiveness": {
+      "get": {
+        "operationId": "getApiV1Prompt-fragmentsEffectiveness",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt effectiveness",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}": {
+      "delete": {
+        "operationId": "deleteApiV1Prompt-fragmentsByFragmentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete prompt fragment",
+        "tags": [
+          "System"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1Prompt-fragmentsByFragmentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update prompt fragment",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/clone": {
+      "post": {
+        "operationId": "postApiV1Prompt-fragmentsByFragmentIdClone",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Clone prompt fragment",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/compare": {
+      "post": {
+        "operationId": "postApiV1Prompt-fragmentsByFragmentIdCompare",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Compare prompt versions",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/effectiveness": {
+      "get": {
+        "operationId": "getApiV1Prompt-fragmentsByFragmentIdEffectiveness",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get prompt effectiveness",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/rollback": {
+      "post": {
+        "operationId": "postApiV1Prompt-fragmentsByFragmentIdRollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Rollback prompt fragment",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/signals": {
+      "post": {
+        "operationId": "postApiV1Prompt-fragmentsByFragmentIdSignals",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Record prompt signal",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-fragments/{fragmentId}/versions": {
+      "get": {
+        "operationId": "getApiV1Prompt-fragmentsByFragmentIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt versions",
+        "tags": [
+          "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Prompt-fragmentsByFragmentIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fragmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create prompt version",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelines",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt pipelines",
+        "tags": [
+          "PromptPipelines"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Prompt-pipelines",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/archive": {
+      "post": {
+        "operationId": "postApiV1Prompt-pipelinesByIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/draft": {
+      "put": {
+        "operationId": "putApiV1Prompt-pipelinesByIdDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update prompt pipeline draft",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/publish": {
+      "post": {
+        "operationId": "postApiV1Prompt-pipelinesByIdPublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish prompt pipeline",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesByIdVersions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List prompt pipeline versions",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/prompt-pipelines/{id}/versions/{versionId}": {
+      "get": {
+        "operationId": "getApiV1Prompt-pipelinesByIdVersionsByVersionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "versionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get prompt pipeline version",
+        "tags": [
+          "PromptPipelines"
+        ]
+      }
+    },
+    "/api/v1/readiness": {
+      "get": {
+        "operationId": "getApiV1Readiness",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Readiness probe",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agent-lineage": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdAgent-lineage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run agent lineage",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/agents/spawn": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdAgentsSpawn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Spawn run agent (temporary/persistent/profile)",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/context-versions": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdContext-versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run context versions",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/control": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdControl",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "client_control_id": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "expectedContextRevision": {
+                    "type": "number"
+                  },
+                  "expected_context_revision": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "client_control_id": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "expectedContextRevision": {
+                    "type": "number"
+                  },
+                  "expected_context_revision": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "client_control_id": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "expectedContextRevision": {
+                    "type": "number"
+                  },
+                  "expected_context_revision": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run control (pause/resume/cancel)",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/orchestration": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdOrchestration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run orchestration",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/stream": {
+      "get": {
+        "description": "Durable SSE with id=seq, Last-Event-ID / ?cursor= & ?after_seq resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update",
+        "operationId": "getApiV1RunsByRunIdStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run stream (SSE)",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/task-nodes": {
+      "get": {
+        "operationId": "getApiV1RunsByRunIdTask-nodes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run task nodes",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/tools/{toolId}/execute": {
+      "post": {
+        "operationId": "postApiV1RunsByRunIdToolsByToolIdExecute",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "toolId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Run-scoped tool execution (Core-owned)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "operationId": "getApiV1Sessions",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List sessions",
+        "tags": [
+          "Sessions"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Sessions",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "project_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "project_id"
+                ],
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "project_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "project_id"
+                ],
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "project_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "project_id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create session",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}": {
+      "patch": {
+        "operationId": "patchApiV1SessionsBySessionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update session title",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/context-packs": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdContext-packs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session context packs",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/context-versions": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdContext-versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session context versions",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create session interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractionsByInteractionIdCancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Cancel interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdInteractionsByInteractionIdReassign",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Reassign interaction",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/stream": {
+      "get": {
+        "description": "Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update",
+        "operationId": "getApiV1SessionsBySessionIdInteractionsByInteractionIdStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "interactionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Stream interaction SSE",
+        "tags": [
+          "Interactions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/invoke-stream": {
+      "post": {
+        "description": "5 required: content, client_message_id, application_mode, agent_mode, permission_mode + 2 optional: target_run_id, expected_context_revision. SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, fixed fields run_id/turn_id/message_id/seq/kind/occurred_at/payload, id=seq",
+        "operationId": "postApiV1SessionsBySessionIdInvoke-stream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Full-duplex invoke-stream",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/logs": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdLogs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session logs",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/logs/stream": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdLogsStream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Stream session logs",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List messages",
+        "tags": [
+          "Messages"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create message (compat)",
+        "tags": [
+          "Messages"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/orchestration": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdOrchestration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session orchestration snapshot",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/runs": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdRuns",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "List session runs",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/supervision-findings": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdSupervision-findings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Supervision findings",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/task-nodes": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdTask-nodes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session task nodes",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/tool-executions": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdTool-executions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Session tool executions",
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v1/tool-layer-readiness": {
+      "get": {
+        "operationId": "getApiV1Tool-layer-readiness",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Tool layer readiness",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/tool-runtime/health": {
+      "get": {
+        "operationId": "getApiV1Tool-runtimeHealth",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Tool provider health",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/tool-runtime/manifest": {
+      "get": {
+        "operationId": "getApiV1Tool-runtimeManifest",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Tool provider manifest",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/tool-runtime/tools": {
+      "get": {
+        "operationId": "getApiV1Tool-runtimeTools",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Tool provider tools",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/tool-runtime/tools/{toolId}/execute": {
+      "post": {
+        "description": "Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.",
+        "operationId": "postApiV1Tool-runtimeToolsByToolIdExecute",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "toolId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Execute user tool (direct transport)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "operationId": "getApiV1Tools",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List tools (Core registry)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/search": {
+      "get": {
+        "operationId": "getApiV1ToolsSearch",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Search tools (Core registry)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/shell": {
+      "post": {
+        "operationId": "postApiV1ToolsShell",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Shell tool (blocked until implemented)",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions": {
+      "get": {
+        "operationId": "getApiV1UserTool-actions",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List user tool actions",
+        "tags": [
+          "Tools"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1UserTool-actions",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}": {
+      "get": {
+        "operationId": "getApiV1UserTool-actionsByActionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}/recovery-decision": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdRecovery-decision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Decide unknown user tool action outcome",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}/resume": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdResume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Resume user tool action",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/user/tool-actions/{actionId}/snapshot-override": {
+      "post": {
+        "operationId": "postApiV1UserTool-actionsByActionIdSnapshot-override",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Override failed user action snapshot",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults": {
+      "get": {
+        "operationId": "getApiV1Workspace-defaults",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/archive": {
+      "post": {
+        "operationId": "postApiV1Workspace-defaultsArchive",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/draft": {
+      "put": {
+        "operationId": "putApiV1Workspace-defaultsDraft",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "default_agent_definition_id": {
+                    "type": "string"
+                  },
+                  "default_agent_mode_id": {
+                    "type": "string"
+                  },
+                  "default_prompt_pipeline_id": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Update workspace defaults draft",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-defaults/publish": {
+      "post": {
+        "operationId": "postApiV1Workspace-defaultsPublish",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Publish workspace defaults",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}": {
+      "get": {
+        "operationId": "getApiV1Workspace-snapshotsBySnapshotId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Get workspace snapshot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/restore": {
+      "post": {
+        "operationId": "postApiV1Workspace-snapshotsBySnapshotIdRestore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "allow_conflicts": {
+                    "type": "boolean"
+                  },
+                  "expected_workspace_hash": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Restore workspace snapshot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Projects"
+    },
+    {
+      "name": "Sessions"
+    },
+    {
+      "name": "Messages"
+    },
+    {
+      "name": "Runs"
+    },
+    {
+      "name": "Health"
+    },
+    {
+      "name": "ModelCenter"
+    },
+    {
+      "name": "AgentCenter"
+    },
+    {
+      "name": "Agents"
+    },
+    {
+      "name": "Interactions"
+    },
+    {
+      "name": "PromptPipelines"
+    },
+    {
+      "name": "Tools"
+    },
+    {
+      "name": "System"
+    }
+  ]
+}

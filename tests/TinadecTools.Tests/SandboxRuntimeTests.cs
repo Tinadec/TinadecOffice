@@ -53,4 +53,26 @@ public sealed class SandboxRuntimeTests
         Assert.Single(merged.WritePaths);
         Assert.Single(merged.EnvironmentVariables);
     }
+
+    [Fact]
+    public void BuildPermissions_RejectsInvalidEnvironmentVariableNames()
+    {
+        Assert.Throws<ArgumentException>(() => CommandSandboxRuntime.BuildPermissions(null, null, ["BAD=NAME"]));
+    }
+
+    [Fact]
+    public void ValidateRequest_RejectsWorkingDirectoryOutsideWorkspace()
+    {
+        var outside = Path.GetFullPath(Path.Combine(WorkspacePathResolver.WorkspaceRoot, ".."));
+
+        Assert.Throws<UnauthorizedAccessException>(() => SandboxRequestValidator.Validate(
+            "git", [], outside, 1));
+    }
+
+    [Fact]
+    public void ValidateRequestAcceptsTimeoutBoundaries()
+    {
+        SandboxRequestValidator.Validate("git", ["value with spaces", "quote\"value", "semi;colon", "amp&value"], WorkspacePathResolver.WorkspaceRoot, 1);
+        SandboxRequestValidator.Validate("git", [], WorkspacePathResolver.WorkspaceRoot, 1_800_000, new Dictionary<string, string> { ["SAFE_NAME"] = "safe" });
+    }
 }

@@ -34,7 +34,7 @@ internal partial class GitCommitToolJsonContext : JsonSerializerContext { }
 
 internal static class GitCommitTool
 {
-    [ToolFunction("git_commit", RequiresApproval = true)]
+    [ToolFunction("git_commit", RequiresApproval = true, ConfirmationFields = ["confirm_commit"])]
     public static async ValueTask<GitCommitResult> CommitAsync(
         GitCommitArgs args,
         CancellationToken cancellationToken)

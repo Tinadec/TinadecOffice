@@ -5,6 +5,7 @@
     <Project Path="Persistence/TinadecCore.Persistence.csproj" />
     <Project Path="VectorStore/TinadecCore.VectorStore.csproj" />
     <Project Path="Tenancy/TinadecCore.Tenancy.csproj" />
+    <Project Path="AgentConfiguration/TinadecCore.AgentConfiguration.csproj" />
     <Project Path="Storage.Migrations.Sqlite/TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <Project Path="Storage.Migrations.PostgreSql/TinadecCore.Storage.Migrations.PostgreSql.csproj" />
     <Project Path="Strategies/TinadecCore.Strategies.fsproj" />
@@ -18,6 +19,8 @@
     <Project Path="Skills/TinadecCore.Skills.csproj" />
     <Project Path="LoopGuard/TinadecCore.LoopGuard.csproj" />
     <Project Path="Lifecycle/TinadecCore.Lifecycle.csproj" />
+    <Project Path="Governance/TinadecCore.Governance.csproj" />
+    <Project Path="Tools/TinadecCore.Tools.csproj" />
   </Folder>
   <Folder Name="/src/host/">
     <Project Path="Runtime/TinadecCore.Runtime.csproj" />
@@ -27,5 +30,6 @@
     <Project Path="tests/TinadecCore.Architecture.Tests/TinadecCore.Architecture.Tests.csproj" />
     <Project Path="tests/TinadecCore.AgentFramework.Tests/TinadecCore.AgentFramework.Tests.csproj" />
     <Project Path="tests/TinadecCore.Api.Tests/TinadecCore.Api.Tests.csproj" />
+    <Project Path="tests/TinadecCore.Governance.Tests/TinadecCore.Governance.Tests.csproj" />
   </Folder>
 </Solution>

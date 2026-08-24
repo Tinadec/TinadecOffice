@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
+import { setActivePinia, createPinia } from 'pinia';
 import GitPanel from './GitPanel.vue';
 import { api, type ApprovalDto, type CodeToolExecuteResultDto } from '../api';
 
@@ -14,14 +15,12 @@ vi.mock('vue-i18n', () => ({
 vi.mock('../api', () => ({
   api: {
     executeCodeTool: vi.fn(),
-    createApproval: vi.fn(),
     invokeStream: vi.fn(() => new AbortController()),
     gitLog: vi.fn(),
   }
 }));
 
 const executeCodeTool = vi.mocked(api.executeCodeTool);
-const createApproval = vi.mocked(api.createApproval);
 
 const pendingCommitApproval: ApprovalDto = {
   id: 'approval-commit',
@@ -174,8 +173,8 @@ async function flushPromises() {
 
 describe('GitPanel', () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
     executeCodeTool.mockReset();
-    createApproval.mockReset();
     executeCodeTool
       .mockResolvedValueOnce(previewResult)
       .mockResolvedValueOnce(pushPlanResult);

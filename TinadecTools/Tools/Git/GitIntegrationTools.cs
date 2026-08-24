@@ -36,10 +36,10 @@ internal partial class GitIntegrationToolsJsonContext : JsonSerializerContext { 
 
 internal static class GitIntegrationTools
 {
-    [ToolFunction("git_merge", RequiresApproval = true)]
+    [ToolFunction("git_merge", RequiresApproval = true, ConfirmationFields = ["confirm_merge"])]
     public static ValueTask<GitIntegrationResult> MergeAsync(GitIntegrationArgs args, CancellationToken ct) => ExecuteAsync(args, "merge", ct);
 
-    [ToolFunction("git_rebase", RequiresApproval = true)]
+    [ToolFunction("git_rebase", RequiresApproval = true, ConfirmationFields = ["confirm_rebase"])]
     public static ValueTask<GitIntegrationResult> RebaseAsync(GitIntegrationArgs args, CancellationToken ct) => ExecuteAsync(args, "rebase", ct);
 
     private static async ValueTask<GitIntegrationResult> ExecuteAsync(GitIntegrationArgs args, string action, CancellationToken ct)

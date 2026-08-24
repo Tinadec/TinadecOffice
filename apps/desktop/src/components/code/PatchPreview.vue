@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { Check, GitCompare, ShieldCheck, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { api, type ApprovalDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  userToolActionIdempotencyKey,
+  userToolActionNeedsDecision,
+  userToolActionStatusMessage,
+  userToolActionToApproval,
+  userToolApprovalId,
+} from '@/userToolAction'
 
 const props = defineProps<{
   cwd: string
@@ -29,6 +36,8 @@ const loading = ref(false)
 const applying = ref(false)
 const feedback = ref<string | null>(null)
 const pendingApprovalId = ref<string | null>(null)
+const pendingAction = ref<UserToolActionDto | null>(null)
+const lastPublishedAction = ref<string | null>(null)
 
 let diffEditor: import('monaco-editor').editor.IStandaloneDiffEditor | null = null
 let originalModel: import('monaco-editor').editor.ITextModel | null = null
@@ -37,7 +46,15 @@ let modifiedModel: import('monaco-editor').editor.ITextModel | null = null
 const language = computed(() => detectLanguage(props.filePath))
 const hasChanges = computed(() => props.originalContent !== props.modifiedContent)
 const pendingApproval = computed(() =>
-  props.approvals?.find((a) => a.id === pendingApprovalId.value) ?? null,
+  (pendingAction.value && userToolActionNeedsDecision(pendingAction.value.status)
+    ? props.approvals?.find((a) => a.id === pendingApprovalId.value)
+    : null)
+    ?? (pendingAction.value && userToolActionNeedsDecision(pendingAction.value.status)
+      ? userToolActionToApproval(pendingAction.value, `Apply patch to: ${props.filePath}`, {
+          sessionId: props.selectedSessionId,
+          cwd: props.cwd,
+        })
+      : null),
 )
 
 /**
@@ -133,30 +150,33 @@ async function renderDiff(): Promise<void> {
 async function handleApplyPatch(): Promise<void> {
   if (!hasChanges.value || !props.filePath) return
 
-  if (!props.selectedSessionId) {
-    notify.error('A session is required to apply patches (approval flow).', { title: 'Session required', source: 'code', key: 'code-patch-session' })
-    return
-  }
-
   applying.value = true
   feedback.value = null
   try {
     const patch = generatePatch()
-    const approval = await api.createApproval({
-      session_id: props.selectedSessionId,
-      kind: 'code',
-      summary: `Apply patch to: ${props.filePath}`,
-      command: 'code_editor patch',
-      cwd: props.cwd,
-    })
-    pendingApprovalId.value = approval.id
-    feedback.value = 'Patch approval requested. Awaiting decision...'
-    emit('approval-requested', approval)
-
-    // Store patch for when approval is granted
     pendingPatch.value = patch
+    const fileHash = await resolveFileHash()
+    const actionParams: Record<string, unknown> = {
+      filepath: props.filePath,
+      content: props.modifiedContent,
+    }
+    if (fileHash) actionParams.file_hash = fileHash
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:patch-preview:apply', {
+      cwd: props.cwd,
+      file_path: props.filePath,
+      file_hash: fileHash,
+      content: props.modifiedContent,
+    })
+    const action = await createUserToolActionForPath(
+      props.cwd,
+      'write_file',
+      actionParams,
+      idempotencyKey,
+    )
+    publishAction(action)
+    await handleActionStatus(action)
   } catch (err) {
-    notify.error(err, { title: 'Failed to create approval', source: 'code', key: 'code-patch-approval' })
+    notify.error(err, { title: 'Failed to request patch', source: 'code', key: 'code-patch-action' })
   } finally {
     applying.value = false
   }
@@ -164,22 +184,67 @@ async function handleApplyPatch(): Promise<void> {
 
 const pendingPatch = ref<string | null>(null)
 
+async function resolveFileHash(): Promise<string | null> {
+  try {
+    const result = await api.readFile(props.cwd, props.filePath)
+    const data = result.data as { file_hash?: unknown }
+    return typeof data.file_hash === 'string' && data.file_hash.length > 0 ? data.file_hash : null
+  } catch {
+    return null
+  }
+}
+
+function publishAction(action: UserToolActionDto): void {
+  pendingAction.value = action
+  pendingApprovalId.value = userToolApprovalId(action)
+  const approval = userToolActionToApproval(action, `Apply patch to: ${props.filePath}`, {
+    sessionId: props.selectedSessionId,
+    cwd: props.cwd,
+  })
+  const publicationKey = `${action.id}:${approval.id}:${action.status}`
+  if (publicationKey !== lastPublishedAction.value && userToolActionNeedsDecision(action.status)) {
+    lastPublishedAction.value = publicationKey
+    emit('approval-requested', approval)
+  }
+}
+
+async function handleActionStatus(action: UserToolActionDto): Promise<void> {
+  feedback.value = userToolActionStatusMessage(action, `Apply patch to ${props.filePath}`)
+  if (action.status === 'completed') {
+    await finishPatch(action)
+    return
+  }
+  if (action.status === 'blocked' || action.status === 'failed') {
+    notify.error(action.message ?? action.status, { title: 'Patch blocked', source: 'code', key: 'code-patch-action' })
+    return
+  }
+  if (action.status === 'outcome_unknown') {
+    notify.warning({ message: feedback.value, source: 'code', key: 'code-patch-outcome-unknown' })
+  }
+}
+
+async function finishPatch(action: UserToolActionDto): Promise<void> {
+  if (action.status !== 'completed') return
+  notify.success(`Patch applied to ${props.filePath}.`)
+  pendingAction.value = null
+  pendingApprovalId.value = null
+  pendingPatch.value = null
+  lastPublishedAction.value = null
+  emit('applied', props.filePath)
+}
+
 async function executePatch(): Promise<void> {
-  if (!pendingApproval.value || pendingApproval.value.status !== 'approved') return
+  if (!pendingAction.value || !pendingApproval.value || pendingApproval.value.status !== 'approved') return
   if (!pendingPatch.value || !props.filePath) return
 
   applying.value = true
   feedback.value = null
   try {
-    const result = await api.codeEditorPatch(props.cwd, props.filePath, pendingPatch.value, pendingApproval.value.id)
-    if (result.status !== 'completed') {
-      notify.error(result.summary, { title: 'Failed to apply patch', source: 'code', key: 'code-patch-apply' })
-      return
-    }
-    notify.success(`Patch applied to ${props.filePath}.`)
-    pendingApprovalId.value = null
-    pendingPatch.value = null
-    emit('applied', props.filePath)
+    const action = await api.resumeUserToolAction(pendingAction.value.id)
+    pendingAction.value = action
+    pendingApprovalId.value = userToolApprovalId(action)
+    publishAction(action)
+    await handleActionStatus(action)
   } catch (err) {
     notify.error(err, { title: 'Failed to apply patch', source: 'code', key: 'code-patch-apply' })
   } finally {
@@ -192,10 +257,34 @@ watch(pendingApproval, (approval) => {
     void executePatch()
   } else if (approval && approval.status === 'rejected') {
     feedback.value = 'Patch approval was rejected.'
-    pendingApprovalId.value = null
-    pendingPatch.value = null
+    if (pendingAction.value) void refreshPendingAction()
   }
 })
+
+async function refreshPendingAction(): Promise<void> {
+  const action = pendingAction.value
+  if (!action) return
+  try {
+    const latest = await api.getUserToolAction(action.id)
+    pendingAction.value = latest
+    pendingApprovalId.value = userToolApprovalId(latest)
+    publishAction(latest)
+    await handleActionStatus(latest)
+  } catch {
+    // Keep the existing state visible until the next event/approval refresh.
+  }
+}
+
+watch(() => props.approvals, () => {
+  const action = pendingAction.value
+  if (!action || !action.permission_request_id || action.action_approval_id) return
+  void api.getUserToolAction(action.id).then((latest) => {
+    if (latest.status === action.status && latest.authorization_decision_id === action.authorization_decision_id) return
+    publishAction(latest)
+    if (latest.status === 'completed') void finishPatch(latest)
+    else void handleActionStatus(latest)
+  }).catch(() => undefined)
+}, { deep: true })
 
 onBeforeUnmount(() => {
   if (diffEditor) {
@@ -243,7 +332,7 @@ watch(
       </div>
     </div>
 
-    <div v-if="feedback" class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+    <div v-if="feedback" class="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground" aria-live="polite">
       <Check :size="12" />
       <span>{{ feedback }}</span>
     </div>

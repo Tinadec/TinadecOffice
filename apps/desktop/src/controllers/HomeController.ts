@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import {
   api,
+  createUserToolActionForPath,
   type ApprovalDto,
   type DoctorReportDto,
   type EventEnvelope,
@@ -13,9 +14,13 @@ import {
   type ToolExecutionTimelineItemDto,
 } from '@/api'
 import { basenameFromPath } from '@/format'
+import { getDispatchPref } from '@/lib/dispatchPref'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
+// generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
+import type { DispatchMode } from '@/api'
+import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -50,8 +55,11 @@ const rightRailCollapsed = ref(false)
 const rightRailWidth = ref(420)
 const currentMode = ref<AgentMode>('auto')
 const currentPermission = ref<PermissionLevel>('default')
+const runs = ref<Array<{ id: string; status: string }>>([])
+const queuedMessages = ref<Array<{ id: string; content: string }>>([])
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
+const activeRuns = computed(() => runs.value.filter((r) => ['running', 'ready', 'pending', 'queued'].includes(r.status)))
 const currentSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
 const recentEvents = computed(() => events.value.slice(-8).reverse())
 
@@ -74,6 +82,10 @@ function generateTitle(content: string): string {
   const firstLine = trimmed.split('\n')[0]
   if (firstLine.length <= 50) return firstLine
   return firstLine.substring(0, 47) + '...'
+}
+
+function newId(): string {
+  return (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 async function run(label: string, action: () => Promise<void>) {
@@ -144,18 +156,21 @@ async function loadMessagesAndApprovals() {
     approvals.value = []
     orchestration.value = null
     toolExecutions.value = []
+    runs.value = []
     return
   }
-  const [messageList, approvalList, orchestrationSnapshot, toolTimeline] = await Promise.all([
+  const [messageList, approvalList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
     api.listMessages(selectedSessionId.value),
     api.listApprovals(selectedSessionId.value),
     api.getOrchestrationSnapshot(selectedSessionId.value),
     api.listToolExecutions(selectedSessionId.value, { limit: 12 }),
+    api.listRuns(selectedSessionId.value).catch(() => [] as unknown[]),
   ])
   messages.value = messageList
   approvals.value = approvalList
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
+  runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String((r as Record<string, unknown>).id), status: String((r as Record<string, unknown>).status ?? '') }))
 }
 
 async function openProject() {
@@ -186,7 +201,14 @@ async function createSession(projectId: string) {
   })
 }
 
-async function handleSend(content: string) {
+// invoke-stream: 5 required + 2 optional, ack optimistic → delta incremental → done persisted
+// explicit states: model_not_configured / disconnected / permission_denied / recovering
+const streamingText = ref<Map<string, string>>(new Map())
+const invokeError = ref<string | null>(null)
+const lastCursor = ref<number | null>(null)
+
+
+async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
     if (!sessionId && selectedProjectId.value) {
@@ -199,10 +221,47 @@ async function handleSend(content: string) {
     if (!sessionId) {
       throw new Error('Open a project before sending a message.')
     }
+    const snapshotContent = content
     draft.value = ''
-    await api.postMessage(sessionId, content)
+    invokeError.value = null
+    const clientMessageId = newId()
+    const dispatchMode: DispatchMode = (opts?.dispatch_mode as DispatchMode) ?? getDispatchPref()
+    const modeVersionId = opts?.mode_version_id ?? null
+    const targetRunId = opts?.target_run_id ?? null
+    const meetingModel = opts?.meeting_model ?? null
+    if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
+    try {
+      messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
+      // new interaction path (snake_case)
+      const resp = await api.createInteraction(sessionId, {
+        content: snapshotContent,
+        client_message_id: clientMessageId,
+        mode_version_id: modeVersionId,
+        dispatch_mode: dispatchMode,
+        target_run_id: targetRunId,
+        meeting_model: meetingModel,
+      })
+      if (!resp.run_id && resp.status === 'queued') queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent }]
+      // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const code = (err as { code?: unknown }).code
+      // Main path only: POST /interactions is the single admission contract
+      // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
+      // fallbacks were removed so failures surface visibly instead of
+      // silently degrading to a non-durable path.
+      if (code === 'context_conflict') {
+        // §4.1-4: show revision conflict guidance; user must re-read before resending.
+        invokeError.value = '上下文已更新（检测到新的目标修订）。请重新读取当前状态后再发送。'
+      } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'
+      else if (msg.includes('permission') || msg.includes('forbidden') || msg.includes('401') || msg.includes('403')) invokeError.value = '权限不足'
+      else if (msg.includes('recovering')) invokeError.value = '恢复中，请稍候再试'
+      else if (!navigator.onLine || msg.includes('Cannot connect') || msg.includes('Failed to fetch')) invokeError.value = '网络已断开'
+      else invokeError.value = msg
+      throw err
+    }
     if (pendingSessionId.value === sessionId) {
-      const title = generateTitle(content)
+      const title = generateTitle(snapshotContent)
       try {
         await api.updateSessionTitle(sessionId, title)
         const idx = sessions.value.findIndex((s) => s.id === sessionId)
@@ -217,9 +276,76 @@ async function handleSend(content: string) {
   })
 }
 
+function dismissQueued(id: string) {
+  queuedMessages.value = queuedMessages.value.filter((item) => item.id !== id)
+}
+
+function editQueued(id: string) {
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  draft.value = item.content
+  dismissQueued(id)
+}
+
+async function steerQueued(id: string, targetRunId: string) {
+  if (!selectedSessionId.value) return
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  let sent = false
+  await run('steer message', async () => {
+    await api.createInteraction(selectedSessionId.value!, {
+      content: item.content,
+      client_message_id: newId(),
+      mode_version_id: null,
+      dispatch_mode: 'insert',
+      target_run_id: targetRunId,
+      meeting_model: null,
+    })
+    sent = true
+  })
+  if (sent) dismissQueued(id)
+}
+
+async function promoteQueued(id: string) {
+  if (!selectedSessionId.value) return
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  let sent = false
+  await run('promote message', async () => {
+    await api.createInteraction(selectedSessionId.value!, {
+      content: item.content,
+      client_message_id: newId(),
+      mode_version_id: null,
+      dispatch_mode: 'parallel',
+      target_run_id: null,
+      meeting_model: null,
+    })
+    sent = true
+  })
+  if (sent) dismissQueued(id)
+}
+
 async function requestShellApproval() {
   await run('request approval', async () => {
-    const approval = await api.createShellApproval(selectedSessionId.value, shellCommand.value, currentProject.value?.path)
+    const projectPath = currentProject.value?.path
+    if (!projectPath) throw new Error('Select a registered project before requesting a shell action.')
+    const command = shellCommand.value.trim()
+    if (!command) throw new Error('Enter a command before requesting a shell action.')
+    const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+    const params = {
+      executable: windows ? 'cmd.exe' : '/bin/sh',
+      arguments: windows ? ['/d', '/c', command] : ['-lc', command],
+      working_directory: projectPath,
+    }
+    const idempotencyKey = await userToolActionIdempotencyKey('desktop:home:shell', {
+      project_path: projectPath,
+      command,
+    })
+    const action = await createUserToolActionForPath(projectPath, 'command_run', params, idempotencyKey)
+    const approval = userToolActionToApproval(action, `Run command: ${command}`, {
+      sessionId: selectedSessionId.value,
+      cwd: projectPath,
+    })
     approvals.value = [approval, ...approvals.value]
   })
 }
@@ -263,6 +389,7 @@ watch(selectedProjectId, () => {
 watch(selectedSessionId, () => {
   void loadMessagesAndApprovals()
   reconnectEvents()
+  queuedMessages.value = []
 })
 
 /** Start the controller's data pipeline (idempotent). */
@@ -308,16 +435,26 @@ export const homeController = {
   agentStatesMap,
   agentProgressEvents,
   agentLabel,
+  streamingText,
+  invokeError,
+  lastCursor,
   // Methods
   start,
   openProject,
   createSession,
-  sendMessage: async () => {
+  runs,
+  queuedMessages,
+  activeRuns,
+  dismissQueued,
+  editQueued,
+  steerQueued,
+  promoteQueued,
+  sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => {
     const content = draft.value.trim()
     if (!content) return
-    await handleSend(content)
+    await handleSend(content, opts)
   },
-  handleWelcomeSend: (content: string) => handleSend(content),
+  handleWelcomeSend: (content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => handleSend(content, opts),
   requestShellApproval,
   decideApproval,
   recordApproval,

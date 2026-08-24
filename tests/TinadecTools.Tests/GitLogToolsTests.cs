@@ -168,7 +168,7 @@ public sealed class GitLogToolsTests
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = headHash },
                 CancellationToken.None);
 
-            Assert.True(result.Success);
+            Assert.True(result.Success, result.Error);
             Assert.Single(result.Commits);
             Assert.NotEmpty(result.Files);
             var a = result.Files.FirstOrDefault(f => f.NewPath == "a.txt");
@@ -222,7 +222,7 @@ public sealed class GitLogToolsTests
                 new GitLogDetailArgs { RepositoryPath = repo, Rev = $"{c1}..{c3}" },
                 CancellationToken.None);
 
-            Assert.True(result.Success);
+            Assert.True(result.Success, result.Error);
             Assert.True(result.Commits.Count >= 2);
             Assert.NotEmpty(result.Files);
         }

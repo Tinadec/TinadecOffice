@@ -1,12 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <RootNamespace>TinadecCore.Storage.Migrations.Sqlite</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Memory\TinadecCore.Memory.csproj" />
     <ProjectReference Include="..\Lifecycle\TinadecCore.Lifecycle.csproj" />
+    <ProjectReference Include="..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\Tenancy\TinadecCore.Tenancy.csproj" />
+    <ProjectReference Include="..\AgentConfiguration\TinadecCore.AgentConfiguration.csproj" />
     <ProjectReference Include="..\Models\TinadecCore.Models.csproj" />
     <ProjectReference Include="..\Prompts\TinadecCore.Prompts.csproj" />
     <ProjectReference Include="..\DmaEA\TinadecCore.DmaEA.csproj" />

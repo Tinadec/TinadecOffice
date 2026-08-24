@@ -34,13 +34,13 @@ public sealed class AgentFrameworkSmokeTests
     }
 
     [Fact]
-    public void FullCompositionRegistersAllTenModules()
+    public void FullCompositionRegistersAllModules()
     {
         var services = new ServiceCollection();
         var builder = services.AddTinadecCore();
 
         var modules = builder.GetRegisteredModules();
-        Assert.Equal(10, modules.Count);
+        Assert.Equal(13, modules.Count);
 
         var moduleIds = modules.Select(m => m.ModuleId).ToHashSet();
         Assert.Contains("dma_ea", moduleIds);
@@ -50,9 +50,12 @@ public sealed class AgentFrameworkSmokeTests
         Assert.Contains("memory", moduleIds);
         Assert.Contains("skills", moduleIds);
         Assert.Contains("loop_guard", moduleIds);
+        Assert.Contains("tools", moduleIds);
         Assert.Contains("lifecycle", moduleIds);
         Assert.Contains("tenancy", moduleIds);
         Assert.Contains("vector_store", moduleIds);
+        Assert.Contains("agent_configuration", moduleIds);
+        Assert.Contains("governance", moduleIds);
     }
 
     [Fact]
@@ -142,7 +145,7 @@ public sealed class AgentFrameworkSmokeTests
         Assert.False(string.IsNullOrEmpty(runId));
 
         var state = await lifecycle.GetRunStateAsync(runId);
-        Assert.Equal(RunStatus.Running, state.Status);
+        Assert.Equal(RunStatus.Planning, state.Status);
 
         await lifecycle.CompleteRunAsync(runId);
         var completedState = await lifecycle.GetRunStateAsync(runId);

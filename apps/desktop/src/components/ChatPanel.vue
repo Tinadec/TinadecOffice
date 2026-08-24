@@ -8,6 +8,7 @@ import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
+import { getModeVersionPref, getMeetingModelPref } from '@/lib/dispatchPref'
 
 const props = defineProps<{
   messages: MessageDto[]
@@ -28,19 +29,30 @@ const props = defineProps<{
   agentLabel?: string | null
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
+  // new: pass runs for insert picker
+  runsForComposer?: Array<{ id: string; status: string }>
 }>()
 
 const emit = defineEmits<{
   'update:draft': [value: string]
   'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
-  'send': []
+  'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
   'welcome-send': [content: string]
   'create-project': []
   'select-project': [id: string]
   'approve': [approvalId: string]
   'reject': [approvalId: string]
 }>()
+
+function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
+  emit('send', {
+    dispatch_mode: payload.dispatch_mode,
+    target_run_id: payload.target_run_id ?? null,
+    mode_version_id: payload.mode_version_id ?? getModeVersionPref(),
+    meeting_model: payload.meeting_model?.trim() || getMeetingModelPref() || null,
+  } as never)
+}
 
 // ---- Responsive mode detection for chat area ----
 const conversationRef = ref<HTMLElement | null>(null)
@@ -98,13 +110,15 @@ function handleReject(approvalId: string) {
             :model-value="draft"
             :mode="mode"
             :permission="permission"
+            :session-id="currentSession?.id ?? null"
+            :runs="runsForComposer"
             @update:model-value="emit('update:draft', $event)"
-            @update:mode="emit('update:mode', $event)"
             @update:permission="emit('update:permission', $event)"
-            @submit="emit('send')"
+            @submit="onComposerSubmit"
           />
         </div>
       </template>
     </Transition>
   </section>
 </template>
+

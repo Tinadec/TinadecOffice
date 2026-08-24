@@ -8,11 +8,17 @@ namespace TinadecCore.Abstractions.Ports;
 /// </summary>
 public interface IContextProvider
 {
+    /// <summary>Builds a context pack from an explicit frozen runtime request.</summary>
+    Task<ContextPack> BuildContextAsync(
+        ContextBuildRequest request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Produces a context pack for the given session and run.</summary>
     Task<ContextPack> BuildContextAsync(
         string sessionId,
         string? runId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        BuildContextAsync(new ContextBuildRequest(sessionId, runId), cancellationToken);
 }
 
 /// <summary>
@@ -25,6 +31,7 @@ public sealed class ContextPack
     public int TokenBudget { get; init; }
     public int EstimatedTokens { get; init; }
     public IReadOnlyList<ContextEvidence> Evidence { get; init; } = [];
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
 }
 
 public sealed class ContextEvidence
@@ -34,3 +41,15 @@ public sealed class ContextEvidence
     public int EstimatedTokens { get; init; }
     public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
 }
+
+public sealed record ContextBuildRequest(
+    string SessionId,
+    string? RunId,
+    string ApplicationMode = "conversation",
+    string AgentMode = "auto",
+    string RuntimeProfileId = "conversation.auto",
+    string AgentId = "meeting",
+    string? TaskContext = null,
+    int? TokenBudget = null,
+    int? RecentMessageLimit = null,
+    int? ReviewedMemoryLimit = null);

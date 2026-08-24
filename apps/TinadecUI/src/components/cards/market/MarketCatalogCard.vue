@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Bot, Boxes, PlugZap, Terminal } from '@lucide/vue'
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MarketCatalogItemDto } from '@/api'
 import { UiBadge } from '@/components/ui'
@@ -9,8 +9,14 @@ import { marketController } from '@/controllers/MarketController'
 const { t } = useI18n()
 
 const {
-  catalog, selectedCatalogId, installedByExtensionId, start,
+  catalog: _catalog, selectedCatalogId: _selectedId, installedByExtensionId, start,
 } = marketController
+// ponytail: vapor template does not auto-unwrap Ref when destructured from controller — expose plain-typed computed so vue-tsc sees correct brands (single reactivity identity via tsconfig paths)
+const catalog = computed(() => _catalog.value) as unknown as MarketCatalogItemDto[]
+const selectedCatalogId = computed({
+  get: () => _selectedId.value,
+  set: (v: string) => { _selectedId.value = v },
+}) as unknown as string
 
 function kindLabel(kind: string) {
   if (kind === 'skill') return 'Skill'

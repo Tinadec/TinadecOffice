@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronRight, Cpu, Dna, Sparkles, ThumbsDown, Workflow, X } from '@lucide/vue'
+import { Check, Cpu, Dna, ThumbsDown, Workflow } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -9,7 +9,7 @@ import {
   type AgentProfileDto,
   type PromoteAgentCandidateInput
 } from '../api'
-import { UiBadge, UiButton, UiCard, UiInput, UiLabel } from '@/components/ui'
+import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSheet, UiSkeleton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
@@ -65,10 +65,10 @@ function confidenceVariant(score: number): 'default' | 'secondary' | 'destructiv
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    proposed: 'Proposed',
-    promoted: 'Promoted',
-    rejected: 'Rejected',
-    evaluating: 'Evaluating'
+    proposed: t('agentCenter.evolution.statusProposed'),
+    promoted: t('agentCenter.evolution.statusPromoted'),
+    rejected: t('agentCenter.evolution.statusRejected'),
+    evaluating: t('agentCenter.evolution.statusEvaluating')
   }
   return map[status] ?? status
 }
@@ -120,9 +120,9 @@ async function generateProposals() {
     if (generated.length > 0) {
       selectedProposalId.value = generated[0].id
     }
-    notify.success({ message: `Generated ${generated.length} proposal${generated.length === 1 ? '' : 's'}.`, source: 'evolution' })
+    notify.success({ message: t('agentCenter.evolution.generateSuccess', { count: generated.length }), source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: 'Could not generate proposals', source: 'evolution' })
+    notify.error(err, { title: t('agentCenter.evolution.generateFailed'), source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -181,9 +181,9 @@ async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
     await api.promoteAgentCandidate(proposal.id, promoteForm.value)
     await loadProposals()
     showPromotePanel.value = ''
-    notify.success({ message: `${proposal.name} promoted.`, source: 'evolution' })
+    notify.success({ title: t('agentCenter.evolution.promoteTitle'), message: t('agentCenter.evolution.promoteSuccess'), source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: `Could not promote ${proposal.name}`, source: 'evolution' })
+    notify.error(err, { title: t('agentCenter.evolution.promoteFailed', { name: proposal.name }), source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -192,10 +192,10 @@ async function promoteCandidate(proposal: AgentEvolutionProposalDto) {
 async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
   const reason = rejectReason.value.trim() || undefined
   if (!await confirm({
-    title: 'Reject agent candidate',
-    message: reason ? `Reject ${proposal.name}?\nReason: ${reason}` : `Reject ${proposal.name}?`,
-    confirmLabel: 'Reject',
-    cancelLabel: 'Cancel',
+    title: t('agentCenter.evolution.rejectTitle'),
+    message: reason ? t('agentCenter.evolution.rejectConfirmReason', { name: proposal.name, reason }) : t('agentCenter.evolution.rejectConfirm', { name: proposal.name }),
+    confirmLabel: t('agentCenter.evolution.reject'),
+    cancelLabel: t('settings.cancel'),
     destructive: true
   })) return
   busy.value = true
@@ -203,9 +203,9 @@ async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
     await api.rejectAgentCandidate(proposal.id, reason)
     rejectReason.value = ''
     await loadProposals()
-    notify.success({ message: `${proposal.name} rejected.`, source: 'evolution' })
+    notify.success({ message: t('agentCenter.evolution.rejectDone', { name: proposal.name }), source: 'evolution' })
   } catch (err) {
-    notify.error(err, { title: `Could not reject ${proposal.name}`, source: 'evolution' })
+    notify.error(err, { title: t('agentCenter.evolution.rejectFailed', { name: proposal.name }), source: 'evolution' })
   } finally {
     busy.value = false
   }
@@ -214,246 +214,211 @@ async function rejectCandidate(proposal: AgentEvolutionProposalDto) {
 onMounted(() => {
   void loadProposals()
 })
+
+defineExpose({ loadProposals })
 </script>
 
 <template>
-  <section class="agent-evolution-panel">
-    <div class="evolution-header">
+  <section class="center-resource-section agent-evolution-panel">
+    <div class="center-resource-heading">
       <div>
-        <h2><Dna :size="18" /> Agent Evolution</h2>
-        <p>Heuristically generate agent candidates from observed workflow patterns.</p>
+        <h3>{{ t('settings.agentEvolution') }}</h3>
+        <p>{{ t('agentCenter.evolution.panelHint') }}</p>
       </div>
-      <UiButton variant="outline" size="sm" :disabled="loading" @click="loadProposals">
-        <Sparkles :size="14" />
-        <span>Refresh</span>
-      </UiButton>
-    </div>
-
-    <UiCard class="evolution-generate-card">
-      <template #content>
-        <div class="evolution-generate-row">
-          <div class="evolution-generate-field">
-            <UiLabel>Session ID (optional)</UiLabel>
-            <UiInput v-model="generateSessionId" placeholder="session id for pattern mining" />
-          </div>
-          <div class="evolution-generate-field">
-            <UiLabel>Lookback Events</UiLabel>
-            <UiInput v-model.number="generateLookback" type="number" placeholder="200" />
-          </div>
-          <UiButton :disabled="busy" @click="generateProposals">
-            <Dna :size="14" />
-            <span>Generate Proposals</span>
-          </UiButton>
-        </div>
-      </template>
-    </UiCard>
-
-    <div class="evolution-list-header">
-      <h3>Proposals</h3>
       <UiBadge variant="outline">{{ proposals.length }}</UiBadge>
     </div>
 
-    <p v-if="loading" class="quiet">Loading proposals…</p>
-    <p v-else-if="proposals.length === 0" class="quiet">
-      No evolution proposals yet. Click "Generate Proposals" to mine workflow patterns.
-    </p>
-
-    <div class="evolution-proposal-grid">
-      <button
-        v-for="proposal in sortedProposals"
-        :key="proposal.id"
-        class="evolution-proposal-card"
-        :class="{ active: selectedProposalId === proposal.id }"
-        @click="selectedProposalId = proposal.id"
-      >
-        <div class="evolution-proposal-head">
-          <div class="evolution-proposal-icon" :class="proposal.layer">
-            <component :is="proposal.layer === 'planning' ? Workflow : Cpu" :size="16" />
-          </div>
-          <div class="evolution-proposal-main">
-            <strong>{{ proposal.name }}</strong>
-            <span>{{ agentLayerLabel(proposal.layer) }} · {{ proposal.agent_type }}</span>
-          </div>
-          <UiBadge :variant="confidenceVariant(proposal.confidence_score)">
-            {{ (proposal.confidence_score * 100).toFixed(0) }}%
-          </UiBadge>
-        </div>
-        <p class="evolution-proposal-desc">{{ proposal.description }}</p>
-        <div class="evolution-proposal-meta">
-          <UiBadge :variant="statusVariant(proposal.status)">{{ statusLabel(proposal.status) }}</UiBadge>
-          <span class="evolution-proposal-by">by {{ proposal.generated_by_agent_id }}</span>
-        </div>
-      </button>
+    <div v-if="loading && proposals.length === 0" class="center-loading-state" aria-live="polite">
+      <UiSkeleton v-for="index in 3" :key="index" class="center-loading-line" />
     </div>
 
-    <UiCard v-if="selectedProposal" class="evolution-detail-panel">
-      <template #content>
-        <div class="evolution-detail-head">
-          <div class="evolution-proposal-icon" :class="selectedProposal.layer">
-            <component :is="selectedProposal.layer === 'planning' ? Workflow : Cpu" :size="20" />
+    <template v-else>
+      <UiCard class="evolution-generate-card">
+        <template #content>
+          <div class="evolution-generate-row">
+            <div class="evolution-form-field">
+              <UiLabel>{{ t('agentCenter.evolution.targetSession') }}</UiLabel>
+              <UiInput v-model="generateSessionId" :placeholder="t('agentCenter.evolution.sessionPlaceholder')" />
+            </div>
+            <div class="evolution-form-field">
+              <UiLabel>{{ t('agentCenter.evolution.lookbackEvents') }}</UiLabel>
+              <UiInput v-model.number="generateLookback" type="number" placeholder="200" />
+            </div>
+            <UiButton :disabled="busy" @click="generateProposals">
+              <Dna :size="14" />
+              <span>{{ t('agentCenter.evolution.generateAction') }}</span>
+            </UiButton>
           </div>
-          <div>
-            <h3>{{ selectedProposal.name }}</h3>
-            <p>{{ agentLayerLabel(selectedProposal.layer) }} · {{ selectedProposal.agent_type }} · {{ statusLabel(selectedProposal.status) }}</p>
-          </div>
-          <UiBadge :variant="confidenceVariant(selectedProposal.confidence_score)">
-            Confidence {{ (selectedProposal.confidence_score * 100).toFixed(0) }}%
-          </UiBadge>
-        </div>
+        </template>
+      </UiCard>
 
-        <div class="evolution-detail-section">
-          <div class="evolution-detail-section-title">Description</div>
-          <p>{{ selectedProposal.description }}</p>
-        </div>
-
-        <div v-if="selectedProposal.observed_patterns.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">Observed Patterns</div>
-          <ul class="evolution-pattern-list">
-            <li v-for="pattern in selectedProposal.observed_patterns" :key="pattern">{{ pattern }}</li>
-          </ul>
-        </div>
-
-        <div v-if="selectedProposal.suggested_tools.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">Suggested Tools</div>
-          <div class="evolution-tag-row">
-            <span v-for="tool in selectedProposal.suggested_tools" :key="tool" class="evolution-tag">{{ tool }}</span>
-          </div>
-        </div>
-
-        <div v-if="selectedProposal.evaluation_notes.length > 0" class="evolution-detail-section">
-          <div class="evolution-detail-section-title">Evaluation Notes</div>
-          <ul class="evolution-pattern-list">
-            <li v-for="note in selectedProposal.evaluation_notes" :key="note">{{ note }}</li>
-          </ul>
-        </div>
-
-        <div v-if="selectedProposal.status === 'proposed' || selectedProposal.status === 'evaluating'" class="evolution-detail-actions">
-          <UiButton :disabled="busy" @click="openPromotePanel(selectedProposal)">
-            <Check :size="14" />
-            <span>Promote to Agent</span>
-          </UiButton>
-          <UiInput v-model="rejectReason" placeholder="rejection reason (optional)" size="sm" />
-          <UiButton variant="ghost" :disabled="busy" @click="rejectCandidate(selectedProposal)">
-            <ThumbsDown :size="14" />
-            <span>Reject</span>
-          </UiButton>
-        </div>
-      </template>
-    </UiCard>
-
-    <Transition name="modal-fade">
-      <div v-if="showPromotePanel" class="evolution-promote-modal" @click.self="closePromotePanel">
-        <UiCard class="evolution-promote-modal-content">
-          <template #header>
-            <div class="evolution-modal-header">
-              <h3>Promote Candidate</h3>
-              <UiButton variant="ghost" size="icon" @click="closePromotePanel">
-                <X :size="16" />
-              </UiButton>
-            </div>
-          </template>
-
-          <template #content>
-            <p class="evolution-modal-subtitle">
-              Promote <strong>{{ selectedProposal?.name }}</strong> to a full agent profile.
-            </p>
-
-            <div class="evolution-form-grid">
-              <div class="settings-field">
-                <UiLabel>Agent ID</UiLabel>
-                <UiInput v-model="promoteForm.agent_id" placeholder="agent_xxx" />
-              </div>
-              <div class="settings-field">
-                <UiLabel>Mode</UiLabel>
-                <select v-model="promoteForm.mode" class="settings-select">
-                  <option v-for="mode in agentModes" :key="mode.id" :value="mode.id">
-                    {{ mode.display_name }} · {{ mode.summary }}
-                  </option>
-                </select>
-              </div>
-              <div class="settings-field">
-                <UiLabel>Model Route Purpose</UiLabel>
-                <UiInput v-model="promoteForm.model_route_purpose" placeholder="chat / planner / executor / reviewer" />
-              </div>
-            </div>
-
-            <div class="evolution-modal-section">
-              <UiLabel>Allowed Tools</UiLabel>
-              <div class="evolution-tag-list">
-                <span v-for="tool in promoteForm.allowed_tools" :key="tool" class="evolution-tag removable">
-                  {{ tool }}
-                  <button class="evolution-tag-remove" @click="removePromoteTool(tool)">×</button>
-                </span>
-              </div>
-              <div class="evolution-add-row">
-                <UiInput v-model="promoteToolInput" placeholder="tool id" size="sm" @keydown.enter="addPromoteTool" />
-                <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">Add</UiButton>
-              </div>
-            </div>
-
-            <div class="evolution-modal-section">
-              <UiLabel>Capabilities</UiLabel>
-              <div class="evolution-tag-list">
-                <span v-for="cap in promoteForm.capabilities" :key="cap" class="evolution-tag removable">
-                  {{ cap }}
-                  <button class="evolution-tag-remove" @click="removePromoteCapability(cap)">×</button>
-                </span>
-              </div>
-              <div class="evolution-add-row">
-                <UiInput v-model="promoteCapabilityInput" placeholder="capability" size="sm" @keydown.enter="addPromoteCapability" />
-                <UiButton variant="outline" size="sm" :disabled="!promoteCapabilityInput.trim()" @click="addPromoteCapability">Add</UiButton>
-              </div>
-            </div>
-
-            <div class="evolution-modal-section">
-              <UiLabel>System Prompt (optional)</UiLabel>
-              <textarea
-                v-model="promoteForm.system_prompt"
-                class="settings-textarea"
-                rows="4"
-                placeholder="Custom system prompt override"
-              ></textarea>
-            </div>
-          </template>
-
-          <template #footer>
-            <div class="modal-actions">
-              <UiButton variant="outline" @click="closePromotePanel">Cancel</UiButton>
-              <UiButton :disabled="busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
-                <Check :size="14" />
-                <span>Promote Agent</span>
-              </UiButton>
-            </div>
-          </template>
-        </UiCard>
+      <div v-if="!loading && proposals.length === 0" class="model-provider-empty">
+        <Dna :size="24" />
+        <span>{{ t('agentCenter.evolution.noProposals') }}</span>
       </div>
-    </Transition>
+
+      <div class="evolution-proposal-grid">
+        <button
+          v-for="proposal in sortedProposals"
+          :key="proposal.id"
+          class="evolution-proposal-card"
+          :class="{ active: selectedProposalId === proposal.id }"
+          @click="selectedProposalId = proposal.id"
+        >
+          <div class="evolution-proposal-head">
+            <div class="evolution-proposal-icon" :class="proposal.layer">
+              <component :is="proposal.layer === 'planning' ? Workflow : Cpu" :size="16" />
+            </div>
+            <div class="evolution-proposal-main">
+              <strong>{{ proposal.name }}</strong>
+              <span>{{ agentLayerLabel(proposal.layer) }} · {{ proposal.agent_type }}</span>
+            </div>
+            <UiBadge :variant="confidenceVariant(proposal.confidence_score)">
+              {{ (proposal.confidence_score * 100).toFixed(0) }}%
+            </UiBadge>
+          </div>
+          <p class="evolution-proposal-desc">{{ proposal.description }}</p>
+          <div class="evolution-proposal-meta">
+            <UiBadge :variant="statusVariant(proposal.status)">{{ statusLabel(proposal.status) }}</UiBadge>
+            <span class="evolution-proposal-by">{{ t('agentCenter.evolution.generatedBy', { id: proposal.generated_by_agent_id }) }}</span>
+          </div>
+        </button>
+      </div>
+
+      <UiCard v-if="selectedProposal" class="evolution-detail-panel">
+        <template #content>
+          <div class="evolution-detail-head">
+            <div class="evolution-proposal-icon" :class="selectedProposal.layer">
+              <component :is="selectedProposal.layer === 'planning' ? Workflow : Cpu" :size="20" />
+            </div>
+            <div>
+              <h3>{{ selectedProposal.name }}</h3>
+              <p>{{ agentLayerLabel(selectedProposal.layer) }} · {{ selectedProposal.agent_type }} · {{ statusLabel(selectedProposal.status) }}</p>
+            </div>
+            <UiBadge :variant="confidenceVariant(selectedProposal.confidence_score)">
+              {{ t('agentCenter.evolution.confidence') }} {{ (selectedProposal.confidence_score * 100).toFixed(0) }}%
+            </UiBadge>
+          </div>
+
+          <div class="evolution-detail-section">
+            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.description') }}</div>
+            <p>{{ selectedProposal.description }}</p>
+          </div>
+
+          <div v-if="selectedProposal.observed_patterns.length > 0" class="evolution-detail-section">
+            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.patterns') }}</div>
+            <ul class="evolution-pattern-list">
+              <li v-for="pattern in selectedProposal.observed_patterns" :key="pattern">{{ pattern }}</li>
+            </ul>
+          </div>
+
+          <div v-if="selectedProposal.suggested_tools.length > 0" class="evolution-detail-section">
+            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.suggestedTools') }}</div>
+            <div class="evolution-tag-row">
+              <span v-for="tool in selectedProposal.suggested_tools" :key="tool" class="evolution-tag">{{ tool }}</span>
+            </div>
+          </div>
+
+          <div v-if="selectedProposal.evaluation_notes.length > 0" class="evolution-detail-section">
+            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.notes') }}</div>
+            <ul class="evolution-pattern-list">
+              <li v-for="note in selectedProposal.evaluation_notes" :key="note">{{ note }}</li>
+            </ul>
+          </div>
+
+          <div v-if="selectedProposal.status === 'proposed' || selectedProposal.status === 'evaluating'" class="evolution-detail-actions">
+            <UiButton :disabled="busy" @click="openPromotePanel(selectedProposal)">
+              <Check :size="14" />
+              <span>{{ t('agentCenter.evolution.promote') }}</span>
+            </UiButton>
+            <UiInput v-model="rejectReason" :placeholder="t('agentCenter.evolution.rejectPlaceholder')" size="sm" />
+            <UiButton variant="ghost" :disabled="busy" @click="rejectCandidate(selectedProposal)">
+              <ThumbsDown :size="14" />
+              <span>{{ t('agentCenter.evolution.reject') }}</span>
+            </UiButton>
+          </div>
+        </template>
+      </UiCard>
+    </template>
+
+    <UiSheet :open="Boolean(showPromotePanel)" side="right" @update:open="!$event && closePromotePanel()">
+      <div class="ac-sheet-body">
+        <h3>{{ t('agentCenter.evolution.promoteTitle') }}</h3>
+        <p class="quiet">{{ t('agentCenter.evolution.promoteSubtitle', { name: selectedProposal?.name ?? '' }) }}</p>
+
+        <div class="evolution-form-grid">
+          <div class="evolution-form-field">
+            <UiLabel>{{ t('settings.agentIdField') }}</UiLabel>
+            <UiInput v-model="promoteForm.agent_id" placeholder="agent_xxx" />
+          </div>
+          <div class="evolution-form-field">
+            <UiLabel>{{ t('agentCenter.evolution.fieldMode') }}</UiLabel>
+            <select v-model="promoteForm.mode" class="settings-select">
+              <option v-for="mode in agentModes" :key="mode.id" :value="mode.id">
+                {{ mode.display_name }} · {{ mode.summary }}
+              </option>
+            </select>
+          </div>
+          <div class="evolution-form-field">
+            <UiLabel>{{ t('agentCenter.evolution.fieldModelRoute') }}</UiLabel>
+            <UiInput v-model="promoteForm.model_route_purpose" placeholder="chat / planner / executor / reviewer" />
+          </div>
+        </div>
+
+        <div class="evolution-form-block">
+          <UiLabel>{{ t('agentCenter.agentForm.tools') }}</UiLabel>
+          <div class="evolution-tag-list">
+            <span v-for="tool in promoteForm.allowed_tools" :key="tool" class="evolution-tag removable">
+              {{ tool }}
+              <button class="evolution-tag-remove" @click="removePromoteTool(tool)">×</button>
+            </span>
+          </div>
+          <div class="evolution-add-row">
+            <UiInput v-model="promoteToolInput" placeholder="tool id" size="sm" @keydown.enter="addPromoteTool" />
+            <UiButton variant="outline" size="sm" :disabled="!promoteToolInput.trim()" @click="addPromoteTool">{{ t('agentCenter.evolution.add') }}</UiButton>
+          </div>
+        </div>
+
+        <div class="evolution-form-block">
+          <UiLabel>{{ t('agentCenter.agentForm.capabilities') }}</UiLabel>
+          <div class="evolution-tag-list">
+            <span v-for="cap in promoteForm.capabilities" :key="cap" class="evolution-tag removable">
+              {{ cap }}
+              <button class="evolution-tag-remove" @click="removePromoteCapability(cap)">×</button>
+            </span>
+          </div>
+          <div class="evolution-add-row">
+            <UiInput v-model="promoteCapabilityInput" :placeholder="t('agentCenter.evolution.capabilityPlaceholder')" size="sm" @keydown.enter="addPromoteCapability" />
+            <UiButton variant="outline" size="sm" :disabled="!promoteCapabilityInput.trim()" @click="addPromoteCapability">{{ t('agentCenter.evolution.add') }}</UiButton>
+          </div>
+        </div>
+
+        <div class="evolution-form-block">
+          <UiLabel>{{ t('agentCenter.agentForm.systemPrompt') }}</UiLabel>
+          <textarea
+            v-model="promoteForm.system_prompt"
+            class="settings-textarea"
+            rows="4"
+            :placeholder="t('agentCenter.evolution.systemPromptPlaceholder')"
+          ></textarea>
+        </div>
+
+        <div class="ac-sheet-actions">
+          <UiButton variant="outline" @click="closePromotePanel">{{ t('settings.cancel') }}</UiButton>
+          <UiButton :disabled="busy || !promoteForm.agent_id.trim()" @click="promoteCandidate(selectedProposal!)">
+            <Check :size="14" />
+            <span>{{ t('agentCenter.evolution.promoteConfirm') }}</span>
+          </UiButton>
+        </div>
+      </div>
+    </UiSheet>
   </section>
 </template>
 
 <style scoped>
 .agent-evolution-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.evolution-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  display: grid;
   gap: 12px;
-}
-.evolution-header h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-.evolution-header p {
-  margin: 0;
-  color: var(--text-muted, #888);
-  font-size: 13px;
 }
 .evolution-generate-card :deep(.ui-card-content) {
   padding: 14px 16px;
@@ -464,21 +429,12 @@ onMounted(() => {
   align-items: flex-end;
   flex-wrap: wrap;
 }
-.evolution-generate-field {
+.evolution-form-field {
   flex: 1 1 200px;
   min-width: 180px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.evolution-list-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.evolution-list-header h3 {
-  margin: 0;
-  font-size: 14px;
 }
 .evolution-proposal-grid {
   display: grid;
@@ -491,7 +447,7 @@ onMounted(() => {
   gap: 8px;
   padding: 12px 14px;
   background: var(--surface-section);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-muted);
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
@@ -499,11 +455,11 @@ onMounted(() => {
   transition: border-color 0.15s, background 0.15s;
 }
 .evolution-proposal-card:hover {
-  border-color: var(--accent-primary, #58a6ff);
+  border-color: var(--accent-brand);
 }
 .evolution-proposal-card.active {
-  border-color: var(--accent-primary, #58a6ff);
-  background: rgba(88, 166, 255, 0.08);
+  border-color: var(--accent-brand);
+  background: var(--surface-selected);
 }
 .evolution-proposal-head {
   display: flex;
@@ -517,12 +473,12 @@ onMounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-primary, #58a6ff);
+  background: color-mix(in srgb, var(--accent-brand) 12%, transparent);
+  color: var(--accent-brand);
 }
 .evolution-proposal-icon.execution {
-  background: rgba(46, 196, 182, 0.12);
-  color: var(--accent-success, #2ec4b6);
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  color: var(--accent-success);
 }
 .evolution-proposal-main {
   flex: 1;
@@ -539,12 +495,12 @@ onMounted(() => {
 }
 .evolution-proposal-main span {
   font-size: 11px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .evolution-proposal-desc {
   margin: 0;
   font-size: 12px;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -558,7 +514,10 @@ onMounted(() => {
   font-size: 11px;
 }
 .evolution-proposal-by {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .evolution-detail-panel :deep(.ui-card-content) {
   padding: 18px 20px;
@@ -576,7 +535,7 @@ onMounted(() => {
 .evolution-detail-head p {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 .evolution-detail-section {
   margin-top: 12px;
@@ -584,7 +543,7 @@ onMounted(() => {
 .evolution-detail-section-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted, #aaa);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 6px;
@@ -605,8 +564,8 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  background: rgba(88, 166, 255, 0.1);
-  border: 1px solid rgba(88, 166, 255, 0.2);
+  background: color-mix(in srgb, var(--accent-brand) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-brand) 20%, transparent);
   border-radius: 4px;
   font-size: 11px;
   font-family: var(--font-mono, monospace);
@@ -630,99 +589,25 @@ onMounted(() => {
   align-items: center;
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--border-muted);
   flex-wrap: wrap;
-}
-.evolution-promote-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 20px;
-}
-.evolution-promote-modal-content {
-  width: 100%;
-  max-width: 560px;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-.evolution-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.evolution-modal-header h3 {
-  margin: 0;
-  font-size: 16px;
-}
-.evolution-modal-subtitle {
-  margin: 0 0 14px;
-  font-size: 13px;
-  color: var(--text-muted, #aaa);
 }
 .evolution-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  margin-bottom: 14px;
 }
-.evolution-modal-section {
-  margin-bottom: 14px;
-}
-.evolution-tag-list {
-  display: flex;
-  flex-wrap: wrap;
+.evolution-form-block {
+  display: grid;
   gap: 6px;
-  margin-bottom: 8px;
-  min-height: 24px;
 }
 .evolution-add-row {
   display: flex;
   gap: 6px;
 }
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.quiet {
-  color: var(--text-muted, #888);
-  font-size: 13px;
-}
-.settings-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.settings-select {
-  height: 32px;
-  padding: 0 8px;
-  background: var(--surface-input);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  border-radius: 6px;
-  color: inherit;
-  font-size: 13px;
-}
-.settings-textarea {
-  width: 100%;
-  padding: 8px 10px;
-  background: var(--surface-input);
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  border-radius: 6px;
-  color: inherit;
-  font-size: 13px;
-  font-family: var(--font-mono, monospace);
-  resize: vertical;
-}
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.18s ease;
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
+@media (max-width: 700px) {
+  .evolution-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

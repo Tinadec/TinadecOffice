@@ -1,14 +1,33 @@
 # TinadecOffice Architecture
 
-TinadecOffice is split into three product responsibilities:
+TinadecOffice is a four-product family. The normative product boundary and target DmaEA architecture are defined in [`tinadec-core-product-definition.zh-CN.md`](tinadec-core-product-definition.zh-CN.md). The current repository uses the following integrated deployment topology:
 
 - `TinadecCore`: portable C# Core framework and runtime. It owns agents, runs, task graphs, context packs, supervision, approvals, model routes, events, secrets, permissions, capability discovery, shared database abstraction (default SQLite, optional PostgreSQL via EF Core), and **Agent Debug Studio tracing**.
-- `gateway`: TinadecOffice Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
-- `apps/desktop`: TinadecOffice Desktop, built with Electron + Vue. The renderer receives only the `window.tinadec.*` preload API and talks to TinadecOffice over HTTP/SSE. Includes the **Agent Debug Studio** as a separate BrowserWindow.
+- `TinadecTool` (current code path `TinadecTools`): tool discovery and execution provider. The current Core-owned child-process adapter is one integration, not a permanent product dependency.
+- `TinadecGateway`: optional Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
+- `TinadecApp` (currently `apps/desktop`, `apps/web`, and `apps/TinadecUI`): client experiences. The desktop renderer receives only the `window.tinadec.*` preload API and talks to Core directly or through Gateway over HTTP/SSE.
 
-Core is the only state authority. Gateway and Desktop must not keep session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
+Core is the only business-state authority. Gateway and App must not keep a second copy of session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
 
-TinadecOffice intentionally studies sibling projects such as VS Code, Codex, t3code, OpenCode, OpenHarness, Open-ClaudeCode, openclaw, pi, DeepSeek-TUI, and The Zeroth Docs. The reference map in [`docs/reference-project-map.md`](reference-project-map.md) records what to absorb and what to reject so those influences strengthen, rather than flatten, the Core/Tool/Desktop split.
+## Fixed v1 and Governance Transport
+
+TinadecOffice has not shipped a first formal release. Every public HTTP, OpenAPI, SSE, and WebSocket contract stays under `/api/v1`; there is no `/api/v2`, compatibility alias, migration route, or deprecation window. Breaking changes update v1, DTOs, generated clients, snapshots, tests, and the Chinese product definition together. Domain values such as `AgentVersion`, `ModeVersion`, policy revisions, and content hashes are immutable state bindings, not API versions.
+
+Gateway is a stateless northbound proxy. It forwards Core governance routes and preserves the two explicit user tool transport surfaces (`/api/v1/code/tools/*` and `/api/v1/tool-runtime/*`) without calculating risk, PDP, approvals, leases, hashes, or nonce material. Core user writes use `POST /api/v1/user/tool-actions`; agent writes use the run-scoped Core tool route. A user action is not a synthetic run and has its own durable snapshot, permission, action-approval, result, and audit references.
+
+High-risk user and agent writes capture a provider-neutral workspace snapshot before permission or action approval. Git snapshots come from the safe-argument-list CLI provider and include HEAD/ref, index/tree, worktree, binary patches, untracked/deleted paths, and conflicts. Snapshot mismatch, parameter drift, manifest drift, expired/revoked lease, invalid nonce, and duplicate consumption fail closed. User actions persist `non_reversible` plus optional compensation guidance for snapshot overrides and remote side effects such as `git_push`. Desktop surfaces the Core action state (`snapshot_required`, `awaiting_delegate`, `awaiting_user`, `awaiting_approval`, `running`, `completed`, `blocked`, `outcome_unknown`) but never treats UI state as authorization fact.
+
+## MAF 1.18 Adapter Boundary
+
+TinadecCore pins the Microsoft Agent Framework package family to `1.18.0`. MAF-specific types and behavior are confined to the internal DmaEA adapter; public contracts, persisted events, checkpoints, permissions, approvals, and tool receipts remain Tinadec-owned.
+
+- MAF compaction operates on atomic function-call/result groups and cannot split a pending tool exchange.
+- Provider/MAF usage is normalized into a provider-neutral Core record before persistence or metrics.
+- Agent and Workflow OpenTelemetry keep sensitive data disabled by default; prompts, user content, credentials, tool arguments, and tool results are not exported.
+- MAF automatic-approval iteration limits are only a ceiling for Core tool-round budgets. They do not grant authority or bypass Core's durable approval and Tool Dispatcher path.
+- MAF session or workflow checkpoints may be opaque sidecars to a Core checkpoint, but Core remains authoritative for scope, event watermarks, leases, approvals, idempotency, side effects, and recovery decisions.
+
+TinadecOffice intentionally studies sibling projects. The source-backed TinadecCore decisions are recorded in [`tinadec-core-reference-decisions.zh-CN.md`](tinadec-core-reference-decisions.zh-CN.md); the earlier workbench-oriented map remains in [`reference-project-map.md`](reference-project-map.md).
 
 ## Default Ports
 
@@ -22,7 +41,7 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/v1/harness/manifest` | Core-owned summary of planning/execution agent layers, canonical tool registry governance, Tool-layer providers, tool risk policy, and registered tool descriptors. |
+| `GET /api/v1/harness/manifest` | Core-owned summary of operation/execution agent layers, canonical tool registry governance, Tool-layer providers, tool risk policy, and registered tool descriptors. |
 | `GET /api/v1/tools` | Raw Core tool descriptor list. |
 | `GET /api/v1/tools/search` | Core-owned searchable tool discovery with matched metadata fields, provider layer, score, and human-checkpoint summary. Supports `query`, `domain`, `source`, `risk`, and `limit`. |
 | `GET /api/v1/sessions/{sessionId}/tool-executions` | Core-owned tool execution timeline built from tool execution events, provider descriptors, checkpoint summaries, durations, and step-result evidence. Supports `runId` and `limit`. |
@@ -30,6 +49,19 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 | `GET /api/v1/tool-layer-readiness` | Core-owned Tool-layer receipt covering canonical tool dispatchability, provider layers, future-tool markers, human-checkpoint requirements, and execution-agent scope resolution. |
 | `GET /api/v1/model-readiness` | Core-owned model provider and route readiness receipt covering provider status, credential availability, route coverage, blocked routes, and advisory discovery notes. |
 | `GET /api/v1/model-catalog-readiness` | Core-owned model catalog receipt covering static templates, runtime module coverage, configured instance counts, and advisory live-discovery policy. Static templates stay visible when live discovery is unavailable. |
+
+### User actions, governance, and snapshots
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET/POST /api/v1/user/tool-actions` | List or create a Core-owned user action. The request contains only project, tool, params, and an idempotency key; the response includes a stable `audit_reference` but never nonce material. |
+| `GET /api/v1/user/tool-actions/{id}` | Read the durable action projection without nonce material. |
+| `POST /api/v1/user/tool-actions/{id}/resume` | Re-evaluate the frozen governance state and resume the same action. |
+| `POST /api/v1/user/tool-actions/{id}/snapshot-override` | Current-user-only one-time override for a failed pre-write snapshot, with a non-reversible audit mark. |
+| `GET/POST /api/v1/governance/permission-requests/*` | Query and decide capability permission requests. Delegation and lease endpoints remain thin Core proxies. |
+| `GET/POST /api/v1/workspace-snapshots/*` | Query, restore, and audit provider-neutral workspace snapshots. |
+
+Permission granting and single-action approval remain separate state machines. Core wakes a user action directly after a permission decision; it never creates a run to represent Desktop work.
 
 ## Model And Agent Center BFF APIs
 
@@ -46,7 +78,7 @@ The BFF normalizes transport and credential kinds separately, recursively strips
 
 ## Built-In Execution Subagents
 
-`executor_git_manager` is the Git Manager Subagent in the execution layer. Git-related goals such as branch review, commit preparation, push readiness, worktree management, merge/rebase guidance, and user-facing handoff notes can route to it. It can explain repository state, but Git mutation and push flows must remain approval-gated through Core-governed tools such as `git_worktree_manager`.
+`git_steward` is the governance-layer Git change steward. It reviews diffs, prepares commit plans, and coordinates approvals without holding tools. `worker.git` is the execution-layer specialist with the Git manifest (`git_status`, `git_diff`, `git_stage`, `git_commit`, `git_push`, branch/worktree, merge, rebase, and conflict tools). Git mutation and push flows remain approval-gated through Core-governed Tool Provider calls.
 
 ## Event Envelope
 
@@ -66,6 +98,35 @@ All runtime events use:
   "error": null
 }
 ```
+
+## Canonical Dual-Layer Runtime Contract
+
+The canonical layers are the governance layer (`operation`) and execution layer (`execution`). `planning` is accepted only as a migration input and must be normalized before new Core contracts, persisted versions, events, or UI payloads are produced. The governance layer includes the meeting entry point, context maintenance, capability advice, supervision, and evolution proposals. The execution layer plans task graphs, schedules task-bound workers, invokes Core-governed tools, and returns evidence.
+
+The meeting agent is the only agent allowed to produce a user-facing answer. A run-time child agent is a Core-owned orchestration instance, not a generic tool: every spawn must carry its parent instance, intent (`temporary`/`persistent_candidate`/`persistent_profile`), target and success criteria, selected context, model, scoped tools/resources, and budget. `search`/`programming`/`testing` are execution specialists selected by the task planner — they remain execution workers and never become a third layer. A child cannot enlarge inherited authority or receive `direct_user_output`, formal-memory writes, or promotion authority. Temporary workers release when their run finishes; a reusable design first becomes an auditable candidate and requires human promotion (`agent.create_profile`, governance-layer only) into an immutable profile version.
+
+Full duplex is coordinated by Core rather than by the lifetime of one HTTP response. A durable run accepts status queries, supplements, goal changes, new tasks, pause, resume, and cancellation while work continues. Shared state uses monotonically increasing `context_revision`; a patch or result based on an obsolete revision cannot overwrite newer constraints and must be rejected, reconciled safely, or trigger re-planning. The intended run states are `understanding`, `executing`, `replanning`, `awaiting_approval`, `paused`, `reviewing`, `completed`, `failed`, and `cancelled`.
+
+Long-term memory and reusable agents follow a candidate-to-promotion path. Session history and summaries may be used automatically; only reviewed, promoted long-term memory is retrievable across sessions. Full content remains in immutable ContentStore, while relational projections and events hold references, hashes, counts, and summaries. Tool approval and memory review are distinct state machines.
+
+## Runtime Configuration Baseline
+
+`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` is the annotated, read-only built-in baseline. It defines mode availability, profile bindings, operation/execution roles (including built-in `search`/`programming`/`testing` execution specialists), model/tool policy, supervision, context, memory, scheduling, and generation budgets. Creation authority is explicit: `agent.create_temporary` (temporary run workers), `agent.create_persistent` (candidate), and `agent.create_profile` (promotion/bound profile); `agent.spawn` is normalized to `agent.create_temporary` for compatibility. The defaults are `conversation` with `plan`/`spec`/`ask`/`vibe`/`auto`/`agent` (default `auto`), and `space` with only `agent`, bound to `space.full_duplex`; `im` and `hub` are compatibility aliases. Agent definitions carry `prompt_profile`, `triggers`, `accepts`, `emits`, `decisions`, `memory_write_policy`, `allowed_tools`, and `context_access`; only `meeting` may set `direct_user_output=true`.
+
+When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads a TOML snapshot in process. A valid edit replaces the snapshot for future consumers; an invalid edit preserves the previous valid snapshot and records an in-memory diagnostic. The target resolution rule is baseline then workspace override, with the resolved version/hash frozen at run creation — the full-duplex engine freezes the resolved profile per run. The legacy orchestrator does not resolve this store yet; workspace override application and readiness diagnostics remain open.
+
+## Current Delivery Status (2026-08-22, after governance/Git/Desktop closure)
+
+| Surface | Present now | Still required for the full-duplex contract |
+|---|---|---|
+| Runtime configuration | Annotated TOML baseline, validation, aliases, in-process valid-only reload, relational projections for agent instances/candidates/profile overrides, and per-run frozen profile resolution in the full-duplex engine. | Workspace override resolution and readiness diagnostics. |
+| Invocation | `POST /api/v1/sessions/{id}/invoke-stream` runs the durable full-duplex engine: idempotent admission, `context_revision` snapshots/patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Gateway/Desktop normal-chat migration and remaining interaction-contract cleanup. |
+| Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
+| Spawn, lineage, and promotion | `agent_instances` and `agent_candidates` projections plus worker spawn/lineage with budgets and the candidate review APIs (generate/promote/reject). | Immutable promotion workflow and long-term retrieval injection. |
+| Context and memory | Context snapshots/patches with `context_revision`, meeting context patches, and candidate review APIs. | Deterministic prompt assembly, reviewed-memory retrieval, and candidate promotion/revocation persistence. |
+| Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, `UserToolAction`, governance nonce boundary, and `tool-layer-readiness` receipts. | Scheduling and `tools/shell` (501); ACP permission bridge. |
+| Workspace snapshots | File-system and Git providers capture HEAD/index/worktree/conflicts and use deterministic restore/guard semantics. | Full restore-plan UX and external compensation records. |
+| Gateway and Desktop | Gateway proxies Core governance and preserves direct user tool transport. Desktop routes code/Git writes through UserToolAction and shows the durable action state machine. | Complete action history/recovery UX and normal-chat migration cleanup. |
 
 ## Run Locally
 

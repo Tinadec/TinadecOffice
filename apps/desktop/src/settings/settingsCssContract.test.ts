@@ -4,7 +4,9 @@ import stylesCss from '../styles.css?raw'
 import uieStackSource from '../../../TinadecUI/src/components/UieStack.vue?raw'
 import settingsPageSource from '../pages/SettingsPage.vue?raw'
 import agentEvolutionPanelSource from '../components/AgentEvolutionPanel.vue?raw'
-import promptEngineeringPanelSource from '../components/PromptEngineeringPanel.vue?raw'
+import promptEngineeringMergedSource from './sections/PromptEngineeringMerged.vue?raw'
+import agentModesPanelSource from './sections/AgentModesPanel.vue?raw'
+import runtimeInstancesPanelSource from './sections/RuntimeInstancesPanel.vue?raw'
 import alertSource from '../components/ui/alert.vue?raw'
 import backgroundPreviewSource from '../components/ui/background-preview.vue?raw'
 import badgeSource from '../components/ui/badge.vue?raw'
@@ -420,7 +422,9 @@ describe('settings material scope contract', () => {
   it.each([
     ['settings.css', settingsCss],
     ['AgentEvolutionPanel.vue', extractStyleBlocks(agentEvolutionPanelSource)],
-    ['PromptEngineeringPanel.vue', extractStyleBlocks(promptEngineeringPanelSource)],
+    ['PromptEngineeringMerged.vue', extractStyleBlocks(promptEngineeringMergedSource)],
+    ['AgentModesPanel.vue', extractStyleBlocks(agentModesPanelSource)],
+    ['RuntimeInstancesPanel.vue', extractStyleBlocks(runtimeInstancesPanelSource)],
     ['panel-style-control.vue', extractStyleBlocks(panelStyleControlSource)],
   ])('%s does not bypass material surfaces with raw neutral backgrounds', (_name, source) => {
     expect(rawNeutralBackgrounds(source)).toEqual([])

@@ -57,7 +57,7 @@ public sealed class FSharpInteropTests
     [Fact]
     public void StateTransitionValidateTransitionReturnsBoolAndString()
     {
-        var (isValid, reason) = StateTransition.validateTransition("pending", "running");
+        var (isValid, reason) = StateTransition.validateTransition("planning", "understanding");
 
         Assert.IsType<bool>(isValid);
         Assert.IsType<string>(reason);
@@ -110,7 +110,7 @@ public sealed class FSharpInteropTests
         Assert.IsType<bool>(loopResult);
 
         // validateTransition returns tuple (bool, string) — C# compatible
-        var (valid, msg) = StateTransition.validateTransition("pending", "running");
+        var (valid, msg) = StateTransition.validateTransition("planning", "understanding");
         Assert.IsType<bool>(valid);
         Assert.IsType<string>(msg);
     }

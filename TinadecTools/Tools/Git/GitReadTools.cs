@@ -270,7 +270,7 @@ internal partial class GitReadToolsJsonContext : JsonSerializerContext { }
 
 internal static class GitReadTools
 {
-    [ToolFunction("git_status", RequiresApproval = true)]
+    [ToolFunction("git_status")]
     public static async ValueTask<GitStatusResult> StatusAsync(GitStatusArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -279,7 +279,7 @@ internal static class GitReadTools
         return status.Ok ? ParseStatus(repo, status.Stdout) : StatusFailure(status.Stderr, status.ExitCode);
     }
 
-    [ToolFunction("git_push_readiness", RequiresApproval = true)]
+    [ToolFunction("git_push_readiness")]
     public static async ValueTask<GitPushReadinessResult> PushReadinessAsync(GitPushReadinessArgs args, CancellationToken cancellationToken)
     {
         var status = await StatusAsync(new GitStatusArgs { RepositoryPath = args.RepositoryPath }, cancellationToken).ConfigureAwait(false);
@@ -292,7 +292,7 @@ internal static class GitReadTools
         return new GitPushReadinessResult { Success = true, Status = status, NeedsPush = status.Ahead > 0, Ready = blockers.Count == 0, Blockers = blockers };
     }
 
-    [ToolFunction("git_diff", RequiresApproval = true)]
+    [ToolFunction("git_diff")]
     public static async ValueTask<GitDiffResult> DiffAsync(GitDiffArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -318,7 +318,7 @@ internal static class GitReadTools
         return new GitDiffResult { Success = true, Sections = sections, Truncated = sections.Any(section => section.Truncated) };
     }
 
-    [ToolFunction("git_branch_list", RequiresApproval = true)]
+    [ToolFunction("git_branch_list")]
     public static async ValueTask<GitBranchListResult> BranchListAsync(GitBranchListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -330,7 +330,7 @@ internal static class GitReadTools
         return new GitBranchListResult { Success = true, Branches = exec.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Split('\t')).Where(fields => fields.Length == 5).Select(fields => new GitBranch { IsCurrent = fields[0] == "*", Name = fields[2], Upstream = NullIfEmpty(fields[3]), Commit = NullIfEmpty(fields[4]), IsRemote = fields[1].StartsWith("refs/remotes/", StringComparison.Ordinal) }).ToList() };
     }
 
-    [ToolFunction("git_worktree_list", RequiresApproval = true)]
+    [ToolFunction("git_worktree_list")]
     public static async ValueTask<GitWorktreeListResult> WorktreeListAsync(GitWorktreeListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -350,7 +350,7 @@ internal static class GitReadTools
         return new GitWorktreeListResult { Success = true, Worktrees = result };
     }
 
-    [ToolFunction("git_ref_list", RequiresApproval = true)]
+    [ToolFunction("git_ref_list")]
     public static async ValueTask<GitRefListResult> RefListAsync(GitRefListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -368,7 +368,7 @@ internal static class GitReadTools
         return new GitRefListResult { Success = true, Refs = refs };
     }
 
-    [ToolFunction("git_remote_list", RequiresApproval = true)]
+    [ToolFunction("git_remote_list")]
     public static async ValueTask<GitRemoteListResult> RemoteListAsync(GitRemoteListArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
@@ -385,7 +385,7 @@ internal static class GitReadTools
         return new GitRemoteListResult { Success = true, Remotes = remotes };
     }
 
-    [ToolFunction("git_blame", RequiresApproval = true)]
+    [ToolFunction("git_blame")]
     public static async ValueTask<GitBlameResult> BlameAsync(GitBlameArgs args, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Path)) throw new InvalidOperationException("path is required.");
@@ -403,7 +403,7 @@ internal static class GitReadTools
         return ParseBlame(exec.Stdout, exec.Truncated);
     }
 
-    [ToolFunction("git_file_at_revision", RequiresApproval = true)]
+    [ToolFunction("git_file_at_revision")]
     public static async ValueTask<GitFileAtRevisionResult> FileAtRevisionAsync(GitFileAtRevisionArgs args, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(args.Path)) throw new InvalidOperationException("path is required.");
@@ -421,7 +421,7 @@ internal static class GitReadTools
         return new GitFileAtRevisionResult { Success = true, Path = path, Rev = args.Rev, BlobHash = hash, ByteSize = size, IsBinary = binary, Content = binary ? null : content.Stdout, Truncated = content.Truncated, TruncationReason = content.Truncated ? "max_output_bytes" : null };
     }
 
-    [ToolFunction("git_conflict_preview", RequiresApproval = true)]
+    [ToolFunction("git_conflict_preview")]
     public static async ValueTask<GitConflictPreviewResult> ConflictPreviewAsync(GitConflictPreviewArgs args, CancellationToken cancellationToken)
     {
         var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);

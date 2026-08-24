@@ -1,5 +1,7 @@
 # TinadecCore：基于 Microsoft Agent Framework 的模块化骨架
 
+> 本文记录最初的模块化骨架方案。TinadecCore 当前产品定位、四产品边界和 DmaEA 目标架构以 [TinadecCore 产品定义与 DmaEA 架构基线](tinadec-core-product-definition.zh-CN.md) 为准。
+
 ## 总结
 
 - 在 `TinadecCore/` 下建立 .NET 10 modular monolith：八个业务模块均为独立类库，可按项目引用裁剪。
@@ -47,14 +49,14 @@ Gateway → Desktop
 ```
 
 - 业务模块之间不直接引用具体实现，通过 `Abstractions` 中的端口协作。
-- 各相关模块可直接使用 MAF 公共类型；MAF 类型不得进入 HTTP DTO 或事件 envelope。
+- 只有 DmaEA 内部适配器可直接使用 MAF 公共类型；其它模块通过 Tinadec 自有端口协作，MAF 类型不得进入 HTTP DTO、事件 envelope、checkpoint schema 或持久化模型。
 - 每个模块提供显式 `AddTinadec...()` 注册入口和 `ModuleDescriptor`，禁止反射扫描。
 - `Runtime` 是默认全量组合；定制宿主可只引用需要的模块，实现编译期裁剪。
 
 ## 模块实现边界
 
 - `DmaEA` 是模块之一，是整个框架的核心多智能体模块。它基于 Microsoft Agent Framework，实现 Tinadec 自有的双层 Agent 模型、动态创建、任务分派、协作通信、调度与结果汇总。
-- `Models`：以 `IChatClient`、`ChatClientAgent` 和 MAF provider 为入口，Tinadec 只实现 provider 实例、凭据引用、模型路由、能力、错误归一化和 readiness，不重写模型 HTTP 客户端。
+- `Models`：以 provider-neutral `IChatClient` 为入口；`ChatClientAgent` 与 MAF provider 的绑定只在 DmaEA adapter 内完成。Tinadec 实现 provider 实例、凭据引用、模型路由、能力、usage/错误归一化和 readiness，不重写模型 HTTP 客户端。
 - `Context`：扩展 `AIContextProvider`，产生带证据、来源和 token 预算的 `ContextPack`；不组装最终 system prompt。
 - `Prompts`：把片段、Agent 指令、Skill 贡献和 ContextPack 确定性组装到 MAF `ChatOptions.Instructions`/`AIContext`；完整提示词只允许出现在受控 preview 和调用内存中。
 - `Memory`：复用 `AgentSession` 序列化、`ChatHistoryProvider`、`ChatHistoryMemoryProvider` 和 `Microsoft.Extensions.VectorData` 抽象；Tinadec 管理作用域、保留策略和 provenance，本轮不选择向量数据库。
@@ -69,10 +71,10 @@ MAF 是技术底座，DmaEA等模块 是建立在其上的 Tinadec 双层多智�
 ## MAF 版本与公共接口
 
 - 集中锁定正式版：
-  - `Microsoft.Agents.AI.Abstractions` `1.15.0`
-  - `Microsoft.Agents.AI` `1.15.0`
-  - `Microsoft.Agents.AI.Workflows` `1.15.0`
-  - `Microsoft.Agents.AI.OpenAI` `1.15.0`
+  - `Microsoft.Agents.AI.Abstractions` `1.18.0`
+  - `Microsoft.Agents.AI` `1.18.0`
+  - `Microsoft.Agents.AI.Workflows` `1.18.0`
+  - `Microsoft.Agents.AI.OpenAI` `1.18.0`
 - 按用户选择允许 RC：建立可选 `Anthropic` provider 项目并锁定 `Microsoft.Agents.AI.Anthropic` `1.1.0-rc1`，默认不启用。
 - 不引入 preview/alpha Hosting、DurableTask、Foundry Hosting、MAF MCP 或独立 Harness 包；API 继续使用标准 ASP.NET Core，MCP 继续沿用官方 `ModelContextProtocol` SDK。
 - OpenAI 初始采用稳定的 `IChatClient`/Chat Completions 路径；Experimental Responses 能力保留 feature gate，不默认注册。
@@ -114,5 +116,13 @@ MAF 是技术底座，DmaEA等模块 是建立在其上的 Tinadec 双层多智�
 
 - “可裁剪”指程序集与显式注册级裁剪，本轮不要求 IL trimming 或 NativeAOT。
 - 允许正式版和 RC 包，但不允许 preview、alpha 或跟随 `main`。
-- 本轮不实现 SQLite schema、真实 provider 调用、向量存储、完整双层运行流或工具执行。
 - Core 始终是状态、审批、路由、事件和审计权威；MAF session/checkpoint 仅是执行运行时状态。
+
+## 阶段一垂直闭环落地（2026-08-20，Core 95/Gateway 36/Desktop 262 green）
+
+- Core 内部 OpenAPI 事实源 `/openapi/core.json`（`Microsoft.AspNetCore.OpenApi 10.0.11` pin），全局 `snake_case` + RFC9457 `ProblemDetails`（`code` + `trace_id`），10 态 `planning→understanding→executing→replanning→awaiting_approval→paused→reviewing→completed/failed/cancelled`（`planning` 可写初态，`StateTransition.fs` 同步，`finalizing` 已移除）。
+- `RunStatus` 枚举、F# 状态机、`LifecycleDbContext` 默认值、`StorageLifecycleService` 状态表、`FullDuplexRunEngine` 均对齐 10 态；`ConfigureHttpJsonOptions SnakeCaseLower` + `AddProblemDetails` + `UseExceptionHandler` 映射 `invalid_request/context_conflict/model_not_configured/run_not_found/forbidden/conflict`。
+- `GET /runs/{id}/orchestration` 透出 `run:{mode_id,agent_profile_id,config_version,config_hash,context_revision}` + `frozen:{baseline_hash,application_mode,agent_mode,permission_mode,config_hash,tool_manifest_hash}`；多协议全阻塞 `openai-chat/openai-responses/anthropic-messages`（`Anthropic.SDK 5.10.0`，缺任一 route/key → `run.failed` 不伪成功）。
+- Gateway 外部 OpenAPI `/docs`（`@elysiajs/swagger@1.3.1`）+ `src/mappers/*` 12 显式 `CoreDto→ExternalDto` + `headers.ts` 统一 `X-Request-Id/X-Tinadec-Principal:dev@local` + `proxySseWithCursor`（`Last-Event-ID/?cursor→after_seq`，8 kinds `ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update`，`id=seq`）。
+- Desktop `src/generated/client.ts` typed fetch + `src/transport/` WS 占位 + `useRunStream`（`run_id+seq` 去重/heartbeat/指数退避）+ Pinia `project/session/run/workbench` + `WorkbenchPage.vue`（任务图 `pending/ready/running/completed/failed/blocked`、agent/worker、监督、上下文版本、`cancel/pause/resume`）。
+- 测试：`TinadecCore 95`（Architecture 10 + AgentFramework 32 + Api 53）、Gateway 36、Desktop 262（vitest 253 + electron 9）；`vite build ✓`，`bun build` 通过。

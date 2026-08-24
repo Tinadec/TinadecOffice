@@ -17,14 +17,29 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
 
     public void Register(ITinadecCoreBuilder builder)
     {
+        Maf18RuntimeAdapter.EnsureCompatible();
         builder.Services.AddDbContextFactory<AgentControlDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<AgentControlDbContext>>();
+        builder.Services.AddSingleton<AgentRuntimeConfigurationStore>();
+        builder.Services.AddSingleton<IAgentRuntimeConfiguration>(sp => sp.GetRequiredService<AgentRuntimeConfigurationStore>());
+        builder.Services.AddSingleton<IAgentRuntimeConfigurationResolver, AgentRuntimeConfigurationResolver>();
+        builder.Services.AddSingleton<IRuntimeContextSettings, RuntimeContextSettingsAdapter>();
+        builder.Services.AddSingleton<IAgentChatClientFactory, AgentChatClientFactory>();
+        builder.Services.AddSingleton<CliRuntime.CliProcessManager>();
+        builder.Services.AddSingleton<CliRuntime.ICliProcessManager>(sp => sp.GetRequiredService<CliRuntime.CliProcessManager>());
+        builder.Services.AddSingleton<AgentInstanceService>();
+        builder.Services.AddSingleton<IAgentInstanceService>(sp => sp.GetRequiredService<AgentInstanceService>());
+        builder.Services.AddSingleton<IAgentToolAuthorization>(sp => sp.GetRequiredService<AgentInstanceService>());
+        builder.Services.AddSingleton<FullDuplexRunEngine>();
+        builder.Services.AddSingleton<IFullDuplexRunEngine>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<FullDuplexRunEngine>());
+        builder.Services.AddSingleton<IFullDuplexRunCoordinator, FullDuplexRunCoordinator>();
         builder.Services.AddSingleton<IAgentOrchestrator, DualLayerAgentOrchestrator>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
-            Dependencies = ["abstractions", "persistence", "lifecycle", "models", "memory", "context", "prompts", "loop_guard"],
+            Dependencies = ["abstractions", "persistence", "lifecycle", "models", "memory", "context", "prompts", "loop_guard", "tools"],
             Capabilities = ["dual_layer_orchestration", "task_dispatch", "collaboration", "scheduling", "result_aggregation"],
             Language = "C#",
             MafPrimitives = ["agent", "workflow"],
@@ -46,7 +61,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
     private readonly ISessionLocator _sessions;
     private readonly IDbContextFactory<AgentControlDbContext> _agents;
     private readonly IContentStore _content;
-    private readonly IChatResolver _chatResolver;
+    private readonly IAgentChatClientFactory _chatClients;
     private readonly ITenantContextAccessor _tenant;
     private readonly ILogger<DualLayerAgentOrchestrator> _logger;
 
@@ -55,7 +70,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
         ISessionLocator sessions,
         IDbContextFactory<AgentControlDbContext> agents,
         IContentStore content,
-        IChatResolver chatResolver,
+        IAgentChatClientFactory chatClients,
         ITenantContextAccessor tenant,
         ILogger<DualLayerAgentOrchestrator> logger)
     {
@@ -63,7 +78,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
         _sessions = sessions;
         _agents = agents;
         _content = content;
-        _chatResolver = chatResolver;
+        _chatClients = chatClients;
         _tenant = tenant;
         _logger = logger;
     }
@@ -89,7 +104,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
         try
         {
             var agents = await LoadAgentsAsync(cancellationToken).ConfigureAwait(false);
-            var planning = agents.FirstOrDefault(a => a.Layer == "planning" && a.Enabled);
+            var planning = agents.FirstOrDefault(a => a.Layer is "planning" or "operation" && a.Enabled);
             var executionAgents = agents.Where(a => a.Layer == "execution" && a.Enabled).ToList();
             PlannedTask[] tasks;
             if (planning is null)
@@ -108,7 +123,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
             }
             else
             {
-                var planner = new PlanningAgent(_chatResolver, _logger);
+                var planner = new PlanningAgent(_chatClients, _logger);
                 tasks = await planner.PlanAsync(ctx, agents, cancellationToken).ConfigureAwait(false);
             }
             var graphId = Guid.NewGuid();
@@ -136,7 +151,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
                     await _lifecycle.AppendEventAsync(runGuid, "step.result.created", new { task_node_id = nodeId, run_id = runGuid, status = "failed", summary = "No execution agent available.", evidence = Array.Empty<string>() }, "No execution agent available.", taskId: nodeId, cancellationToken: cancellationToken).ConfigureAwait(false);
                     continue;
                 }
-                var executor = new ExecutionAgent(_chatResolver, _logger);
+                var executor = new ExecutionAgent(_chatClients, _logger);
                 var result = await executor.ExecuteAsync(ctx, agent, task, nodeId, cancellationToken).ConfigureAwait(false);
                 await _lifecycle.UpdateTaskSnapshotAsync(runGuid, new
                 {

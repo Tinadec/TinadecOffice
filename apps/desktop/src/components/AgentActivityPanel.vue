@@ -85,8 +85,13 @@ const progressPercent = computed(() => {
 
 // ---- Agent list ----
 const agentList = computed(() => Object.values(props.agentStates))
-const planningAgents = computed(() => agentList.value.filter((a) => a.agentLayer === 'planning'))
-const executionAgents = computed(() => agentList.value.filter((a) => a.agentLayer === 'execution'))
+function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
+  const v = String(layer ?? '').trim().toLowerCase();
+  if (v === 'planning') return 'operation';
+  return v === 'execution' ? 'execution' : (v as 'operation' | 'execution');
+}
+const planningAgents = computed(() => agentList.value.filter((a) => normalizeAgentLayer((a as unknown as {agentLayer: unknown}).agentLayer) === 'operation'))
+const executionAgents = computed(() => agentList.value.filter((a) => normalizeAgentLayer((a as unknown as {agentLayer: unknown}).agentLayer) === 'execution'))
 
 const hasActivity = computed(
   () =>

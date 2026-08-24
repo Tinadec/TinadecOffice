@@ -8,6 +8,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Api\TinadecCore.Api.csproj" />
+    <!-- Optional real-process dependency: only resolved when the sibling
+         TinadecTools project exists (monorepo layout). Showcase mirrors of
+         TinadecCore alone compile and run without it; TinadecToolsProcessTests
+         is excluded from those mirrors because it needs the apphost binary. -->
+    <ProjectReference Include="..\..\..\TinadecTools\TinadecTools.csproj"
+                      Condition="Exists('..\..\..\TinadecTools\TinadecTools.csproj')" />
   </ItemGroup>
 
   <ItemGroup>

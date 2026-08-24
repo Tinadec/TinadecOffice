@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '../api'
 import { useGitOperation } from '../composables/useGitOperation'
 import GitChangesView from './git/GitChangesView.vue'
+import SnapshotOverrideDialog from './governance/SnapshotOverrideDialog.vue'
 import GitHistoryView from './git/GitHistoryView.vue'
 import GitBranchView from './git/GitBranchView.vue'
 import { useResponsiveMode } from '../composables/useElementSize'
@@ -122,11 +123,20 @@ const {
   // Utils
   approvalStatusLabel,
   decideGitApproval,
+  snapshotOverrideCandidate,
+  overrideSnapshotAndResume,
 } = useGitOperation(
   () => props.currentProjectPath,
   () => props.selectedSessionId ?? null,
   () => props.approvals,
 )
+
+const overrideDialogOpen = computed({
+  get: () => snapshotOverrideCandidate.value !== null,
+  set: (open: boolean) => {
+    if (!open) snapshotOverrideCandidate.value = null
+  },
+})
 
 // ---- Tab navigation ----
 const activeTab = ref<GitTab>('changes')
@@ -368,6 +378,14 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
         <span>{{ t('context.gitPlanApproval') }}</span>
       </div>
     </template>
+
+    <!-- One-shot snapshot override (blocked + snapshot_failed only) -->
+    <SnapshotOverrideDialog
+      v-model:open="overrideDialogOpen"
+      :action-id="snapshotOverrideCandidate?.id ?? ''"
+      :tool-id="snapshotOverrideCandidate?.tool_id ?? ''"
+      @confirmed="overrideSnapshotAndResume"
+    />
   </section>
 </template>
 

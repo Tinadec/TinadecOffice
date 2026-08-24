@@ -36,7 +36,7 @@ internal partial class GitWorktreeMutationToolsJsonContext : JsonSerializerConte
 
 internal static class GitWorktreeMutationTools
 {
-    [ToolFunction("git_worktree_create", RequiresApproval = true)]
+    [ToolFunction("git_worktree_create", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_create"])]
     public static async ValueTask<GitWorktreeMutationResult> CreateAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmWorktreeCreate, nameof(args.ConfirmWorktreeCreate));
@@ -64,7 +64,7 @@ internal static class GitWorktreeMutationTools
         return await SuccessAsync(args.RepositoryPath, "create", target, branch, !exists.Ok, false, execution.Stdout, ct).ConfigureAwait(false);
     }
 
-    [ToolFunction("git_worktree_remove", RequiresApproval = true)]
+    [ToolFunction("git_worktree_remove", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_remove"])]
     public static async ValueTask<GitWorktreeMutationResult> RemoveAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmWorktreeRemove, nameof(args.ConfirmWorktreeRemove));

@@ -22,6 +22,32 @@
         "mcp"
       ],
       "cwd": "apps/desktop"
+    },
+    "vue-mcp": {
+      "type": "sse",
+      "enabled": true,
+      "url": "http://localhost:5173/__mcp/sse"
+    },
+    "chrome-devtools": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
+    },
+    "electron": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "npx",
+        "-y",
+        "electron-mcp-server"
+      ],
+      "env": {
+        "SECURITY_LEVEL": "balanced"
+      }
     }
   }
 }

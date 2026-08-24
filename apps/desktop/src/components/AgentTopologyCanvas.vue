@@ -21,8 +21,13 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const planningAgents = computed(() => props.agents.filter((agent) => agent.layer === 'planning'))
-const executionAgents = computed(() => props.agents.filter((agent) => agent.layer === 'execution'))
+function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
+  const v = String(layer ?? '').trim().toLowerCase();
+  if (v === 'planning') return 'operation';
+  return v === 'execution' ? 'execution' : (v as 'operation' | 'execution');
+}
+const planningAgents = computed(() => props.agents.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
+const executionAgents = computed(() => props.agents.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
 
 function runtimeParts(agent: AgentProfileDto) {
   const binding = props.runtimeBindings[agent.id]

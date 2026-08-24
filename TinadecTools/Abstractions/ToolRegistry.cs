@@ -7,16 +7,40 @@ internal delegate ValueTask<ToolCallResponse<JsonElement>> ToolHandlerDelegate(
     ToolCallRequest<JsonElement> request,
     CancellationToken cancellationToken);
 
+/// <summary>A registered tool's manifest descriptor exposed via the <c>#manifest</c> protocol call.</summary>
+internal sealed record ToolDescriptor
+{
+    public string Id { get; init; } = string.Empty;
+    public string Description { get; init; } = string.Empty;
+    public bool RequiresApproval { get; init; }
+    public string InputSchemaJson { get; init; } = "{\"type\":\"object\",\"additionalProperties\":true}";
+    public string Risk { get; init; } = "low";
+    public bool MutatesWorkspace { get; init; }
+    public string RetrySafety { get; init; } = "safe";
+    public IReadOnlyList<string> ConfirmationFields { get; init; } = [];
+}
+
 internal static class ToolRegistry
 {
+    internal const string ManifestToolId = "#manifest";
+
     private static readonly Dictionary<string, ToolHandlerDelegate> Handlers = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, ToolDescriptor> Descriptors = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object RegistrationLock = new();
 
     public static void Register(string toolId, ToolHandlerDelegate handler)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolId);
         ArgumentNullException.ThrowIfNull(handler);
 
-        Handlers[toolId] = handler;
+        lock (RegistrationLock)
+        {
+            Handlers[toolId] = handler;
+            if (!Descriptors.ContainsKey(toolId))
+            {
+                Descriptors[toolId] = new ToolDescriptor { Id = toolId };
+            }
+        }
     }
 
     public static void Register<TArgs, TResult>(ToolHandlerBase<TArgs, TResult> handler)
@@ -31,7 +55,13 @@ internal static class ToolRegistry
         Func<TArgs, CancellationToken, ValueTask<TResult>> handler,
         JsonTypeInfo<TArgs> argsTypeInfo,
         JsonTypeInfo<TResult> resultTypeInfo,
-        bool requiresApproval = false)
+        bool requiresApproval = false,
+        string? description = null,
+        string? inputSchemaJson = null,
+        string? risk = null,
+        bool? mutatesWorkspace = null,
+        string? retrySafety = null,
+        IReadOnlyList<string>? confirmationFields = null)
         where TArgs : notnull
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolId);
@@ -39,7 +69,7 @@ internal static class ToolRegistry
         ArgumentNullException.ThrowIfNull(argsTypeInfo);
         ArgumentNullException.ThrowIfNull(resultTypeInfo);
 
-        Register(toolId, async (request, cancellationToken) =>
+        ToolHandlerDelegate wrapper = async (request, cancellationToken) =>
         {
             if (requiresApproval && !request.Approved)
             {
@@ -65,7 +95,32 @@ internal static class ToolRegistry
                 IsSuccess = true,
                 Response = JsonSerializer.SerializeToElement(result, resultTypeInfo)
             };
-        });
+        };
+        lock (RegistrationLock)
+        {
+            Handlers[toolId] = wrapper;
+            var mutates = mutatesWorkspace ?? requiresApproval;
+            Descriptors[toolId] = new ToolDescriptor
+            {
+                Id = toolId,
+                Description = description ?? string.Empty,
+                RequiresApproval = requiresApproval,
+                InputSchemaJson = inputSchemaJson ?? "{\"type\":\"object\",\"additionalProperties\":true}",
+                Risk = risk ?? (requiresApproval ? "high" : "low"),
+                MutatesWorkspace = mutates,
+                RetrySafety = retrySafety ?? (mutates ? "unsafe" : "safe"),
+                ConfirmationFields = confirmationFields ?? []
+            };
+        }
+    }
+
+    /// <summary>Returns every registered tool's descriptor, ordered by id, for manifest reporting.</summary>
+    public static IReadOnlyList<ToolDescriptor> ListTools()
+    {
+        lock (RegistrationLock)
+        {
+            return Descriptors.Values.OrderBy(x => x.Id, StringComparer.OrdinalIgnoreCase).ToList();
+        }
     }
 
     public static bool TryResolve(string toolId, out ToolHandlerDelegate handler)
@@ -77,9 +132,55 @@ internal static class ToolRegistry
         ToolCallRequest<JsonElement> request,
         CancellationToken cancellationToken = default)
     {
+        if (string.Equals(request.ToolId, ManifestToolId, StringComparison.OrdinalIgnoreCase))
+        {
+            var tools = ListTools()
+                .Select(x => new ToolManifestEntry
+                {
+                    Id = x.Id,
+                    Description = x.Description,
+                    RequiresApproval = x.RequiresApproval,
+                    InputSchema = ParseInputSchema(x.InputSchemaJson, x.Id),
+                    Risk = x.Risk,
+                    MutatesWorkspace = x.MutatesWorkspace,
+                    RetrySafety = x.RetrySafety,
+                    ConfirmationFields = x.ConfirmationFields.ToList()
+                })
+                .ToList();
+            var manifest = new ToolManifest
+            {
+                ProtocolVersion = 2,
+                Tools = tools,
+                ManifestHash = ToolManifestHash.Compute(tools)
+            };
+            return ValueTask.FromResult(new ToolCallResponse<JsonElement>
+            {
+                CallId = request.ToolCallId,
+                IsSuccess = true,
+                Response = JsonSerializer.SerializeToElement(manifest, ToolCallJsonContext.Default.ToolManifest)
+            });
+        }
+
         if (!TryResolve(request.ToolId, out var handler))
             throw new InvalidOperationException($"Unknown tool '{request.ToolId}'.");
 
         return handler(request, cancellationToken);
+    }
+
+    private static JsonElement ParseInputSchema(string json, string toolId)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException("Input schema must be a JSON object.");
+            }
+            return document.RootElement.Clone();
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Tool '{toolId}' has an invalid manifest input schema.", ex);
+        }
     }
 }

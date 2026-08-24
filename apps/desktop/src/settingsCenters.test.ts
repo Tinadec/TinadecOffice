@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import topologyCanvas from './components/AgentTopologyCanvas.vue?raw'
 import zhCn from './locales/zh-CN.ts?raw'
 import settingsPage from './pages/SettingsPage.vue?raw'
+// D7.2 moved the pets UI into its own section; assert against both sources.
+import petsSection from './settings/sections/PetsSection.vue?raw'
+const settingsSources = settingsPage + petsSection
 
 describe('settings centers presentation contract', () => {
   it('renders the rewritten model workbench contract', () => {
@@ -13,14 +16,14 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("modelCenterOverview?.capabilities.provider_crud")
     expect(settingsPage).toContain("modelCenterOverview?.capabilities.model_catalog_mode")
     expect(settingsPage).toContain("modelCenterOverview?.capabilities.live_model_discovery")
-    expect(settingsPage).toContain('v-html="providerPresentation(supplier.driver)?.icon"')
     expect(settingsPage).toContain('v-html="providerPresentation(selectedProviderDetail.driver)?.icon"')
+    expect(settingsPage).toContain('v-html="providerPresentation(provider.driver)?.icon"')
     expect(settingsPage).toContain('v-html="row.template?.icon"')
     expect(settingsPage).toContain('v-html="currentTemplate?.icon"')
     expect(settingsPage).toContain('<RefreshCw')
-    expect(settingsPage).toContain('supplierSummary(supplier)')
+    expect(settingsPage).toContain("label: t('settings.centerSuppliers')")
     expect(settingsPage).toContain('class="center-resource-rail model-resource-navigation"')
-    expect(settingsPage).toContain('class="center-resource-grid supplier-grid supplier-list"')
+    expect(settingsPage).toContain('class="model-provider-section"')
     expect(settingsPage).toContain('?? providers.value[0] ?? null')
   })
 
@@ -31,7 +34,7 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("t('settings.agentProfilesWritable')")
     expect(settingsPage).toContain("t('settings.runtimePreviewOnly')")
     expect(settingsPage).toContain('v-if="!agentCenterLoading && agents.length === 0"')
-    expect(settingsPage).toContain(':disabled="agentRuntimeBusy || !runtimeBindingWritable || !runtimeBindingInput()"')
+    expect(settingsPage).toContain(':disabled="agentRuntimeBusy || !agentStrategySaveable()"')
     expect(settingsPage).toContain('<PanelRight')
     expect(settingsPage).toContain("const agentViewMode = ref<'topology' | 'list'>('list')")
     expect(settingsPage).toContain(':class="`view-${agentViewMode}`"')
@@ -53,13 +56,18 @@ describe('settings centers presentation contract', () => {
     expect(settingsPage).toContain("t('settings.centerResources')")
     expect(settingsPage).toContain("t('settings.centerInspector')")
     expect(settingsPage).toContain("t('settings.centerDiagnostics')")
-    expect(settingsPage).toContain("label: t('settings.agentEvolution')")
-    expect(settingsPage).toContain("label: t('settings.promptContext')")
-    expect(settingsPage).toContain("label: t('settings.promptEngineering')")
+    expect(settingsPage).toContain("label: t('settings.agentCenter')")
+    // Merged Agent Center sub-tabs (D7.4): five tabs — agents / modes / prompts /
+    // evolution / runtime — replace the former four-tab layout.
+    expect(settingsPage).toContain('data-testid="agent-center-subtabs"')
+    expect(settingsPage).toContain("t('settings.agentModes')")
+    expect(settingsPage).toContain("t('settings.promptEngineering')")
+    expect(settingsPage).toContain("t('settings.agentEvolution')")
+    expect(settingsPage).toContain("t('settings.runtimeInstances')")
     expect(settingsPage).toContain("label: t('settings.pets')")
-    expect(settingsPage).toContain("t('settings.petdexCatalog')")
-    expect(settingsPage).toContain("t('settings.openPetFolder')")
-    expect(settingsPage).toContain("t('settings.deletePet')")
+    expect(settingsSources).toContain("t('settings.petdexCatalog')")
+    expect(settingsSources).toContain("t('settings.openPetFolder')")
+    expect(settingsSources).toContain("t('settings.deletePet')")
   })
 
   it('keeps the topology readable and the inspector beside the work surface', () => {
