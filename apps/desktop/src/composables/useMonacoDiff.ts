@@ -110,15 +110,23 @@ export function useMonacoDiff() {
   }
 
   function disposeDiffEditor(editor: DiffEditor | null): void {
-    if (!editor) return
+    if (!editor || (editor as unknown as { _isDisposed?: boolean })._isDisposed) return
     try {
-      const original = editor.getOriginalEditor().getModel()
-      const modified = editor.getModifiedEditor().getModel()
-      original?.dispose()
-      modified?.dispose()
-      editor.dispose()
+      // Monaco invariant: the diff widget must RESET its model references
+      // BEFORE the models are disposed, otherwise TextModel.dispose() asserts
+      // "TextModel got disposed before DiffEditorWidget model got reset".
+      const models = editor.getModel()
+      editor.setModel({ original: null, modified: null })
+      models?.original?.dispose()
+      models?.modified?.dispose()
     } catch {
       // ignore disposal errors
+    } finally {
+      try {
+        editor.dispose()
+      } catch {
+        // ignore disposal errors
+      }
     }
   }
 

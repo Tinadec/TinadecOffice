@@ -69,8 +69,7 @@ const expanded = ref(false)
 
 <style scoped>
 .simulator-bar {
-  background: #161b22;
-  border-top: 1px solid #30363d;
+  background: transparent;
   flex-shrink: 0;
 }
 

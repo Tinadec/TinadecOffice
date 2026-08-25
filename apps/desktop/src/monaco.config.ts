@@ -25,23 +25,44 @@ function installMonacoEnvironment(): void {
   if (typeof window === 'undefined') return
   if (window.MonacoEnvironment && typeof window.MonacoEnvironment.getWorker === 'function') return
 
+  // `import('monaco-editor')` resolves to editor.main, which registers the
+  // FULL language-service clients (typescript/json/css/html). Each client
+  // spawns a worker by label and issues RPCs like `getNavigationTree` — those
+  // handlers only exist in the matching language worker, so routing every
+  // label to the generic editor worker throws
+  // "Missing requestHandler or method: …" on first use.
+  //
+  // Each `new URL(...)` must stay a STATIC string literal: Vite rewrites them
+  // at build time (a template literal is parsed as an invalid import glob).
+  const tsWorker = new URL(
+    'monaco-editor/esm/vs/language/typescript/ts.worker.js',
+    import.meta.url,
+  )
+  const jsonWorker = new URL('monaco-editor/esm/vs/language/json/json.worker.js', import.meta.url)
+  const cssWorker = new URL('monaco-editor/esm/vs/language/css/css.worker.js', import.meta.url)
+  const htmlWorker = new URL('monaco-editor/esm/vs/language/html/html.worker.js', import.meta.url)
+  const editorWorker = new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url)
+
   window.MonacoEnvironment = {
     getWorker(_workerId: string, label: string): Worker {
-      // Use the generic editor worker for all language features.
-      // Rich language services (TS IntelliSense, CSS/HTML completion) require
-      // additional worker configuration that can be added later.
-      if (label === 'editorWorker' || !label) {
-        return new Worker(
-          new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
-          { type: 'module' },
-        )
+      switch (label) {
+        case 'typescript':
+        case 'javascript':
+          return new Worker(tsWorker, { type: 'module' })
+        case 'json':
+          return new Worker(jsonWorker, { type: 'module' })
+        case 'css':
+        case 'scss':
+        case 'less':
+          return new Worker(cssWorker, { type: 'module' })
+        case 'html':
+        case 'handlebars':
+        case 'razor':
+          return new Worker(htmlWorker, { type: 'module' })
+        default:
+          // Editor core worker (diff computation, word navigation, links…).
+          return new Worker(editorWorker, { type: 'module' })
       }
-      // Language-specific workers fall back to the generic editor worker.
-      // This keeps the build simple while still providing syntax highlighting.
-      return new Worker(
-        new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url),
-        { type: 'module' },
-      )
     },
   }
 }

@@ -3,7 +3,7 @@
  * 组件预览包装器
  * 根据选中的组件名称，用 mock 数据渲染对应的独立组件。
  */
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import AgentActivityBanner from '@/components/chat/AgentActivityBanner.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ThinkingProcess from '@/components/chat/ThinkingProcess.vue'
@@ -16,11 +16,15 @@ import type { AgentActivity, AgentState } from '@/composables/useAgentActivity'
 import type { ToolExecutionTimelineItemDto, ToolDescriptorDto } from '@/api'
 import type { MockDataBundle } from './mockData'
 import { mockThinkingSteps, mockToolCalls } from './mockData'
+import PreviewIslandCard from './PreviewIslandCard.vue'
 
 const props = defineProps<{
   componentName: string
   data: MockDataBundle
 }>()
+
+// 真实 FileTreePanel（内部经 apiBridge 走 mock listDirectory/globSearch）
+const RealFileTreePanel = defineAsyncComponent(() => import('@/components/code/FileTreePanel.vue'))
 
 // ---- AgentActivityBanner mock 数据 ----
 const mockActivity = computed<AgentActivity>(() => {
@@ -108,77 +112,62 @@ const commitMessage = ref('feat(orchestrator): support dynamic dependency resolu
 
 // ---- ToolCatalogBrowser mock tools ----
 const mockTools = computed<ToolDescriptorDto[]>(() => props.data.tools)
-
-// ---- FileTreePanel mock (简化版，不调用 api) ----
-// 由于 FileTreePanel 内部调用 api.listDirectory，这里用一个简化的内联文件树替代
-const fileTreeEntries = computed(() => [
-  { name: 'src', isDir: true, depth: 0 },
-  { name: 'orchestrator.ts', isDir: false, depth: 1, size: '12 KB' },
-  { name: 'graph.ts', isDir: false, depth: 1, size: '6 KB' },
-  { name: 'types.ts', isDir: false, depth: 1, size: '3 KB' },
-  { name: '__tests__', isDir: true, depth: 1 },
-  { name: 'orch.test.ts', isDir: false, depth: 2, size: '4 KB' },
-  { name: 'tests', isDir: true, depth: 0 },
-  { name: 'package.json', isDir: false, depth: 0, size: '2 KB' },
-  { name: 'tsconfig.json', isDir: false, depth: 0, size: '512 B' },
-  { name: 'README.md', isDir: false, depth: 0, size: '4 KB' },
-])
-
-const expandedDirs = ref<Set<string>>(new Set(['src', 'src/__tests__']))
-
-function toggleDir(path: string) {
-  const next = new Set(expandedDirs.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  expandedDirs.value = next
-}
-
-function filePath(entry: { name: string; depth: number }): string {
-  return entry.name
-}
 </script>
 
 <template>
   <div class="component-preview">
     <!-- AgentActivityBanner -->
-    <div v-if="componentName === 'AgentActivityBanner'" class="preview-frame">
+    <PreviewIslandCard v-if="componentName === 'AgentActivityBanner'" variant="raised" padding="sm" class="preview-frame">
       <AgentActivityBanner :activity="mockActivity" :agent-states="mockAgentStates" />
-      <div v-if="!data.orchestration?.run" class="preview-empty-hint">当前场景无编排运行数据，切换到「正常填充」或「智能体工作中」场景查看效果。</div>
-    </div>
+      <PreviewIslandCard v-if="!data.orchestration?.run" variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
+        当前场景无编排运行数据，切换到「正常填充」或「智能体工作中」场景查看效果。
+      </PreviewIslandCard>
+    </PreviewIslandCard>
 
-    <!-- ToolCallCard：共享 mock 全量展示五种状态 -->
-    <div v-else-if="componentName === 'ToolCallCard'" class="preview-frame">
+    <!-- ToolCallCard：共享 mock 全量展示五种状态（orca 悬浮卡片风格） -->
+    <PreviewIslandCard v-else-if="componentName === 'ToolCallCard'" variant="section" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">工具调用卡片 — 5 种状态（hover 抬升 / 拖拽）</span></template>
       <div class="preview-card-list">
-        <ToolCallCard
+        <PreviewIslandCard
           v-for="call in mockToolCalls()"
           :key="call.id"
-          :tool-call="call"
-        />
+          variant="raised"
+          padding="none"
+          :hoverable="true"
+          :draggable="true"
+        >
+          <ToolCallCard :tool-call="call" />
+        </PreviewIslandCard>
       </div>
-    </div>
+    </PreviewIslandCard>
 
     <!-- ThinkingProcess：共享 mock，不依赖编排场景 -->
-    <div v-else-if="componentName === 'ThinkingProcess'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'ThinkingProcess'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">思考过程</span></template>
       <ThinkingProcess :steps="mockThinkingSteps()" />
-    </div>
+    </PreviewIslandCard>
 
     <!-- ToolExecutionTimeline -->
-    <div v-else-if="componentName === 'ToolExecutionTimeline'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'ToolExecutionTimeline'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">工具执行时间线</span></template>
       <ToolExecutionTimeline :tool-executions="data.toolExecutions" />
-    </div>
+    </PreviewIslandCard>
 
     <!-- ToolCatalogBrowser -->
-    <div v-else-if="componentName === 'ToolCatalogBrowser'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'ToolCatalogBrowser'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">工具目录</span></template>
       <ToolCatalogBrowser :tools="mockTools" />
-    </div>
+    </PreviewIslandCard>
 
     <!-- ToolStatsDashboard -->
-    <div v-else-if="componentName === 'ToolStatsDashboard'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'ToolStatsDashboard'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">工具统计</span></template>
       <ToolStatsDashboard :tool-executions="data.toolExecutions" />
-    </div>
+    </PreviewIslandCard>
 
     <!-- DiffViewer -->
-    <div v-else-if="componentName === 'DiffViewer'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'DiffViewer'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">Diff 查看器</span></template>
       <DiffViewer
         v-if="mockDiffFiles"
         :files="mockDiffFiles.files.map((f) => ({
@@ -194,11 +183,14 @@ function filePath(entry: { name: string; depth: number }): string {
         :selected-file-path="mockDiffFiles.files[0]?.path ?? null"
         :enable-hunk-actions="false"
       />
-      <div v-else class="preview-empty-hint">当前场景无 Git diff 数据，切换到「Git 变更」场景查看效果。</div>
-    </div>
+      <PreviewIslandCard v-else variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
+        当前场景无 Git diff 数据，切换到「Git 变更」场景查看效果。
+      </PreviewIslandCard>
+    </PreviewIslandCard>
 
     <!-- CommitMessageEditor -->
-    <div v-else-if="componentName === 'CommitMessageEditor'" class="preview-frame">
+    <PreviewIslandCard v-else-if="componentName === 'CommitMessageEditor'" variant="raised" padding="sm" class="preview-frame">
+      <template #header><span class="preview-frame-title">Commit 消息编辑器</span></template>
       <CommitMessageEditor
         v-model="commitMessage"
         :recent-commits="[
@@ -207,52 +199,45 @@ function filePath(entry: { name: string; depth: number }): string {
           'docs: update orchestrator architecture',
         ]"
       />
-    </div>
+    </PreviewIslandCard>
 
-    <!-- FileTreePanel (简化版预览) -->
-    <div v-else-if="componentName === 'FileTreePanel'" class="preview-frame">
-      <div class="file-tree-preview">
+    <!-- FileTreePanel（真实组件，经 apiBridge 走 mock 目录/搜索） -->
+    <PreviewIslandCard v-else-if="componentName === 'FileTreePanel'" variant="raised" padding="none" class="preview-frame file-tree-frame">
+      <template #header>
         <div class="file-tree-head">
-          <span>文件树预览</span>
+          <span>文件树（真实 FileTreePanel）</span>
           <span class="file-tree-cwd">D:/workspace/tinadec</span>
         </div>
-        <div class="file-tree-list">
-          <div
-            v-for="(entry, i) in fileTreeEntries"
-            :key="i"
-            class="file-tree-row"
-            :style="{ paddingLeft: `${entry.depth * 16 + 8}px` }"
-            @click="entry.isDir && toggleDir(filePath(entry))"
-          >
-            <span v-if="entry.isDir" class="ft-icon">📁</span>
-            <span v-else class="ft-icon">📄</span>
-            <span class="ft-name">{{ entry.name }}</span>
-            <span v-if="!entry.isDir && entry.size" class="ft-size">{{ entry.size }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+      </template>
+      <RealFileTreePanel cwd="D:/workspace/tinadec" :approvals="data.approvals" />
+    </PreviewIslandCard>
 
-    <div v-else class="preview-empty-hint">
+    <PreviewIslandCard v-else variant="section" padding="sm" class="preview-empty-hint" :hoverable="false">
       未找到组件：{{ componentName }}
-    </div>
+    </PreviewIslandCard>
   </div>
 </template>
 
 <style scoped>
 .component-preview {
-  height: 100%;
-  overflow: auto;
-  padding: 16px;
-  background: var(--bg-primary, #0d1117);
+  min-height: 100%;
+  background: transparent;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .preview-frame {
-  max-width: 900px;
+  max-width: 960px;
+  width: 100%;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+}
+
+.preview-frame-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .preview-card-list {
@@ -262,73 +247,39 @@ function filePath(entry: { name: string; depth: number }): string {
 }
 
 .preview-empty-hint {
-  padding: 24px;
   text-align: center;
-  color: var(--text-muted, #8b949e);
+  color: var(--text-muted, #6e7681);
   font-size: 13px;
-  background: var(--bg-secondary, #161b22);
-  border: 1px dashed var(--border-muted, #30363d);
-  border-radius: 8px;
-}
-
-.file-tree-preview {
-  border: 1px solid var(--border-muted, #30363d);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg-secondary, #161b22);
+  border-style: dashed !important;
 }
 
 .file-tree-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-muted, #30363d);
+  width: 100%;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 
 .file-tree-cwd {
   font-weight: 400;
-  color: var(--text-muted, #8b949e);
+  color: var(--text-muted, #6e7681);
   font-family: monospace;
-}
-
-.file-tree-list {
-  padding: 4px 0;
-}
-
-.file-tree-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary, #c9d1d9);
-  transition: background 0.12s;
-}
-
-.file-tree-row:hover {
-  background: var(--bg-hover, #21262d);
-}
-
-.ft-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.ft-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ft-size {
-  color: var(--text-muted, #8b949e);
   font-size: 11px;
+}
+
+/* 真实 FileTreePanel 宿主：限高滚动，保持岛内布局 */
+.file-tree-frame :deep(.island-body) {
+  height: 480px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.file-tree-frame :deep(.island-body > *) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

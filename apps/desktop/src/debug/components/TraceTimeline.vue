@@ -141,21 +141,22 @@ const flatSpans = computed(() => {
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid #30363d;
-  background: #0d1117;
+  border-bottom: 1px solid var(--border-default, #1a1f29);
+  background: transparent;
 }
 .filter-input, .filter-select {
-  background: #161b22;
-  border: 1px solid #30363d;
-  color: #e6edf3;
+  background: var(--surface-input, var(--bg-input, #0a0e14));
+  border: 1px solid var(--border-input, #1a1f29);
+  color: var(--text-primary, #c9d1d9);
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .filter-input:focus, .filter-select:focus {
   outline: none;
-  border-color: #58a6ff;
+  border-color: var(--border-input-focus, #2ec4b6);
+  box-shadow: var(--shadow-focus, 0 0 0 2px rgba(46,196,182,.18));
 }
 .filter-input { flex: 1; }
 
@@ -167,25 +168,33 @@ const flatSpans = computed(() => {
   gap: 10px;
   padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #21262d;
-  transition: background 0.12s;
+  border-bottom: 1px solid var(--border-muted, #161b22);
+  border-radius: 8px;
+  margin: 4px 8px;
+  border: 1px solid transparent;
+  transition: background 0.15s, box-shadow 0.2s, transform 0.2s, border-color 0.2s;
 }
-.trace-item:hover { background: #161b22; }
+.trace-item:hover {
+  background: var(--surface-hover, #1a1f29);
+  border-color: var(--border-card, rgba(0,0,0,.08));
+  box-shadow: var(--shadow-card-subtle);
+  transform: translateY(-1px);
+}
 .trace-item-color {
   width: 4px;
   height: 36px;
   border-radius: 2px;
   flex-shrink: 0;
 }
-.trace-item-name { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.trace-item-name { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text-primary); }
 .trace-item-meta {
   font-size: 11px;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   display: flex;
   align-items: center;
   gap: 4px;
 }
-.meta-divider { color: #30363d; }
+.meta-divider { color: var(--border-default, #1a1f29); }
 .error-badge {
   color: #f85149;
   margin-left: 4px;
@@ -198,13 +207,13 @@ const flatSpans = computed(() => {
 .timeline-empty {
   padding: 32px;
   text-align: center;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
 }
-.empty-icon { color: #6e7681; }
+.empty-icon { color: var(--text-muted, #6e7681); opacity: .8; }
 .empty-icon.spinning {
   animation: spin 1s linear infinite;
 }
@@ -218,36 +227,49 @@ const flatSpans = computed(() => {
 .back-btn {
   background: none;
   border: none;
-  color: #58a6ff;
+  color: var(--accent-primary, #2ec4b6);
   cursor: pointer;
   padding: 10px 12px;
   font-size: 12px;
   font-weight: 500;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   transition: color 0.12s;
 }
-.back-btn:hover { color: #79c0ff; }
+.back-btn:hover { color: var(--text-brand, #2ec4b6); }
 
 .span-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 8px;
-  border-bottom: 1px solid #21262d;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  margin: 2px 8px;
   cursor: pointer;
   min-height: 30px;
-  transition: background 0.12s;
+  cursor: grab;
+  transition: background 0.12s, box-shadow 0.18s, transform 0.18s, border-color 0.18s;
 }
-.span-row:hover { background: #161b22; }
-.span-row.selected { background: #1c2333; }
-.span-row.error .span-name { color: #f85149; }
+.span-row:hover {
+  background: var(--surface-hover, #1a1f29);
+  border-color: var(--border-card, rgba(0,0,0,.08));
+  box-shadow: var(--shadow-card-subtle);
+  transform: translateY(-1px);
+}
+.span-row:active { cursor: grabbing; transform: translateY(-1px) scale(1.01); }
+.span-row.selected {
+  background: var(--surface-selected, #0d2e2a);
+  border-color: var(--accent-primary, #2ec4b6);
+  box-shadow: 0 0 0 1px var(--accent-primary, #2ec4b6);
+}
+.span-row.error .span-name { color: var(--accent-danger, #f85149); }
 
 .span-row-bar {
   flex: 2;
   height: 16px;
-  background: #21262d;
+  background: var(--bg-tertiary, #1a1f29);
   border-radius: 4px;
   position: relative;
   overflow: hidden;
@@ -275,10 +297,11 @@ const flatSpans = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-primary);
 }
 .span-duration {
   font-size: 11px;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }

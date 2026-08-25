@@ -68,73 +68,100 @@ function formatTime(iso: string): string {
 </template>
 
 <style scoped>
-.diagnostics-report { padding: 20px; }
-.report-title { font-size: 16px; font-weight: 600; margin: 0 0 16px; }
+.diagnostics-report {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.report-title { font-size: 15px; font-weight: 600; margin: 0; color: var(--text-primary); }
 
 .report-empty {
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   text-align: center;
   padding: 40px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  background: var(--surface-section, #11151c);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-subtle);
 }
-.empty-icon { color: #6e7681; }
+.empty-icon { color: var(--text-muted, #6e7681); }
 
 /* ---- Meta ---- */
 .report-meta {
   display: flex;
   gap: 24px;
   padding: 12px 16px;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  margin-bottom: 24px;
+  background: var(--surface-section, #11151c);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-subtle);
+  transition: box-shadow .2s ease;
 }
+.report-meta:hover { box-shadow: var(--shadow-card-hover); }
 .meta-item {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.meta-label { font-size: 12px; color: #8b949e; }
-.meta-value { font-size: 12px; color: #e6edf3; }
+.meta-label { font-size: 12px; color: var(--text-muted, #6e7681); }
+.meta-value { font-size: 12px; color: var(--text-primary, #c9d1d9); }
 .meta-value.code {
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
-  color: #6e7681;
+  color: var(--text-muted, #6e7681);
 }
 
 /* ---- Sections ---- */
-.report-section { margin-bottom: 24px; }
+.report-section {
+  background: var(--surface-section, #11151c);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: var(--shadow-card-subtle);
+  transition: box-shadow .2s ease;
+}
+.report-section:hover { box-shadow: var(--shadow-card-hover); }
 .section-title {
   font-size: 11px;
   font-weight: 600;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 12px;
 }
 .empty-note {
-  color: #6e7681;
+  color: var(--text-muted, #6e7681);
   font-size: 13px;
   padding: 12px 0;
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.empty-icon-sm { color: #238636; flex-shrink: 0; }
+.empty-icon-sm { color: var(--accent-success, #238636); flex-shrink: 0; }
 
 /* ---- Failure Items ---- */
 .failure-item {
   padding: 12px 16px;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 8px;
+  background: var(--surface-raised, #1a1f29);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 10px;
   margin-bottom: 8px;
-  border-left: 3px solid #da3633;
-  transition: border-color 0.15s;
+  border-left: 3px solid var(--accent-danger, #da3633);
+  box-shadow: var(--shadow-card-subtle);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  cursor: grab;
 }
-.failure-item:hover { border-color: #484f58; border-left-color: #f85149; }
+.failure-item:hover {
+  border-color: var(--border-card-active, rgba(0,0,0,.12));
+  border-left-color: var(--accent-danger, #f85149);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
+}
+.failure-item:active { cursor: grabbing; transform: translateY(-1px) scale(1.01); }
 .failure-item.compact {
   padding: 8px 16px;
   display: flex;
@@ -148,8 +175,8 @@ function formatTime(iso: string): string {
   align-items: center;
   margin-bottom: 4px;
 }
-.failure-name { font-size: 13px; font-weight: 500; color: #f85149; }
-.failure-count { font-size: 12px; color: #8b949e; font-variant-numeric: tabular-nums; }
-.failure-cause { font-size: 12px; color: #8b949e; margin-top: 2px; }
-.failure-time { font-size: 11px; color: #6e7681; margin-top: 4px; }
+.failure-name { font-size: 13px; font-weight: 500; color: var(--accent-danger, #f85149); }
+.failure-count { font-size: 12px; color: var(--text-muted, #6e7681); font-variant-numeric: tabular-nums; }
+.failure-cause { font-size: 12px; color: var(--text-secondary, #7d8590); margin-top: 2px; }
+.failure-time { font-size: 11px; color: var(--text-muted, #6e7681); margin-top: 4px; }
 </style>

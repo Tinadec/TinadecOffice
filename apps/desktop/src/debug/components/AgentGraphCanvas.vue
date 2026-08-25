@@ -112,13 +112,14 @@ onMounted(fetchGraph)
           width="140" height="48" rx="10"
           fill="#000" fill-opacity="0.3"
         />
-        <!-- Card -->
+        <!-- Card（岛屿卡片：surface-raised + 状态描边） -->
         <rect
           :x="node.x - 70" :y="node.y - 24"
           width="140" height="48" rx="10"
-          :fill="'#161b22'"
+          fill="var(--surface-raised, #1a1f29)"
           :stroke="statusColors[node.status]"
           stroke-width="1.5"
+          style="filter: drop-shadow(0 1px 3px rgba(0,0,0,.08)) drop-shadow(0 4px 12px rgba(0,0,0,.05));"
         />
         <!-- Status icon -->
         <svg
@@ -151,6 +152,10 @@ onMounted(fetchGraph)
   width: 100%;
   height: 100%;
   min-height: 400px;
+  background: transparent;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .graph-empty {
@@ -160,9 +165,14 @@ onMounted(fetchGraph)
   justify-content: center;
   height: 100%;
   gap: 8px;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
+  background: var(--surface-raised, #1a1f29);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 12px;
+  margin: 12px;
+  box-shadow: var(--shadow-card-subtle);
 }
-.empty-icon { color: #6e7681; }
+.empty-icon { color: var(--text-muted, #6e7681); }
 .empty-icon.spinning {
   animation: spin 1s linear infinite;
 }
@@ -171,5 +181,9 @@ onMounted(fetchGraph)
   to { transform: rotate(360deg); }
 }
 
-.graph-canvas { min-height: 400px; }
+.graph-canvas {
+  min-height: 400px;
+  flex: 1;
+  background: transparent;
+}
 </style>

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 /**
- * 预览画廊主组件
- * 参考 Storybook 的设计理念，提供页面/组件的可视化预览。
- * 左侧栏：页面/组件树
- * 右侧栏：场景控制面板
- * 主预览区：渲染选中的页面/组件
+ * 预览画廊主组件 — 卡片岛式重构版
+ * 左岛：页面/组件树 · 中岛：预览视口（沉浸）· 右岛：场景控制
+ * 跟随全局 usePanelStyles 材质（opaque/translucent/blur），不再自管主题
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import {
   LayoutDashboard,
   Home,
@@ -26,18 +24,17 @@ import {
   Edit3,
   Folder,
   RefreshCw,
-  Sun,
-  Moon,
   ChevronRight,
   ChevronDown,
 } from '@lucide/vue'
 import { UiBadge } from '@/components/ui'
+import PreviewIslandCard from './PreviewIslandCard.vue'
 import PagePreview from './PagePreview.vue'
 import ComponentPreview from './ComponentPreview.vue'
+import { installPreviewApi, restoreRealApi, unmockedMethods } from './apiBridge'
 import { SCENARIOS, buildScenarioData, type ScenarioId } from './scenarios'
 import type { MockDataBundle } from './mockData'
 
-// ---- 选中项类型 ----
 type ItemType = 'page' | 'component'
 interface TreeItem {
   id: string
@@ -47,7 +44,6 @@ interface TreeItem {
   icon: typeof Home
 }
 
-// ---- 页面/组件树 ----
 const PAGES: TreeItem[] = [
   { id: 'HomePage', name: 'HomePage', label: '首页（三栏布局）', type: 'page', icon: Home },
   { id: 'ChatPanel', name: 'ChatPanel', label: '聊天面板', type: 'page', icon: MessageSquare },
@@ -71,10 +67,14 @@ const COMPONENTS: TreeItem[] = [
   { id: 'FileTreePanel', name: 'FileTreePanel', label: '文件树面板', type: 'component', icon: Folder },
 ]
 
-// ---- 状态 ----
 const selectedItem = ref<TreeItem>(PAGES[0])
 const scenarioId = ref<ScenarioId>('populated')
-const theme = ref<'dark' | 'light'>('dark')
+
+// 真实控件预览：挂载期间把 mock api 补丁到单例上（引用计数，卸载时还原）。
+// 必须在子组件 setup 之前执行——本组件 setup 先于 PagePreview/ComponentPreview。
+installPreviewApi(scenarioId)
+onBeforeUnmount(restoreRealApi)
+
 const previewWidth = ref(100)
 const showApprovals = ref(true)
 const showToolCalls = ref(true)
@@ -82,14 +82,9 @@ const showErrors = ref(false)
 const refreshKey = ref(0)
 const expandedGroups = ref<Set<string>>(new Set(['pages', 'components']))
 
-// ---- 计算数据 ----
-const mockData = computed<MockDataBundle>(() => {
-  return buildScenarioData(scenarioId.value, 'sess-tinadec-1001')
-})
-
+const mockData = computed<MockDataBundle>(() => buildScenarioData(scenarioId.value, 'sess-tinadec-1001'))
 const currentScenario = computed(() => SCENARIOS.find((s) => s.id === scenarioId.value) ?? SCENARIOS[0])
 
-// ---- 数据统计 ----
 const stats = computed(() => {
   const d = mockData.value
   return [
@@ -104,47 +99,27 @@ const stats = computed(() => {
   ]
 })
 
-// ---- 操作 ----
-function selectItem(item: TreeItem) {
-  selectedItem.value = item
-}
-
+function selectItem(item: TreeItem) { selectedItem.value = item }
 function toggleGroup(group: string) {
   const next = new Set(expandedGroups.value)
   if (next.has(group)) next.delete(group)
   else next.add(group)
   expandedGroups.value = next
 }
-
-function refresh() {
-  refreshKey.value++
-}
-
-function setTheme(t: 'dark' | 'light') {
-  theme.value = t
-}
-
-// 主题切换时更新 CSS 变量
-watch(theme, (t) => {
-  const root = document.documentElement
-  if (t === 'light') {
-    root.classList.remove('dark')
-  } else {
-    root.classList.add('dark')
-  }
-}, { immediate: true })
+function refresh() { refreshKey.value++ }
 </script>
 
 <template>
-  <div class="preview-gallery" :class="`theme-${theme}`">
-    <!-- 左侧栏：页面/组件树 -->
-    <aside class="gallery-sidebar">
-      <div class="sidebar-head">
-        <LayoutDashboard :size="14" />
-        <span>预览画廊</span>
-      </div>
+  <div class="preview-gallery">
+    <!-- 左岛：导航树 -->
+    <PreviewIslandCard variant="section" padding="none" class="gallery-sidebar">
+      <template #header>
+        <div class="sidebar-head">
+          <LayoutDashboard :size="14" />
+          <span>预览画廊</span>
+        </div>
+      </template>
       <div class="sidebar-tree">
-        <!-- 页面组 -->
         <div class="tree-group">
           <button class="tree-group-head" @click="toggleGroup('pages')">
             <component :is="expandedGroups.has('pages') ? ChevronDown : ChevronRight" :size="12" />
@@ -164,8 +139,6 @@ watch(theme, (t) => {
             </button>
           </template>
         </div>
-
-        <!-- 组件组 -->
         <div class="tree-group">
           <button class="tree-group-head" @click="toggleGroup('components')">
             <component :is="expandedGroups.has('components') ? ChevronDown : ChevronRight" :size="12" />
@@ -186,156 +159,153 @@ watch(theme, (t) => {
           </template>
         </div>
       </div>
-    </aside>
+    </PreviewIslandCard>
 
-    <!-- 主预览区 -->
-    <main class="gallery-main">
-      <!-- 顶部工具栏 -->
-      <div class="gallery-toolbar">
-        <div class="toolbar-left">
-          <component :is="selectedItem.icon" :size="14" />
-          <span class="toolbar-name">{{ selectedItem.label }}</span>
-          <span class="toolbar-type" :class="selectedItem.type">{{ selectedItem.type === 'page' ? '页面' : '组件' }}</span>
-          <UiBadge variant="outline" class="toolbar-scenario">{{ currentScenario.label }}</UiBadge>
+    <!-- 中岛：预览视口（沉浸外层 + 内层岛） -->
+    <div class="gallery-center">
+      <PreviewIslandCard variant="section" padding="none" class="gallery-main">
+        <template #header>
+          <div class="gallery-toolbar">
+            <div class="toolbar-left">
+              <component :is="selectedItem.icon" :size="14" />
+              <span class="toolbar-name">{{ selectedItem.label }}</span>
+              <span class="toolbar-type" :class="selectedItem.type">{{ selectedItem.type === 'page' ? '页面' : '组件' }}</span>
+              <UiBadge variant="outline" class="toolbar-scenario">{{ currentScenario.label }}</UiBadge>
+            </div>
+            <div class="toolbar-right">
+              <button class="toolbar-btn" title="刷新预览" @click="refresh">
+                <RefreshCw :size="13" />
+              </button>
+            </div>
+          </div>
+        </template>
+        <div class="gallery-content" :style="{ '--preview-width': `${previewWidth}%` }">
+          <PreviewIslandCard variant="raised" padding="none" class="preview-viewport">
+            <PagePreview
+              v-if="selectedItem.type === 'page'"
+              :key="`${selectedItem.id}-${scenarioId}-${refreshKey}`"
+              :page-name="selectedItem.name"
+              :data="mockData"
+            />
+            <ComponentPreview
+              v-else
+              :key="`${selectedItem.id}-${scenarioId}-${refreshKey}`"
+              :component-name="selectedItem.name"
+              :data="mockData"
+            />
+          </PreviewIslandCard>
         </div>
-        <div class="toolbar-right">
-          <button class="toolbar-btn" title="刷新预览" @click="refresh">
-            <RefreshCw :size="13" />
-          </button>
-        </div>
-      </div>
+        <template #footer>
+          <div class="gallery-statusbar">
+            <div class="status-stats">
+              <span v-for="s in stats" :key="s.label" class="status-stat">
+                <small>{{ s.label }}</small>
+                <strong>{{ s.value }}</strong>
+              </span>
+            </div>
+            <div class="status-scenario">
+              <span class="status-scenario-label">当前场景：</span>
+              <strong>{{ currentScenario.label }}</strong>
+            </div>
+          </div>
+        </template>
+      </PreviewIslandCard>
+    </div>
 
-      <!-- 内容区 -->
-      <div class="gallery-content" :style="{ '--preview-width': `${previewWidth}%` }">
-        <div class="preview-viewport">
-          <PagePreview
-            v-if="selectedItem.type === 'page'"
-            :key="`${selectedItem.id}-${scenarioId}-${refreshKey}`"
-            :page-name="selectedItem.name"
-            :data="mockData"
-          />
-          <ComponentPreview
-            v-else
-            :key="`${selectedItem.id}-${scenarioId}-${refreshKey}`"
-            :component-name="selectedItem.name"
-            :data="mockData"
-          />
+    <!-- 右岛：场景控制 -->
+    <PreviewIslandCard variant="section" padding="none" class="gallery-controls">
+      <template #header>
+        <div class="controls-head">
+          <span>场景控制</span>
         </div>
-      </div>
+      </template>
+      <div class="controls-body">
+        <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
+          <label class="controls-label">场景预设</label>
+          <div class="scenario-list">
+            <PreviewIslandCard
+              v-for="s in SCENARIOS"
+              :key="s.id"
+              variant="raised"
+              padding="sm"
+              :selected="scenarioId === s.id"
+              :hoverable="true"
+              class="scenario-card"
+              @click="scenarioId = s.id"
+            >
+              <span class="scenario-label">{{ s.label }}</span>
+              <small class="scenario-desc">{{ s.description }}</small>
+            </PreviewIslandCard>
+          </div>
+        </PreviewIslandCard>
 
-      <!-- 底部状态栏 -->
-      <div class="gallery-statusbar">
-        <div class="status-stats">
-          <span v-for="s in stats" :key="s.label" class="status-stat">
-            <small>{{ s.label }}</small>
-            <strong>{{ s.value }}</strong>
-          </span>
-        </div>
-        <div class="status-scenario">
-          <span class="status-scenario-label">当前场景：</span>
-          <strong>{{ currentScenario.label }}</strong>
-        </div>
-      </div>
-    </main>
+        <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
+          <label class="controls-label">场景描述</label>
+          <p class="scenario-detail">{{ currentScenario.description }}</p>
+        </PreviewIslandCard>
 
-    <!-- 右侧栏：场景控制面板 -->
-    <aside class="gallery-controls">
-      <div class="controls-head">
-        <span>场景控制</span>
-      </div>
+        <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
+          <label class="controls-label">数据选项</label>
+          <div class="toggle-row">
+            <span>显示审批</span>
+            <button class="toggle-switch" :class="{ on: showApprovals }" @click="showApprovals = !showApprovals">
+              <span class="toggle-knob" />
+            </button>
+          </div>
+          <div class="toggle-row">
+            <span>显示工具调用</span>
+            <button class="toggle-switch" :class="{ on: showToolCalls }" @click="showToolCalls = !showToolCalls">
+              <span class="toggle-knob" />
+            </button>
+          </div>
+          <div class="toggle-row">
+            <span>显示错误</span>
+            <button class="toggle-switch" :class="{ on: showErrors }" @click="showErrors = !showErrors">
+              <span class="toggle-knob" />
+            </button>
+          </div>
+        </PreviewIslandCard>
 
-      <!-- 场景选择 -->
-      <div class="controls-section">
-        <label class="controls-label">场景预设</label>
-        <div class="scenario-list">
-          <button
-            v-for="s in SCENARIOS"
-            :key="s.id"
-            class="scenario-item"
-            :class="{ active: scenarioId === s.id }"
-            @click="scenarioId = s.id"
-          >
-            <span class="scenario-label">{{ s.label }}</span>
-            <small class="scenario-desc">{{ s.description }}</small>
-          </button>
-        </div>
-      </div>
+        <PreviewIslandCard variant="raised" padding="sm" class="controls-section">
+          <label class="controls-label">预览宽度 ({{ previewWidth }}%)</label>
+          <input type="range" min="40" max="100" v-model.number="previewWidth" class="width-slider" />
+        </PreviewIslandCard>
 
-      <!-- 当前场景描述 -->
-      <div class="controls-section">
-        <label class="controls-label">场景描述</label>
-        <p class="scenario-detail">{{ currentScenario.description }}</p>
+        <PreviewIslandCard v-if="unmockedMethods.size > 0" variant="raised" padding="sm" class="controls-section">
+          <label class="controls-label">未模拟 API（走空实现）</label>
+          <div class="unmocked-list">
+            <UiBadge v-for="m in unmockedMethods" :key="m" variant="outline">{{ m }}</UiBadge>
+          </div>
+        </PreviewIslandCard>
       </div>
-
-      <!-- 数据覆盖选项 -->
-      <div class="controls-section">
-        <label class="controls-label">数据选项</label>
-        <div class="toggle-row">
-          <span>显示审批</span>
-          <button class="toggle-switch" :class="{ on: showApprovals }" @click="showApprovals = !showApprovals">
-            <span class="toggle-knob" />
-          </button>
-        </div>
-        <div class="toggle-row">
-          <span>显示工具调用</span>
-          <button class="toggle-switch" :class="{ on: showToolCalls }" @click="showToolCalls = !showToolCalls">
-            <span class="toggle-knob" />
-          </button>
-        </div>
-        <div class="toggle-row">
-          <span>显示错误</span>
-          <button class="toggle-switch" :class="{ on: showErrors }" @click="showErrors = !showErrors">
-            <span class="toggle-knob" />
-          </button>
-        </div>
-      </div>
-
-      <!-- 主题切换 -->
-      <div class="controls-section">
-        <label class="controls-label">主题</label>
-        <div class="theme-buttons">
-          <button class="theme-btn" :class="{ active: theme === 'dark' }" @click="setTheme('dark')">
-            <Moon :size="13" />
-            <span>深色</span>
-          </button>
-          <button class="theme-btn" :class="{ active: theme === 'light' }" @click="setTheme('light')">
-            <Sun :size="13" />
-            <span>浅色</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 尺寸控制 -->
-      <div class="controls-section">
-        <label class="controls-label">预览宽度 ({{ previewWidth }}%)</label>
-        <input
-          type="range"
-          min="40"
-          max="100"
-          v-model.number="previewWidth"
-          class="width-slider"
-        />
-      </div>
-    </aside>
+    </PreviewIslandCard>
   </div>
 </template>
 
 <style scoped>
 .preview-gallery {
   display: flex;
+  gap: 8px;
   height: 100%;
-  background: #0d1117;
-  color: #e6edf3;
+  padding: 8px;
+  background: transparent;
+  color: var(--text-primary, #c9d1d9);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
   font-size: 13px;
+  min-height: 0;
 }
 
-/* ---- 左侧栏 ---- */
+/* ---- 左岛 ---- */
 .gallery-sidebar {
-  width: 240px;
+  width: 260px;
   flex-shrink: 0;
-  background: #161b22;
-  border-right: 1px solid #30363d;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.gallery-sidebar :deep(.island-body) {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -345,24 +315,21 @@ watch(theme, (t) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
   font-size: 12px;
   font-weight: 700;
-  color: #58a6ff;
-  border-bottom: 1px solid #30363d;
+  color: var(--accent-primary, #2ec4b6);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  width: 100%;
 }
 
 .sidebar-tree {
   flex: 1;
   overflow: auto;
-  padding: 4px 0;
+  padding: 6px 0;
 }
 
-.tree-group {
-  margin-bottom: 4px;
-}
+.tree-group { margin-bottom: 4px; }
 
 .tree-group-head {
   display: flex;
@@ -372,21 +339,18 @@ watch(theme, (t) => {
   padding: 6px 12px;
   background: none;
   border: none;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
 }
-
-.tree-group-head:hover {
-  color: #c9d1d9;
-}
-
+.tree-group-head:hover { color: var(--text-secondary, #7d8590); }
 .tree-group-head small {
   margin-left: auto;
-  background: #21262d;
+  background: var(--surface-raised, #1a1f29);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
   padding: 1px 6px;
   border-radius: 8px;
   font-size: 10px;
@@ -396,287 +360,227 @@ watch(theme, (t) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 6px 12px 6px 28px;
-  background: none;
-  border: none;
-  color: #c9d1d9;
+  width: calc(100% - 12px);
+  margin: 2px 6px;
+  padding: 7px 10px 7px 26px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-secondary, #7d8590);
   font-size: 12px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.18s, transform 0.18s, border-color 0.18s;
 }
-
 .tree-item:hover {
-  background: #21262d;
-  color: #e6edf3;
+  background: var(--surface-hover, #1a1f29);
+  color: var(--text-primary, #c9d1d9);
+  border-color: var(--border-card, rgba(0,0,0,.08));
+  box-shadow: var(--shadow-card-subtle);
+  transform: translateY(-1px);
 }
-
 .tree-item.active {
-  background: rgba(56, 139, 253, 0.15);
-  color: #58a6ff;
-  border-left: 2px solid #58a6ff;
-  padding-left: 26px;
+  background: var(--surface-selected, #0d2e2a);
+  color: var(--accent-primary, #2ec4b6);
+  border-color: var(--accent-primary, #2ec4b6);
+  box-shadow: var(--shadow-card-subtle);
+  font-weight: 600;
 }
 
-/* ---- 主预览区 ---- */
+/* ---- 中岛 ---- */
+.gallery-center {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
 .gallery-main {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+}
+.gallery-main :deep(.island-body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px;
+  background: transparent;
 }
 
 .gallery-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
-  flex-shrink: 0;
+  width: 100%;
+  gap: 12px;
 }
-
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #e6edf3;
-}
-
+.toolbar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .toolbar-type {
   font-size: 10px;
   font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
   text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
-
-.toolbar-type.page {
-  background: rgba(88, 166, 255, 0.14);
-  color: #58a6ff;
-}
-
-.toolbar-type.component {
-  background: rgba(188, 140, 255, 0.14);
-  color: #bc8cff;
-}
-
-.toolbar-scenario {
-  margin-left: 8px;
-}
-
-.toolbar-right {
-  display: flex;
-  gap: 4px;
-}
-
+.toolbar-type.page { background: color-mix(in srgb, var(--accent-primary, #2ec4b6) 14%, transparent); color: var(--accent-primary, #2ec4b6); }
+.toolbar-type.component { background: color-mix(in srgb, #bc8cff 14%, transparent); color: #bc8cff; }
+.toolbar-scenario { margin-left: 4px; }
+.toolbar-right { display: flex; gap: 4px; }
 .toolbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  color: #8b949e;
+  width: 30px;
+  height: 30px;
+  background: var(--surface-raised, #1a1f29);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 8px;
+  color: var(--text-muted, #6e7681);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.18s, transform 0.18s;
 }
-
 .toolbar-btn:hover {
-  background: #21262d;
-  color: #e6edf3;
+  background: var(--surface-hover, #1a1f29);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card-subtle);
+  transform: translateY(-1px);
 }
 
 .gallery-content {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   min-height: 0;
   display: flex;
   justify-content: center;
-  background: #010409;
+  padding: 4px;
 }
 
+/* 视口是固定高度的单一画布：高度恒等于可用空间，
+   滚动统一收敛到它的 island-body（唯一滚动容器） */
 .preview-viewport {
   width: var(--preview-width, 100%);
   max-width: 100%;
   height: 100%;
-  overflow: hidden;
-  background: #0d1117;
-  border-left: 1px solid #30363d;
-  border-right: 1px solid #30363d;
+}
+.preview-viewport :deep(.island-body) {
+  height: 100%;
+  overflow: auto;
+  padding: 0;
 }
 
-/* ---- 底部状态栏 ---- */
 .gallery-statusbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 16px;
-  background: #161b22;
-  border-top: 1px solid #30363d;
-  flex-shrink: 0;
-}
-
-.status-stats {
-  display: flex;
-  gap: 16px;
+  gap: 12px;
+  width: 100%;
   flex-wrap: wrap;
 }
+.status-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+.status-stat { display: flex; align-items: center; gap: 4px; }
+.status-stat small { font-size: 10px; color: var(--text-muted, #6e7681); }
+.status-stat strong { font-size: 12px; color: var(--text-primary); }
+.status-scenario { display: flex; align-items: center; gap: 4px; }
+.status-scenario-label { font-size: 11px; color: var(--text-muted, #6e7681); }
+.status-scenario strong { font-size: 12px; color: var(--accent-primary, #2ec4b6); }
 
-.status-stat {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.status-stat small {
-  font-size: 10px;
-  color: #8b949e;
-}
-
-.status-stat strong {
-  font-size: 12px;
-  color: #e6edf3;
-}
-
-.status-scenario {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.status-scenario-label {
-  font-size: 11px;
-  color: #8b949e;
-}
-
-.status-scenario strong {
-  font-size: 12px;
-  color: #58a6ff;
-}
-
-/* ---- 右侧栏 ---- */
+/* ---- 右岛 ---- */
 .gallery-controls {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
-  background: #161b22;
-  border-left: 1px solid #30363d;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  overflow: auto;
 }
-
-.controls-head {
+.gallery-controls :deep(.island-body) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   display: flex;
-  align-items: center;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: transparent;
+}
+.controls-head {
   font-size: 12px;
   font-weight: 700;
-  color: #58a6ff;
-  border-bottom: 1px solid #30363d;
+  color: var(--accent-primary, #2ec4b6);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  width: 100%;
 }
-
+.controls-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .controls-section {
-  padding: 12px;
-  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
 }
-
 .controls-label {
   display: block;
   font-size: 11px;
   font-weight: 600;
-  color: #8b949e;
+  color: var(--text-muted, #6e7681);
   margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-
-.scenario-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.scenario-list { display: flex; flex-direction: column; gap: 6px; }
+.scenario-card {
+  cursor: pointer;
+  text-align: left;
 }
-
-.scenario-item {
+.scenario-card :deep(.island-body) {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 10px;
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.12s, background 0.12s;
+  padding: 10px 12px;
 }
-
-.scenario-item:hover {
-  border-color: #58a6ff;
-}
-
-.scenario-item.active {
-  border-color: #58a6ff;
-  background: rgba(56, 139, 253, 0.1);
-}
-
-.scenario-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #e6edf3;
-}
-
+.scenario-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
 .scenario-desc {
-  font-size: 10px;
-  color: #8b949e;
+  font-size: 11px;
+  color: var(--text-muted, #6e7681);
   line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-
 .scenario-detail {
   font-size: 12px;
-  color: #c9d1d9;
+  color: var(--text-secondary, #7d8590);
   line-height: 1.5;
   margin: 0;
 }
-
 .toggle-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 6px 0;
   font-size: 12px;
-  color: #c9d1d9;
+  color: var(--text-secondary, #7d8590);
 }
-
 .toggle-switch {
   position: relative;
-  width: 32px;
-  height: 18px;
-  background: #30363d;
-  border: none;
-  border-radius: 9px;
+  width: 34px;
+  height: 20px;
+  background: var(--border-default, #1a1f29);
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
-
-.toggle-switch.on {
-  background: #238636;
-}
-
+.toggle-switch.on { background: var(--accent-success, #238636); border-color: var(--accent-success, #238636); }
 .toggle-knob {
   position: absolute;
   top: 2px;
@@ -685,45 +589,36 @@ watch(theme, (t) => {
   height: 14px;
   background: #fff;
   border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
   transition: transform 0.15s;
 }
-
-.toggle-switch.on .toggle-knob {
-  transform: translateX(14px);
-}
-
-.theme-buttons {
-  display: flex;
-  gap: 6px;
-}
-
-.theme-btn {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px;
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  color: #8b949e;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.theme-btn:hover {
-  color: #c9d1d9;
-}
-
-.theme-btn.active {
-  border-color: #58a6ff;
-  color: #58a6ff;
-  background: rgba(56, 139, 253, 0.1);
-}
-
+.toggle-switch.on .toggle-knob { transform: translateX(14px); }
 .width-slider {
   width: 100%;
-  accent-color: #58a6ff;
+  accent-color: var(--accent-primary, #2ec4b6);
+}
+
+.unmocked-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ---- 响应式：窄屏右岛下沉，超窄左岛收起 ---- */
+@media (max-width: 1100px) {
+  .preview-gallery { flex-wrap: wrap; }
+  .gallery-sidebar { width: 220px; }
+  .gallery-controls { width: 100%; flex-direction: row; flex-wrap: wrap; }
+  .gallery-controls :deep(.island-body) { flex-direction: row; flex-wrap: wrap; }
+  .controls-section { flex: 1 1 260px; }
+}
+@media (max-width: 700px) {
+  .gallery-sidebar { width: 56px; }
+  .sidebar-head span, .tree-group-head span, .tree-group-head small, .tree-item span { display: none; }
+  .tree-item { padding-left: 10px; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-item, .toolbar-btn, .scenario-card { transition: none; transform: none !important; }
 }
 </style>
