@@ -53,10 +53,9 @@ public static class StorageEndpoints
                     {
                         await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
                         var wsDefault = await cfg.WorkspaceDefaults.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false);
-                        if (wsDefault?.DefaultAgentModeId is { } mid)
+                        if (wsDefault?.DefaultModeVersionId is { } defaultModeVersionId)
                         {
-                            var latest = await cfg.ModeVersions.Where(x => x.AgentModeId == mid).OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
-                            if (latest.HasValue) session = await store.UpdateSessionModeAsync(session.Id, latest, null, null, ct).ConfigureAwait(false) ?? session;
+                            session = await store.UpdateSessionModeAsync(session.Id, defaultModeVersionId, null, null, ct).ConfigureAwait(false) ?? session;
                         }
                     }
                     catch { }
@@ -205,9 +204,9 @@ public static class StorageEndpoints
         {
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var wsDefault = await cfg.WorkspaceDefaults.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false);
-            if (wsDefault?.DefaultAgentModeId is { } mid)
+            if (wsDefault?.DefaultModeVersionId is { } defaultModeVersionId)
             {
-                latestModeVersionId = await cfg.ModeVersions.Where(x => x.AgentModeId == mid).OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                latestModeVersionId = defaultModeVersionId;
                 if (latestModeVersionId.HasValue && session.ModeVersionId.HasValue)
                     hasUpdate = latestModeVersionId.Value != session.ModeVersionId.Value;
                 else if (latestModeVersionId.HasValue && !session.ModeVersionId.HasValue)

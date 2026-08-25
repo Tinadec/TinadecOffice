@@ -12,4 +12,13 @@ public sealed class WorkspaceDefaultsRequestDto
 
     [JsonPropertyName("default_prompt_pipeline_id")]
     public Guid? DefaultPromptPipelineId { get; init; }
+
+    [JsonPropertyName("default_agent_version_id")]
+    public Guid? DefaultAgentVersionId { get; init; }
+
+    [JsonPropertyName("default_mode_version_id")]
+    public Guid? DefaultModeVersionId { get; init; }
+
+    [JsonPropertyName("default_prompt_version_id")]
+    public Guid? DefaultPromptVersionId { get; init; }
 }

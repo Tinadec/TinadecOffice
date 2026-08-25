@@ -1,6 +1,874 @@
 {
   "components": {
     "schemas": {
+      "AgentPackActivationDto": {
+        "properties": {
+          "workspace_defaults": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackWorkspaceDefaultsDto"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackAgentResourceDto": {
+        "properties": {
+          "base_prompt_pipeline_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "layer": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "model_strategy": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "resource_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "system_prompt": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackApplyRequestDto": {
+        "properties": {
+          "envelope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackEnvelopeDto"
+              }
+            ]
+          },
+          "preview_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackApplyView": {
+        "properties": {
+          "active_version": {
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/AgentPackCounts"
+          },
+          "defaults_adopted": {
+            "type": "boolean"
+          },
+          "installed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "integrity_digest": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackResourceView"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "pack_id",
+          "owner",
+          "active_version",
+          "integrity_digest",
+          "revision",
+          "counts",
+          "resources",
+          "defaults_adopted",
+          "installed_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "AgentPackCompatibilityDto": {
+        "properties": {
+          "minimum_core_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "required_core_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackCounts": {
+        "properties": {
+          "adopted": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "agents": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "created": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "modes": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "prompt_pipelines": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "reused": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "updated": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "agents",
+          "prompt_pipelines",
+          "modes",
+          "created",
+          "adopted",
+          "reused",
+          "updated"
+        ],
+        "type": "object"
+      },
+      "AgentPackEnvelopeDto": {
+        "properties": {
+          "integrity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackIntegrityDto"
+              }
+            ]
+          },
+          "manifest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackManifestDto"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackInstallationDetail": {
+        "properties": {
+          "active_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "installed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "integrity_digest": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackResourceView"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackVersionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "pack_id",
+          "owner",
+          "product_id",
+          "name",
+          "status",
+          "active_version",
+          "integrity_digest",
+          "revision",
+          "installed_at",
+          "updated_at",
+          "versions",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "AgentPackInstallationView": {
+        "properties": {
+          "active_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "installed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "integrity_digest": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pack_id",
+          "owner",
+          "product_id",
+          "name",
+          "status",
+          "active_version",
+          "integrity_digest",
+          "revision",
+          "installed_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "AgentPackIntegrityDto": {
+        "properties": {
+          "algorithm": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "digest": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackManifestDto": {
+        "properties": {
+          "activation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackActivationDto"
+              }
+            ]
+          },
+          "api_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "compatibility": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackCompatibilityDto"
+              }
+            ]
+          },
+          "kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackMetadataDto"
+              }
+            ]
+          },
+          "resources": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentPackResourcesDto"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackMetadataDto": {
+        "properties": {
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "owner": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "pack_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "product_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackModeEdgeDto": {
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "edge_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source_node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "target_node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackModeNodeDto": {
+        "properties": {
+          "agent_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "label": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "layer": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "position": {
+            "$ref": "#/components/schemas/JsonElement"
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackModeResourceDto": {
+        "properties": {
+          "canvas_layout": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackModeEdgeDto"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackModeNodeDto"
+            },
+            "type": "array"
+          },
+          "resource_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackPreviewView": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "bundled_version": {
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/AgentPackCounts"
+          },
+          "current_core_version": {
+            "type": "string"
+          },
+          "defaults_will_adopt": {
+            "type": "boolean"
+          },
+          "differences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "installed_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "integrity_digest": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string"
+          },
+          "preview_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "required_core_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackResourceView"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "action",
+          "preview_id",
+          "pack_id",
+          "owner",
+          "bundled_version",
+          "installed_version",
+          "integrity_digest",
+          "revision",
+          "expires_at",
+          "counts",
+          "resources",
+          "defaults_will_adopt",
+          "required_core_version",
+          "current_core_version",
+          "differences",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "AgentPackPromptPipelineResourceDto": {
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "graph": {
+            "$ref": "#/components/schemas/JsonElement"
+          },
+          "resource_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "slug": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackResourceView": {
+        "properties": {
+          "content_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "logical_entity_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_key": {
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "resource_key",
+          "logical_entity_id",
+          "version_id",
+          "content_hash",
+          "disposition"
+        ],
+        "type": "object"
+      },
+      "AgentPackResourcesDto": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackAgentResourceDto"
+            },
+            "type": "array"
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackModeResourceDto"
+            },
+            "type": "array"
+          },
+          "prompt_pipelines": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackPromptPipelineResourceDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackVersionView": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "integrity_digest": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "integrity_digest",
+          "created_at",
+          "active"
+        ],
+        "type": "object"
+      },
+      "AgentPackWorkspaceDefaultsDto": {
+        "properties": {
+          "agent_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mode_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "prompt_pipeline_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ApprovalDecisionRequestDto": {
         "properties": {
           "decision": {
@@ -328,6 +1196,44 @@
             ]
           },
           "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ProblemDetails": {
+        "properties": {
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "type": {
             "type": [
               "null",
               "string"
@@ -677,7 +1583,28 @@
               "string"
             ]
           },
+          "default_agent_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "default_mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "default_prompt_pipeline_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "default_prompt_version_id": {
             "format": "uuid",
             "type": [
               "null",
@@ -1204,6 +2131,288 @@
         ]
       }
     },
+    "/api/v1/agent-packs": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentPackInstallationView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List installed agent packs",
+        "tags": [
+          "AgentPacks"
+        ]
+      }
+    },
+    "/api/v1/agent-packs/install-preview": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentPackEnvelopeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPackPreviewView"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Quoted numeric agent pack installation revision for conditional updates.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: invalid_agent_pack_manifest."
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_management_forbidden."
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_owner_conflict, agent_pack_version_hash_conflict."
+          },
+          "422": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_incompatible, invalid_agent_pack_manifest."
+          }
+        },
+        "summary": "Preview an agent pack installation or upgrade",
+        "tags": [
+          "AgentPacks"
+        ]
+      }
+    },
+    "/api/v1/agent-packs/{packId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPackInstallationDetail"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Quoted numeric agent pack installation revision for conditional updates.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_not_found."
+          }
+        },
+        "summary": "Get an installed agent pack",
+        "tags": [
+          "AgentPacks"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unique key for this preview application. Replays with the same key and request converge to the stored receipt.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Quoted numeric installation revision from the preview or pack ETag. Required for upgrades; omit for a first installation.",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentPackApplyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPackApplyView"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Quoted numeric agent pack installation revision for conditional updates.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPackApplyView"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "description": "Quoted numeric agent pack installation revision for conditional updates.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: invalid_agent_pack_manifest."
+          },
+          "403": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_management_forbidden."
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_owner_conflict, agent_pack_version_hash_conflict, agent_pack_resource_conflict."
+          },
+          "412": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_preview_stale, agent_pack_revision_conflict."
+          },
+          "422": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 problem details. Possible code values: agent_pack_incompatible, invalid_agent_pack_manifest."
+          }
+        },
+        "summary": "Install or upgrade an agent pack",
+        "tags": [
+          "AgentPacks"
+        ]
+      }
+    },
     "/api/v1/agent-runtime-instances": {
       "get": {
         "responses": {
@@ -1224,7 +2433,7 @@
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "AgentConfigurationEndpoints"
         ]
       },
       "post": {
@@ -1271,27 +2480,6 @@
         "tags": [
           "AgentConfigurationEndpoints"
         ]
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
-        ]
       }
     },
     "/api/v1/agents/{id}/archive": {
@@ -1337,18 +2525,6 @@
         },
         "tags": [
           "AgentConfigurationEndpoints"
-        ]
-      }
-    },
-    "/api/v1/agents/{id}/mode": {
-      "put": {
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
         ]
       }
     },
@@ -4308,6 +5484,9 @@
     },
     {
       "name": "AgentConfigurationEndpoints"
+    },
+    {
+      "name": "AgentPacks"
     },
     {
       "name": "InteractionsEndpoints"

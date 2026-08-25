@@ -4339,6 +4339,61 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   gap: 12px;
 }
 
+.agent-pack-status-band {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 16px;
+  background: var(--surface-chrome);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.agent-pack-status-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent-primary);
+}
+
+.agent-pack-status-copy {
+  min-width: 0;
+}
+
+.agent-pack-status-title,
+.agent-pack-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-pack-status-title {
+  flex-wrap: wrap;
+}
+
+.agent-pack-status-title strong {
+  font-size: 13px;
+}
+
+.agent-pack-status-copy p {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .agent-pack-status-band {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-pack-status-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
+
 .agent-center-merged .center-command-bar,
 .agent-center-merged .center-overview-receipt {
   margin-bottom: 0;

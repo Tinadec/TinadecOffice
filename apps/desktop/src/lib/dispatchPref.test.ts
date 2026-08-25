@@ -2,12 +2,9 @@ import { Window } from 'happy-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ENTER_PREF_KEY,
-  MODE_VERSION_PREF_KEY,
   MEETING_MODEL_PREF_KEY,
   getDispatchPref,
   setDispatchPref,
-  getModeVersionPref,
-  setModeVersionPref,
   getMeetingModelPref,
   setMeetingModelPref
 } from './dispatchPref';
@@ -38,18 +35,13 @@ describe('dispatchPref', () => {
     expect(getDispatchPref()).toBe('queued');
   });
 
-  it('handles modeVersion and meetingModel preference persistence', () => {
-    expect(getModeVersionPref()).toBeNull();
+  it('handles meetingModel preference persistence', () => {
     expect(getMeetingModelPref()).toBe('');
 
-    setModeVersionPref('topo-123');
     setMeetingModelPref('gpt-4o-mini');
-    expect(getModeVersionPref()).toBe('topo-123');
     expect(getMeetingModelPref()).toBe('gpt-4o-mini');
 
-    setModeVersionPref(null);
     setMeetingModelPref('');
-    expect(getModeVersionPref()).toBeNull();
     expect(getMeetingModelPref()).toBe('');
   });
 });

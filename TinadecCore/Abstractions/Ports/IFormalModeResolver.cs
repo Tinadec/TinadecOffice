@@ -17,7 +17,19 @@ public interface IFormalModeResolver
     /// Handles inherit/fixed/parent_select (up to 2 retries) and audits to EventIndex/RunStream/control_event_index.
     /// Returns null for inherit or when no formal mode, meaning caller should fallback to default resolver.
     /// </summary>
-    Task<ChatResolution?> TryResolveFormalChatAsync(Guid sessionId, string layer, Guid runId, Guid turnId, CancellationToken cancellationToken = default);
+    Task<ChatResolution?> TryResolveFormalChatAsync(
+        FrozenAgentChatRequest request,
+        CancellationToken cancellationToken = default) =>
+        TryResolveFormalChatAsync(request.SessionId, request.Layer, request.RunId, request.TurnId, cancellationToken);
+
+    /// <summary>Compatibility shim for callers that have not yet supplied a frozen per-agent strategy.</summary>
+    Task<ChatResolution?> TryResolveFormalChatAsync(
+        Guid sessionId,
+        string layer,
+        Guid runId,
+        Guid turnId,
+        CancellationToken cancellationToken = default) =>
+        TryResolveFormalChatAsync(new FrozenAgentChatRequest(sessionId, layer, layer, "{\"kind\":\"inherit\"}", runId, turnId), cancellationToken);
 
     /// <summary>
     /// Resolves the runnable agent roster for the session's published relational mode version.
@@ -38,7 +50,22 @@ public sealed record FormalModeRoster(
     Guid ModeVersionId,
     int VersionNumber,
     string? TopologyHash,
-    string RuntimeProfileId);
+    string RuntimeProfileId)
+{
+    public Guid AgentModeId { get; init; }
+}
+
+/// <summary>
+/// The model strategy already captured for one agent in the run configuration.
+/// Formal model resolution must not reload a mutable mode node or agent definition.
+/// </summary>
+public sealed record FrozenAgentChatRequest(
+    Guid SessionId,
+    string AgentId,
+    string Layer,
+    string? ModelStrategyJson,
+    Guid RunId,
+    Guid TurnId);
 
 /// <summary>
 /// One runnable agent entry resolved from a relational <c>AgentDefinitionRecord</c> referenced by a mode node.
@@ -56,4 +83,14 @@ public sealed record RuntimeAgentRosterEntry(
     string PromptProfile,
     Guid? AgentDefinitionId = null,
     Guid? AgentVersionId = null,
-    string VersionContentHash = "");
+    string VersionContentHash = "")
+{
+    public string SystemPrompt { get; init; } = string.Empty;
+    public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
+    public bool Enabled { get; init; } = true;
+    public int RosterOrder { get; init; }
+    public Guid? PromptPipelineId { get; init; }
+    public Guid? PromptVersionId { get; init; }
+    public string PromptVersionContentHash { get; init; } = string.Empty;
+    public string PromptGraphJson { get; init; } = string.Empty;
+}

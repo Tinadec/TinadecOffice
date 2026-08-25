@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Circle,
   Cpu,
+  CopyPlus,
   Database,
   Download,
   Dna,
@@ -25,6 +26,8 @@ import {
   MoreHorizontal,
   Palette,
   PanelRight,
+  PackageCheck,
+  PackagePlus,
   PawPrint,
   Plus,
   RefreshCw,
@@ -125,6 +128,15 @@ import RuntimeInstancesPanel from '@/settings/sections/RuntimeInstancesPanel.vue
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useNotifications } from '@/composables/useNotifications'
+import {
+  installOrUpgradeOfficeAgentPack,
+  officeAgentPackState,
+  refreshOfficeAgentPack,
+} from '@/agentPacks/officeAgentPackBootstrap'
+import {
+  OFFICE_AGENT_PACK_VERSION,
+  officeAgentPackManifest,
+} from '@/agentPacks/OfficeAgentPack'
 
 type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
@@ -133,6 +145,23 @@ type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 const modePanelRef = ref<InstanceType<typeof AgentModesPanel> | null>(null)
 const promptsPanelRef = ref<InstanceType<typeof PromptEngineeringMerged> | null>(null)
 const evolutionPanelRef = ref<InstanceType<typeof AgentEvolutionPanel> | null>(null)
+
+const officeAgentPackBusy = computed(() => officeAgentPackState.value.phase === 'checking' || officeAgentPackState.value.phase === 'installing')
+const officeAgentPackCanApply = computed(() => ['idle', 'install', 'upgrade', 'deferred', 'conflict', 'error'].includes(officeAgentPackState.value.phase))
+const officeAgentPackCanClone = computed(() => ['up_to_date', 'newer_installed'].includes(officeAgentPackState.value.phase))
+const officeAgentPackStatusLabel = computed(() => t(`agentPack.status.${officeAgentPackState.value.phase}`))
+const officeAgentPackActionLabel = computed(() => officeAgentPackState.value.phase === 'upgrade'
+  ? t('agentPack.upgradeAction')
+  : officeAgentPackState.value.phase === 'error' || officeAgentPackState.value.phase === 'conflict'
+    ? t('settings.retry')
+  : officeAgentPackState.value.phase === 'idle'
+    ? t('agentPack.checkAction')
+    : t('agentPack.installAction'))
+const officeAgentPackBadgeVariant = computed<'default' | 'secondary' | 'outline'>(() => {
+  if (officeAgentPackState.value.phase === 'up_to_date') return 'default'
+  if (officeAgentPackState.value.phase === 'install' || officeAgentPackState.value.phase === 'upgrade') return 'secondary'
+  return 'outline'
+})
 
 /** Lazily refresh per-tab data when a tab becomes active. */
 function switchAgentCenterTab(tab: AgentCenterTab) {
@@ -960,12 +989,18 @@ async function loadAgentCenter() {
   // Load the versioned catalog directly; overview-only projections degrade.
   loading.value = true
   try {
-      const [definitions, modes, candidates, toolReadiness] = await Promise.all([
+      const [definitions, modes, candidates, toolReadiness, packDetail] = await Promise.all([
         api.listAgents().catch(() => [] as AgentProfileDto[]),
         api.listAgentModes().catch(() => [] as AgentModeDto[]),
         api.listAgentCandidates().catch(() => [] as AgentCandidateDto[]),
         api.getToolLayerReadiness().catch(() => null),
+        api.getAgentPack(officeAgentPackManifest.metadata.pack_id).catch(() => null),
       ])
+      const managedAgentIds = new Set(
+        (packDetail?.resources ?? [])
+          .filter((resource) => resource.kind === 'agent' && resource.logical_entity_id)
+          .map((resource) => resource.logical_entity_id!),
+      )
       agentCenterOverview.value = null
       agentModes.value = modes
       agents.value = (definitions as Array<AgentProfileDto & Partial<AgentDefinitionDto>>).map((definition) => ({
@@ -977,6 +1012,7 @@ async function loadAgentCenter() {
             ? definition.tool_scope
             : []
           : (definition as unknown as AgentProfileDto).allowed_tools,
+        is_built_in: Boolean(definition.is_built_in || managedAgentIds.has(definition.id)),
       }))
       agentCandidates.value = candidates as unknown as AgentCandidateDto[]
       toolLayerReadiness.value = toolReadiness
@@ -1156,6 +1192,24 @@ async function cloneAgentProfile() {
   } finally {
     agentCloneBusy.value = false
   }
+}
+
+async function openOfficeAgentPackCloneFlow() {
+  agentCenterTab.value = 'agents'
+  if (!agents.value.some((agent) => agent.is_built_in)) await loadAgentCenter()
+  const officeSlugs = new Set(officeAgentPackManifest.resources.agents.map((agent) => agent.slug))
+  const managedAgent = agents.value.find((agent) =>
+    agent.is_built_in && officeSlugs.has(agent.slug ?? agent.name),
+  )
+  if (!managedAgent) {
+    status.warning({
+      key: 'office-agent-pack-clone',
+      source: 'OfficeAgentPack',
+      message: t('agentPack.managedReadOnly'),
+    })
+    return
+  }
+  openAgentConfig(managedAgent)
 }
 
 async function saveAgentProfile() {
@@ -2157,6 +2211,52 @@ import '../settings/settings.css'
                 </UiButton>
               </div>
             </div>
+            <section class="agent-pack-status-band" data-testid="office-agent-pack-status">
+              <PackageCheck class="agent-pack-status-icon" aria-hidden="true" />
+              <div class="agent-pack-status-copy">
+                <div class="agent-pack-status-title">
+                  <strong>{{ t('agentPack.name') }}</strong>
+                  <UiBadge :variant="officeAgentPackBadgeVariant">{{ officeAgentPackStatusLabel }}</UiBadge>
+                  <UiBadge variant="outline">{{ t('agentPack.managed') }}</UiBadge>
+                </div>
+                <p>
+                  {{ t('agentPack.versionSummary', {
+                    bundled: OFFICE_AGENT_PACK_VERSION,
+                    installed: officeAgentPackState.active_version ?? t('agentPack.notInstalled'),
+                  }) }}
+                </p>
+              </div>
+              <div class="agent-pack-status-actions">
+                <UiButton
+                  v-if="officeAgentPackCanClone"
+                  variant="outline"
+                  size="sm"
+                  @click="openOfficeAgentPackCloneFlow"
+                >
+                  <CopyPlus data-icon="inline-start" />
+                  {{ t('agentPack.cloneAction') }}
+                </UiButton>
+                <UiButton
+                  v-if="officeAgentPackCanApply"
+                  size="sm"
+                  :disabled="officeAgentPackBusy"
+                  @click="installOrUpgradeOfficeAgentPack"
+                >
+                  <PackagePlus data-icon="inline-start" />
+                  {{ officeAgentPackActionLabel }}
+                </UiButton>
+                <UiButton
+                  variant="ghost"
+                  size="icon"
+                  :disabled="officeAgentPackBusy"
+                  :title="t('agentPack.refreshStatus')"
+                  :aria-label="t('agentPack.refreshStatus')"
+                  @click="refreshOfficeAgentPack"
+                >
+                  <RefreshCw data-icon="inline-start" />
+                </UiButton>
+              </div>
+            </section>
             <div class="ac-subtabs" role="tablist" data-testid="agent-center-subtabs">
               <button :class="['ac-subtab', { active: agentCenterTab === 'agents' }]" role="tab" :aria-selected="agentCenterTab === 'agents'" @click="agentCenterTab = 'agents'">{{ t('settings.agents') }}</button>
               <button :class="['ac-subtab', { active: agentCenterTab === 'modes' }]" role="tab" :aria-selected="agentCenterTab === 'modes'" @click="agentCenterTab = 'modes'">{{ t('settings.agentModes') }}</button>

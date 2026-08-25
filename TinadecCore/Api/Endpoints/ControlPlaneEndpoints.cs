@@ -40,11 +40,6 @@ public static class ControlPlaneEndpoints
         app.MapPost("/api/v1/prompt-fragments/{id:guid}/compare", () => Results.Json(new { code = "capability_unavailable", message = "Prompt comparison requires version telemetry." }, statusCode: 501));
         app.MapPost("/api/v1/prompt-context/preview", () => Results.Json(new { code = "capability_unavailable", message = "Prompt context preview requires the active context assembler runtime." }, statusCode: 501));
 
-        app.MapGet("/api/v1/agents", (ControlPlaneService service, CancellationToken ct) => service.ListAgents(ct));
-        app.MapPut("/api/v1/agents/{id:guid}", async (Guid id, HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SaveAgent(id, await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), request.Headers.IfMatch.FirstOrDefault(), ct));
-        app.MapPut("/api/v1/agents/{id:guid}/mode", () => Results.Json(new { code = "capability_unavailable", message = "Agent mode changes require a versioned profile update." }, statusCode: 501));
-        // agent-modes and agent-candidates are TOML/review-driven and mapped by DmaeaEndpoints/MemoryReviewEndpoints.
-
         app.MapGet("/api/v1/approvals", (string? status, string? session_id, string? run_id, ControlPlaneService service, CancellationToken ct) => service.ListApprovals(status, session_id, run_id, ct));
         app.MapGet("/api/v1/approvals/{id:guid}", (Guid id, ControlPlaneService service, CancellationToken ct) => service.GetApproval(id, ct));
         app.MapPost("/api/v1/approvals/{id:guid}/decision", (Guid id, ApprovalDecisionRequestDto input, ControlPlaneService service, CancellationToken ct) => service.DecideApproval(id, input, ct));

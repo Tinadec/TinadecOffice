@@ -5,7 +5,7 @@ TinadecOffice is a four-product family. The normative product boundary and targe
 - `TinadecCore`: portable C# Core framework and runtime. It owns agents, runs, task graphs, context packs, supervision, approvals, model routes, events, secrets, permissions, capability discovery, shared database abstraction (default SQLite, optional PostgreSQL via EF Core), and **Agent Debug Studio tracing**.
 - `TinadecTool` (current code path `TinadecTools`): tool discovery and execution provider. The current Core-owned child-process adapter is one integration, not a permanent product dependency.
 - `TinadecGateway`: optional Elysia BFF/API layer. It exposes `/api/v1/*` (including `/api/v1/debug/*`), OpenAPI docs at `/docs`, and proxies to the Core runtime.
-- `TinadecApp` (currently `apps/desktop`, `apps/web`, and `apps/TinadecUI`): client experiences. The desktop renderer receives only the `window.tinadec.*` preload API and talks to Core directly or through Gateway over HTTP/SSE.
+- `TinadecApp` (currently `apps/desktop`, `apps/web`, and `apps/TinadecUI`): client experiences and product-owned Agent Pack artifacts. A TinadecApp may implement either supported northbound deployment, but the current Desktop/Web renderer uses Gateway only; Electron exposes only the `window.tinadec.*` preload API.
 
 Core is the only business-state authority. Gateway and App must not keep a second copy of session state, approval decisions, model routing state, tool policy state, or provider lifecycle state.
 
@@ -63,22 +63,25 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 
 Permission granting and single-action approval remain separate state machines. Core wakes a user action directly after a permission decision; it never creates a run to represent Desktop work.
 
-## Model And Agent Center BFF APIs
+## Model And Agent Configuration APIs
 
-Gateway exposes stateless center-oriented views for Desktop while Core remains the only authority for provider lifecycle, routes, agents, readiness, and secrets.
+Desktop composes Model Center and Agent Center from Core-owned versioned provider, route, Agent, Mode, PromptPipeline, WorkspaceDefaults and Agent Pack APIs through Gateway. The former `/model-center/overview`, `/agent-center/overview`, `/agents/{id}/runtime-binding` and model-center refresh alias are intentionally absent; Gateway does not derive effective bindings or retain configuration drafts. Canonical model discovery is `POST /api/v1/model-providers/{id}/models/refresh`, and all Agent writes use draft/publish/archive plus immutable version contracts.
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /api/v1/model-center/overview` | Aggregates Core supplier templates, configured provider instances, model routes, model/catalog readiness, and ACP adapters into suppliers, API/local connections, configured-only models, CLI runtimes, ACP runtimes, capabilities, and diagnostics. |
-| `GET /api/v1/agent-center/overview` | Adds agents, modes, candidates, selectable runtime sources, and a Gateway-derived effective binding for each existing `model_route_purpose`. Shared purposes are reported with `LEGACY_SHARED_ROUTE`; they are not treated as per-agent state. |
-| `POST /api/v1/model-center/provider-instances/{providerInstanceId}/models/refresh` | Reserved live-discovery contract. It validates the provider id and returns `501 MODEL_DISCOVERY_UNSUPPORTED` until Core owns discovery. |
-| `PUT /api/v1/agents/{agentId}/runtime-binding` | Reserved snake_case discriminated-union contract for inherit, fixed model, provider auto, CLI, and ACP. It validates the request and returns `501 AGENT_RUNTIME_BINDING_UNSUPPORTED` until Core owns persistent per-agent bindings. |
+## Bundled Agent Pack Lifecycle
 
-The BFF normalizes transport and credential kinds separately, recursively strips secret fields, keeps Core readiness receipts unchanged apart from secret removal, and degrades optional Core `404/501` responses into diagnostics. Required Core failures and Core unreachability remain errors. The model list is not live discovery: it is deduplicated only from configured provider defaults and current route overrides. CLI providers and ACP adapters stay distinct; ACP-capable legacy providers are labeled `legacy_provider` rather than merged by guesswork. Gateway and Desktop do not persist binding drafts, implement provider auto-selection, or rewrite shared legacy routes.
+TinadecCore exposes a generic, workspace-scoped Agent Pack lifecycle; it does not compile TinadecOffice roles into Core. TinadecOffice carries schema `tinadec.io/agent-pack/v1alpha1` Pack `tinadec.office.agent-pack` (`owner=tinadec.office`, `version=0.1.0`) as a deterministic renderer asset. It contains 14 Agent definitions, `baseline-prompt`, `default-mode`, and recommended workspace defaults.
 
-## Built-In Execution Subagents
+On each connected epoch the main renderer asks Core for an install preview through Gateway, validates the returned Pack identity/hash, shows owner/version/hash and default impact, and submits a confirmed install. Electron child/pet/debug windows skip bootstrap; Web tabs coordinate through `BroadcastChannel`/Web Locks, while Core idempotency and revision checks remain authoritative. Rejection is remembered only for the current App lifetime; errors stay non-blocking and expose a retry that obtains a fresh preview.
 
-`git_steward` is the governance-layer Git change steward. It reviews diffs, prepares commit plans, and coordinates approvals without holding tools. `worker.git` is the execution-layer specialist with the Git manifest (`git_status`, `git_diff`, `git_stage`, `git_commit`, `git_push`, branch/worktree, merge, rebase, and conflict tools). Git mutation and push flows remain approval-gated through Core-governed Tool Provider calls.
+Core validates the complete Prompt -> Agent -> Mode graph, recomputes the RFC 8785/JCS SHA-256, and persists immutable pack versions and managed-resource bindings in one transaction. Preview expires after 15 minutes; PUT reuses the exact envelope and `preview_id`, requires `Idempotency-Key`, and requires `If-Match` for upgrades. Eligible defaults advance only while empty, legacy-equivalent, or still bound to the prior Pack version. Existing sessions keep their exact ModeVersion; upgrades affect only new sessions. Pack-managed resources are read-only and must be cloned before customization. App uninstall does not remove Core state, and digital signatures/market distribution are outside the first bundled-pack contract.
+
+The northbound surface is `GET /api/v1/agent-packs`, `GET /api/v1/agent-packs/{pack_id}`, `POST /api/v1/agent-packs/install-preview`, and `PUT /api/v1/agent-packs/{pack_id}`.
+
+## Office Agent Pack Runtime Boundary
+
+The active path creates exact-version instances for `meeting`, `task_planner`, `supervisor`, and one selected specialist from `worker.code`, `worker.document`, `worker.data`, `worker.browser`, `worker.file`, `worker.git`, or `worker.general`. Worker selection requires complete capability/tool coverage, then prefers specialists, fewer extra permissions, roster order, and slug; no match fails closed as `worker_unavailable`. Assignment is persisted before first invocation and reused after recovery. Only `meeting` may answer the user.
+
+`context_compressor`, `skill_recommender`, `evolution`, and `git_steward` are installed and included in the frozen roster but remain dormant in this release: no synthetic instance or participation event is created. `worker.git` is the executable Git specialist; mutations remain approval-gated through Core-governed Tool Provider calls.
 
 ## Event Envelope
 
@@ -111,22 +114,23 @@ Long-term memory and reusable agents follow a candidate-to-promotion path. Sessi
 
 ## Runtime Configuration Baseline
 
-`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` is the annotated, read-only built-in baseline. It defines mode availability, profile bindings, operation/execution roles (including built-in `search`/`programming`/`testing` execution specialists), model/tool policy, supervision, context, memory, scheduling, and generation budgets. Creation authority is explicit: `agent.create_temporary` (temporary run workers), `agent.create_persistent` (candidate), and `agent.create_profile` (promotion/bound profile); `agent.spawn` is normalized to `agent.create_temporary` for compatibility. The defaults are `conversation` with `plan`/`spec`/`ask`/`vibe`/`auto`/`agent` (default `auto`), and `space` with only `agent`, bound to `space.full_duplex`; `im` and `hub` are compatibility aliases. Agent definitions carry `prompt_profile`, `triggers`, `accepts`, `emits`, `decisions`, `memory_write_policy`, `allowed_tools`, and `context_access`; only `meeting` may set `direct_user_output=true`.
+`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` is the annotated, read-only generic fallback and budget baseline. It defines mode availability, operation/execution policy, model/tool policy, supervision, context, memory, scheduling, and generation budgets, but it is not the formal Office roster. Creation authority is explicit: `agent.create_temporary` (temporary run workers), `agent.create_persistent` (candidate), and `agent.create_profile` (promotion/bound profile); `agent.spawn` is normalized to `agent.create_temporary` for compatibility.
 
-When it is resolved, `AgentRuntimeConfigurationStore` validates and hot-reloads a TOML snapshot in process. A valid edit replaces the snapshot for future consumers; an invalid edit preserves the previous valid snapshot and records an in-memory diagnostic. The target resolution rule is baseline then workspace override, with the resolved version/hash frozen at run creation — the full-duplex engine freezes the resolved profile per run. The legacy orchestrator does not resolve this store yet; workspace override application and readiness diagnostics remain open.
+When a session has an exact published ModeVersion, `FormalModeResolver` resolves the immutable AgentVersion/PromptVersion bindings from that snapshot and the run freezes them; it must not query latest published versions. TOML is used only when no formal ModeVersion is bound and as the source of generic scheduling/budget policy. `AgentRuntimeConfigurationStore` still validates and hot-reloads only valid fallback snapshots; workspace override application and readiness diagnostics remain open.
 
-## Current Delivery Status (2026-08-22, after governance/Git/Desktop closure)
+## Current Delivery Status (2026-08-25)
 
 | Surface | Present now | Still required for the full-duplex contract |
 |---|---|---|
 | Runtime configuration | Annotated TOML baseline, validation, aliases, in-process valid-only reload, relational projections for agent instances/candidates/profile overrides, and per-run frozen profile resolution in the full-duplex engine. | Workspace override resolution and readiness diagnostics. |
 | Invocation | `POST /api/v1/sessions/{id}/invoke-stream` runs the durable full-duplex engine: idempotent admission, `context_revision` snapshots/patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Gateway/Desktop normal-chat migration and remaining interaction-contract cleanup. |
 | Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
-| Spawn, lineage, and promotion | `agent_instances` and `agent_candidates` projections plus worker spawn/lineage with budgets and the candidate review APIs (generate/promote/reject). | Immutable promotion workflow and long-term retrieval injection. |
-| Context and memory | Context snapshots/patches with `context_revision`, meeting context patches, and candidate review APIs. | Deterministic prompt assembly, reviewed-memory retrieval, and candidate promotion/revocation persistence. |
+| Spawn, lineage, and promotion | Exact-version meeting/planner/supervisor/worker instances, persisted specialist assignment, stable capability/tool selection, recovery reuse, and candidate review APIs. | Immutable promotion workflow and long-term retrieval injection. |
+| Context, prompts, and memory | Context snapshots/patches plus one frozen prompt assembly path: Core protocol -> agent system prompt -> PromptPipeline -> task evidence -> final constraints. | Event-driven `context_compressor`, reviewed-memory retrieval, and candidate promotion/revocation persistence. |
 | Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, `UserToolAction`, governance nonce boundary, and `tool-layer-readiness` receipts. | Scheduling and `tools/shell` (501); ACP permission bridge. |
 | Workspace snapshots | File-system and Git providers capture HEAD/index/worktree/conflicts and use deterministic restore/guard semantics. | Full restore-plan UX and external compensation records. |
-| Gateway and Desktop | Gateway proxies Core governance and preserves direct user tool transport. Desktop routes code/Git writes through UserToolAction and shows the durable action state machine. | Complete action history/recovery UX and normal-chat migration cleanup. |
+| Gateway and Desktop | Gateway proxies Core governance and Agent Pack routes without state. Desktop/Web carry the Pack, run owner-confirmed bootstrap, and show Pack version/managed/clone/retry state. | Complete action history/recovery UX and normal-chat migration cleanup. |
+| Bundled Agent Pack | Generic Core preview/install/version/default-adoption/managed-resource lifecycle plus TinadecOffice-owned 14-Agent `OfficeAgentPack`; SQLite/PostgreSQL migrations and exact runtime binding are wired. | Digital signatures, organization trust stores, market distribution, rollback and uninstall. |
 
 ## Run Locally
 

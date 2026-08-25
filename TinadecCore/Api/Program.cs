@@ -66,6 +66,7 @@ app.UseExceptionHandler(errorApp =>
         // invalid_request, context_conflict, model_not_configured, run_not_found, forbidden, conflict
         var (status, code, detail) = exception switch
         {
+            TinadecCore.AgentConfiguration.AgentPackDomainException ape => (ape.StatusCode, ape.Code, ape.Message),
             TinadecCore.DmaEA.RunAdmissionException rae when rae.Code == "CONTEXT_REVISION_CONFLICT" => (StatusCodes.Status409Conflict, "context_conflict", rae.Message),
             TinadecCore.DmaEA.RunAdmissionException rae => (StatusCodes.Status409Conflict, "conflict", rae.Message),
             UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "forbidden", exception.Message),
@@ -86,8 +87,10 @@ app.UseExceptionHandler(errorApp =>
         problem.Extensions["code"] = code;
         problem.Extensions["trace_id"] = context.TraceIdentifier;
         context.Response.StatusCode = status;
-        context.Response.ContentType = "application/problem+json";
-        await context.Response.WriteAsJsonAsync(problem, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        await context.Response.WriteAsJsonAsync(
+            problem,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower },
+            "application/problem+json");
     });
 });
 app.UseStatusCodePages();
@@ -256,6 +259,7 @@ app.MapGet("/api/v1/readiness", async (
 app.MapStorageEndpoints();
 app.MapDmaeaEndpoints();
 app.MapAgentConfigurationEndpoints();
+app.MapAgentPackEndpoints();
 app.MapInteractionsEndpoints();
 app.MapControlPlaneEndpoints();
 app.MapGovernanceEndpoints();

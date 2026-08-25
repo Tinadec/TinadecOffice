@@ -11,6 +11,7 @@ public sealed class AgentDefinition
     public string AgentType { get; init; } = string.Empty;
     public string? ModelRoutePurpose { get; init; }
     public string? SystemPrompt { get; init; }
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
     public IReadOnlyList<string> AllowedTools { get; init; } = [];
     public bool Enabled { get; init; }
 }

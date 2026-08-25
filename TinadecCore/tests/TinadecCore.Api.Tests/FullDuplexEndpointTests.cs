@@ -4,10 +4,12 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
 
 namespace TinadecCore.Api.Tests;
@@ -19,8 +21,10 @@ namespace TinadecCore.Api.Tests;
 /// </summary>
 public sealed class FullDuplexEndpointTests : IAsyncLifetime
 {
+    private const string TestAgentPackId = "tinadec.tests.runtime-agent-pack";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-fullduplex-api-tests", Guid.NewGuid().ToString("N"));
     private FullDuplexFactory? _factory;
+    private bool _agentPackInstalled;
 
     public Task InitializeAsync()
     {
@@ -36,18 +40,214 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private FullDuplexFactory CreateFactory(ScriptedChatClient? client = null, bool available = true)
+    private FullDuplexFactory CreateFactory(
+        ScriptedChatClient? client = null,
+        bool available = true,
+        IPromptAssembler? promptAssembler = null)
     {
         _factory?.Dispose();
-        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available);
+        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available, promptAssembler);
         return _factory;
     }
 
     private async Task<Guid> CreateSessionAsync(HttpClient client)
     {
+        await EnsureRuntimeAgentPackInstalledAsync(client);
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "FD project", path = Path.Combine(_root, "workspace") })).Content.ReadFromJsonAsync<JsonElement>();
         var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "FD session" })).Content.ReadFromJsonAsync<JsonElement>();
         return session.GetProperty("id").GetGuid();
+    }
+
+    private async Task EnsureRuntimeAgentPackInstalledAsync(HttpClient client)
+    {
+        if (_agentPackInstalled) return;
+        var manifest = TestAgentPackManifest();
+        var envelope = JsonSerializer.SerializeToElement(new
+        {
+            manifest,
+            integrity = new { algorithm = "sha256", digest = ComputeCanonicalDigest(manifest) }
+        });
+        var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+        var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("install", preview.GetProperty("action").GetString());
+
+        using var apply = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/agent-packs/{TestAgentPackId}")
+        {
+            Content = JsonContent.Create(new { preview_id = preview.GetProperty("preview_id").GetGuid(), envelope })
+        };
+        apply.Headers.TryAddWithoutValidation("Idempotency-Key", "full-duplex-test-pack-install");
+        using var applyResponse = await client.SendAsync(apply);
+        Assert.Equal(HttpStatusCode.Created, applyResponse.StatusCode);
+        var applied = await applyResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("installed", applied.GetProperty("status").GetString());
+        _agentPackInstalled = true;
+    }
+
+    private static JsonElement TestAgentPackManifest()
+    {
+        static object Agent(
+            string key,
+            string layer,
+            string role,
+            string[] capabilities,
+            string[] tools,
+            string prompt) => new
+        {
+            resource_key = key,
+            slug = key,
+            display_name = key,
+            description = key,
+            layer,
+            role,
+            capabilities,
+            model_strategy = new { kind = "inherit" },
+            tool_scope = tools,
+            system_prompt = prompt,
+            enabled = true,
+            base_prompt_pipeline_ref = "prompt:baseline-prompt"
+        };
+        static object Node(string key, string agent, string layer) => new
+        {
+            node_key = key,
+            agent_ref = $"agent:{agent}",
+            layer,
+            label = agent,
+            config = new { },
+            position = (object?)null
+        };
+
+        return JsonSerializer.SerializeToElement(new
+        {
+            api_version = "tinadec.io/agent-pack/v1alpha1",
+            kind = "AgentPack",
+            metadata = new
+            {
+                pack_id = TestAgentPackId,
+                owner = "tinadec.tests",
+                product_id = "tinadec.tests",
+                name = "Runtime Test Agent Pack",
+                version = "0.1.0"
+            },
+            compatibility = new
+            {
+                minimum_core_version = "0.1.0",
+                required_core_capabilities = Array.Empty<string>()
+            },
+            resources = new
+            {
+                agents = new[]
+                {
+                    Agent("meeting", "operation", "session_coordinator", ["task.dispatch", "user.respond"], ["*"], "meeting-system"),
+                    Agent("context_compressor", "operation", "context_maintenance", ["context.patch"], ["*"], "context-system"),
+                    Agent("skill_recommender", "operation", "capability_advisor", ["tool.search"], ["*"], "skill-system"),
+                    Agent("supervisor", "operation", "quality_controller", ["supervision.review"], ["*"], "supervisor-system"),
+                    Agent("evolution", "operation", "experience_curator", ["agent.candidate"], ["*"], "evolution-system"),
+                    Agent("git_steward", "operation", "git_steward", ["git.review"], Array.Empty<string>(), "git-steward-system"),
+                    Agent("task_planner", "execution", "execution_coordinator", ["agent.create_temporary", "task.plan"], ["*"], "planner-system"),
+                    Agent("worker.general", "execution", "task_executor", ["task.execute"], ["*"], "worker-system")
+                },
+                prompt_pipelines = new[]
+                {
+                    new
+                    {
+                        resource_key = "baseline-prompt",
+                        slug = "baseline-prompt",
+                        display_name = "Baseline Prompt",
+                        description = "Runtime test prompt.",
+                        graph = new
+                        {
+                            nodes = new object[]
+                            {
+                                new { id = "template", type = "template", config = new { content = "runtime-test-template" } },
+                                new { id = "assemble", type = "assemble" }
+                            },
+                            edges = new[] { new { source = "template", target = "assemble" } }
+                        }
+                    }
+                },
+                modes = new[]
+                {
+                    new
+                    {
+                        resource_key = "default-mode",
+                        slug = "default-mode",
+                        display_name = "Default Mode",
+                        description = "Runtime test mode.",
+                        nodes = new[]
+                        {
+                            Node("executor-1", "task_planner", "execution"),
+                            Node("executor-2", "worker.general", "execution"),
+                            Node("meeting-1", "meeting", "operation"),
+                            Node("meeting-2", "context_compressor", "operation"),
+                            Node("meeting-3", "skill_recommender", "operation"),
+                            Node("meeting-4", "supervisor", "operation"),
+                            Node("meeting-5", "evolution", "operation"),
+                            Node("meeting-6", "git_steward", "operation")
+                        },
+                        edges = Array.Empty<object>(),
+                        canvas_layout = new { }
+                    }
+                }
+            },
+            activation = new
+            {
+                workspace_defaults = new
+                {
+                    agent_ref = "agent:meeting",
+                    mode_ref = "mode:default-mode",
+                    prompt_pipeline_ref = "prompt:baseline-prompt"
+                }
+            }
+        });
+    }
+
+    private static string ComputeCanonicalDigest(JsonElement value)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = false }))
+        {
+            WriteCanonical(writer, value);
+        }
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+    }
+
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var property in value.EnumerateObject().OrderBy(property => property.Name, StringComparer.Ordinal))
+                {
+                    writer.WritePropertyName(property.Name);
+                    WriteCanonical(writer, property.Value);
+                }
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in value.EnumerateArray()) WriteCanonical(writer, item);
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.String:
+                writer.WriteStringValue(value.GetString());
+                break;
+            case JsonValueKind.Number:
+                writer.WriteRawValue(value.GetRawText(), skipInputValidation: true);
+                break;
+            case JsonValueKind.True:
+                writer.WriteBooleanValue(true);
+                break;
+            case JsonValueKind.False:
+                writer.WriteBooleanValue(false);
+                break;
+            case JsonValueKind.Null:
+                writer.WriteNullValue();
+                break;
+            default:
+                throw new InvalidDataException("Test agent pack contains an unsupported JSON value.");
+        }
     }
 
     private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
@@ -95,7 +295,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    Assert.Fail($"Invoke stream returned {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
+                }
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 var builder = new StringBuilder();
@@ -199,6 +403,82 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
         Assert.True(orchestration.GetProperty("supervision_findings").GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task InvokeStream_FailsClosedWithWorkerUnavailableWhenFrozenRosterCannotCoverTask()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("""[{"task_key":"slides","title":"Create slides","description":"","success_criteria":["done"],"dependencies":[],"required_capabilities":["tool.presentation"],"required_tools":[],"priority":1,"risk":"low"}]""");
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "Create slides", client_message_id = "worker-unavailable" });
+
+        var error = chunks.Last(chunk => KindOf(chunk) is "done" or "error");
+        Assert.Equal("error", KindOf(error));
+        Assert.Equal("worker_unavailable", error.GetProperty("error_category").GetString());
+        Assert.Contains("No frozen execution specialist", error.GetProperty("safe_error_message").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InvokeStream_InjectsFrozenPromptIntoEveryRunnableRoleWithoutStartingDormantRoles()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var prompts = new RecordingPromptAssembler();
+        var factory = CreateFactory(script, promptAssembler: prompts);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行任务", client_message_id = "frozen-prompts" });
+
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+        Assert.Equal(new[] { "meeting", "supervisor", "task_planner", "worker.general" },
+            prompts.AgentIds.OrderBy(value => value, StringComparer.Ordinal).ToArray());
+        foreach (var agentId in prompts.AgentIds)
+        {
+            Assert.Contains(script.Instructions, instructions =>
+                instructions.Contains($"frozen-prompt:{agentId}", StringComparison.Ordinal));
+        }
+
+        var runId = RunIdOf(chunks[0]);
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage");
+        Assert.Equal(4, lineage!.Length);
+        Assert.DoesNotContain(lineage, instance => instance.GetProperty("role").GetString() is
+            "context_maintenance" or "capability_advisor" or "experience_curator" or "git_steward");
+
+        var session = await factory.Services.GetRequiredService<ISessionLocator>().FindAsync(sessionId);
+        Assert.NotNull(session);
+        Assert.True(session.ModeVersionId.HasValue);
+        var modeVersionId = session.ModeVersionId.Value;
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>()
+            .CreateDbContextAsync();
+        var modeVersion = await db.ModeVersions.AsNoTracking().SingleAsync(version => version.Id == modeVersionId);
+        using var modeDocument = JsonDocument.Parse(modeVersion.SnapshotJson!);
+        var versionIds = modeDocument.RootElement.GetProperty("nodes").EnumerateArray()
+            .Select(node => node.GetProperty("agent_version_id").GetGuid())
+            .ToArray();
+        var versions = await db.AgentVersions.AsNoTracking()
+            .Where(version => versionIds.Contains(version.Id))
+            .ToListAsync();
+        var expectedBySlug = versions.ToDictionary(
+            version => JsonDocument.Parse(version.SnapshotJson).RootElement.GetProperty("slug").GetString()!,
+            version => version,
+            StringComparer.Ordinal);
+        var instances = await factory.Services.GetRequiredService<IAgentInstanceService>().ListByRunAsync(runId);
+        AssertVersionBinding(Assert.Single(instances, instance => instance.Generated), expectedBySlug["worker.general"]);
+        AssertVersionBinding(Assert.Single(instances, instance => instance.Role == "quality_controller"), expectedBySlug["supervisor"]);
+    }
+
+    private static void AssertVersionBinding(RuntimeAgentInstance instance, AgentVersionRecord expected)
+    {
+        Assert.Equal(expected.AgentDefinitionId, instance.AgentDefinitionId);
+        Assert.Equal(expected.Id, instance.AgentVersionId);
+        Assert.Equal(expected.ContentHash, instance.AgentVersionContentHash);
     }
 
     [Fact]
@@ -646,12 +926,14 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private readonly string _root;
         private readonly ScriptedChatClient _client;
         private readonly bool _available;
+        private readonly IPromptAssembler? _promptAssembler;
 
-        public FullDuplexFactory(string root, ScriptedChatClient client, bool available)
+        public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler)
         {
             _root = root;
             _client = client;
             _available = available;
+            _promptAssembler = promptAssembler;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -667,6 +949,36 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             {
                 services.AddSingleton<IAgentChatClientFactory>(new ScriptedFactory(_client, _available));
                 services.AddSingleton<IToolManifestSnapshotResolver, EmptyToolManifestSnapshotResolver>();
+                if (_promptAssembler is not null) services.AddSingleton(_promptAssembler);
+            });
+        }
+    }
+
+    private sealed class RecordingPromptAssembler : IPromptAssembler
+    {
+        private readonly object _gate = new();
+        private readonly HashSet<string> _agentIds = new(StringComparer.Ordinal);
+
+        public IReadOnlyList<string> AgentIds
+        {
+            get { lock (_gate) return _agentIds.OrderBy(value => value, StringComparer.Ordinal).ToArray(); }
+        }
+
+        public Task<PromptAssemblyResult> AssembleAsync(
+            string agentId,
+            ContextPack? contextPack,
+            CancellationToken cancellationToken = default) =>
+            AssembleAsync(new FrozenPromptAssemblyRequest(agentId, contextPack), cancellationToken);
+
+        public Task<PromptAssemblyResult> AssembleAsync(
+            FrozenPromptAssemblyRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            lock (_gate) _agentIds.Add(request.AgentId);
+            return Task.FromResult(new PromptAssemblyResult
+            {
+                Instructions = $"frozen-prompt:{request.AgentId}",
+                FragmentIds = [$"test:{request.AgentId}"]
             });
         }
     }
@@ -715,6 +1027,13 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public Task? BeforeMeeting;
         public Task? BeforeWorker;
         public TaskCompletionSource? WorkerStarted;
+        private readonly object _instructionsGate = new();
+        private readonly List<string> _instructions = [];
+
+        public IReadOnlyList<string> Instructions
+        {
+            get { lock (_instructionsGate) return _instructions.ToArray(); }
+        }
 
         public ScriptedChatClient WhenPlanner(string script) { _planner = script; return this; }
         public ScriptedChatClient WhenWorker(string script) { _worker = script; return this; }
@@ -739,7 +1058,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         {
             var prompt = string.Join('\n', messages.Select(m => m.Text));
             var instructions = options?.Instructions;
-            var isPlanner = instructions?.Contains("规划层", StringComparison.Ordinal) == true
+            if (!string.IsNullOrWhiteSpace(instructions))
+            {
+                lock (_instructionsGate) _instructions.Add(instructions);
+            }
+            var isPlanner = instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
+                || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal);
             var isSupervisor = instructions?.Contains("监督智能体", StringComparison.Ordinal) == true
                 || prompt.Contains("执行证据", StringComparison.Ordinal);
@@ -757,7 +1081,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         /// <summary>Routes by prompt shape: the runtime's fixed Chinese scaffolding identifies the caller.</summary>
         private string RouteByPrompt(string prompt, string? instructions)
         {
-            if (instructions?.Contains("规划层", StringComparison.Ordinal) == true || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
+            if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
+                || instructions?.Contains("规划层", StringComparison.Ordinal) == true
+                || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
                 return RecordPlanner(_planner ?? "[]");
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";
@@ -783,6 +1109,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            if (!string.IsNullOrWhiteSpace(options?.Instructions))
+            {
+                lock (_instructionsGate) _instructions.Add(options.Instructions);
+            }
             var isMeeting = options?.Instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) ?? false;
             if (isMeeting)
             {

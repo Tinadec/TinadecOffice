@@ -1,9 +1,9 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-22
-**Last Updated By:** Codex (governance nonce, Git snapshots, user actions, and thin proxy closure)
-**Last Verified Commit:** 7d19eef
-**Branch:** DmaEA/MVP
+**Last Updated:** 2026-08-25
+**Last Updated By:** openai/gpt-5.6
+**Last Verified Commit:** daf2648
+**Branch:** main
 
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。
@@ -50,7 +50,8 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | 请求上下文 | `src/headers.ts`, `src/auth.ts` | 只处理请求 id、认证和租户头；授权事实由 Core 或 Tool Provider 产生 |
 | WebSocket 代理 | `src/websocket.ts` | 路由表，目标 URL 构建，消息透传 |
 | 流式 HTTP 代理 | `src/streaming.ts` | 大文件/日志流式透传 |
-| Model/Agent center BFF | `src/modelAgentCenter.ts` | 无状态聚合视图 |
+| Model/Agent 配置代理 | `src/index.ts` | 版本化 provider/route/Agent/Mode/Prompt/default 路径；旧 overview/runtime-binding 路由已删除。 |
+| Agent Pack 代理 | `src/index.ts`, `src/runtimeProxy.test.ts`, `tests/__snapshots__/openapi.external.json` | 四条显式薄代理；保留 ETag、`If-Match`、`Idempotency-Key` 和 Core ProblemDetails code。 |
 | Code tools 传输 | `src/index.ts`, `src/toolRuntimeClient.ts` | Desktop 工具目录代理 Core，用户执行请求原样转发 Tool Provider |
 | MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
 | 测试 | `src/coreClient.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
@@ -88,6 +89,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
+- `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/:packId`、`POST /api/v1/agent-packs/install-preview`、`PUT /api/v1/agent-packs/:packId` 是纯 Core 代理。Gateway 不解析 manifest、不重算 hash、不保存 preview/receipt；PUT 必须透传 `If-Match` 与 `Idempotency-Key`，读/preview/apply 必须保留 ETag。
 - 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
 
@@ -109,9 +111,9 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `/api/v1/governance/permission-requests` 及其 detail/decision、grant/delegation/lease 控制路由全部直接代理 Core；Gateway 不持有治理状态或内部 nonce。
 
 ### Model/Agent Center
-- `GET /api/v1/model-center/overview` 和 `GET /api/v1/agent-center/overview` 是无状态 BFF 聚合视图
-- 必须递归剥离 API Key 和其他密钥字段
-- 不持久化或发明第二真相源
+- 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview`、`PUT /api/v1/agents/:id/runtime-binding` 与 model-center refresh alias 已删除并返回 404。
+- Desktop 通过 Gateway 的版本化 provider/route/agent/mode/prompt/default/pack 路径自行组合视图；Gateway 不持久化或推导第二真相源。
+- 任何仍保留的 BFF/代理响应都必须递归剥离 API Key 和其他密钥字段。
 
 ### JWT 认证（云端模式）
 - `authenticate()` 是 **async**，`index.ts` 的 `onRequest` 中间件必须 `await` 它

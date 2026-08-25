@@ -89,6 +89,27 @@ public sealed record RuntimeAgentDefinition(
 
     /// <summary>Determines memory write policy for experience curators.</summary>
     public string MemoryWritePolicy { get; init; } = string.Empty;
+
+    /// <summary>Immutable formal-agent content captured before run admission.</summary>
+    public string SystemPrompt { get; init; } = string.Empty;
+
+    public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
+
+    public bool Enabled { get; init; } = true;
+
+    public int RosterOrder { get; init; }
+
+    public Guid? PromptPipelineId { get; init; }
+
+    public Guid? PromptVersionId { get; init; }
+
+    public string PromptVersionContentHash { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The immutable PromptVersion graph body. Keeping it in the frozen run document
+    /// prevents resume from observing a later prompt publication.
+    /// </summary>
+    public string PromptGraphJson { get; init; } = string.Empty;
 }
 
 public sealed record AgentRuntimeConfigurationSnapshot(

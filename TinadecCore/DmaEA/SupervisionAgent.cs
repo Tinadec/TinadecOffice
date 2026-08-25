@@ -57,6 +57,15 @@ public sealed class SupervisionAgent
     }
 
     public async Task<SupervisionVerdict> ReviewAsync(string userGoal, IReadOnlyList<PlannedTask> tasks, IReadOnlyList<StepResult> results, int revisionRound, CancellationToken ct)
+        => await ReviewAsync(userGoal, tasks, results, revisionRound, null, ct).ConfigureAwait(false);
+
+    public async Task<SupervisionVerdict> ReviewAsync(
+        string userGoal,
+        IReadOnlyList<PlannedTask> tasks,
+        IReadOnlyList<StepResult> results,
+        int revisionRound,
+        string? assembledInstructions,
+        CancellationToken ct)
     {
         var resolution = await _chatClients.ResolveChatAsync("chat", ct).ConfigureAwait(false);
         if (!resolution.IsAvailable)
@@ -75,7 +84,12 @@ public sealed class SupervisionAgent
                 "operation.supervisor",
                 "supervisor",
                 "Reviews execution evidence and emits a non-authoritative quality verdict.",
-                new ChatOptions { Instructions = SupervisionInstructions });
+                new ChatOptions
+                {
+                    Instructions = string.IsNullOrWhiteSpace(assembledInstructions)
+                        ? SupervisionInstructions
+                        : assembledInstructions.Trim() + "\n\n" + SupervisionInstructions
+                });
             var response = await agent.RunAsync(prompt, cancellationToken: ct).ConfigureAwait(false);
             LastUsage = Maf18RuntimeAdapter.NormalizeUsage(response.Usage);
             var verdict = TryParseVerdict(response.Text);

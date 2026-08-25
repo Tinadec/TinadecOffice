@@ -24,7 +24,24 @@ const CODE_MAP: Record<string, string> = {
   RUN_NOT_ACTIVE: 'conflict',
 };
 
-const ALLOWED_CODES = new Set(['invalid_request','context_conflict','model_not_configured','run_not_found','forbidden','conflict']);
+const ALLOWED_CODES = new Set([
+  'invalid_request',
+  'context_conflict',
+  'model_not_configured',
+  'run_not_found',
+  'forbidden',
+  'conflict',
+  'invalid_agent_pack_manifest',
+  'agent_pack_management_forbidden',
+  'agent_pack_version_hash_conflict',
+  'agent_pack_resource_conflict',
+  'agent_pack_revision_conflict',
+  'agent_pack_incompatible',
+  'agent_pack_not_found',
+  'agent_pack_owner_conflict',
+  'agent_pack_preview_stale',
+  'managed_resource_read_only',
+]);
 
 function normalizeCode(raw?: string | null): string {
   if (!raw) return 'conflict';

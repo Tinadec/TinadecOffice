@@ -11,7 +11,28 @@ public interface IPromptAssembler
         string agentId,
         ContextPack? contextPack,
         CancellationToken cancellationToken = default);
+
+    Task<PromptAssemblyResult> AssembleAsync(
+        FrozenPromptAssemblyRequest request,
+        CancellationToken cancellationToken = default) =>
+        AssembleAsync(request.AgentId, request.ContextPack, cancellationToken);
 }
+
+/// <summary>
+/// Immutable prompt inputs captured in a run configuration. Durable execution uses
+/// this request so a resumed run never reloads a mutable agent or prompt pipeline.
+/// </summary>
+public sealed record FrozenPromptAssemblyRequest(
+    string AgentId,
+    ContextPack? ContextPack,
+    string? SystemPrompt = null,
+    Guid? AgentVersionId = null,
+    string? AgentVersionContentHash = null,
+    Guid? PromptPipelineId = null,
+    Guid? PromptVersionId = null,
+    string? PromptVersionContentHash = null,
+    string? PromptGraphJson = null,
+    bool IncludeLiveFragments = false);
 
 public sealed class PromptAssemblyResult
 {

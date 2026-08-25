@@ -120,6 +120,109 @@ test('workspace governance routes stay stateless Core proxies and preserve If-Ma
   assert.deepEqual(JSON.parse(requests[5]!.body ?? ''), { default_agent_mode_id: 'mode-1' });
 });
 
+test('agent pack routes are stateless Core proxies and preserve install guards', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined; headers: Headers }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+      headers: new Headers(init?.headers),
+    });
+    return new Response(JSON.stringify({ status: 'up_to_date' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', etag: '"pack-revision-2"' },
+    });
+  }) as typeof fetch;
+
+  const envelope = { api_version: 'tinadec.io/agent-pack/v1alpha1', pack_id: 'tinadec.office.agent-pack' };
+  const encodedPackId = encodeURIComponent(envelope.pack_id);
+  const calls = [
+    new Request('http://gateway.local/api/v1/agent-packs'),
+    new Request(`http://gateway.local/api/v1/agent-packs/${encodedPackId}`),
+    new Request('http://gateway.local/api/v1/agent-packs/install-preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(envelope),
+    }),
+    new Request(`http://gateway.local/api/v1/agent-packs/${encodedPackId}`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'if-match': '"pack-revision-1"',
+        'idempotency-key': 'office-pack-0.1.0',
+      },
+      body: JSON.stringify({ envelope, preview_id: 'preview-1' }),
+    }),
+  ];
+
+  for (const call of calls) {
+    const response = await app.handle(call);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('etag'), '"pack-revision-2"');
+    assert.deepEqual(await response.json(), { status: 'up_to_date' });
+  }
+
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ['GET', 'http://127.0.0.1:48731/api/v1/agent-packs'],
+    ['GET', `http://127.0.0.1:48731/api/v1/agent-packs/${encodedPackId}`],
+    ['POST', 'http://127.0.0.1:48731/api/v1/agent-packs/install-preview'],
+    ['PUT', `http://127.0.0.1:48731/api/v1/agent-packs/${encodedPackId}`],
+  ]);
+  assert.deepEqual(JSON.parse(requests[2]!.body ?? ''), envelope);
+  assert.deepEqual(JSON.parse(requests[3]!.body ?? ''), { envelope, preview_id: 'preview-1' });
+  assert.equal(requests[3]!.headers.get('if-match'), '"pack-revision-1"');
+  assert.equal(requests[3]!.headers.get('idempotency-key'), 'office-pack-0.1.0');
+});
+
+test('agent pack routes preserve public RFC9457 error codes', { concurrency: false }, async () => {
+  const publicCodes = [
+    'invalid_agent_pack_manifest',
+    'agent_pack_management_forbidden',
+    'agent_pack_version_hash_conflict',
+    'agent_pack_resource_conflict',
+    'agent_pack_revision_conflict',
+    'agent_pack_incompatible',
+    'agent_pack_not_found',
+    'agent_pack_owner_conflict',
+    'agent_pack_preview_stale',
+    'managed_resource_read_only',
+  ];
+  let coreCode = publicCodes[0]!;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    type: `https://tinadec.dev/errors/${coreCode}`,
+    title: coreCode,
+    status: 409,
+    detail: 'Agent pack request failed.',
+    code: coreCode,
+    trace_id: 'trace-pack-conflict',
+  }), {
+    status: 409,
+    headers: { 'content-type': 'application/problem+json' },
+  })) as unknown as typeof fetch;
+
+  for (const code of publicCodes) {
+    coreCode = code;
+    const response = await app.handle(new Request('http://gateway.local/api/v1/agent-packs/install-preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ api_version: 'tinadec.io/agent-pack/v1alpha1' }),
+    }));
+
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get('content-type'), 'application/problem+json');
+    assert.deepEqual(await response.json(), {
+      type: `https://tinadec.dev/errors/${code}`,
+      title: code,
+      status: 409,
+      detail: 'Agent pack request failed.',
+      code,
+      instance: '/api/v1/agent-packs/install-preview',
+      trace_id: 'trace-pack-conflict',
+    });
+  }
+});
+
 test('governance control routes proxy decisions and grants without local authorization', { concurrency: false }, async () => {
   const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

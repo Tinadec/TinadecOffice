@@ -153,7 +153,21 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
             execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
             runtimeProfileId = relational.RuntimeProfileId;
-            bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.ModeVersionId, DeterministicGuid(relational.ModeVersionId + ":" + relational.VersionNumber), relational.TopologyHash ?? ""));
+            bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
+            foreach (var agent in relational.Operation.Concat(relational.Execution))
+            {
+                if (agent.AgentDefinitionId is { } definitionId && agent.AgentVersionId is { } versionId)
+                {
+                    bindings.Add(new RunConfigurationBinding("agent_version", definitionId, versionId, agent.VersionContentHash));
+                }
+                if (agent.PromptPipelineId is { } pipelineId && agent.PromptVersionId is { } promptVersionId)
+                {
+                    if (!bindings.Any(binding => binding.ConfigurationKind == "prompt_version" && binding.ConfigurationVersionId == promptVersionId))
+                    {
+                        bindings.Add(new RunConfigurationBinding("prompt_version", pipelineId, promptVersionId, agent.PromptVersionContentHash));
+                    }
+                }
+            }
         }
         else
         {
@@ -276,7 +290,15 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         AgentVersionId = e.AgentVersionId,
         VersionContentHash = e.VersionContentHash,
         AllowedTools = e.AllowedTools,
-        PromptProfile = e.PromptProfile
+        PromptProfile = e.PromptProfile,
+        SystemPrompt = e.SystemPrompt,
+        ModelStrategyJson = e.ModelStrategyJson,
+        Enabled = e.Enabled,
+        RosterOrder = e.RosterOrder,
+        PromptPipelineId = e.PromptPipelineId,
+        PromptVersionId = e.PromptVersionId,
+        PromptVersionContentHash = e.PromptVersionContentHash,
+        PromptGraphJson = e.PromptGraphJson
     };
 
     private static SpawnPolicy ReadSpawn(JsonElement root, SpawnPolicy fallback) => new(

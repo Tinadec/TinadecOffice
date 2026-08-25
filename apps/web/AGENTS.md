@@ -1,8 +1,15 @@
 # WEB APP KNOWLEDGE
 
+**Last Updated:** 2026-08-25
+**Last Updated By:** openai/gpt-5.6
+**Last Verified Commit:** daf2648
+**Branch:** main
+
 ## OVERVIEW
 Browser client that reuses the Electron desktop renderer verbatim. This package contains
 NO UI code. Vite aliases `@` to `../desktop/src` and compiles the desktop sources in place.
+That shared renderer includes the App-owned `OfficeAgentPack`; Web and Desktop therefore
+ship the same manifest bytes, version, and digest.
 
 The desktop renderer's only Electron coupling is the global `window.tinadec` object
 (defined by `apps/desktop/electron/preload.cjs`, typed in `apps/desktop/src/env.d.ts:105-197`).
@@ -35,6 +42,7 @@ apps/web/
 | Platform contract | `src/platform/webShim.ts` | Must satisfy every member of the `window.tinadec` type in `apps/desktop/src/env.d.ts`. |
 | Build/dev config | `vite.config.ts` | Port 5174 (5173 is reserved for desktop Vite). |
 | Backend wiring | `vite.config.ts` `server.proxy` | `/api`, `/docs`, `/ws` proxy to Gateway 48730 for same-origin dev. |
+| Shared Agent Pack | `../desktop/src/agentPacks/OfficeAgentPack/`, `../desktop/src/agentPacks/officeAgentPackBootstrap.ts` | Static renderer import; browser tabs coordinate preview/confirmation with `BroadcastChannel` and Web Locks, while Core PUT is final concurrency authority. |
 
 ## CONVENTIONS
 - `server.fs.allow` must include the REPO ROOT. Desktop deps (`@fontsource-variable/geist`,
@@ -57,10 +65,13 @@ apps/web/
   `SettingsPage.vue:168` throw immediately.
 - Listener registrations (`onChanged`, `onPanel*`, `onStatusNotification`) MUST return an
   unsubscribe function. Consumers store the return value and call it on unmount.
+- Production build verification must find `tinadec.office.agent-pack` and its fixed digest in
+  the emitted renderer bundle. Do not fetch the manifest from a filesystem path at runtime.
 
 ## FEATURE PARITY
 Available: chat, sessions/projects, task graph, approvals, context packs, event SSE,
-Model/Agent Center, Market, Settings, Debug Studio, Monaco code viewing.
+Model/Agent Center, OfficeAgentPack bootstrap/status, Market, Settings, Debug Studio,
+Monaco code viewing.
 
 Unavailable by design: terminal (see `docs/web-client.md` stage 2), desktop pets,
 detachable panel windows, native directory picker.

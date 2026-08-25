@@ -8,7 +8,7 @@ import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
-import { getModeVersionPref, getMeetingModelPref } from '@/lib/dispatchPref'
+import { getMeetingModelPref } from '@/lib/dispatchPref'
 
 const props = defineProps<{
   messages: MessageDto[]
@@ -48,7 +48,7 @@ function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'
   emit('send', {
     dispatch_mode: payload.dispatch_mode,
     target_run_id: payload.target_run_id ?? null,
-    mode_version_id: payload.mode_version_id ?? getModeVersionPref(),
+    mode_version_id: payload.mode_version_id ?? null,
     meeting_model: payload.meeting_model?.trim() || getMeetingModelPref() || null,
   } as never)
 }

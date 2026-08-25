@@ -192,6 +192,7 @@ internal sealed class DualLayerAgentOrchestrator : IAgentOrchestrator
                 AgentType = row.AgentType,
                 ModelRoutePurpose = body.TryGetProperty("model_route_purpose", out var r) ? r.GetString() : null,
                 SystemPrompt = body.TryGetProperty("system_prompt", out var p) ? p.GetString() : null,
+                Capabilities = body.TryGetProperty("capabilities", out var c) && c.ValueKind == JsonValueKind.Array ? c.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : [],
                 AllowedTools = body.TryGetProperty("allowed_tools", out var t) && t.ValueKind == JsonValueKind.Array ? t.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray() : [],
                 Enabled = row.Enabled
             });

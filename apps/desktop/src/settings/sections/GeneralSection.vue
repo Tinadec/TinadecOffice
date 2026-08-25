@@ -3,15 +3,13 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Save, ShieldCheck } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
-import { api, type AgentModeTopologyDto } from '@/api'
+import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
 import {
   getDispatchPref,
   getMeetingModelPref,
-  getModeVersionPref,
   setDispatchPref,
   setMeetingModelPref,
-  setModeVersionPref,
   type DispatchPref,
 } from '@/lib/dispatchPref'
 
@@ -19,8 +17,8 @@ import {
  * General section extracted from SettingsPage (D7.2).
  *
  * Owns: Gateway connection config (Electron appConfig IPC), dispatch
- * behavior preferences (localStorage via dispatchPref), and the default
- * mode-topology picker. No shared state with other settings sections.
+ * behavior preferences (localStorage via dispatchPref). Workspace defaults
+ * remain Core-owned and are managed from Agent Center.
  */
 const { t } = useI18n()
 const { items: notificationItems, notify, banner, status, confirm: dismissConfirm, dismiss: dismissNotification, dismissByKey } =
@@ -37,26 +35,11 @@ const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
 const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
-const modeVersionDraft = ref<string | null>(getModeVersionPref())
 const meetingModelDraft = ref<string>(getMeetingModelPref())
-const generalTopologies = ref<AgentModeTopologyDto[]>([])
-const generalTopologiesLoading = ref(false)
 
 async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
   gatewayUrlDraft.value = appConfig.value.gateway_url
-}
-
-async function loadGeneralTopologies(): Promise<void> {
-  generalTopologiesLoading.value = true
-  try {
-    const list = await api.listAgentModeTopologies()
-    generalTopologies.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
-  } catch {
-    /* ignore offline */
-  } finally {
-    generalTopologiesLoading.value = false
-  }
 }
 
 function normalizedGatewayDraft(): string {
@@ -152,12 +135,6 @@ function onEnterPrefChange(e: Event): void {
   setDispatchPref(v)
 }
 
-function onModeVersionChange(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value || null
-  modeVersionDraft.value = v
-  setModeVersionPref(v)
-}
-
 function onMeetingModelChange(v: string): void {
   meetingModelDraft.value = v
   setMeetingModelPref(v)
@@ -165,7 +142,6 @@ function onMeetingModelChange(v: string): void {
 
 onMounted(() => {
   void loadAppConfig()
-  void loadGeneralTopologies()
 })
 
 // Re-exported for template type inference only.
@@ -239,25 +215,6 @@ void dismissConfirm
         <div>
           <h3 id="dispatch-settings-title">{{ t('settings.dispatchBehavior') }}</h3>
           <p>{{ t('settings.dispatchBehaviorHint') }}</p>
-        </div>
-      </div>
-
-      <div class="gateway-config-field">
-        <UiLabel for="mode-version-pref">{{ t('settings.defaultModeTopology') }}</UiLabel>
-        <select
-          id="mode-version-pref"
-          class="settings-select"
-          :value="modeVersionDraft ?? ''"
-          :disabled="generalTopologiesLoading && generalTopologies.length === 0"
-          @change="onModeVersionChange"
-        >
-          <option value="">{{ t('settings.defaultModeTopologyFollow') }}</option>
-          <option v-for="m in generalTopologies" :key="m.id" :value="m.id">
-            {{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}
-          </option>
-        </select>
-        <div class="gateway-config-meta">
-          <span>{{ t('settings.defaultModeTopologyHint') }}</span>
         </div>
       </div>
 

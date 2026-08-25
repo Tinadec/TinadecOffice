@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
@@ -56,13 +57,34 @@ internal sealed class PromptAssembler : IPromptAssembler
     public async Task<PromptAssemblyResult> AssembleAsync(
         string agentId,
         ContextPack? contextPack,
+        CancellationToken cancellationToken = default) =>
+        await AssembleAsync(new FrozenPromptAssemblyRequest(
+            agentId,
+            contextPack,
+            IncludeLiveFragments: true), cancellationToken).ConfigureAwait(false);
+
+    public async Task<PromptAssemblyResult> AssembleAsync(
+        FrozenPromptAssemblyRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(request.AgentId)) throw new ArgumentException("Agent id is required.", nameof(request));
+        var agentId = request.AgentId.Trim();
+        var contextPack = request.ContextPack;
         var sections = new List<string> { ArchitectureBaseline(agentId) };
         var fragmentIds = new List<string> { "builtin:architecture-baseline" };
         var warnings = new List<string>();
         var budget = contextPack?.TokenBudget ?? 8192;
         var used = EstimateTokens(sections[0]);
+
+        if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
+        {
+            var systemPrompt = request.SystemPrompt.Trim();
+            sections.Add(systemPrompt);
+            used += EstimateTokens(systemPrompt);
+            fragmentIds.Add(request.AgentVersionId is { } agentVersionId
+                ? $"agent-version:{agentVersionId}:{request.AgentVersionContentHash}"
+                : $"agent:{agentId}:system-prompt");
+        }
         var runtimeProfile = contextPack?.Metadata.TryGetValue("runtime_profile_id", out var profileId) == true ? profileId : "unspecified";
         var applicationMode = contextPack?.Metadata.TryGetValue("application_mode", out var applicationModeId) == true ? applicationModeId : "conversation";
         var agentMode = contextPack?.Metadata.TryGetValue("agent_mode", out var agentModeId) == true ? agentModeId : "auto";
@@ -91,44 +113,67 @@ internal sealed class PromptAssembler : IPromptAssembler
         {
             warnings.Add("Agent profile could not fit in the configured context budget.");
         }
-        var scope = _tenant.Current;
-        Guid? targetAgentId = Guid.TryParse(agentId, out var parsedAgentId) ? parsedAgentId : null;
 
-        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var fragmentRows = await db.Fragments.AsNoTracking()
-            .Where(fragment => fragment.TenantId == scope.TenantId
-                && fragment.Enabled
-                && fragment.DeletedAt == null
-                && (fragment.WorkspaceId == null || fragment.WorkspaceId == scope.WorkspaceId)
-                && (fragment.TargetAgentId == null || fragment.TargetAgentId == targetAgentId))
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var fragments = fragmentRows
-            .OrderBy(fragment => CategoryOrder(fragment.Category))
-            .ThenByDescending(fragment => fragment.Priority)
-            .ThenBy(fragment => fragment.Key, StringComparer.Ordinal)
-            .ThenBy(fragment => fragment.Id)
-            .ToArray();
-
-        foreach (var fragment in fragments)
+        if (request.PromptVersionId is { } promptVersionId)
         {
-            var version = await db.Versions.AsNoTracking().SingleOrDefaultAsync(item => item.Id == fragment.CurrentVersionId, cancellationToken).ConfigureAwait(false);
-            if (version is null)
+            fragmentIds.Add($"prompt-version:{promptVersionId}:{request.PromptVersionContentHash}");
+            var templates = ReadPromptTemplates(request.PromptGraphJson, warnings);
+            if (templates.Count == 0)
             {
-                warnings.Add($"Prompt fragment '{fragment.Key}' has no current version.");
-                continue;
+                warnings.Add($"Prompt version '{promptVersionId}' contains no non-empty template content.");
             }
-
-            var text = await ReadTextAsync(version, cancellationToken).ConfigureAwait(false);
-            var tokens = EstimateTokens(text);
-            if (tokens > budget - used)
+            foreach (var template in templates)
             {
-                warnings.Add($"Prompt fragment '{fragment.Key}' was omitted because the context budget is exhausted.");
-                continue;
+                var tokens = EstimateTokens(template.Content);
+                if (tokens > budget - used)
+                {
+                    warnings.Add($"Prompt template '{template.Id}' was omitted because the context budget is exhausted.");
+                    continue;
+                }
+                sections.Add(template.Content);
+                fragmentIds.Add($"prompt-node:{promptVersionId}:{template.Id}");
+                used += tokens;
             }
+        }
 
-            sections.Add(text);
-            fragmentIds.Add(fragment.Id.ToString());
-            used += tokens;
+        if (request.IncludeLiveFragments)
+        {
+            var scope = _tenant.Current;
+            Guid? targetAgentId = Guid.TryParse(agentId, out var parsedAgentId) ? parsedAgentId : null;
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var fragmentRows = await db.Fragments.AsNoTracking()
+                .Where(fragment => fragment.TenantId == scope.TenantId
+                    && fragment.Enabled
+                    && fragment.DeletedAt == null
+                    && (fragment.WorkspaceId == null || fragment.WorkspaceId == scope.WorkspaceId)
+                    && (fragment.TargetAgentId == null || fragment.TargetAgentId == targetAgentId))
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var fragments = fragmentRows
+                .OrderBy(fragment => CategoryOrder(fragment.Category))
+                .ThenByDescending(fragment => fragment.Priority)
+                .ThenBy(fragment => fragment.Key, StringComparer.Ordinal)
+                .ThenBy(fragment => fragment.Id)
+                .ToArray();
+
+            foreach (var fragment in fragments)
+            {
+                var version = await db.Versions.AsNoTracking().SingleOrDefaultAsync(item => item.Id == fragment.CurrentVersionId, cancellationToken).ConfigureAwait(false);
+                if (version is null)
+                {
+                    warnings.Add($"Prompt fragment '{fragment.Key}' has no current version.");
+                    continue;
+                }
+                var text = await ReadTextAsync(version, cancellationToken).ConfigureAwait(false);
+                var tokens = EstimateTokens(text);
+                if (tokens > budget - used)
+                {
+                    warnings.Add($"Prompt fragment '{fragment.Key}' was omitted because the context budget is exhausted.");
+                    continue;
+                }
+                sections.Add(text);
+                fragmentIds.Add(fragment.Id.ToString());
+                used += tokens;
+            }
         }
 
         if (contextPack is not null)
@@ -151,16 +196,9 @@ internal sealed class PromptAssembler : IPromptAssembler
 
         const string runtimeConstraints = "Runtime constraints: only the meeting agent may produce direct user output. Do not claim an external action unless execution evidence confirms it. Respect Core-owned approval and tool policy.";
         var runtimeTokens = EstimateTokens(runtimeConstraints);
-        if (runtimeTokens <= budget - used)
-        {
-            sections.Add(runtimeConstraints);
-            fragmentIds.Add("builtin:runtime-constraints");
-            used += runtimeTokens;
-        }
-        else
-        {
-            warnings.Add("Runtime constraints could not fit in the configured context budget.");
-        }
+        sections.Add(runtimeConstraints);
+        fragmentIds.Add("builtin:runtime-constraints");
+        used += runtimeTokens;
 
         return new PromptAssemblyResult
         {
@@ -182,6 +220,46 @@ internal sealed class PromptAssembler : IPromptAssembler
     private static string ArchitectureBaseline(string agentId) =>
         $"TinadecOffice uses a Core-owned operation/execution agent harness. You are '{agentId}'. The meeting agent is the only formal user-facing agent; all other agents submit auditable evidence to Core.";
 
+    private static IReadOnlyList<PromptTemplate> ReadPromptTemplates(string? graphJson, ICollection<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(graphJson)) return [];
+        try
+        {
+            using var document = JsonDocument.Parse(graphJson);
+            if (!document.RootElement.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array) return [];
+            var result = new List<PromptTemplate>();
+            var index = 0;
+            foreach (var node in nodes.EnumerateArray())
+            {
+                index++;
+                var kind = String(node, "type") ?? String(node, "kind");
+                if (!string.Equals(kind, "template", StringComparison.OrdinalIgnoreCase)) continue;
+                var id = String(node, "id") ?? String(node, "node_key") ?? index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var content = TemplateContent(node);
+                if (!string.IsNullOrWhiteSpace(content)) result.Add(new PromptTemplate(id, content.Trim()));
+            }
+            return result;
+        }
+        catch (JsonException ex)
+        {
+            warnings.Add("Frozen prompt graph could not be parsed: " + ex.Message);
+            return [];
+        }
+    }
+
+    private static string? TemplateContent(JsonElement node)
+    {
+        foreach (var property in new[] { "content", "template", "text", "value" })
+            if (String(node, property) is { } direct) return direct;
+        if (node.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object)
+            foreach (var property in new[] { "content", "template", "text", "value" })
+                if (String(config, property) is { } nested) return nested;
+        return null;
+    }
+
+    private static string? String(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
     private static int CategoryOrder(string category) => category.Trim().ToLowerInvariant() switch
     {
         "mode_profile" or "mode" => 1,
@@ -191,4 +269,6 @@ internal sealed class PromptAssembler : IPromptAssembler
     };
 
     private static int EstimateTokens(string text) => Math.Max(1, (text.Length + 3) / 4);
+
+    private sealed record PromptTemplate(string Id, string Content);
 }

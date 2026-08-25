@@ -37,4 +37,7 @@ SQLite 适合本地部署；自托管云部署通过配置 PostgreSQL、ContentS
 
 - `TinadecTools.Generators` 继续是 TinadecTool 的 Analyzer/Source Generator，不参与 Core 打包，也不成为运行时依赖。
 - Gateway 只代理 Core API；它不读取 Core 数据库，也不负责 Core 包或工具授权。
+- `OfficeAgentPack` 是 TinadecOffice/TinadecApp 的构建产物，不进入 Core NuGet 或 `TinadecCore.Api` publish 目录。Core 包只携带通用 Agent Pack 契约、安装服务、持久化迁移和无 App 专业知识的 TOML fallback。
+- Desktop 与 Web 从同一 renderer 静态导入 `apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json`，生产构建必须包含 Pack ID 和固定 digest；不得在运行时依赖机器路径读取 manifest。
+- App 连接后把 bundled manifest 经公开 `/api/v1/agent-packs/*` 契约提交到当前工作区；不得通过复制文件到 Core 安装目录或直接写 Core 数据库完成“安装”。SQLite/PostgreSQL 的 Pack 表迁移属于 Core Runtime/API 交付物。
 - MAF `1.18.0` 的版本兼容性由 `DmaEA/Maf18RuntimeAdapter.cs` 和兼容测试门禁；升级不得改变 Contracts 包、事件或配置契约。

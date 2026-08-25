@@ -95,6 +95,8 @@ public static class AgentConfigurationEndpoints
             {
                 TenantId = t, WorkspaceId = w, DefaultAgentDefinitionId = input.DefaultAgentDefinitionId,
                 DefaultAgentModeId = input.DefaultAgentModeId, DefaultPromptPipelineId = input.DefaultPromptPipelineId,
+                DefaultAgentVersionId = input.DefaultAgentVersionId, DefaultModeVersionId = input.DefaultModeVersionId,
+                DefaultPromptVersionId = input.DefaultPromptVersionId,
                 Status = "draft", Revision = 1, CreatedAt = now, UpdatedAt = now
             };
             db.WorkspaceDefaults.Add(row);
@@ -106,6 +108,9 @@ public static class AgentConfigurationEndpoints
             row.DefaultAgentDefinitionId = input.DefaultAgentDefinitionId;
             row.DefaultAgentModeId = input.DefaultAgentModeId;
             row.DefaultPromptPipelineId = input.DefaultPromptPipelineId;
+            row.DefaultAgentVersionId = input.DefaultAgentVersionId;
+            row.DefaultModeVersionId = input.DefaultModeVersionId;
+            row.DefaultPromptVersionId = input.DefaultPromptVersionId;
             row.Status = "draft";
             row.Revision++;
             row.UpdatedAt = now;
@@ -134,6 +139,27 @@ public static class AgentConfigurationEndpoints
             return Results.BadRequest(new { code = "invalid_request", message = "default_agent_mode_id must reference a published mode." });
         if (row.DefaultPromptPipelineId is { } prompt && !await db.PromptPipelines.AnyAsync(x => x.Id == prompt && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
             return Results.BadRequest(new { code = "invalid_request", message = "default_prompt_pipeline_id must reference a published prompt pipeline." });
+        if (row.DefaultAgentDefinitionId is { } agentDefinition)
+        {
+            row.DefaultAgentVersionId ??= await db.AgentVersions.Where(x => x.AgentDefinitionId == agentDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published").OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+            if (row.DefaultAgentVersionId is not { } agentVersion || !await db.AgentVersions.AnyAsync(x => x.Id == agentVersion && x.AgentDefinitionId == agentDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+                return Results.BadRequest(new { code = "invalid_request", message = "default_agent_version_id must reference a published version of default_agent_definition_id." });
+        }
+        else if (row.DefaultAgentVersionId is not null) return Results.BadRequest(new { code = "invalid_request", message = "default_agent_version_id requires default_agent_definition_id." });
+        if (row.DefaultAgentModeId is { } modeDefinition)
+        {
+            row.DefaultModeVersionId ??= await db.ModeVersions.Where(x => x.AgentModeId == modeDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published").OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+            if (row.DefaultModeVersionId is not { } modeVersion || !await db.ModeVersions.AnyAsync(x => x.Id == modeVersion && x.AgentModeId == modeDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+                return Results.BadRequest(new { code = "invalid_request", message = "default_mode_version_id must reference a published version of default_agent_mode_id." });
+        }
+        else if (row.DefaultModeVersionId is not null) return Results.BadRequest(new { code = "invalid_request", message = "default_mode_version_id requires default_agent_mode_id." });
+        if (row.DefaultPromptPipelineId is { } promptDefinition)
+        {
+            row.DefaultPromptVersionId ??= await db.PromptVersions.Where(x => x.PromptPipelineId == promptDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published").OrderByDescending(x => x.Version).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+            if (row.DefaultPromptVersionId is not { } promptVersion || !await db.PromptVersions.AnyAsync(x => x.Id == promptVersion && x.PromptPipelineId == promptDefinition && x.TenantId == t && x.WorkspaceId == w && x.Status == "published", ct))
+                return Results.BadRequest(new { code = "invalid_request", message = "default_prompt_version_id must reference a published version of default_prompt_pipeline_id." });
+        }
+        else if (row.DefaultPromptVersionId is not null) return Results.BadRequest(new { code = "invalid_request", message = "default_prompt_version_id requires default_prompt_pipeline_id." });
         row.Status = "active";
         row.Revision++;
         row.UpdatedAt = DateTimeOffset.UtcNow;
@@ -168,6 +194,9 @@ public static class AgentConfigurationEndpoints
         default_agent_definition_id = row.DefaultAgentDefinitionId,
         default_agent_mode_id = row.DefaultAgentModeId,
         default_prompt_pipeline_id = row.DefaultPromptPipelineId,
+        default_agent_version_id = row.DefaultAgentVersionId,
+        default_mode_version_id = row.DefaultModeVersionId,
+        default_prompt_version_id = row.DefaultPromptVersionId,
         status = row.Status,
         revision = row.Revision,
         created_at = row.CreatedAt,
@@ -224,7 +253,7 @@ public static class AgentConfigurationEndpoints
         var rec = await db.AgentDefinitions.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == t && x.WorkspaceId == w, ct);
         return rec is null ? Results.NotFound(new { code = "not_found", message = "Agent not found" }) : Results.Ok(ToAgentDto(rec));
     }
-    static async Task<IResult> UpdateAgentDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> UpdateAgentDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var exp = IfMatch(req);
@@ -232,6 +261,7 @@ public static class AgentConfigurationEndpoints
         await using var db = await f.CreateDbContextAsync(ct);
         var rec = await db.AgentDefinitions.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == t && x.WorkspaceId == w, ct);
         if (rec is null) return Results.NotFound(new { code = "not_found" });
+        if (await packs.FindManagedResourceAsync("agent", id, ct) is { } managed) return ManagedReadOnly(managed);
         if (rec.Status == "archived") return Results.Conflict(new { code = "conflict", message = "Archived agent cannot be edited" });
         if (exp >= 0 && rec.Revision != exp) return Results.Json(new { code = "conflict", message = "Revision conflict" }, statusCode: 412);
         if (el.TryGetProperty("layer", out var l)) { AgentConfigurationService.ValidateLayer(l.GetString()!); rec.Layer = l.GetString()!.Trim().ToLowerInvariant(); }
@@ -249,13 +279,14 @@ public static class AgentConfigurationEndpoints
         try { await db.SaveChangesAsync(ct); } catch (DbUpdateConcurrencyException) { return Results.Json(new { code = "conflict", message = "Concurrent update" }, statusCode: 412); }
         return Results.Ok(ToAgentDto(rec));
     }
-    static async Task<IResult> PublishAgent(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> PublishAgent(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp = IfMatch(req);
         var (t, w, p) = Ctx(a);
         await using var db = await f.CreateDbContextAsync(ct);
         var rec = await db.AgentDefinitions.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == t && x.WorkspaceId == w, ct);
         if (rec is null) return Results.NotFound(new { code = "not_found" });
+        if (await packs.FindManagedResourceAsync("agent", id, ct) is { } managed) return ManagedReadOnly(managed);
         if (exp >= 0 && rec.Revision != exp) return Results.Json(new { code = "conflict", message = "Revision conflict" }, statusCode: 412);
         if (rec.Status == "archived") return Results.Conflict(new { code = "conflict", message = "Archived" });
         if (!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new { code = "not_draft", message = "Only a draft agent can be published." });
@@ -275,13 +306,14 @@ public static class AgentConfigurationEndpoints
         await db.SaveChangesAsync(ct);
         return Results.Ok(new { id = rec.Id, version = ver, revision = rec.Revision, snapshot = ToAgentDto(rec) });
     }
-    static async Task<IResult> ArchiveAgent(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> ArchiveAgent(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp = IfMatch(req);
         var (t, w, _) = Ctx(a);
         await using var db = await f.CreateDbContextAsync(ct);
         var rec = await db.AgentDefinitions.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == t && x.WorkspaceId == w, ct);
         if (rec is null) return Results.NotFound(new { code = "not_found" });
+        if (await packs.FindManagedResourceAsync("agent", id, ct) is { } managed) return ManagedReadOnly(managed);
         if (exp >= 0 && rec.Revision != exp) return Results.Json(new { code = "conflict", message = "Revision conflict" }, statusCode: 412);
         // block if referenced by published mode
         var referenced = await db.ModeNodes.AnyAsync(x => x.AgentDefinitionId == id && x.TenantId == t && x.WorkspaceId == w, ct);
@@ -366,17 +398,19 @@ public static class AgentConfigurationEndpoints
         var (t,w,_)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
-        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
-        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
+        if (!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
+        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
+        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
         var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w, ct);
         return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
-    static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var el=await JsonSerializer.DeserializeAsync<JsonElement>(req.Body,cancellationToken:ct);
         var exp=IfMatch(req); var (t,w,p)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("mode", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict",message="Revision conflict"},statusCode:412);
         if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
@@ -431,16 +465,18 @@ public static class AgentConfigurationEndpoints
             else { existing.LayoutJson=json; existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++; }
         }
     }
-    static async Task<IResult> PublishMode(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> PublishMode(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp=IfMatch(req); var (t,w,p)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("mode", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict",message="Revision conflict"},statusCode:412);
         var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
         var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w).ToListAsync(ct);
         // dual-lane validation
-        var opCount=nodes.Count(n=>n.Layer=="operation");
+        var agentDefinitions = await db.AgentDefinitions.AsNoTracking().Where(x => nodes.Select(n => n.AgentDefinitionId).Contains(x.Id) && x.TenantId == t && x.WorkspaceId == w).ToDictionaryAsync(x => x.Id, ct);
+        var opCount=nodes.Count(n=>n.Layer=="operation" && agentDefinitions.TryGetValue(n.AgentDefinitionId, out var definition) && definition.Slug=="meeting");
         var exCount=nodes.Count(n=>n.Layer=="execution");
         if(opCount==0) return Results.BadRequest(new{code="invalid_request",message="Mode must have at least one operation agent (meeting)"});
         if(exCount==0) return Results.BadRequest(new{code="invalid_request",message="Mode must have at least one execution agent"});
@@ -448,25 +484,63 @@ public static class AgentConfigurationEndpoints
         var byAgent=nodes.GroupBy(n=>n.AgentDefinitionId).Where(g=>g.Select(x=>x.Layer).Distinct().Count()>1).Select(g=>g.Key).ToArray();
         var warnings = new List<object>();
         if(byAgent.Length>0) warnings.Add(new{ code="CROSS_LAYER_REUSE", message="Same agent reused across operation and execution", agent_ids=byAgent });
-        // tool effective intersection per node
-        foreach(var node in nodes)
+        // Freeze exact AgentVersion/PromptVersion bindings. Runtime consumes only this snapshot.
+        var frozenNodes = new List<object>();
+        foreach(var node in nodes.OrderBy(n => n.NodeKey, StringComparer.Ordinal))
         {
-            var agentDef = await db.AgentDefinitions.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==node.AgentDefinitionId && x.TenantId==t && x.WorkspaceId==w, ct);
-            if(agentDef is null) continue;
+            if (!agentDefinitions.TryGetValue(node.AgentDefinitionId, out var agentDef) || agentDef.Status != "published")
+                return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey} must reference a published agent."});
+            var agentVersion = await db.AgentVersions.AsNoTracking().Where(x => x.AgentDefinitionId == agentDef.Id && x.Status == "published").OrderByDescending(x => x.Version).FirstOrDefaultAsync(ct);
+            if (agentVersion is null || string.IsNullOrWhiteSpace(agentVersion.ContentHash))
+                return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey} has no published immutable AgentVersion."});
             var agentTools = ParseTools(agentDef.ToolScopeJson);
             var modeTools = ParseTools(node.ConfigJson);
-            // if agent has "*", effective = modeTools or * (allow all)
             HashSet<string> effective;
             if (agentTools.Contains("*")) effective = modeTools.Count>0 ? new HashSet<string>(modeTools, StringComparer.OrdinalIgnoreCase) : new HashSet<string>(StringComparer.OrdinalIgnoreCase){ "*"};
             else if (modeTools.Count==0) effective = new HashSet<string>(agentTools, StringComparer.OrdinalIgnoreCase);
             else effective = new HashSet<string>(agentTools.Intersect(modeTools, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
             if (effective.Count==0)
                 warnings.Add(new{ code="EMPTY_EFFECTIVE_TOOLS", message=$"Node {node.NodeKey} has no effective tools after intersection", node_key=node.NodeKey, agent_id=node.AgentDefinitionId });
+            PromptVersionRecord? promptVersion = null;
+            if (agentDef.BasePromptPipelineId is { } promptPipelineId)
+                promptVersion = await db.PromptVersions.AsNoTracking().Where(x => x.PromptPipelineId == promptPipelineId && x.Status == "published").OrderByDescending(x => x.Version).FirstOrDefaultAsync(ct);
+            JsonElement config;
+            try { config = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(node.ConfigJson) ? "{}" : node.ConfigJson); }
+            catch { return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey} config is invalid JSON."}); }
+            frozenNodes.Add(new
+            {
+                node_key = node.NodeKey,
+                agent_definition_id = agentDef.Id,
+                agent_version_id = agentVersion.Id,
+                agent_version_hash = agentVersion.ContentHash,
+                layer = node.Layer,
+                label = node.Label,
+                config,
+                effective_tools = effective.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                prompt_pipeline_id = agentDef.BasePromptPipelineId,
+                prompt_version_id = promptVersion?.Id,
+                prompt_version_hash = promptVersion?.ContentHash
+            });
         }
         string? warning=null;
         if(warnings.Count>0) warning=JsonSerializer.Serialize(warnings);
-        // freeze snapshot
-        var snapshot=JsonSerializer.Serialize(new{ nodes=nodes.Select(n=>new{ n.NodeKey, n.AgentDefinitionId, n.Layer}), edges=edges.Select(e=>new{e.EdgeKey, e.SourceNodeKey, e.TargetNodeKey})});
+        var frozenEdges = edges.OrderBy(e => e.EdgeKey, StringComparer.Ordinal).Select(e => new
+        {
+            edge_key = e.EdgeKey,
+            source_node_key = e.SourceNodeKey,
+            target_node_key = e.TargetNodeKey,
+            condition = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(e.ConditionJson) ? "{}" : e.ConditionJson)
+        }).ToArray();
+        var layout = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
+        var canvasLayout = JsonSerializer.Deserialize<JsonElement>(layout?.LayoutJson ?? "{}");
+        var snapshot=JsonSerializer.Serialize(new
+        {
+            schema = "tinadec.mode_version/v1",
+            mode = new { id = rec.Id, slug = rec.Slug, display_name = rec.DisplayName },
+            nodes = frozenNodes,
+            edges = frozenEdges,
+            canvas_layout = canvasLayout
+        });
         var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(snapshot))).ToLowerInvariant();
         var ver=(await db.ModeVersions.Where(x=>x.AgentModeId==id).MaxAsync(x=>(int?)x.Version, ct)??0)+1;
         db.ModeVersions.Add(new ModeVersionRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, AgentModeId=id, Version=ver, SnapshotJson=snapshot, TopologyHash=hash, WarningJson=warning, Status="published", Revision=1, CreatedAt=DateTimeOffset.UtcNow, CreatedByPrincipalId=p});
@@ -474,11 +548,12 @@ public static class AgentConfigurationEndpoints
         await db.SaveChangesAsync(ct);
         return Results.Ok(new{ id=rec.Id, version=ver, revision=rec.Revision, topology_hash=hash, warning= warning!=null? JsonSerializer.Deserialize<JsonElement>(warning): (JsonElement?)null });
     }
-    static async Task<IResult> ArchiveMode(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> ArchiveMode(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp=IfMatch(req); var (t,w,_)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("mode", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict"},statusCode:412);
         rec.Status="archived"; rec.ArchivedAt=DateTimeOffset.UtcNow; rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct); return Results.Ok(ToModeDto(rec));
@@ -525,12 +600,13 @@ public static class AgentConfigurationEndpoints
         var rec=await db.PromptPipelines.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         return rec is null? Results.NotFound(new{code="not_found"}): Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, graph=JsonSerializer.Deserialize<JsonElement>(rec.GraphJson), status=rec.Status, revision=rec.Revision, version=rec.Version, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
-    static async Task<IResult> UpdatePipelineDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> UpdatePipelineDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var el=await JsonSerializer.DeserializeAsync<JsonElement>(req.Body,cancellationToken:ct);
         var exp=IfMatch(req); var (t,w,p)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.PromptPipelines.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("prompt_pipeline", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict"},statusCode:412);
         if(!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft prompt pipeline can be published."});
         if(el.TryGetProperty("display_name",out var n)) rec.DisplayName=n.GetString()??rec.DisplayName;
@@ -540,11 +616,12 @@ public static class AgentConfigurationEndpoints
         rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow; rec.UpdatedByPrincipalId=p; rec.Status="draft";
         await db.SaveChangesAsync(ct); return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, graph=JsonSerializer.Deserialize<JsonElement>(rec.GraphJson), status=rec.Status, revision=rec.Revision});
     }
-    static async Task<IResult> PublishPipeline(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> PublishPipeline(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp=IfMatch(req); var (t,w,p)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.PromptPipelines.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("prompt_pipeline", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict"},statusCode:412);
         var gerr = ValidatePromptGraph(rec.GraphJson);
         if (gerr is not null) return Results.BadRequest(new{ code="invalid_request", message=gerr });
@@ -568,11 +645,12 @@ public static class AgentConfigurationEndpoints
         rec.Version=ver; rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow; rec.Status="published";
         await db.SaveChangesAsync(ct); return Results.Ok(new{ id=rec.Id, version=ver, revision=rec.Revision, content_hash=hash});
     }
-    static async Task<IResult> ArchivePipeline(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+    static async Task<IResult> ArchivePipeline(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var exp=IfMatch(req); var (t,w,_)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.PromptPipelines.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
+        if (await packs.FindManagedResourceAsync("prompt_pipeline", id, ct) is { } managed) return ManagedReadOnly(managed);
         if(exp>=0 && rec.Revision!=exp) return Results.Json(new{code="conflict"},statusCode:412);
         rec.Status="archived"; rec.ArchivedAt=DateTimeOffset.UtcNow; rec.Revision++; rec.UpdatedAt=DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct); return Results.Ok(new{ id=rec.Id, status=rec.Status, revision=rec.Revision});
@@ -791,4 +869,10 @@ public static class AgentConfigurationEndpoints
 
     static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, layer=r.Layer, role=r.Role, capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
     static object ToModeDto(AgentModeRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, description=r.Description, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+
+    static IResult ManagedReadOnly(AgentPackManagedResource managed) => throw new AgentPackDomainException(
+        StatusCodes.Status409Conflict,
+        "managed_resource_read_only",
+        "Pack-managed resource is read-only",
+        $"Pack '{managed.PackId}' manages {managed.ResourceKind} '{managed.ResourceKey}' ({managed.LogicalEntityId}). Clone it before customizing.");
 }

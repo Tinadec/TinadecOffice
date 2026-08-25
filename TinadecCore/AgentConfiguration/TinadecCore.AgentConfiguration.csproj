@@ -16,4 +16,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
+  </ItemGroup>
+
 </Project>

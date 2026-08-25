@@ -274,11 +274,11 @@ POST /api/v1/user/tool-actions/{actionId}/snapshot-override
 - `WorkspaceDefaults`：默认 agent/mode/prompt 的引用，发布前引用必须指向已发布版本。
 - `AgentRuntimeInstance`：run 内实例；展示 parent、generation depth、AgentVersion 和 frozen hash，不允许修改已运行实例。
 
-#### 默认 Git 拓扑
+#### Office Pack Git 拓扑
 
-当前 TOML 与 DevSeed 已同时提供以下两个正式角色，Desktop 的 Agent Center 必须按职责拆开展示，不能因为它们都与 Git 有关就合并成一个“Git Agent”：
+`OfficeAgentPack` 发布以下两个正式角色；Core DevSeed 不再写入 Office Agent/Prompt/Mode/defaults。Desktop 的 Agent Center 必须按职责拆开展示，不能因为它们都与 Git 有关就合并成一个“Git Agent”：
 
-- 治理层 `git_steward`：审阅 diff、组织提交计划、提出审批建议；默认工具集合为空，不直接 stage、commit、push 或改写历史。
+- 治理层 `git_steward`：审阅 diff、组织提交计划、提出审批建议；默认工具集合为空，不直接 stage、commit、push 或改写历史。本期仅安装并冻结，不创建运行实例或参与事件。
 - 执行层 `worker.git`：持有 Git 专业提示词和 Git 工具范围，负责执行 Core 已授权的 `status/diff/stage/unstage/commit/push/fetch/pull/branch/checkout/worktree/merge/rebase/conflict` 动作。
 
 Agent Center 应显示每个角色的 layer、已发布 AgentVersion、内容 hash、model strategy、prompt profile、声明工具、Mode 节点工具范围和当前 Tool Provider manifest 三者的有效交集。`git_steward` 没有直接工具是设计结果，不是配置错误；`worker.git` 的某个工具不在实时 manifest 时应显示“当前 provider 不可用”，不能由 Desktop 补回。用户在 Git 面板发起的写操作仍是当前用户的 UserToolAction，不冒充 `worker.git`，也不创建伪造 run。
@@ -311,6 +311,11 @@ GET      /api/v1/workspace-defaults
 PUT      /api/v1/workspace-defaults/draft
 POST     /api/v1/workspace-defaults/publish
 POST     /api/v1/workspace-defaults/archive
+
+GET      /api/v1/agent-packs
+GET      /api/v1/agent-packs/{pack_id}
+POST     /api/v1/agent-packs/install-preview
+PUT      /api/v1/agent-packs/{pack_id}
 ```
 
 **UI 规则**：
@@ -319,7 +324,10 @@ POST     /api/v1/workspace-defaults/archive
 - 展示 `operation`/`execution`，不要在新 UI 使用 `planning` 作为层名称。
 - 发布后版本不可变；已有 run 继续使用 frozen Agent/Mode/Prompt，不能因热更新漂移。
 - Mode canvas 允许拖拽，但发布前由 Core 校验层、节点引用、工具交集、Prompt 图和 meeting 唯一性。
-- Core 只内置最小治理/通用角色；专业 Agent Pack 以后由签名本地导入，不在 Desktop 里直接写入 profile。
+- Core 只保留最小通用运行基线；专业 Agent Pack 属于具体 TinadecApp。TinadecOffice 以构建期静态 manifest 携带 `OfficeAgentPack`，连接后先向 Core preview，再经用户确认和 Gateway 薄代理安装，Desktop 不直接写 profile 或 Core 数据库。
+- Pack 首版以 canonical SHA-256、固定 owner、当前 workspace owner 授权和审计建立完整性边界；数字签名与组织信任库后置。Pack-managed Agent/Mode/Prompt 只读，定制入口是 clone。
+- Agent Center 顶部状态条展示 bundled/installed 版本、managed/read-only、检查/安装/升级/重试与 clone。General 页面不持有默认 topology；WorkspaceDefaults 只从 Core 读取。
+- connected bootstrap 只在主 renderer 运行；Electron child/pet/debug 跳过，Web 多标签用 `BroadcastChannel`/Web Locks 协调。拒绝只在当前生命周期去重，失败不阻塞工作台；Retry 必须重新 preview，变化后重新确认。
 - Desktop 不再调用旧的 flat `PUT /agents/{id}` 或 `PUT /agents/{id}/mode` 保存配置；正式写路径只使用 draft/publish/archive 和不可变 version 契约。
 
 #### 演化候选
@@ -600,6 +608,9 @@ create action
 | 401/403 | 显示身份、租户或权限范围错误；不自动扩大权限。 |
 | 404 | 显示资源不存在并刷新当前列表；不回退到旧路由。 |
 | 409 / `conflict`、`context_conflict`、`workspace_conflict` | 显示两侧 hash/revision/conflicts，要求重新读取；不要静默覆盖。 |
+| Pack `invalid_agent_pack_manifest` / `agent_pack_incompatible` | 显示 Core 校验详情，不尝试在 Desktop 修补 manifest。 |
+| Pack `agent_pack_management_forbidden` | 显示需要当前 workspace owner，不弹安装确认或尝试 PUT。 |
+| Pack hash/resource/revision conflict | 保留工作台，显示持久 Retry；重新 preview 后才允许再次确认和安装。 |
 | 412 | ETag/版本过期，刷新 draft 后让用户合并。 |
 | 422 | 显示 Core schema 校验错误，不在客户端猜字段。 |
 | 429 | 按 Retry-After 查询同一 id/action，不重复创建。 |
@@ -641,7 +652,8 @@ create action
 - [ ] 独立 supervision user-review decision API（continue/correct/cancel）。
 - [ ] Git snapshot detail DTO（HEAD/branch/index/tree/worktree/patch/conflict paths）。
 - [ ] Workspace restore 纳入 UserToolAction 治理闭环（如果产品策略要求）。
-- [ ] Agent Pack 信任库、签名导入、脱敏/评测/canary/激活/撤销流水线。
+- [x] 首方 bundled Agent Pack 的 owner+hash+用户确认安装、托管只读和版本冻结。
+- [ ] Agent Pack 数字签名/组织信任库、市场分发、脱敏/评测/canary/撤销流水线。
 - [ ] PostgreSQL、多实例恢复扫描、远程 Tool Provider 和 OIDC 的 Desktop 诊断。
 - [ ] ACP `permission.request` 接入同一治理状态机；在此之前保持 fail-closed。
 
@@ -659,10 +671,10 @@ Desktop Agent 遇到以下缺口时应停止猜测接口，先补 Core/Gateway �
 8. Desktop 旧治理输入 DTO 与 Core 当前 subject/claim/scope/expiry/uses/parent grant 契约不一致，必须先替换。
 9. 无 run 的 queued interaction 尚未持久化，且 Gateway 缺 `GET /sessions/{id}/interactions` 代理；需要耐久队列后才能提供跨重启编辑、改派和取消。
 10. Gateway 当前代理 `/sessions/{sessionId}/interactions/{interactionId}/stream`，但 Core 没有该 endpoint。获得 `run_id` 后应以 `/runs/{runId}/stream` 为唯一流；删除或实现悬空代理时直接更新 v1，不保留别名。
-11. Core 同时还映射了旧 flat Agent control-plane 写入口；正式配置服务完成后应删除冲突入口，并同步 Gateway/Desktop，只保留版本化 draft/publish/archive 契约。
+11. ~~Core 同时还映射了旧 flat Agent control-plane 写入口；正式配置服务完成后应删除冲突入口，并同步 Gateway/Desktop，只保留版本化 draft/publish/archive 契约。~~ 已完成（2026-08-25）：flat Agent 写入口删除，版本化配置接口是唯一公开事实源。
 12. ~~Desktop Settings 仍依赖已经 404 的 model-center/agent-center overview 和 runtime-binding；应迁移到正式 provider/route/configuration API，并删除 Gateway 的 model-center refresh 别名。~~ 已完成（2026-08-23）：两个中心改读版本化 API（模型中心客户端聚合 providers/templates/routes/acp/readiness；智能体模型策略走 draft/publish），Gateway 别名与废弃客户端已删除。
 13. model readiness/catalog readiness 与 prompt fragment 高级操作仍为 skeleton/501；需要真实 Core 服务后再开放，不在 Desktop 根据空数据生成“健康”或“发布成功”。
-14. Core 当前同时注册了两组 `GET /agents`，请求可能发生 ambiguous match；`agent-candidates` 也存在重复/重叠模板。先收口为版本化配置与候选流水线的唯一 v1 路由，再接 Agent Center，不能在 Desktop 用重试或另一条别名掩盖服务端冲突。
+14. `GET /agents` 的重复注册已于 2026-08-25 收口；`agent-candidates` 仍存在重复/重叠模板，候选流水线在 Core 统一前不能由 Desktop 用重试或别名掩盖。
 15. Core 的 run stream、legacy invoke stream 和全局 events 实际返回 SSE，但 OpenAPI 未完整声明 `text/event-stream` 及事件 schema；修复事实源后再生成 Gateway/Desktop 类型。
 
 ## 11. 测试与验收矩阵

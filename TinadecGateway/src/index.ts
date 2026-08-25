@@ -30,6 +30,14 @@ import { mapTaskNodes } from './mappers/taskNodeMapper.js';
 import { mapContextVersions } from './mappers/contextVersionMapper.js';
 import { validateInvokeStreamBody, toCoreInvokeStreamBody } from './mappers/invokeStreamMapper.js';
 import { mapCoreErrorToExternal, toProblemDetails } from './mappers/errorMapper.js';
+import {
+  agentPackApplyHeaderParameters,
+  agentPackApplyRequestBody,
+  agentPackEnvelopeRequestBody,
+  agentPackJsonResponse,
+  agentPackOpenApiSchemas,
+  agentPackProblemResponse,
+} from './agentPackOpenApi.js';
 
 const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
@@ -78,6 +86,8 @@ function forwardHeaders(request: Request): Record<string, string> {
   };
   const ifMatch = request.headers.get('if-match') ?? request.headers.get('If-Match');
   if (ifMatch) existing['if-match'] = ifMatch;
+  const idempotencyKey = request.headers.get('idempotency-key') ?? request.headers.get('Idempotency-Key');
+  if (idempotencyKey) existing['idempotency-key'] = idempotencyKey;
   for (const name of ['x-tenant-id', 'x-user-id']) {
     const value = request.headers.get(name);
     if (value) existing[name] = value;
@@ -113,7 +123,10 @@ const app = new Elysia()
       info: { title: 'Tinadec Gateway External API', version: 'v1', description: 'Stateless gateway facade – all snake_case, RFC9457 ProblemDetails, full-duplex SSE' },
       tags: [
         { name: 'Projects' }, { name: 'Sessions' }, { name: 'Messages' }, { name: 'Runs' }, { name: 'Health' }, { name: 'ModelCenter' }, { name: 'AgentCenter' }, { name: 'Agents' }, { name: 'Interactions' }, { name: 'PromptPipelines' }, { name: 'Tools' }, { name: 'System' }
-      ]
+      ],
+      // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
+      // assignable to openapi-types' narrower SchemaObject declaration.
+      components: { schemas: agentPackOpenApiSchemas as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -147,7 +160,7 @@ const app = new Elysia()
       const requestHeaders = request.headers.get('access-control-request-headers');
       if (requestMethod) corsHeaders['access-control-allow-methods'] = requestMethod;
       if (requestHeaders) corsHeaders['access-control-allow-headers'] = requestHeaders;
-      else corsHeaders['access-control-allow-headers'] = 'accept, content-type, authorization, x-api-key, x-tenant-id, x-user-id, x-request-id, x-tinadec-principal, last-event-id';
+      else corsHeaders['access-control-allow-headers'] = 'accept, content-type, authorization, x-api-key, x-tenant-id, x-user-id, x-request-id, x-tinadec-principal, idempotency-key, if-match, last-event-id';
       corsHeaders['access-control-max-age'] = '86400';
       set.headers = { ...set.headers, ...corsHeaders };
       set.status = 204;
@@ -1237,6 +1250,97 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List application modes (TOML baseline)', tags: ['AgentCenter'] } })
+  .get('/api/v1/agent-packs', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/agent-packs', { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agent-packs'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'List installed agent packs',
+      tags: ['AgentCenter'],
+      responses: {
+        200: agentPackJsonResponse('AgentPackInstallationList', 'Installed agent packs in the current workspace.'),
+        401: agentPackProblemResponse('Authentication is required.'),
+        502: agentPackProblemResponse('Core is unavailable or returned an invalid response.'),
+      },
+    },
+  })
+  .get('/api/v1/agent-packs/:packId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const packId = encodeURIComponent((params as { packId: string }).packId);
+    const path = `/api/v1/agent-packs/${packId}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Get installed agent pack',
+      tags: ['AgentCenter'],
+      responses: {
+        200: agentPackJsonResponse('AgentPackInstallationDetail', 'Installed agent pack detail.', true),
+        401: agentPackProblemResponse('Authentication is required.'),
+        404: agentPackProblemResponse('agent_pack_not_found'),
+        502: agentPackProblemResponse('Core is unavailable or returned an invalid response.'),
+      },
+    },
+  })
+  .post('/api/v1/agent-packs/install-preview', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/agent-packs/install-preview';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Preview agent pack installation',
+      tags: ['AgentCenter'],
+      requestBody: agentPackEnvelopeRequestBody,
+      responses: {
+        200: agentPackJsonResponse('AgentPackInstallPreview', 'Install or upgrade preview valid for 15 minutes.', true),
+        400: agentPackProblemResponse('invalid_agent_pack_manifest'),
+        401: agentPackProblemResponse('Authentication is required.'),
+        403: agentPackProblemResponse('agent_pack_management_forbidden'),
+        409: agentPackProblemResponse('agent_pack_version_hash_conflict, agent_pack_resource_conflict, or agent_pack_owner_conflict'),
+        422: agentPackProblemResponse('agent_pack_incompatible'),
+        502: agentPackProblemResponse('Core is unavailable or returned an invalid response.'),
+      },
+    },
+  })
+  .put('/api/v1/agent-packs/:packId', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const packId = encodeURIComponent((params as { packId: string }).packId);
+    const path = `/api/v1/agent-packs/${packId}`;
+    const result = await proxyJson(path, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: {
+      summary: 'Install or upgrade agent pack',
+      tags: ['AgentCenter'],
+      parameters: agentPackApplyHeaderParameters(),
+      requestBody: agentPackApplyRequestBody,
+      responses: {
+        200: agentPackJsonResponse('AgentPackApplyResult', 'Pack updated, already current, or newer than the bundled version.', true),
+        201: agentPackJsonResponse('AgentPackApplyResult', 'Pack installed.', true),
+        400: agentPackProblemResponse('invalid_agent_pack_manifest'),
+        401: agentPackProblemResponse('Authentication is required.'),
+        403: agentPackProblemResponse('agent_pack_management_forbidden'),
+        409: agentPackProblemResponse('agent_pack_version_hash_conflict, agent_pack_resource_conflict, or agent_pack_owner_conflict'),
+        412: agentPackProblemResponse('agent_pack_revision_conflict or agent_pack_preview_stale'),
+        422: agentPackProblemResponse('agent_pack_incompatible'),
+        502: agentPackProblemResponse('Core is unavailable or returned an invalid response.'),
+      },
+    },
+  })
   .get('/api/v1/agent-modes', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();

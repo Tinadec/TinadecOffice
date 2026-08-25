@@ -1,3 +1,5 @@
+import type { AgentPackEnvelope } from '@/agentPacks/OfficeAgentPack'
+
 export interface ProjectDto {
   id: string;
   name: string;
@@ -839,11 +841,96 @@ export interface AgentDefinitionDto {
 export interface WorkspaceDefaultsDto {
   id?: string;
   default_agent_id?: string | null;
+  default_agent_definition_id?: string | null;
+  default_agent_version_id?: string | null;
   default_agent_mode_id?: string | null;
+  default_mode_version_id?: string | null;
   default_prompt_pipeline_id?: string | null;
+  default_prompt_version_id?: string | null;
   status?: string;
   revision?: number | null;
   etag?: string | null;
+}
+
+export type AgentPackPreviewAction =
+  | 'install'
+  | 'upgrade'
+  | 'up_to_date'
+  | 'newer_installed'
+  | 'conflict'
+  | string
+
+export interface AgentPackResourceCountsDto {
+  agents: number
+  prompt_pipelines: number
+  modes: number
+  created?: number
+  adopted?: number
+  reused?: number
+  updated?: number
+}
+
+export interface AgentPackDto {
+  pack_id: string
+  owner: string
+  product_id?: string | null
+  name?: string | null
+  status: string
+  active_version: string | null
+  integrity_digest: string | null
+  revision: number
+  installed_at: string
+  updated_at: string
+  etag?: string | null
+}
+
+export interface AgentPackInstallPreviewDto {
+  preview_id: string | null
+  pack_id: string
+  owner: string
+  action: AgentPackPreviewAction
+  bundled_version: string
+  installed_version: string | null
+  integrity_digest: string
+  revision: number
+  etag?: string | null
+  expires_at: string | null
+  counts: AgentPackResourceCountsDto
+  resources?: AgentPackResourceBindingDto[]
+  defaults_will_adopt?: boolean
+  required_core_version: string | null
+  current_core_version: string
+  differences?: string[]
+  warnings: string[]
+}
+
+export interface AgentPackResourceBindingDto {
+  kind: 'agent' | 'prompt_pipeline' | 'mode' | string
+  resource_key: string
+  logical_entity_id: string | null
+  version_id: string | null
+  content_hash: string | null
+  disposition: 'created' | 'adopted' | 'reused' | 'updated' | 'conflict' | string
+}
+
+export interface AgentPackDetailDto extends AgentPackDto {
+  versions: Array<Record<string, unknown>>
+  resources: AgentPackResourceBindingDto[]
+}
+
+export interface AgentPackInstallResultDto {
+  status: 'installed' | 'updated' | 'up_to_date' | 'newer_installed' | string
+  pack_id: string
+  owner: string
+  active_version: string
+  integrity_digest: string
+  revision: number
+  counts: AgentPackResourceCountsDto
+  resources?: AgentPackResourceBindingDto[]
+  defaults_adopted?: boolean
+  installed_at: string
+  updated_at: string
+  etag?: string | null
 }
 
 export interface AgentVersionDto {
@@ -1389,7 +1476,12 @@ export interface OrchestrationSnapshotDto {
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface JsonRequestResult<T> {
+  data: T
+  headers: Headers
+}
+
+async function requestResult<T>(path: string, init?: RequestInit): Promise<JsonRequestResult<T>> {
   let response: Response;
   try {
     response = await fetch(`${gatewayUrl}${path}`, {
@@ -1427,7 +1519,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw Object.assign(new Error(message), { code, status: response.status });
   }
 
-  return data as T;
+  return { data: data as T, headers: response.headers };
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await requestResult<T>(path, init)).data;
+}
+
+function withResponseEtag<T extends { etag?: string | null }>(result: JsonRequestResult<T>): T {
+  const etag = result.headers.get('etag')
+  return etag ? { ...result.data, etag } : result.data
 }
 
 function extractErrorMessage(data: unknown, fallback: string): string {
@@ -1629,6 +1730,24 @@ export const api = {
   publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
   archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   getWorkspaceDefaults: () => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults'),
+  listAgentPacks: () => request<AgentPackDto[]>('/api/v1/agent-packs'),
+  getAgentPack: async (packId: string) => withResponseEtag(await requestResult<AgentPackDetailDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`)),
+  previewAgentPackInstall: async (envelope: AgentPackEnvelope) => withResponseEtag(await requestResult<AgentPackInstallPreviewDto>('/api/v1/agent-packs/install-preview', {
+    method: 'POST',
+    body: JSON.stringify(envelope),
+  })),
+  installAgentPack: async (
+    packId: string,
+    input: { preview_id: string; envelope: AgentPackEnvelope },
+    options: { if_match?: string | null; idempotency_key: string },
+  ) => withResponseEtag(await requestResult<AgentPackInstallResultDto>(`/api/v1/agent-packs/${encodeURIComponent(packId)}`, {
+    method: 'PUT',
+    headers: {
+      ...(options.if_match ? { 'if-match': options.if_match } : {}),
+      'idempotency-key': options.idempotency_key,
+    },
+    body: JSON.stringify(input),
+  })),
   listAgentVersions: (id: string) => request<AgentVersionDto[]>(`/api/v1/agents/${encodeURIComponent(id)}/versions`),
   getAgentVersion: (id: string, versionId: string) => request<AgentVersionDto>(`/api/v1/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`),
   // agent-modes topology

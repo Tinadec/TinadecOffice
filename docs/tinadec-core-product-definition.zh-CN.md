@@ -98,7 +98,7 @@ TinadecOffice 是产品族，不是必须整体安装的单体应用。
 | **TinadecCore** | 智能体治理、DmaEA 编排、会话/run/task 状态、模型路由、权限与审批、上下文/记忆、审计与演化 | 作为 .NET 嵌入式运行时，或作为 headless HTTP/SSE 服务 | UI、通用网关、具体工具实现 | `TinadecCore/` |
 | **TinadecTool** | 工具发现、参数 schema、风险元数据、隔离执行和结构化结果 | 作为 MCP/本地进程/远程工具服务供符合当前契约的客户端调用 | 任务编排、会话状态、最终授权决定 | 当前代码名 `TinadecTools/` 与 `TinadecTools.Generators/` |
 | **TinadecGateway** | 对外 API 门面、身份接入、协议适配、限流、聚合和流转发 | 连接 TinadecCore 或当前契约上游，为 Web/企业网络提供稳定入口；也暴露用户显式工具直连入口 | Core 业务状态、智能体决策、工具策略 | `TinadecGateway/` |
-| **TinadecApp** | 面向不同场景的交互应用和可视化客户端 | 直连 TinadecCore，或经 TinadecGateway 连接当前契约后端 | 编排真相、密钥、审批策略和工具执行 | 当前由 `apps/desktop`、`apps/web`、`apps/TinadecUI` 等承载 |
+| **TinadecApp** | 面向不同场景的交互应用、可视化客户端和产品专属 Agent Pack 制品 | 直连 TinadecCore，或经 TinadecGateway 连接当前契约后端；经用户确认把随 App 分发的 Pack 安装到 Core | 编排真相、密钥、审批策略、Pack 安装状态和工具执行 | 当前由 `apps/desktop`、`apps/web`、`apps/TinadecUI` 等承载 |
 
 “可单独使用”必须准确理解：四个产品应能独立安装、部署和替换，但客户端或网关仍需要一个符合当前契约的上游服务。TinadecCore 与 TinadecTool 可直接提供独立运行价值；TinadecGateway 与 TinadecApp 的独立性是“不强制捆绑某个具体实现”，不是“脱离任何上游仍能完成业务”。
 
@@ -122,6 +122,7 @@ flowchart LR
 - TinadecTool 不得读取或修改 Core 数据库来判断权限。
 - Gateway 不得保存 session、run、approval、agent configuration 等业务真相。
 - App 只可保存窗口布局、主题等本地体验偏好；业务状态必须来自 Core 契约。
+- 专业 Agent Pack 的内容制品属于 App；Core 只实现通用 manifest 校验、安装、版本、来源、只读治理和运行时冻结，不编译进某个 App 的专业角色。
 - 四个产品分别维护自己的构建与部署产物；不维护 SemVer API 兼容矩阵或弃用周期，所有公开 HTTP 接口固定为 `/api/v1`。
 
 ### 3.3 用户工具直连与智能体工具执行是两条路径
@@ -146,6 +147,7 @@ Gateway 保留两组用途明确的当前 v1 工具传输入口：
 | 租户、工作区、主体与成员关系 | 是 | 所有请求和资源必须带作用域。 |
 | 会话、消息、run、turn、task graph | 是 | HTTP 断开不结束后台 run。 |
 | 智能体、模式、提示词和模型绑定版本 | 是 | 发布版本不可变。 |
+| Agent Pack 安装、版本、来源和资源绑定 | 是 | Pack 内容由 App 提交；Core 按 tenant/workspace 记录安装真相和托管关系。 |
 | 权限请求、能力租约、审批和监督结论 | 是 | 三类状态分别持久化。 |
 | 工具 manifest 冻结副本和调用记录 | 是 | 工具实现仍属于 Tool provider。 |
 | 上下文、记忆候选、正式记忆及来源 | 是 | 正文可进入不可变内容存储。 |
@@ -405,7 +407,7 @@ sequenceDiagram
 | `controlled_execution` | `meeting` + `task_planner` + 少量 worker + `supervisor` | 写操作逐项审批 | 单任务开发和办公自动化 |
 | `full_duplex` | 完整治理层 + 并行执行层 | 动态权限、快照与审批 | 长任务、多任务和持续协作 |
 
-当前 `conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 是内置 profile；面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
+`conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 继续存在于通用 TOML fallback 中，用于无正式 ModeVersion 时的开发启动和预算基线；TinadecOffice 的正式 `default-mode` 拓扑则由 `OfficeAgentPack` 发布到关系库。面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
 
 ## 8. 运行、并发与事件契约
 
@@ -465,6 +467,7 @@ run 创建时必须持久化以下引用和哈希：
 3. **PromptPipeline/PromptVersion**：确定性的提示词 DAG 与模板版本。
 4. **PolicyBundle/PolicyVersion**：权限上限、风险分类、委托和升级规则。
 5. **WorkspaceDefaults**：工作区默认模式、会议智能体、提示词和模型路由。
+6. **AgentPackInstallation/AgentPackVersion**：App 提交的版本化资源集合、完整性哈希、来源、托管资源绑定和默认值采用记录。
 
 稳定基线已覆盖 Agent、Mode、PromptPipeline 和 WorkspaceDefaults 的控制面结构。升级工作树新增了 Governance 的 PolicyBundle、grant、delegation、permission request、decision 与 lease 领域实现，并已接入 Runtime、SQLite/PostgreSQL 迁移、治理 API 与 ToolDispatcher 热路径；ACP `permission.request` 仍按本阶段约束 fail-closed，通用远程 provider 仍是后续工作。
 
@@ -554,6 +557,16 @@ spec:
 - 查看某个 run 实际冻结的版本与当前 draft 的差异。
 
 所有保存、发布、授权和撤销动作都必须调用 Core API，并使用 revision/ETag；App 不得在本地状态中形成隐藏的生效配置。
+
+### 9.7 Agent Pack 生命周期
+
+- Agent Pack manifest 使用 Pack 内稳定 key 与 `agent:<key>`、`prompt:<key>`、`mode:<key>` 引用，不携带环境 UUID、secret 或机器路径。首版 schema 是 `tinadec.io/agent-pack/v1alpha1`；TinadecOffice 制品固定为 `tinadec.office.agent-pack` / `tinadec.office` / `0.1.0`，包含 14 个 Agent、`baseline-prompt`、`default-mode` 和推荐 WorkspaceDefaults。
+- Envelope 对 manifest 执行 RFC 8785/JCS canonicalization 后计算 SHA-256，Core 必须重算。首版信任边界是当前工作区 owner 授权、用户确认 owner/version/hash 与审计；完整性哈希不等同于发布者数字签名。
+- install preview 只在同一 tenant/workspace/principal 下有效 15 分钟，返回 `install|upgrade|up_to_date|newer_installed|conflict`、资源/default 差异、警告和基础 revision。PUT 必须提交同一 envelope、`preview_id` 和 `Idempotency-Key`；upgrade 还必须携带 preview ETag 对应的 `If-Match`。
+- Core 在同一事务中按 Prompt -> Agent -> Mode -> defaults 安装。首装只在 defaults 为空或精确等价于旧 DevSeed 基线时采用推荐值；升级只推进仍指向上一 Pack 版本的 defaults，任何用户自定义值都保留。
+- Pack-managed 资源只读，用户定制必须 clone 为 user-owned 资源。相同版本/哈希重放为 no-op；相同版本/不同哈希拒绝；低于已安装版本返回 `newer_installed`，不隐式降级。首次安装可以认领语义完全等价的旧 DevSeed 资源，非等价同名资源使整包冲突且不覆盖。
+- ModeVersion 固定每个节点的精确 AgentVersion/hash 和 PromptVersion/hash；session 复制精确 ModeVersion，run 再冻结完整 roster、工具和模型策略。当前热路径只实例化 `meeting`、`task_planner`、`supervisor` 与匹配的专业 worker；`context_compressor`、`skill_recommender`、`evolution`、`git_steward` 仅安装并冻结，不伪造参与事件。
+- App 卸载不删除 Core 中的 Pack。市场分发、签名信任库、rollback 和 uninstall 流程不属于首版 bundled Pack 生命周期。
 
 ## 10. 权限、审批与监督
 
@@ -706,10 +719,11 @@ stateDiagram-v2
 
 ### 14.1 北向接口
 
-- 管理面：agents、modes、prompts、policies、models、tools、candidates 和 workspace defaults。
+- 管理面：agents、modes、prompts、agent packs、policies、models、tools、candidates 和 workspace defaults。
 - 运行面：sessions、interactions、runs、controls、events、approvals、permission requests、user tool actions、context versions 和 snapshots。
 - 观测面：readiness、traces、metrics、evaluations 和 audit export。
 - 所有公开 JSON 使用 `snake_case`、RFC 9457 Problem Details、幂等键和并发 revision。
+- Agent Pack 使用 `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/{pack_id}`、`POST /api/v1/agent-packs/install-preview` 和 `PUT /api/v1/agent-packs/{pack_id}`；Gateway 只能原样代理，App 不能直接写 Core 数据库。
 - 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，也可使用 `invoke-stream` 完成全双工运行；两者都属于当前 `/api/v1` 契约。后续若合并或调整语义，直接更新 `/api/v1`、测试和本文，不保留旧兼容入口。
 
 ### 14.2 南向接口
@@ -766,12 +780,13 @@ stateDiagram-v2
 | .NET/MAF 模块化 Core | 已实现 | .NET 10、MAF 1.18；MAF 特定行为收口于 DmaEA 内部适配器 | 继续保持公开契约和持久状态不泄漏 MAF 类型 |
 | 持久化全双工 run | 已实现 | task planning、动态 worker、meeting 汇总、监督、暂停/恢复/取消、checkpoint 恢复 | 队列超限项尚未持久化 |
 | 正式智能体配置 | 部分实现 | 11 张表、draft/revision、不可变版本、mode/prompt 发布 API | `AgentConfigurationService` 仍是桩；验证逻辑集中于 endpoint |
+| Bundled Agent Pack | 已实现首版 | App-owned manifest 经预览和用户确认安装；Core 持有 workspace-scoped 版本、来源、托管绑定和默认值采用状态 | 数字签名、市场分发、rollback/uninstall 和跨组织信任库 |
 | 每智能体模型策略 | 已实现主要部分 | `inherit`、`fixed`、`parent_select`，选择事件可审计 | 能力/评测驱动选择与完整 fallback policy |
 | 工具治理 | 已实现主要部分 | manifest v2 冻结、agent/mode/manifest 交集、PDP/租约/委托、单次审批、恢复和拒绝 fail-closed | 通用远程 provider transport、ACP 权限桥 |
 | 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence | `context_compressor` 尚未作为事件驱动角色进入热路径 |
 | 监督 | 部分实现 | `pass/revise/escalate` 质量门 | 不是委托审批代理；尚无 ApprovalDelegation |
 | 演化 | 部分实现 | 候选生成/晋升/拒绝 API 与临时 agent lineage | 正常 run 不会自动观察并生成候选；缺 eval/canary/revoke 闭环 |
-| Git 智能体 | 已实现基线 | TOML/DevSeed 已包含 `git_steward` 与 `worker.git`，Git worker manifest 交集、Desktop 写操作入口和真实 Git commit 治理 E2E 已收口 | 快照智能体调度与远程 provider |
+| Git 智能体 | 已实现基线 | `OfficeAgentPack` 发布 `git_steward` 与 `worker.git`；当前 `worker.git` 可按冻结能力/工具被选择，Desktop 写操作入口和真实 Git commit 治理 E2E 已收口，`git_steward` 本期保持 dormant | Git steward 事件触发、快照智能体调度与远程 provider |
 | 工作区快照 | 已实现主要部分 | 文件系统/Git provider、HEAD/index/worktree 捕获、ContentStore、创建/恢复幂等、冲突检查和高风险写前 guard | 完整 restore plan 展示、外部副作用补偿和快照智能体调度 |
 | 用户工具动作 | 已实现基线 | `UserToolAction`、权限请求、租约、ActionApproval、快照 override、结果/审计引用和 `/api/v1/user/tool-actions` | 更完整的用户动作历史、恢复决定 UI 和远程 provider |
 | 动态权限 | 已实现主要部分 | PermissionRequest、PDP 求交、CapabilityGrant/Delegation/Lease、冻结策略、Agent/用户工具授权闭环、nonce fail-closed | ACP 请求桥接、远程 provider 契约 |
@@ -787,7 +802,8 @@ stateDiagram-v2
 目标：消除事实源和术语冲突。
 
 - 固定本文的产品边界、`operation/execution` 和 DmaEA 定义。
-- 统一 TOML 与关系库 seed 的 agent roster，关系库发布版本为运行事实源，TOML 只提供内置基线与预算默认值。
+- 保持关系库发布版本为正式运行事实源；TOML 只提供无 App 专业知识的 fallback 与预算默认值，DevSeed 只保留通用开发启动资源。
+- 继续以 TinadecOffice 自带的 `OfficeAgentPack` 维护 Office 专业 roster；Core 不回引 Office 角色或 manifest 内容。
 - 将 AgentConfiguration 业务逻辑从 API endpoint 下沉到 service/domain 层。
 - 修正 Core/根解决方案项目清单、README、MAF 版本和过期文档。
 - 持久化 interaction queue，并移除硬编码的 space/agent/default 准入参数。
@@ -895,7 +911,7 @@ TinadecCore 首个正式版至少需要满足：
 1. 已发布数据库版本和某个 run 的冻结快照决定该 run 的实际行为。
 2. 公开 API/事件契约与自动化测试决定当前可用能力。
 3. 本文决定目标产品边界和术语。
-4. `default-agent-runtime.toml` 提供内置运行基线。
+4. `default-agent-runtime.toml` 提供通用 fallback 与预算基线，不是 Office 正式 roster 的发布事实源。
 5. 其它计划、设计稿和历史文档仅作参考。
 
 发现冲突时必须修正文档或实现，不能通过口头约定长期保留第二套事实源。

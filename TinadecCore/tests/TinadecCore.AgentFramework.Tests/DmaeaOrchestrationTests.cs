@@ -57,6 +57,32 @@ public sealed class DmaeaOrchestrationTests
     }
 
     [Fact]
+    public async Task PlanningAgent_ReceivesFrozenSpecialistRosterInInstructions()
+    {
+        var client = new StubChatClient("""[{"task_key":"code-task","title":"Code","description":"","success_criteria":["done"],"dependencies":[],"required_capabilities":["tool.code"],"required_tools":["write_file"],"priority":1,"risk":"low"}]""");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+        var specialist = new AgentDefinition
+        {
+            Id = Guid.NewGuid(),
+            Name = "worker.code",
+            Layer = "execution",
+            AgentType = "task_executor",
+            Capabilities = ["tool.file", "tool.code"],
+            AllowedTools = ["write_file", "read_file"],
+            Enabled = true
+        };
+
+        _ = await planner.PlanAsync(Context("Implement"), [specialist], "frozen-prompt:task_planner", CancellationToken.None);
+
+        Assert.NotNull(client.LastInstructions);
+        Assert.Contains("frozen-prompt:task_planner", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("Frozen specialist roster", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("\"slug\":\"worker.code\"", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("\"tool.code\"", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("\"write_file\"", client.LastInstructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PlanningAgent_ThrowsWhenChatRouteUnavailable()
     {
         var resolver = new FakeChatResolver(false, "Provider API key is not stored.");
@@ -255,12 +281,17 @@ public sealed class DmaeaOrchestrationTests
         private readonly string _text;
         public StubChatClient(string text) => _text = text;
 
+        public string? LastInstructions { get; private set; }
+
         public void Dispose() { }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _text)));
+        {
+            LastInstructions = options?.Instructions;
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _text)));
+        }
 
         public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages,

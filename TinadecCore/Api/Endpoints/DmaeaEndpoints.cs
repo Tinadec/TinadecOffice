@@ -416,6 +416,9 @@ public static class DmaeaEndpoints
                 allowed_tools = a.AllowedTools,
                 allowed_resources = a.AllowedResources,
                 budget_tokens = a.BudgetTokens,
+                agent_definition_id = a.AgentDefinitionId,
+                agent_version_id = a.AgentVersionId,
+                agent_version_content_hash = a.AgentVersionContentHash,
                 created_at = a.CreatedAt,
                 updated_at = a.UpdatedAt
             }));

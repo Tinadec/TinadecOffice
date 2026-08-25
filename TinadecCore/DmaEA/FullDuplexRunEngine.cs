@@ -229,7 +229,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                     await FinalizeCancellationAsync(runId, checkpoint, stoppingToken).ConfigureAwait(false);
                     return;
                 }
-                if (run.Status is RunStatus.Paused or RunStatus.AwaitingUser) return;
+                if (run.Status == RunStatus.Paused
+                    || run.Status == RunStatus.AwaitingUser && checkpoint.Phase == "awaiting_user")
+                {
+                    return;
+                }
                 if (IsTerminal(run.Status)) return;
 
                 if (await ApplyPendingContextPatchesAsync(run, checkpoint, stoppingToken).ConfigureAwait(false))
@@ -295,8 +299,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
             var checkpoint = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
-            if (checkpoint is not null) await FailRunAsync(runId, checkpoint, "runtime", SafeError(ex), CancellationToken.None).ConfigureAwait(false);
-            else await FailLegacyRunAsync(runId, run, "runtime", SafeError(ex), CancellationToken.None).ConfigureAwait(false);
+            var failureCode = ex is WorkerUnavailableException ? "worker_unavailable" : "runtime";
+            if (checkpoint is not null) await FailRunAsync(runId, checkpoint, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
+            else await FailLegacyRunAsync(runId, run, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
@@ -376,7 +381,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.MeetingAgentId = agents.Meeting.Id;
         checkpoint.PlannerAgentId = agents.Planner.Id;
 
-        var context = await BuildContextAsync(run, configuration, "task_planner", checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var assembly = await AssemblePromptAsync(plannerDefinition, context, cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(Guid.Parse(run.RunId), "context.packed", "Planner context assembled.", new
         {
             evidence_count = context.Evidence.Count,
@@ -392,8 +399,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             try
             {
                 var contextForPlanner = CreateRunContext(run, checkpoint);
-                var planner = new PlanningAgent(_chatClients, _logger);
-                planned = await planner.PlanAsync(contextForPlanner, [], cancellationToken).ConfigureAwait(false);
+                var formal = await ResolveFrozenChatAsync(checkpoint, plannerDefinition, cancellationToken).ConfigureAwait(false);
+                var planner = new PlanningAgent(formal is null ? _chatClients : new FixedChatFactory(formal, _chatClients), _logger);
+                planned = await planner.PlanAsync(
+                    contextForPlanner,
+                    BuildFrozenPlannerRoster(configuration),
+                    assembly.Instructions,
+                    cancellationToken).ConfigureAwait(false);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 var materialized = ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
@@ -805,18 +817,51 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
+        var selected = ResolveOrSelectWorker(configuration, task);
+        if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
+        {
+            task.WorkerAgentSlug = selected.Agent.Id;
+            task.WorkerAgentDefinitionId = selected.Agent.AgentDefinitionId;
+            task.WorkerAgentVersionId = selected.Agent.AgentVersionId;
+            task.WorkerAgentVersionHash = selected.Agent.VersionContentHash;
+            task.WorkerAssignmentReason = selected.Reason;
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-selected", cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "worker.assigned", $"Task assigned to {selected.Agent.Id}.", new
+            {
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                agent_slug = selected.Agent.Id,
+                agent_definition_id = selected.Agent.AgentDefinitionId,
+                agent_version_id = selected.Agent.AgentVersionId,
+                agent_version_hash = selected.Agent.VersionContentHash,
+                reason = selected.Reason,
+                required_capabilities = task.RequiredCapabilities,
+                required_tools = task.RequiredTools
+            }, cancellationToken, task.TaskId).ConfigureAwait(false);
+        }
         var instances = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
         if (task.WorkerAgentId is { } assigned)
         {
             var existing = instances.FirstOrDefault(item => item.Id == assigned);
-            if (existing is not null) return existing;
+            if (existing is not null)
+            {
+                VerifyWorkerInstance(existing, selected.Agent, task);
+                return existing;
+            }
         }
 
-        var worker = instances.FirstOrDefault(item => item.Generated && item.TaskId == task.TaskId && item.Status is "created" or "running");
+        var worker = instances.FirstOrDefault(item => item.Generated
+            && item.TaskId == task.TaskId
+            && item.AgentVersionId == selected.Agent.AgentVersionId
+            && item.Status is "created" or "running");
         if (worker is null)
         {
             var parent = instances.FirstOrDefault(item => item.Id == plannerId)
                 ?? throw new InvalidDataException("Planner instance is missing from the run lineage.");
+            if (selected.Agent.AgentDefinitionId is not { } definitionId
+                || selected.Agent.AgentVersionId is not { } versionId
+                || string.IsNullOrWhiteSpace(selected.Agent.VersionContentHash))
+                throw new InvalidDataException($"Frozen specialist '{selected.Agent.Id}' has no immutable version binding.");
             worker = await _instances.SpawnAsync(new AgentSpawnRequest(
                 parent.Id,
                 string.IsNullOrWhiteSpace(task.Description) ? task.Title : task.Description,
@@ -827,18 +872,31 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 ["workspace"],
                 configuration.Context.DefaultTokenBudget,
                 task.TaskId,
-                "worker",
-                new AgentSpawnLimits(configuration.Spawn.MaxDepth, configuration.Spawn.MaxAgentsPerRun, configuration.Spawn.MaxParallelWorkers)), cancellationToken).ConfigureAwait(false);
+                selected.Agent.Role,
+                new AgentSpawnLimits(configuration.Spawn.MaxDepth, configuration.Spawn.MaxAgentsPerRun, configuration.Spawn.MaxParallelWorkers),
+                Template: new FrozenAgentTemplate(
+                    selected.Agent.Id,
+                    selected.Agent.Layer,
+                    selected.Agent.Role,
+                    selected.Agent.Capabilities,
+                    selected.Agent.AllowedTools,
+                    definitionId,
+                    versionId,
+                    selected.Agent.VersionContentHash)), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "agent.created", "Execution worker created.", new
             {
                 agent_instance_id = worker.Id,
                 parent_instance_id = worker.ParentInstanceId,
                 task_id = task.TaskId,
+                agent_slug = selected.Agent.Id,
+                agent_definition_id = worker.AgentDefinitionId,
+                agent_version_id = worker.AgentVersionId,
                 layer = worker.Layer,
                 role = worker.Role
             }, cancellationToken, task.TaskId).ConfigureAwait(false);
             try { await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(checkpoint.TurnId, "ephemeral_agent", null, IdempotencyKey: $"run:{runId}:ephemeral:{worker.Id}"), cancellationToken).ConfigureAwait(false); } catch { }
         }
+        VerifyWorkerInstance(worker, selected.Agent, task);
 
         if (task.WorkerAgentId != worker.Id)
         {
@@ -857,21 +915,22 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IReadOnlyList<WorkerToolDescriptor> tools,
         CancellationToken cancellationToken)
     {
-        var context = await BuildContextAsync(run, configuration, worker.Id.ToString(),
+        var workerDefinition = GetAssignedWorkerDefinition(configuration, task);
+        var context = await BuildContextAsync(run, configuration, workerDefinition.Id,
             $"Task: {task.Title}\nDescription: {task.Description}\nSuccess criteria: {string.Join("; ", task.SuccessCriteria)}",
             cancellationToken).ConfigureAwait(false);
-        var assembly = await _promptAssembler.AssembleAsync(worker.Id.ToString(), context, cancellationToken).ConfigureAwait(false);
+        var assembly = await AssemblePromptAsync(workerDefinition, context, cancellationToken).ConfigureAwait(false);
         var agent = new AgentDefinition
         {
             Id = worker.Id,
-            Name = worker.Role,
+            Name = workerDefinition.Id,
             Layer = worker.Layer,
-            AgentType = worker.Role,
+            AgentType = workerDefinition.Role,
             ModelRoutePurpose = "chat",
             AllowedTools = worker.AllowedTools,
             Enabled = true
         };
-        var formal = _formalResolver is not null ? await _formalResolver.TryResolveFormalChatAsync(checkpoint.SessionId, "execution", checkpoint.RunId, checkpoint.TurnId, cancellationToken).ConfigureAwait(false) : null;
+        var formal = await ResolveFrozenChatAsync(checkpoint, workerDefinition, cancellationToken).ConfigureAwait(false);
         var factory = formal is not null ? new FixedChatFactory(formal, _chatClients) : _chatClients;
         return await new ExecutionAgent(factory, _logger).GetNextTurnAsync(
             CreateRunContext(run, checkpoint),
@@ -883,6 +942,173 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             configuration.Context.RecentMessageLimit,
             cancellationToken).ConfigureAwait(false);
     }
+
+    internal static WorkerSelection ResolveOrSelectWorker(FrozenRunConfigurationV1 configuration, DurableTaskNode task)
+    {
+        var selected = SelectWorker(configuration, task);
+        if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug)) return selected;
+        if (!string.Equals(task.WorkerAgentSlug, selected.Agent.Id, StringComparison.Ordinal)
+            || task.WorkerAgentDefinitionId != selected.Agent.AgentDefinitionId
+            || task.WorkerAgentVersionId != selected.Agent.AgentVersionId
+            || !string.Equals(task.WorkerAgentVersionHash, selected.Agent.VersionContentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"Persisted worker assignment for task '{task.TaskKey}' does not match the frozen deterministic selection.");
+        }
+        return selected with { Reason = task.WorkerAssignmentReason ?? selected.Reason };
+    }
+
+    internal static WorkerSelection SelectWorker(FrozenRunConfigurationV1 configuration, DurableTaskNode task)
+    {
+        var requiredTools = NormalizeValues(task.RequiredTools);
+        var requiredCapabilities = NormalizeValues(task.RequiredCapabilities);
+        var manifestTools = configuration.ToolManifest.Select(tool => tool.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingManifestTool = requiredTools.FirstOrDefault(tool => !manifestTools.Contains(tool));
+        if (missingManifestTool is not null)
+            throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{missingManifestTool}', which is not in the frozen run manifest.");
+
+        var candidates = configuration.ExecutionAgents
+            .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
+            .Where(agent => agent.Id.StartsWith("worker.", StringComparison.Ordinal)
+                || agent.Role is "task_executor" or "git_specialist")
+            .Select(agent =>
+            {
+                ValidateFrozenAgent(agent, "worker");
+                var tools = ExpandFrozenTools(agent.AllowedTools, manifestTools);
+                var capabilities = agent.Capabilities.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var isGeneral = string.Equals(agent.Id, "worker.general", StringComparison.Ordinal);
+                var coversTools = requiredTools.All(tools.Contains);
+                var coversCapabilities = requiredCapabilities.All(capabilities.Contains);
+                var eligible = coversTools && coversCapabilities;
+                if (requiredTools.Count == 0 && requiredCapabilities.Count == 0) eligible = eligible && isGeneral;
+                return new WorkerCandidate(agent, tools, capabilities, isGeneral, eligible);
+            })
+            .Where(candidate => candidate.Eligible)
+            .OrderBy(candidate => candidate.IsGeneral)
+            .ThenBy(candidate => Math.Max(0, candidate.Tools.Count - requiredTools.Count))
+            .ThenBy(candidate => Math.Max(0, candidate.Capabilities.Count - requiredCapabilities.Count))
+            .ThenBy(candidate => candidate.Agent.RosterOrder)
+            .ThenBy(candidate => candidate.Agent.Id, StringComparer.Ordinal)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            var capabilityText = requiredCapabilities.Count == 0 ? "none" : string.Join(", ", requiredCapabilities);
+            var toolText = requiredTools.Count == 0 ? "none" : string.Join(", ", requiredTools);
+            throw new WorkerUnavailableException($"No frozen execution specialist can satisfy task '{task.TaskKey}' (capabilities: {capabilityText}; tools: {toolText}).");
+        }
+
+        var winner = candidates[0];
+        var reason = winner.IsGeneral
+            ? requiredTools.Count == 0 && requiredCapabilities.Count == 0 ? "general_default" : "general_fallback"
+            : requiredCapabilities.Count == 0 ? "specialist_tool_match" : "specialist_capability_and_tool_match";
+        return new WorkerSelection(winner.Agent, reason);
+    }
+
+    private static HashSet<string> ExpandFrozenTools(
+        IReadOnlyList<string> allowedTools,
+        IReadOnlySet<string> manifestTools)
+    {
+        if (allowedTools.Any(tool => string.Equals(tool, "*", StringComparison.OrdinalIgnoreCase)))
+            return manifestTools.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return allowedTools.Where(manifestTools.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<string> NormalizeValues(IEnumerable<string> values) =>
+        values.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<AgentDefinition> BuildFrozenPlannerRoster(FrozenRunConfigurationV1 configuration) =>
+        configuration.ExecutionAgents
+            .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
+            .Where(agent => agent.Id.StartsWith("worker.", StringComparison.Ordinal)
+                || agent.Role is "task_executor" or "git_specialist")
+            .OrderBy(agent => agent.RosterOrder)
+            .ThenBy(agent => agent.Id, StringComparer.Ordinal)
+            .Select(agent => new AgentDefinition
+            {
+                Id = agent.AgentDefinitionId ?? Guid.Empty,
+                Name = agent.Id,
+                Layer = agent.Layer,
+                AgentType = agent.Role,
+                Capabilities = agent.Capabilities,
+                AllowedTools = agent.AllowedTools,
+                Enabled = agent.Enabled
+            })
+            .ToArray();
+
+    private static RuntimeAgentDefinition GetAssignedWorkerDefinition(
+        FrozenRunConfigurationV1 configuration,
+        DurableTaskNode task)
+    {
+        if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
+            throw new InvalidDataException($"Task '{task.TaskKey}' has no persisted worker assignment.");
+        var definition = configuration.ExecutionAgents.SingleOrDefault(agent =>
+            string.Equals(agent.Id, task.WorkerAgentSlug, StringComparison.Ordinal)
+            && agent.AgentDefinitionId == task.WorkerAgentDefinitionId
+            && agent.AgentVersionId == task.WorkerAgentVersionId
+            && string.Equals(agent.VersionContentHash, task.WorkerAgentVersionHash, StringComparison.OrdinalIgnoreCase));
+        return definition ?? throw new InvalidDataException($"Task '{task.TaskKey}' worker assignment is not present in the frozen roster.");
+    }
+
+    private static void VerifyWorkerInstance(
+        RuntimeAgentInstance instance,
+        RuntimeAgentDefinition definition,
+        DurableTaskNode task)
+    {
+        if (instance.AgentDefinitionId != definition.AgentDefinitionId
+            || instance.AgentVersionId != definition.AgentVersionId
+            || !string.Equals(instance.AgentVersionContentHash, definition.VersionContentHash, StringComparison.OrdinalIgnoreCase)
+            || instance.TaskId != task.TaskId)
+            throw new InvalidDataException($"Worker instance '{instance.Id}' does not match task '{task.TaskKey}' frozen assignment.");
+    }
+
+    private static RuntimeAgentDefinition RequiredAgent(
+        IReadOnlyList<RuntimeAgentDefinition> agents,
+        string slug)
+    {
+        var agent = agents.SingleOrDefault(item => string.Equals(item.Id, slug, StringComparison.Ordinal))
+            ?? throw new InvalidDataException($"Frozen profile has no '{slug}' agent.");
+        if (!agent.Enabled) throw new InvalidDataException($"Frozen agent '{slug}' is disabled.");
+        ValidateFrozenAgent(agent, slug);
+        return agent;
+    }
+
+    private static void ValidateFrozenAgent(RuntimeAgentDefinition agent, string purpose)
+    {
+        if (agent.AgentDefinitionId is null || agent.AgentVersionId is null || string.IsNullOrWhiteSpace(agent.VersionContentHash))
+            throw new InvalidDataException($"Frozen {purpose} agent '{agent.Id}' has no immutable version binding.");
+    }
+
+    private async Task<PromptAssemblyResult> AssemblePromptAsync(
+        RuntimeAgentDefinition definition,
+        ContextPack context,
+        CancellationToken cancellationToken) =>
+        await _promptAssembler.AssembleAsync(new FrozenPromptAssemblyRequest(
+            definition.Id,
+            context,
+            definition.SystemPrompt,
+            definition.AgentVersionId,
+            definition.VersionContentHash,
+            definition.PromptPipelineId,
+            definition.PromptVersionId,
+            definition.PromptVersionContentHash,
+            definition.PromptGraphJson), cancellationToken).ConfigureAwait(false);
+
+    private async Task<ChatResolution?> ResolveFrozenChatAsync(
+        FullDuplexCheckpointV1 checkpoint,
+        RuntimeAgentDefinition definition,
+        CancellationToken cancellationToken) =>
+        _formalResolver is null
+            ? null
+            : await _formalResolver.TryResolveFormalChatAsync(new FrozenAgentChatRequest(
+                checkpoint.SessionId,
+                definition.Id,
+                definition.Layer,
+                definition.ModelStrategyJson,
+                checkpoint.RunId,
+                checkpoint.TurnId), cancellationToken).ConfigureAwait(false);
 
     private sealed class FixedChatFactory : IAgentChatClientFactory
     {
@@ -978,7 +1204,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     {
         var runId = Guid.Parse(run.RunId);
         await _lifecycle.SetRunStatusAsync(run.RunId, "reviewing", cancellationToken: cancellationToken).ConfigureAwait(false);
-        _ = await BuildContextAsync(run, configuration, "supervisor", checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var plans = checkpoint.Tasks.Select(ToPlannedTask).ToArray();
         var results = checkpoint.Tasks.Select(item => new StepResult
         {
@@ -997,8 +1222,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         SupervisionVerdict verdict;
         if (configuration.Supervision.RequiredBeforeFinal)
         {
-            var supervisor = new SupervisionAgent(_chatClients, _logger);
-            verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, cancellationToken).ConfigureAwait(false);
+            var supervisorDefinition = RequiredAgent(configuration.OperationAgents, "supervisor");
+            var supervisorInstance = await EnsureSupervisorAgentAsync(run, configuration, checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
+            checkpoint.SupervisorAgentId = supervisorInstance.Id;
+            var context = await BuildContextAsync(run, configuration, supervisorDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+            var assembly = await AssemblePromptAsync(supervisorDefinition, context, cancellationToken).ConfigureAwait(false);
+            var formal = await ResolveFrozenChatAsync(checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
+            var supervisor = new SupervisionAgent(formal is null ? _chatClients : new FixedChatFactory(formal, _chatClients), _logger);
+            verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, assembly.Instructions, cancellationToken).ConfigureAwait(false);
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
         }
         else
@@ -1162,8 +1393,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         if (string.IsNullOrWhiteSpace(checkpoint.MeetingResponse))
         {
-            var context = await BuildContextAsync(run, configuration, "meeting", checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-            checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(checkpoint, context, cancellationToken).ConfigureAwait(false);
+            var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
+            var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "meeting-response", cancellationToken).ConfigureAwait(false);
         }
 
@@ -1279,12 +1511,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var all = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
         var meeting = checkpoint.MeetingAgentId is { } meetingId ? all.FirstOrDefault(item => item.Id == meetingId) : null;
         var planner = checkpoint.PlannerAgentId is { } plannerId ? all.FirstOrDefault(item => item.Id == plannerId) : null;
-        var meetingDefinition = configuration.OperationAgents.FirstOrDefault(item => item.Id == "meeting")
-            ?? throw new InvalidDataException("Frozen profile has no meeting agent.");
-        var plannerDefinition = configuration.ExecutionAgents.FirstOrDefault(item => item.Id == "task_planner")
-            ?? throw new InvalidDataException("Frozen profile has no task planner.");
-        meeting ??= all.FirstOrDefault(item => !item.Generated && item.Role == meetingDefinition.Role);
-        planner ??= all.FirstOrDefault(item => !item.Generated && item.Role == plannerDefinition.Role);
+        var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
+        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        meeting ??= all.FirstOrDefault(item => !item.Generated && item.AgentVersionId == meetingDefinition.AgentVersionId);
+        planner ??= all.FirstOrDefault(item => !item.Generated && item.AgentVersionId == plannerDefinition.AgentVersionId);
+        if (meeting is not null) VerifyRootInstance(meeting, meetingDefinition, checkpoint.MeetingAgentId, "meeting");
+        if (planner is not null) VerifyRootInstance(planner, plannerDefinition, checkpoint.PlannerAgentId, "task planner");
         if (meeting is null)
         {
             meeting = await _instances.CreateRootAsync(new RuntimeAgentSeed(sessionId, runId, meetingDefinition.Id, meetingDefinition.Layer,
@@ -1297,13 +1529,83 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         if (planner is null)
         {
             planner = await _instances.CreateRootAsync(new RuntimeAgentSeed(sessionId, runId, plannerDefinition.Id, plannerDefinition.Layer,
-                plannerDefinition.Role, "chat", plannerDefinition.Capabilities, ["*"], ["workspace"], configuration.Context.DefaultTokenBudget,
+                plannerDefinition.Role, "chat", plannerDefinition.Capabilities, plannerDefinition.AllowedTools, ["workspace"], configuration.Context.DefaultTokenBudget,
                 AgentDefinitionId: plannerDefinition.AgentDefinitionId,
                 AgentVersionId: plannerDefinition.AgentVersionId,
                 VersionContentHash: plannerDefinition.VersionContentHash), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "agent.created", "Task planning agent created.", new { agent_instance_id = planner.Id, layer = planner.Layer, role = planner.Role }, cancellationToken).ConfigureAwait(false);
         }
         return (meeting, planner);
+    }
+
+    private sealed record WorkerCandidate(
+        RuntimeAgentDefinition Agent,
+        HashSet<string> Tools,
+        HashSet<string> Capabilities,
+        bool IsGeneral,
+        bool Eligible);
+
+    internal sealed record WorkerSelection(RuntimeAgentDefinition Agent, string Reason);
+
+    private async Task<RuntimeAgentInstance> EnsureSupervisorAgentAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        RuntimeAgentDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var all = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        var supervisor = checkpoint.SupervisorAgentId is { } instanceId
+            ? all.FirstOrDefault(item => item.Id == instanceId)
+            : null;
+        supervisor ??= all.FirstOrDefault(item => !item.Generated && item.AgentVersionId == definition.AgentVersionId);
+        if (supervisor is not null)
+        {
+            VerifyRootInstance(supervisor, definition, checkpoint.SupervisorAgentId, "supervisor");
+            return supervisor;
+        }
+
+        supervisor = await _instances.CreateRootAsync(new RuntimeAgentSeed(
+            Guid.Parse(run.SessionId),
+            runId,
+            definition.Id,
+            definition.Layer,
+            definition.Role,
+            "chat",
+            definition.Capabilities,
+            [],
+            ["workspace"],
+            configuration.Context.DefaultTokenBudget,
+            AgentDefinitionId: definition.AgentDefinitionId,
+            AgentVersionId: definition.AgentVersionId,
+            VersionContentHash: definition.VersionContentHash), cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "agent.created", "Supervision agent created.", new
+        {
+            agent_instance_id = supervisor.Id,
+            agent_slug = definition.Id,
+            agent_definition_id = supervisor.AgentDefinitionId,
+            agent_version_id = supervisor.AgentVersionId,
+            layer = supervisor.Layer,
+            role = supervisor.Role
+        }, cancellationToken).ConfigureAwait(false);
+        return supervisor;
+    }
+
+    private static void VerifyRootInstance(
+        RuntimeAgentInstance instance,
+        RuntimeAgentDefinition definition,
+        Guid? checkpointInstanceId,
+        string purpose)
+    {
+        if (instance.Generated
+            || instance.AgentDefinitionId != definition.AgentDefinitionId
+            || instance.AgentVersionId != definition.AgentVersionId
+            || !string.Equals(instance.AgentVersionContentHash, definition.VersionContentHash, StringComparison.OrdinalIgnoreCase)
+            || checkpointInstanceId is { } expectedId && instance.Id != expectedId)
+        {
+            throw new InvalidDataException($"Persisted {purpose} instance does not match its frozen agent version.");
+        }
     }
 
     private async Task<ContextPack> BuildContextAsync(RunState run, FrozenRunConfigurationV1 config, string agentId, string taskContext, CancellationToken cancellationToken) =>
@@ -1319,12 +1621,16 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             config.Context.RecentMessageLimit,
             config.Memory.RetrievalLimit), cancellationToken).ConfigureAwait(false);
 
-    private async Task<string> GenerateMeetingResponseAsync(FullDuplexCheckpointV1 checkpoint, ContextPack context, CancellationToken cancellationToken)
+    private async Task<string> GenerateMeetingResponseAsync(
+        FullDuplexCheckpointV1 checkpoint,
+        RuntimeAgentDefinition meetingDefinition,
+        ContextPack context,
+        CancellationToken cancellationToken)
     {
-        var formal = _formalResolver is not null ? await _formalResolver.TryResolveFormalChatAsync(checkpoint.SessionId, "operation", checkpoint.RunId, checkpoint.TurnId, cancellationToken).ConfigureAwait(false) : null;
+        var formal = await ResolveFrozenChatAsync(checkpoint, meetingDefinition, cancellationToken).ConfigureAwait(false);
         var resolution = formal ?? await _chatClients.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
-        var assembly = await _promptAssembler.AssembleAsync("meeting", context, cancellationToken).ConfigureAwait(false);
+        var assembly = await AssemblePromptAsync(meetingDefinition, context, cancellationToken).ConfigureAwait(false);
         var escalation = checkpoint.SupervisionDecision == "escalate"
             ? "\n\nIMPORTANT: supervision escalated this run. Explain the unresolved decision clearly and ask the user for direction."
             : string.Empty;
@@ -1419,6 +1725,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 Status = prior.Status,
                 Attempt = prior.Attempt,
                 WorkerAgentId = prior.WorkerAgentId,
+                WorkerAgentSlug = prior.WorkerAgentSlug,
+                WorkerAgentDefinitionId = prior.WorkerAgentDefinitionId,
+                WorkerAgentVersionId = prior.WorkerAgentVersionId,
+                WorkerAgentVersionHash = prior.WorkerAgentVersionHash,
+                WorkerAssignmentReason = prior.WorkerAssignmentReason,
                 InputContextRevision = prior.InputContextRevision,
                 ResultStatus = prior.ResultStatus,
                 ResultSummary = prior.ResultSummary,
@@ -1483,7 +1794,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _lifecycle.AppendEventAsync(runId, type, payload, summary, taskId: taskId, cancellationToken: ct);
 
     private static bool IsTerminal(RunStatus status) => status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled;
-    private static string SafeError(Exception ex) => ex is InvalidOperationException or InvalidDataException ? ex.Message : "Unexpected runtime failure.";
+    private static string SafeError(Exception ex) =>
+        ex is InvalidOperationException or InvalidDataException or WorkerUnavailableException
+            ? ex.Message
+            : "Unexpected runtime failure.";
 
     private static string NormalizeTaskKey(string? candidate, string title)
     {
@@ -1528,6 +1842,7 @@ internal sealed class FullDuplexCheckpointV1
     public int PlanRevision { get; set; }
     public Guid? MeetingAgentId { get; set; }
     public Guid? PlannerAgentId { get; set; }
+    public Guid? SupervisorAgentId { get; set; }
     public List<DurableTaskNode> Tasks { get; set; } = [];
     public int SupervisionRound { get; set; }
     public string? SupervisionDecision { get; set; }
@@ -1556,6 +1871,11 @@ internal sealed class DurableTaskNode
     public string? PendingToolExecutionId { get; set; }
     public string? PendingToolApprovalId { get; set; }
     public Guid? WorkerAgentId { get; set; }
+    public string? WorkerAgentSlug { get; set; }
+    public Guid? WorkerAgentDefinitionId { get; set; }
+    public Guid? WorkerAgentVersionId { get; set; }
+    public string? WorkerAgentVersionHash { get; set; }
+    public string? WorkerAssignmentReason { get; set; }
     public long InputContextRevision { get; set; }
     public string? ResultStatus { get; set; }
     public string? ResultSummary { get; set; }
@@ -1572,3 +1892,5 @@ internal sealed record StaleTaskEvidence(
     DateTimeOffset RecordedAt);
 
 internal sealed class RunAwaitingExternalDecisionException : Exception;
+
+internal sealed class WorkerUnavailableException(string message) : Exception(message);
