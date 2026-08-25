@@ -20,6 +20,7 @@ import { ref, watch, type Ref } from 'vue'
 import type { DynamicPalette } from '@/lib/monetExtract'
 import { buildDynamicVars, extractSourceColor } from '@/lib/monetExtract'
 import { useBackground } from './useBackground'
+import { useNotifications } from './useNotifications'
 
 const STORAGE_KEY = 'tinadec-dynamic-palette'
 /** Longest edge of the downscaled sampling bitmap — Monet samples small. */
@@ -30,6 +31,8 @@ let watchArmed = false
 let extracting = false
 /** Source string successfully extracted during this session (dedupe). */
 let extractedFor: string | null = null
+/** Source string whose failure was already reported (notify once). */
+let lastNotifiedFor: string | null = null
 
 export function __resetDynamicPaletteForTests(): void {
   cachedRef = null
@@ -111,10 +114,15 @@ async function extract(source: string): Promise<void> {
     }
     extractedFor = source
   } catch (error) {
-    // Keep any previous frozen palette; only surface an error when we have
-    // nothing usable at all and this was a fresh attempt for this source.
-    if (palette.value?.source !== source) {
+    // Keep any previous frozen palette; surface a deduped error so a dead
+    // option never looks like a silent no-op.
+    if (palette.value?.source !== source && lastNotifiedFor !== source) {
+      lastNotifiedFor = source
       console.warn('[dynamicPalette] extraction failed:', error)
+      useNotifications().notify.error(error, {
+        title: 'Background color extraction failed',
+        source: 'settings',
+      })
     }
   } finally {
     extracting = false
@@ -132,6 +140,16 @@ async function loadImagePixels(source: string): Promise<number[]> {
     img.onerror = () => reject(new Error(`image decode failed: ${source}`))
     img.src = url
   })
+  // onload alone races the decoder: drawImage can paint a fully transparent
+  // bitmap before pixel data is ready. decode() resolves only when pixels
+  // are actually usable.
+  if (typeof img.decode === 'function') {
+    try {
+      await img.decode()
+    } catch {
+      /* undecodable via decode() — onload already guaranteed the bytes; let drawImage try */
+    }
+  }
 
   const scale = Math.min(1, SAMPLE_SIZE / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
   const w = Math.max(1, Math.round((img.naturalWidth || SAMPLE_SIZE) * scale))
@@ -147,8 +165,11 @@ async function loadImagePixels(source: string): Promise<number[]> {
 
   const pixels: number[] = []
   for (let i = 0; i < data.length; i += 4) {
-    if (data[i]! < 255) continue
-    pixels.push((data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!)
+    // RGBA layout: alpha lives at i+3. Alpha MUST be packed into the value:
+    // QuantizerWu skips pixels with alpha < 255, so alpha-less entries yield
+    // an empty histogram and a null source color.
+    if (data[i + 3]! < 255) continue
+    pixels.push(((0xff << 24) | (data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!) >>> 0)
   }
   return pixels
 }

@@ -35,6 +35,13 @@ describe('extractSourceColor', () => {
     const pixels = Array.from({ length: 64 }, (_, i) => argb(i * 4 % 256, 100 + i % 50, 200 - i))
     expect(extractSourceColor(pixels)).toBe(extractSourceColor(pixels))
   })
+
+  it('returns null for alpha-less pixels (Wu skips transparent entries)', () => {
+    // Regression: the canvas packer once dropped the 0xff<<24 byte, making
+    // every pixel transparent and extraction permanently fail.
+    const alphaless = Array.from({ length: 256 }, (_, i) => (i * 7 % 256) << 16 | 200 << 8 | 180)
+    expect(extractSourceColor(alphaless)).toBeNull()
+  })
 })
 
 describe('buildDynamicVars', () => {
