@@ -1,12 +1,16 @@
-/** Thin snake_case passthrough for session interactions — validates dispatch_mode only */
+/** Thin snake_case passthrough for session interactions — validates dispatch_mode/agent_mode only */
 
 export type DispatchMode = 'queued' | 'insert' | 'parallel';
+
+/** Composer agent modes; Core resolves each to its published conversation.* mode version. */
+export const AGENT_MODES = ['plan', 'spec', 'ask', 'vibe', 'auto', 'agent'] as const;
 
 export interface InteractionExternalRequest {
   dispatch_mode: DispatchMode;
   target_run_id?: string | null;
   content?: string;
   client_message_id?: string;
+  agent_mode?: string | null;
   [key: string]: unknown;
 }
 
@@ -25,6 +29,8 @@ export function validateInteractionBody(body: unknown): { ok: true; value: Inter
     const target = typeof rec.target_run_id === 'string' ? rec.target_run_id.trim() : typeof (rec as Record<string,unknown>).targetRunId === 'string' ? String((rec as Record<string,unknown>).targetRunId).trim() : '';
     if (!target) errors.push('target_run_id is required when dispatch_mode is insert.');
   }
+  const amRaw = typeof rec.agent_mode === 'string' ? rec.agent_mode.trim().toLowerCase() : '';
+  if (amRaw && !(AGENT_MODES as readonly string[]).includes(amRaw)) errors.push(`agent_mode must be one of: ${AGENT_MODES.join(', ')}.`);
   if (errors.length) return { ok: false, errors };
   return { ok: true, value: rec as InteractionExternalRequest };
 }

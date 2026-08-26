@@ -9,6 +9,8 @@ const props = defineProps<{
   nodes: AgentModeNodeDto[]
   edges: AgentModeEdgeDto[]
   agents: AgentDefinitionDto[]
+  /** Pack-managed/published modes render inspect-only: no drag, no connect, no delete. */
+  readonly?: boolean
 }>()
 const emit = defineEmits<{
   'update:nodes': [nodes: AgentModeNodeDto[]]
@@ -118,6 +120,7 @@ function hasCycle(nextEdges: AgentModeEdgeDto[]): boolean {
 }
 
 onConnect((conn: Connection) => {
+  if (props.readonly) return
   if (!conn.source || !conn.target) return
   if (conn.source === conn.target) { laneWarning.value = '不允许自连'; setTimeout(() => laneWarning.value = '', 1800); return }
   if (props.edges.some((e) => e.source === conn.source && e.target === conn.target)) return
@@ -139,6 +142,7 @@ onConnect((conn: Connection) => {
 })
 
 function handleNodesChange(changes: unknown) {
+  if (props.readonly) return
   const list = changes as Array<{ id: string; position?: { x:number;y:number } }>
   let dirty = false
   const next = props.nodes.map((n) => {
@@ -177,13 +181,17 @@ defineExpose({ deleteSelectedEdge, updateEdgeLabel, selectedEdgeId, laneWarning 
         :edges="vfEdges"
         fit-view-on-init
         class="vf"
+        :nodes-draggable="!readonly"
+        :nodes-connectable="!readonly"
+        :edges-focusable="false"
+        :delete-key-code="null"
         @node-click="onNodeClick"
         @pane-click="onPaneClick"
         @edge-click="onEdgeClick"
         @nodes-change="handleNodesChange"
       >
         <Background />
-        <Panel position="top-right" class="vf-panel">双泳道 · 拖拽节点 / 连线 · 选中边可删/改标签</Panel>
+        <Panel position="top-right" class="vf-panel">{{ readonly ? '只读 · 克隆后可编辑' : '双泳道 · 拖拽节点 / 连线 · 选中边可删/改标签' }}</Panel>
         <template #node-custom="{ data }">
           <div class="am-node" :class="{ sel: data.selected, op: data.lane === 'operation', ex: data.lane === 'execution' }">
             <div class="am-node-head">

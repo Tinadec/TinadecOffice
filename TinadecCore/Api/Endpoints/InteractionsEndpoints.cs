@@ -26,6 +26,9 @@ public static class InteractionsEndpoints
         if (string.IsNullOrWhiteSpace(content)) return Results.BadRequest(new { code = "invalid_request", message = "content is required" });
         var clientMessageId = el.TryGetProperty("client_message_id", out var cm) ? cm.GetString() : Guid.NewGuid().ToString("N");
         var modeVersionId = el.TryGetProperty("mode_version_id", out var mv) && Guid.TryParse(mv.GetString(), out var g) ? g : (Guid?)null;
+        var agentMode = el.TryGetProperty("agent_mode", out var am) ? am.GetString()?.Trim().ToLowerInvariant() : null;
+        if (agentMode is not (null or "plan" or "spec" or "ask" or "vibe" or "auto" or "agent"))
+            return Results.BadRequest(new { code = "invalid_request", message = "agent_mode must be one of plan|spec|ask|vibe|auto|agent" });
         var dispatchMode = el.TryGetProperty("dispatch_mode", out var dm) ? dm.GetString()?.Trim().ToLowerInvariant() : "queued";
         if (dispatchMode is not ("queued" or "insert" or "parallel")) return Results.BadRequest(new { code = "invalid_request", message = "dispatch_mode must be queued|insert|parallel" });
         Guid? targetRunId = null;
@@ -44,6 +47,27 @@ public static class InteractionsEndpoints
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
             var mvRec = await cfg.ModeVersions.FirstOrDefaultAsync(x => x.Id == modeVersionId.Value, ct);
             if (mvRec is null) return Results.BadRequest(new { code = "invalid_request", message = "mode_version_id not found" });
+        }
+
+        // Composer agent_mode selects a published conversation mode for this workspace.
+        // Resolution order: explicit mode_version_id > agent_mode slug (conversation.*) >
+        // the session's existing mode (workspace default applied at session creation).
+        // The resolved version is persisted onto the session so the run engine's roster
+        // resolver freezes the exact relational mode the Agent Center edits.
+        if (modeVersionId is null && agentMode is not null)
+        {
+            await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
+            var slug = $"conversation.{agentMode}";
+            var mode = await cfg.AgentModes.AsNoTracking().FirstOrDefaultAsync(
+                x => x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId && x.Slug == slug && x.Status == "published", ct);
+            if (mode is null) return Results.BadRequest(new { code = "invalid_request", message = $"agent_mode '{agentMode}' has no published mode for this workspace" });
+            var version = await cfg.ModeVersions.AsNoTracking()
+                .Where(x => x.AgentModeId == mode.Id && x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId && x.Status == "published")
+                .OrderByDescending(x => x.Version)
+                .Select(x => (Guid?)x.Id)
+                .FirstOrDefaultAsync(ct);
+            if (version is null) return Results.BadRequest(new { code = "invalid_request", message = $"agent_mode '{agentMode}' has no published version" });
+            modeVersionId = version;
         }
 
         // model strategy resolution (inherit/fixed/parent_select) with 2 retries
@@ -86,7 +110,12 @@ public static class InteractionsEndpoints
         string admissionStatus = "queued";
         try
         {
-            admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, "space", "agent", "default", targetRunId, expectedRev), ct);
+            // Composer agent modes belong to the conversation application: selecting one routes
+        // the runtime through the matching TOML conversation.* profile (policy + binding),
+        // while the roster freezes from the resolved relational mode version. No selection
+        // keeps the legacy space/full_duplex admission behavior.
+        var applicationMode = agentMode is null ? "space" : "conversation";
+        admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, applicationMode, agentMode ?? "agent", "default", targetRunId, expectedRev), ct);
             admissionStatus = dispatchMode == "parallel" ? "assigned" : "queued";
         }
         catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")

@@ -35,6 +35,10 @@ const filteredModes = computed(() => {
   return modes.value.filter((m) => `${m.display_name} ${m.summary ?? ''}`.toLowerCase().includes(q))
 })
 const selectedMode = computed(() => modes.value.find((m) => m.id === selectedModeId.value) ?? null)
+const selectedModeReadOnly = computed(() => {
+  const m = selectedMode.value
+  return m !== null && Boolean(m.managed || m.status === 'published' || m.status === 'archived')
+})
 
 function normalizeLayer(layer?: string): 'operation' | 'execution' {
   return layer === 'execution' ? 'execution' : 'operation'
@@ -71,6 +75,19 @@ async function selectMode(id: string) {
     modeNodes.value = (m.nodes ?? []) as AgentModeNodeDto[]
     modeEdges.value = (m.edges ?? []) as AgentModeEdgeDto[]
     modeEtag.value = m.revision != null ? String(m.revision) : null
+    // Fold the managed/status facts back onto the list row so the read-only notice
+    // reflects the live resource state for pack-installed published modes too.
+    if (m.managed !== undefined || m.status) {
+      modes.value = modes.value.map((row) =>
+        row.id === id
+          ? {
+              ...row,
+              managed: m.managed ?? row.managed,
+              status: m.status ?? row.status,
+            }
+          : row,
+      )
+    }
   } catch {
     modeNodes.value = []
     modeEdges.value = []
@@ -99,7 +116,7 @@ async function createMode() {
 }
 
 async function saveModeDraft() {
-  if (!selectedModeId.value) return
+  if (!selectedModeId.value || selectedModeReadOnly.value) return
   modeBusy.value = true
   try {
     await api.updateAgentModeDraft(selectedModeId.value, { nodes: modeNodes.value, edges: modeEdges.value, canvas_layout: {} }, modeEtag.value)
@@ -113,7 +130,7 @@ async function saveModeDraft() {
 }
 
 async function publishMode() {
-  if (!selectedModeId.value) return
+  if (!selectedModeId.value || selectedModeReadOnly.value) return
   modeBusy.value = true
   try {
     await api.publishAgentMode(selectedModeId.value)
@@ -126,7 +143,30 @@ async function publishMode() {
   }
 }
 
+async function cloneSelectedMode() {
+  const source = selectedMode.value
+  if (!source || !selectedModeReadOnly.value) return
+  modeBusy.value = true
+  try {
+    const m = await api.createAgentModeDraft({
+      display_name: `${source.display_name} (copy)`,
+      summary: 'draft',
+      nodes: modeNodes.value,
+      edges: modeEdges.value,
+      canvas_layout: {}
+    })
+    await loadModes()
+    await selectMode(m.id)
+    notify.success({ message: t('agentCenter.modeCreated', { name: m.display_name }) })
+  } catch (e) {
+    notify.error(e)
+  } finally {
+    modeBusy.value = false
+  }
+}
+
 function addModeNode() {
+  if (selectedModeReadOnly.value) return
   const id = `n-${Date.now().toString(36)}`
   const firstAgent = agents.value[0]?.id ?? 'meeting'
   modeNodes.value = [
@@ -148,7 +188,7 @@ function handleSelectEdge(e: AgentModeEdgeDto | null) {
 }
 
 function applyNodeOverride() {
-  if (!selectedModeNode.value) return
+  if (!selectedModeNode.value || selectedModeReadOnly.value) return
   modeNodes.value = modeNodes.value.map((n) =>
     n.id === selectedModeNode.value!.id
       ? { ...n, agent_id: nodeOverride.value.agent_id || n.agent_id, label: nodeOverride.value.label || n.label }
@@ -158,7 +198,7 @@ function applyNodeOverride() {
 }
 
 function saveEdgeLabel() {
-  if (!selectedEdge.value) return
+  if (!selectedEdge.value || selectedModeReadOnly.value) return
   modeEdges.value = modeEdges.value.map((e) =>
     e.id === selectedEdge.value!.id ? { ...e, label: edgeLabelDraft.value || undefined } : e
   )
@@ -166,7 +206,7 @@ function saveEdgeLabel() {
 }
 
 function deleteEdge() {
-  if (!selectedEdge.value) return
+  if (!selectedEdge.value || selectedModeReadOnly.value) return
   modeEdges.value = modeEdges.value.filter((e) => e.id !== selectedEdge.value!.id)
   selectedEdge.value = null
 }
@@ -210,10 +250,16 @@ defineExpose({ loadModes })
 
     <div class="ac-mode-actions">
       <UiButton size="sm" :disabled="modeBusy" @click="createMode"><Plus :size="14" /><span>{{ t('agentCenter.createMode') }}</span></UiButton>
-      <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy" @click="saveModeDraft">{{ t('settings.saveDraftMode') }}</UiButton>
-      <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy" @click="publishMode">{{ t('settings.publishModeAction') }}</UiButton>
-      <UiButton size="sm" variant="ghost" :disabled="!selectedModeId" @click="addModeNode"><Plus :size="14" />{{ t('settings.addNodeAction') }}</UiButton>
+      <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy || selectedModeReadOnly" @click="saveModeDraft">{{ t('settings.saveDraftMode') }}</UiButton>
+      <UiButton size="sm" variant="outline" :disabled="!selectedModeId || modeBusy || selectedModeReadOnly" @click="publishMode">{{ t('settings.publishModeAction') }}</UiButton>
+      <UiButton size="sm" variant="ghost" :disabled="!selectedModeId || selectedModeReadOnly" @click="addModeNode"><Plus :size="14" />{{ t('settings.addNodeAction') }}</UiButton>
       <UiButton size="sm" variant="outline" :disabled="!selectedModeId" @click="openVersionDrawer"><History :size="14" />{{ t('agentCenter.versionHistory') }}</UiButton>
+      <UiButton v-if="selectedModeReadOnly" size="sm" :disabled="modeBusy" @click="cloneSelectedMode">{{ t('agentPack.cloneAction') }}</UiButton>
+    </div>
+
+    <div v-if="selectedModeReadOnly && selectedMode" class="ac-mode-readonly-notice">
+      <UiBadge variant="outline">{{ t('agentPack.managed') }}</UiBadge>
+      <span>{{ selectedMode.managed ? t('agentPack.managedReadOnly') : t('agentCenter.publishedReadOnlyHint') }}</span>
     </div>
 
     <div class="center-workbench workbench-duo">
@@ -250,12 +296,13 @@ defineExpose({ loadModes })
           :nodes="modeNodes"
           :edges="modeEdges"
           :agents="agents"
+          :readonly="selectedModeReadOnly"
           @update:nodes="modeNodes = $event"
           @update:edges="modeEdges = $event"
           @select-node="handleSelectNode"
           @select-edge="handleSelectEdge"
         />
-        <div v-if="selectedEdge" class="ac-edge-bar">
+        <div v-if="selectedEdge && !selectedModeReadOnly" class="ac-edge-bar">
           <span>{{ selectedEdge.source }} → {{ selectedEdge.target }}</span>
           <UiInput v-model="edgeLabelDraft" :placeholder="t('settings.edgeLabelPlaceholder')" class="ac-edge-label-input" />
           <UiButton size="sm" variant="outline" @click="saveEdgeLabel">{{ t('settings.saveLabelAction') }}</UiButton>
@@ -280,7 +327,7 @@ defineExpose({ loadModes })
         </div>
         <div class="ac-sheet-actions">
           <UiButton size="sm" variant="outline" @click="selectedModeNode = null">{{ t('settings.cancel') }}</UiButton>
-          <UiButton size="sm" @click="applyNodeOverride">{{ t('settings.applyAction') }}</UiButton>
+          <UiButton size="sm" :disabled="selectedModeReadOnly" @click="applyNodeOverride">{{ t('settings.applyAction') }}</UiButton>
         </div>
       </div>
     </UiSheet>
@@ -312,6 +359,17 @@ defineExpose({ loadModes })
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.ac-mode-readonly-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 .ac-mode-tabs {
   display: grid;

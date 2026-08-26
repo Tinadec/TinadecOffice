@@ -395,16 +395,22 @@ public static class AgentConfigurationEndpoints
         await db.SaveChangesAsync(ct);
         return Results.Created($"/api/v1/agent-modes/{rec.Id}", ToModeDto(rec));
     }
-    static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
+static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var (t,w,_)=Ctx(a); await using var db=await f.CreateDbContextAsync(ct);
         var rec=await db.AgentModes.FirstOrDefaultAsync(x=>x.Id==id && x.TenantId==t && x.WorkspaceId==w, ct);
         if(rec is null) return Results.NotFound(new{code="not_found"});
-        if (!string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase)) return Results.Conflict(new{code="not_draft",message="Only a draft mode can be published."});
-        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
-        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status=="draft").ToListAsync(ct);
-        var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w, ct);
-        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
+        if (string.Equals(rec.Status, "archived", StringComparison.OrdinalIgnoreCase)) return Results.NotFound(new{code="not_found", message="Mode is archived."});
+        // Read returns the current topology for any live status: draft edits read the
+        // draft projection; published/managed modes read the published projection. The
+        // draft-only guard belongs on writes (update/publish), not on this read.
+        var isDraft = string.Equals(rec.Status, "draft", StringComparison.OrdinalIgnoreCase);
+        var nodeStatus = isDraft ? "draft" : "published";
+        var nodes=await db.ModeNodes.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
+        var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
+        var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus, ct);
+        var managed = await packs.FindManagedResourceAsync("mode", id, ct) is not null;
+        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
     static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {

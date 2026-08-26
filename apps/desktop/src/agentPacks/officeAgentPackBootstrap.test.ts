@@ -32,13 +32,13 @@ function preview(action: string, overrides: Partial<AgentPackInstallPreviewDto> 
     preview_id: '7c3899a5-119d-4e40-b2a4-313a7b13fac0',
     pack_id: OFFICE_AGENT_PACK_ID,
     owner: 'tinadec.office',
-    bundled_version: '0.1.0',
+    bundled_version: '0.2.0',
     installed_version: null,
     integrity_digest: OFFICE_AGENT_PACK_DIGEST,
     revision: 0,
     etag: '"0"',
     expires_at: '2026-08-25T13:00:00Z',
-    counts: { agents: 14, prompt_pipelines: 1, modes: 1, created: 16, adopted: 0, reused: 0, updated: 0 },
+    counts: { agents: 14, prompt_pipelines: 1, modes: 7, created: 22, adopted: 0, reused: 0, updated: 0 },
     required_core_version: '0.1.0',
     current_core_version: '0.1.0',
     warnings: [],
@@ -67,10 +67,10 @@ describe('OfficeAgentPack bootstrap', () => {
       status: 'installed',
       pack_id: OFFICE_AGENT_PACK_ID,
       owner: 'tinadec.office',
-      active_version: '0.1.0',
+      active_version: '0.2.0',
       integrity_digest: OFFICE_AGENT_PACK_DIGEST,
       revision: 1,
-      counts: { agents: 14, prompt_pipelines: 1, modes: 1 },
+      counts: { agents: 14, prompt_pipelines: 1, modes: 7 },
       installed_at: '2026-08-25T12:00:00Z',
       updated_at: '2026-08-25T12:00:00Z',
     })
@@ -86,7 +86,7 @@ describe('OfficeAgentPack bootstrap', () => {
       expect.objectContaining({ if_match: null }),
     )
     expect(officeAgentPackState.value.phase).toBe('up_to_date')
-    expect(officeAgentPackState.value.active_version).toBe('0.1.0')
+    expect(officeAgentPackState.value.active_version).toBe('0.2.0')
   })
 
   it('defers a rejected upgrade and rechecks without prompting again in the same app run', async () => {
@@ -112,10 +112,10 @@ describe('OfficeAgentPack bootstrap', () => {
       status: 'updated',
       pack_id: OFFICE_AGENT_PACK_ID,
       owner: 'tinadec.office',
-      active_version: '0.1.0',
+      active_version: '0.2.0',
       integrity_digest: OFFICE_AGENT_PACK_DIGEST,
       revision: 4,
-      counts: { agents: 14, prompt_pipelines: 1, modes: 1 },
+      counts: { agents: 14, prompt_pipelines: 1, modes: 7 },
       installed_at: '2026-08-24T12:00:00Z',
       updated_at: '2026-08-25T12:00:00Z',
     })
@@ -131,7 +131,7 @@ describe('OfficeAgentPack bootstrap', () => {
   it('treats a concurrent installation as success after a 412 re-preview', async () => {
     previewMock
       .mockResolvedValueOnce(preview('install'))
-      .mockResolvedValueOnce(preview('up_to_date', { preview_id: null, installed_version: '0.1.0', revision: 1, etag: '"1"' }))
+      .mockResolvedValueOnce(preview('up_to_date', { preview_id: null, installed_version: '0.2.0', revision: 1, etag: '"1"' }))
     installMock.mockRejectedValue(Object.assign(new Error('revision conflict'), { status: 412, code: 'conflict' }))
 
     const pending = ensureOfficeAgentPack({ force: true })
@@ -140,7 +140,7 @@ describe('OfficeAgentPack bootstrap', () => {
     await pending
 
     expect(officeAgentPackState.value.phase).toBe('up_to_date')
-    expect(officeAgentPackState.value.active_version).toBe('0.1.0')
+    expect(officeAgentPackState.value.active_version).toBe('0.2.0')
     expect(useNotifications().items.value.some((item) => item.key === 'office-agent-pack')).toBe(false)
   })
 

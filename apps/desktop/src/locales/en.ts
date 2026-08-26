@@ -1308,6 +1308,7 @@ retry: 'Retry',
     modeSaveFailed: 'Failed to save the mode',
     modePublished: 'Mode published successfully',
     versionHistory: 'Version history',
+    publishedReadOnlyHint: 'This mode is published and renders read-only; clone it to edit a custom copy.',
   },
   common: {
     loading: 'Loading…',

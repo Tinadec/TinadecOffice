@@ -1,11 +1,19 @@
 # OfficeAgentPack 随装方案 — 本阶段收尾 + 后续待办
 
-**提交:** `3d92404`
+**提交:** `3d92404`（首版 0.1.0）/ `9b3d42b`（列表 500 修复）/ 本阶段（v0.2.0 七模式 + 发送框打通）
 **分支:** `main`
-**阶段:** OfficeAgentPack 随装方案（首版 0.1.0）第一轮收尾
-**校验结果:** Core 114/114、Gateway 38/38、Desktop 276 pass + 14 skipped 全绿
+**校验结果:** Core Api 116/116、AgentFramework 56/56、Gateway 40/40、Desktop 276 pass + 14 skipped 全绿
 
-本文件记录该方案在 `3d92404` 的落地状态，并把计划中**明确本期不做 / 延期**的项登记为后续待办，供后续阶段直接取用。与 `AGENTS.md`、`docs/tinadec-core-product-definition.zh-CN.md` 相互引用。
+本文件记录该方案的落地状态，并把计划中**明确延期**的项登记为后续待办。与 `AGENTS.md`、`docs/tinadec-core-product-definition.zh-CN.md` 相互引用。
+
+---
+
+## 〇、阶段二：发送框模式 ↔ Pack 拓扑打通（2026-08-26）
+
+- **Pack v0.2.0**：manifest 新增六个对话模式 `conversation.plan/spec/ask/vibe/auto/agent`（节点子集对齐 TOML profile，各带合法 worker 子集），共 7 Mode / 22 资源；digest `837497ea…7ee5`。
+- **拓扑显示修复**：`GET /api/v1/agent-modes/{id}` 对 published/managed 模式返回 published 投影 + `managed` 标记（此前 draft-only 守卫 409 导致画布空白）；Desktop 模式面板只读渲染 + 克隆入口。
+- **agent_mode 打通**：`POST /interactions` 接受 `agent_mode`；解析顺序 = 显式 `mode_version_id` > workspace 已发布 `conversation.{slug}` > 会话默认；选中即持久化到 session 并以 conversation 应用语义 admission。Gateway `sessionMapper` 补转发 `mode_version_id` 等绑定字段，`interactionsMapper` 薄校验枚举。
+- **回归测试**：装包后三列表端点 + published 拓扑读 + agent_mode 三级解析/未知拒绝/优先级。
 
 ---
 

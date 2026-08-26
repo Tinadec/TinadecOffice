@@ -967,6 +967,8 @@ export interface AgentModeTopologyDto {
   edges: AgentModeEdgeDto[];
   canvas_layout?: Record<string, unknown> | null;
   status?: string;
+  /** True when an installed Agent Pack owns this mode (read-only; clone to customize). */
+  managed?: boolean;
   revision?: number | null;
   etag?: string | null;
   created_at?: string | null;
@@ -1776,7 +1778,7 @@ export const api = {
     return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
   },
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; agent_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),

@@ -5,6 +5,9 @@ export interface ExternalSessionDto {
   title: string | null;
   status: string | null;
   mode: string | null;
+  mode_version_id: string | null;
+  meeting_model: string | null;
+  meeting_provider_id: string | null;
   summary: string | null;
   history_revision: number | null;
   created_at: string | null;
@@ -24,6 +27,9 @@ export function mapSession(core: unknown): ExternalSessionDto | null {
     title: (core.title as string) ?? null,
     status: (core.status as string) ?? null,
     mode: (core.mode as string) ?? null,
+    mode_version_id: (core.mode_version_id as string) ?? (core.modeVersionId as string) ?? null,
+    meeting_model: (core.meeting_model as string) ?? (core.meetingModel as string) ?? null,
+    meeting_provider_id: (core.meeting_provider_id as string) ?? (core.meetingProviderId as string) ?? null,
     summary: (core.summary as string) ?? null,
     history_revision: (core.history_revision as number) ?? (core.historyRevision as number) ?? null,
     created_at: (core.created_at as string) ?? null,

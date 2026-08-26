@@ -1308,6 +1308,7 @@ retry: '重试',
     modeSaveFailed: '保存模式失败',
     modePublished: '模式已成功发布',
     versionHistory: '版本历史',
+    publishedReadOnlyHint: '该模式已发布，画布只读；克隆后可编辑自定义副本。',
   },
   common: {
     loading: '加载中…',

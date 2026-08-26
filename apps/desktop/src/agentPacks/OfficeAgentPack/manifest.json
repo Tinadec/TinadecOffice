@@ -6,7 +6,7 @@
     "owner": "tinadec.office",
     "product_id": "tinadec.office",
     "name": "OfficeAgentPack",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -239,6 +239,107 @@
       }
     ],
     "modes": [
+      {
+        "resource_key": "conversation.ask",
+        "slug": "conversation.ask",
+        "display_name": "问答 (Ask)",
+        "description": "conversation.ask profile: 快速问答，meeting 直答。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "conversation.vibe",
+        "slug": "conversation.vibe",
+        "display_name": "随性 (Vibe)",
+        "description": "conversation.vibe profile: 随性发散，meeting 直答。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null },
+          { "node_key": "executor-3", "agent_ref": "agent:worker.general", "layer": "execution", "label": "通用执行智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "conversation.plan",
+        "slug": "conversation.plan",
+        "display_name": "规划 (Plan)",
+        "description": "conversation.plan profile: 规划为主，监督把关。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "meeting-2", "agent_ref": "agent:context_compressor", "layer": "operation", "label": "上下文压缩智能体", "config": {}, "position": null },
+          { "node_key": "meeting-3", "agent_ref": "agent:supervisor", "layer": "operation", "label": "监督智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null },
+          { "node_key": "executor-3", "agent_ref": "agent:worker.document", "layer": "execution", "label": "文档生成智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "conversation.spec",
+        "slug": "conversation.spec",
+        "display_name": "规范 (Spec)",
+        "description": "conversation.spec profile: 规范产出，监督把关。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "meeting-2", "agent_ref": "agent:context_compressor", "layer": "operation", "label": "上下文压缩智能体", "config": {}, "position": null },
+          { "node_key": "meeting-3", "agent_ref": "agent:supervisor", "layer": "operation", "label": "监督智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null },
+          { "node_key": "executor-3", "agent_ref": "agent:worker.document", "layer": "execution", "label": "文档生成智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "conversation.auto",
+        "slug": "conversation.auto",
+        "display_name": "自动 (Auto)",
+        "description": "conversation.auto profile: 自动意图适配。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "meeting-2", "agent_ref": "agent:context_compressor", "layer": "operation", "label": "上下文压缩智能体", "config": {}, "position": null },
+          { "node_key": "meeting-3", "agent_ref": "agent:skill_recommender", "layer": "operation", "label": "技能推荐智能体", "config": {}, "position": null },
+          { "node_key": "meeting-4", "agent_ref": "agent:supervisor", "layer": "operation", "label": "监督智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null },
+          { "node_key": "executor-3", "agent_ref": "agent:worker.document", "layer": "execution", "label": "文档生成智能体", "config": {}, "position": null },
+          { "node_key": "executor-4", "agent_ref": "agent:worker.file", "layer": "execution", "label": "文件操作智能体", "config": {}, "position": null },
+          { "node_key": "executor-5", "agent_ref": "agent:worker.general", "layer": "execution", "label": "通用执行智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "conversation.agent",
+        "slug": "conversation.agent",
+        "display_name": "智能体 (Agent)",
+        "description": "conversation.agent profile: 完整自主执行。",
+        "nodes": [
+          { "node_key": "meeting-1", "agent_ref": "agent:meeting", "layer": "operation", "label": "会议智能体", "config": {}, "position": null },
+          { "node_key": "meeting-2", "agent_ref": "agent:context_compressor", "layer": "operation", "label": "上下文压缩智能体", "config": {}, "position": null },
+          { "node_key": "meeting-3", "agent_ref": "agent:skill_recommender", "layer": "operation", "label": "技能推荐智能体", "config": {}, "position": null },
+          { "node_key": "meeting-4", "agent_ref": "agent:supervisor", "layer": "operation", "label": "监督智能体", "config": {}, "position": null },
+          { "node_key": "meeting-5", "agent_ref": "agent:evolution", "layer": "operation", "label": "进化智能体", "config": {}, "position": null },
+          { "node_key": "executor-1", "agent_ref": "agent:task_planner", "layer": "execution", "label": "任务规划智能体", "config": {}, "position": null },
+          { "node_key": "executor-2", "agent_ref": "agent:worker.code", "layer": "execution", "label": "代码执行智能体", "config": {}, "position": null },
+          { "node_key": "executor-3", "agent_ref": "agent:worker.document", "layer": "execution", "label": "文档生成智能体", "config": {}, "position": null },
+          { "node_key": "executor-4", "agent_ref": "agent:worker.data", "layer": "execution", "label": "数据处理智能体", "config": {}, "position": null },
+          { "node_key": "executor-5", "agent_ref": "agent:worker.browser", "layer": "execution", "label": "浏览器检索智能体", "config": {}, "position": null },
+          { "node_key": "executor-6", "agent_ref": "agent:worker.file", "layer": "execution", "label": "文件操作智能体", "config": {}, "position": null },
+          { "node_key": "executor-7", "agent_ref": "agent:worker.general", "layer": "execution", "label": "通用执行智能体", "config": {}, "position": null },
+          { "node_key": "executor-8", "agent_ref": "agent:worker.git", "layer": "execution", "label": "Git 执行智能体", "config": {}, "position": null }
+        ],
+        "edges": [],
+        "canvas_layout": {}
+      },
       {
         "resource_key": "default-mode",
         "slug": "default-mode",

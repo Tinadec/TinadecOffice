@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-25
+**Last Updated:** 2026-08-26
 **Last Updated By:** openai/gpt-5.6
-**Last Verified Commit:** daf2648
+**Last Verified Commit:** 9b3d42b
 **Branch:** main
 
 ## OVERVIEW
@@ -86,6 +86,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 
 ### 全双工运行期代理
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` 原样转发完整 JSON 请求和 Core 的 SSE 状态/主体；Gateway 不解释 `application_mode`、`agent_mode`、`permission_mode`、`target_run_id` 或 `expected_context_revision`。
+- `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model`、`meeting_provider_id`（Desktop 依赖它们感知当前模式）。
 - `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
