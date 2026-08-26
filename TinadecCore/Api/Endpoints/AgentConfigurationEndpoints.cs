@@ -210,8 +210,9 @@ public static class AgentConfigurationEndpoints
         var (t, w, _) = Ctx(a);
         var q = req.Query["status"].ToString();
         await using var db = await f.CreateDbContextAsync(ct);
-        var list = await db.AgentDefinitions.Where(x => x.TenantId == t && x.WorkspaceId == w && (string.IsNullOrEmpty(q) || x.Status == q)).OrderByDescending(x => x.UpdatedAt).ToListAsync(ct);
-        return Results.Ok(list.Select(ToAgentDto));
+        // SQLite cannot translate DateTimeOffset ORDER BY to SQL; order in memory after materializing.
+        var list = await db.AgentDefinitions.Where(x => x.TenantId == t && x.WorkspaceId == w && (string.IsNullOrEmpty(q) || x.Status == q)).ToListAsync(ct);
+        return Results.Ok(list.OrderByDescending(x => x.UpdatedAt).Select(ToAgentDto));
     }
     static async Task<IResult> CreateAgent(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
     {
@@ -368,7 +369,8 @@ public static class AgentConfigurationEndpoints
         }
         var (t,w,_) = Ctx(a); var q=req.Query["status"].ToString();
         await using var db = await f.CreateDbContextAsync(ct);
-        var list = await db.AgentModes.Where(x=>x.TenantId==t && x.WorkspaceId==w && (string.IsNullOrEmpty(q)||x.Status==q)).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
+        var list = await db.AgentModes.Where(x=>x.TenantId==t && x.WorkspaceId==w && (string.IsNullOrEmpty(q)||x.Status==q)).ToListAsync(ct);
+        list = list.OrderByDescending(x=>x.UpdatedAt).ToList();
         // If DB empty, fall back to TOML for backward compat (so old tests see TOML modes)
         if (list.Count == 0 && string.IsNullOrEmpty(q))
         {
@@ -531,7 +533,8 @@ public static class AgentConfigurationEndpoints
             target_node_key = e.TargetNodeKey,
             condition = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(e.ConditionJson) ? "{}" : e.ConditionJson)
         }).ToArray();
-        var layout = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
+        var layouts = await db.CanvasLayouts.AsNoTracking().Where(x => x.ModeId == id && x.TenantId == t && x.WorkspaceId == w && x.Status == "draft").ToListAsync(ct);
+        var layout = layouts.OrderByDescending(x => x.UpdatedAt).FirstOrDefault();
         var canvasLayout = JsonSerializer.Deserialize<JsonElement>(layout?.LayoutJson ?? "{}");
         var snapshot=JsonSerializer.Serialize(new
         {
@@ -576,7 +579,8 @@ public static class AgentConfigurationEndpoints
     {
         var (t,w,_)=Ctx(a); var q=req.Query["status"].ToString();
         await using var db=await f.CreateDbContextAsync(ct);
-        var list=await db.PromptPipelines.Where(x=>x.TenantId==t && x.WorkspaceId==w && (string.IsNullOrEmpty(q)||x.Status==q)).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
+        var list=await db.PromptPipelines.Where(x=>x.TenantId==t && x.WorkspaceId==w && (string.IsNullOrEmpty(q)||x.Status==q)).ToListAsync(ct);
+        list=list.OrderByDescending(x=>x.UpdatedAt).ToList();
         return Results.Ok(list.Select(p=>new{ id=p.Id, slug=p.Slug, display_name=p.DisplayName, description=p.Description, graph= JsonSerializer.Deserialize<JsonElement>(p.GraphJson), status=p.Status, revision=p.Revision, version=p.Version, created_at=p.CreatedAt, updated_at=p.UpdatedAt}));
     }
     static async Task<IResult> CreatePipeline(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)

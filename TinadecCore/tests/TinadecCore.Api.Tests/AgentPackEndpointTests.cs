@@ -40,6 +40,39 @@ public sealed class AgentPackEndpointTests
     }
 
     [Fact]
+    public async Task OfficePack_AfterInstall_CenterListEndpointsReturnPackRoster()
+    {
+        // Regression: SQLite cannot translate DateTimeOffset ORDER BY to SQL, so the
+        // Agent Center list endpoints (agents/modes/prompt-pipelines) used to 500
+        // right after a pack install while the pack detail endpoint looked healthy.
+        using var factory = new AgentPackFactory();
+        using var client = factory.CreateClient();
+        var envelope = OfficeEnvelope();
+
+        using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+        var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
+        using var installResponse = await ApplyAsync(client, envelope, preview.GetProperty("preview_id").GetGuid(), "office-install-list");
+        Assert.Equal(HttpStatusCode.Created, installResponse.StatusCode);
+
+        var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+        Assert.NotNull(agents);
+        Assert.Equal(14, agents!.Length);
+        Assert.All(agents, agent => Assert.Equal("published", agent.GetProperty("status").GetString()));
+        Assert.Equal(6, agents.Count(agent => agent.GetProperty("layer").GetString() == "operation"));
+        Assert.Equal(8, agents.Count(agent => agent.GetProperty("layer").GetString() == "execution"));
+
+        var modes = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-modes");
+        Assert.NotNull(modes);
+        var defaultMode = Assert.Single(modes!, mode => mode.GetProperty("slug").GetString() == "default-mode");
+        Assert.Equal("published", defaultMode.GetProperty("status").GetString());
+
+        var pipelines = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/prompt-pipelines");
+        var baseline = Assert.Single(pipelines!, pipeline => pipeline.GetProperty("slug").GetString() == "baseline-prompt");
+        Assert.Equal("published", baseline.GetProperty("status").GetString());
+    }
+
+    [Fact]
     public async Task OfficePack_InstallsIdempotently_FreezesDefaultsAndProtectsManagedResources()
     {
         using var factory = new AgentPackFactory();
