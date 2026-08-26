@@ -949,6 +949,8 @@ export interface AgentModeNodeDto {
   lane: 'operation' | 'execution';
   position: { x: number; y: number };
   label?: string | null;
+  /** Core node_key for published projections; write-back uses it before id. */
+  node_key?: string;
   data?: Record<string, unknown> | null;
 }
 
@@ -957,6 +959,13 @@ export interface AgentModeEdgeDto {
   source: string;
   target: string;
   label?: string | null;
+}
+
+/** Core UpsertModeTopology write contract (node_key/agent_definition_id/layer). */
+export interface AgentModeTopologyWriteDto {
+  nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null }>;
+  edges: Array<{ source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
+  canvas_layout?: Record<string, unknown> | null;
 }
 
 export interface AgentModeTopologyDto {
@@ -1754,9 +1763,9 @@ export const api = {
   getAgentVersion: (id: string, versionId: string) => request<AgentVersionDto>(`/api/v1/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`),
   // agent-modes topology
   listAgentModeTopologies: () => request<AgentModeTopologyDto[]>('/api/v1/agent-modes'),
-  createAgentModeDraft: (body: Partial<AgentModeTopologyDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
+  createAgentModeDraft: (body: Omit<Partial<AgentModeTopologyDto>, 'nodes' | 'edges'> & Partial<AgentModeTopologyWriteDto>) => request<AgentModeTopologyDto>('/api/v1/agent-modes', { method: 'POST', body: JSON.stringify(body) }),
   getAgentModeTopology: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}`),
-  updateAgentModeDraft: (id: string, body: { nodes: AgentModeNodeDto[]; edges: AgentModeEdgeDto[]; canvas_layout?: Record<string, unknown> | null }, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
+  updateAgentModeDraft: (id: string, body: AgentModeTopologyWriteDto, etag?: string | null) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
   publishAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
   archiveAgentMode: (id: string) => request<AgentModeTopologyDto>(`/api/v1/agent-modes/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   listAgentModeVersions: (id: string) => request<ModeVersionDto[]>(`/api/v1/agent-modes/${encodeURIComponent(id)}/versions`),

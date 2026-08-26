@@ -47,10 +47,10 @@ const vfNodes = computed<Node[]>(() =>
       type: 'custom',
       position: n.position,
       data: {
-        label: n.label ?? ag?.name ?? n.agent_id,
+        label: n.label ?? ag?.name ?? n.agent_id ?? '',
         agent_id: n.agent_id,
         lane: normalizeLane(n.lane),
-        agentName: ag?.name ?? n.agent_id.slice(0, 8),
+        agentName: ag?.name ?? n.agent_id?.slice(0, 8) ?? '未绑定',
         role: ag?.agent_type ?? '—',
         cap: cap || '—',
         toolCount: tools,

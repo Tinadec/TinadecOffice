@@ -72,8 +72,28 @@ async function selectMode(id: string) {
   selectedModeId.value = id
   try {
     const m = await api.getAgentModeTopology(id)
-    modeNodes.value = (m.nodes ?? []) as AgentModeNodeDto[]
-    modeEdges.value = (m.edges ?? []) as AgentModeEdgeDto[]
+    let operationIndex = 0
+    let executionIndex = 0
+    modeNodes.value = ((m.nodes ?? []) as unknown as Array<Record<string, unknown>>).map((n) => {
+      // Canvas contract (agent_id/lane); Core projections speak agent_definition_id/layer.
+      const lane = normalizeLayer((n.layer ?? n.lane) != null ? String(n.layer ?? n.lane) : undefined)
+      const slot = lane === 'execution' ? executionIndex++ : operationIndex++
+      return {
+        id: String(n.node_key ?? n.id),
+        node_key: n.node_key != null ? String(n.node_key) : undefined,
+        agent_id: n.agent_id != null ? String(n.agent_id) : n.agent_definition_id != null ? String(n.agent_definition_id) : '',
+        lane,
+        // Published projections carry null positions; give VueFlow a stable two-lane layout.
+        position: (n.position as { x: number; y: number } | null) ?? { x: 60 + (slot % 4) * 230, y: 30 },
+        label: (n.label as string) ?? '',
+      }
+    }) as AgentModeNodeDto[]
+    modeEdges.value = ((m.edges ?? []) as unknown as Array<Record<string, unknown>>).map((e) => ({
+      id: String(e.edge_key ?? e.id),
+      source: e.source != null ? String(e.source) : String(e.source_node_key ?? ''),
+      target: e.target != null ? String(e.target) : String(e.target_node_key ?? ''),
+      label: (e.label as string | undefined) ?? undefined,
+    })) as AgentModeEdgeDto[]
     modeEtag.value = m.revision != null ? String(m.revision) : null
     // Fold the managed/status facts back onto the list row so the read-only notice
     // reflects the live resource state for pack-installed published modes too.
@@ -115,11 +135,30 @@ async function createMode() {
   }
 }
 
+function toCoreTopology(nodes: AgentModeNodeDto[], edges: AgentModeEdgeDto[]) {
+  // Core UpsertModeTopology speaks node_key/agent_definition_id/layer and
+  // source_node_key/target_node_key — map the canvas shape back before saving.
+  return {
+    nodes: nodes.map((n) => ({
+      node_key: n.node_key ?? n.id,
+      agent_definition_id: n.agent_id,
+      layer: normalizeLayer(n.lane),
+      label: n.label ?? null,
+      position: n.position ?? null,
+    })),
+    edges: edges.map((e) => ({
+      source_node_key: e.source,
+      target_node_key: e.target,
+      ...(e.label ? { condition: { label: e.label } } : {}),
+    })),
+  }
+}
+
 async function saveModeDraft() {
   if (!selectedModeId.value || selectedModeReadOnly.value) return
   modeBusy.value = true
   try {
-    await api.updateAgentModeDraft(selectedModeId.value, { nodes: modeNodes.value, edges: modeEdges.value, canvas_layout: {} }, modeEtag.value)
+    await api.updateAgentModeDraft(selectedModeId.value, { ...toCoreTopology(modeNodes.value, modeEdges.value), canvas_layout: {} }, modeEtag.value)
     notify.success({ message: t('agentCenter.modeDraftSaved') })
     await loadModes()
   } catch (e) {
@@ -151,8 +190,7 @@ async function cloneSelectedMode() {
     const m = await api.createAgentModeDraft({
       display_name: `${source.display_name} (copy)`,
       summary: 'draft',
-      nodes: modeNodes.value,
-      edges: modeEdges.value,
+      ...toCoreTopology(modeNodes.value, modeEdges.value),
       canvas_layout: {}
     })
     await loadModes()
