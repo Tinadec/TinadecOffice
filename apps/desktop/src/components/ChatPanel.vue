@@ -37,7 +37,7 @@ const emit = defineEmits<{
   'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
   'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
-  'welcome-send': [content: string]
+  'welcome-send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel }]
   'create-project': []
   'select-project': [id: string]
   'approve': [approvalId: string]
@@ -109,6 +109,8 @@ function handleReject(approvalId: string) {
             :mode="mode"
             :permission="permission"
             :session-id="currentSession?.id ?? null"
+            :mode-version-id="currentSession?.mode_version_id ?? null"
+            :meeting-model="currentSession?.meeting_model ?? null"
             :runs="runsForComposer"
             @update:model-value="emit('update:draft', $event)"
             @update:permission="emit('update:permission', $event)"

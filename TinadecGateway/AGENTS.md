@@ -1,7 +1,7 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-26
-**Last Updated By:** openai/gpt-5.6
+**Last Updated:** 2026-08-27
+**Last Updated By:** WorkBuddy (GLM-5.3)
 **Last Verified Commit:** 9b3d42b
 **Branch:** main
 
@@ -90,6 +90,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `GET /api/v1/application-modes` 与 `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
+- `POST /api/v1/model-providers/:providerInstanceId/models/refresh` 为纯 Core 代理（模型发现，canonical 路径；Core 从 provider 配置读取 base_url/api_key 拉取远端 `/models`，OpenAI 兼容走 Bearer、Anthropic 走 x-api-key）。
 - `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/:packId`、`POST /api/v1/agent-packs/install-preview`、`PUT /api/v1/agent-packs/:packId` 是纯 Core 代理。Gateway 不解析 manifest、不重算 hash、不保存 preview/receipt；PUT 必须透传 `If-Match` 与 `Idempotency-Key`，读/preview/apply 必须保留 ETag。
 - 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。
@@ -112,7 +113,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `/api/v1/governance/permission-requests` 及其 detail/decision、grant/delegation/lease 控制路由全部直接代理 Core；Gateway 不持有治理状态或内部 nonce。
 
 ### Model/Agent Center
-- 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview`、`PUT /api/v1/agents/:id/runtime-binding` 与 model-center refresh alias 已删除并返回 404。
+- 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview`、`PUT /api/v1/agents/:id/runtime-binding` 与 model-center refresh alias 已删除并返回 404；模型发现的 canonical 转发路由是 `POST /api/v1/model-providers/:providerInstanceId/models/refresh`（Desktop `api.refreshProviderModels` 调用，快照 `tests/__snapshots__/openapi.external.json` 由 `bun test` 再生成）。
 - Desktop 通过 Gateway 的版本化 provider/route/agent/mode/prompt/default/pack 路径自行组合视图；Gateway 不持久化或推导第二真相源。
 - 任何仍保留的 BFF/代理响应都必须递归剥离 API Key 和其他密钥字段。
 

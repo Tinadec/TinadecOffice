@@ -12,6 +12,9 @@ export interface SessionDto {
   project_id: string;
   title: string;
   status: string;
+  mode_version_id?: string | null;
+  meeting_model?: string | null;
+  meeting_provider_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -455,6 +458,13 @@ export interface ToolLayerReadinessReceiptDto {
   design_notes: string[];
 }
 
+/**
+ * Stable renderer-side shape delivered by connectEvents(). Normalized from the Core wire
+ * envelope (TinadecCore/Contracts/Events/EventEnvelope.cs: version/event_id/event_type/
+ * timestamp/session_id/run_id/payload.sequence + SSE id line) by normalizeEventEnvelope(),
+ * which guarantees type/seq/ts/v are always present. request_id/trace_id/capabilities are
+ * not part of the Core contract and default to ''/[].
+ */
 export interface EventEnvelope {
   v: string;
   type: string;
@@ -1037,13 +1047,17 @@ export interface SessionInteractionDto {
   id: string;
   session_id: string;
   run_id?: string | null;
+  turn_id?: string | null;
   content: string;
   client_message_id: string;
   mode_version_id?: string | null;
   dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
   target_run_id?: string | null;
   meeting_model?: string | null;
+  meeting_provider_id?: string | null;
+  permission_mode?: string | null;
   status: string;
+  error?: { code?: string; message?: string; detail?: string | null } | null;
   created_at: string;
   updated_at?: string | null;
 }
@@ -1555,6 +1569,13 @@ function extractErrorMessage(data: unknown, fallback: string): string {
     if (typeof nestedMessage === 'string' && nestedMessage.length > 0) return nestedMessage;
   }
 
+  // RFC 9457 problem+json bodies (gateway / backend errors) carry detail/title instead of message.
+  const detail = record.detail;
+  if (typeof detail === 'string' && detail.length > 0) return detail;
+
+  const title = record.title;
+  if (typeof title === 'string' && title.length > 0) return title;
+
   return fallback;
 }
 
@@ -1577,6 +1598,46 @@ export async function createUserToolActionForPath(
     method: 'POST',
     body: JSON.stringify({ project_id: project.id, tool_id: toolId, params, idempotency_key: idempotencyKey }),
   });
+}
+
+/**
+ * Normalize a raw SSE event payload into the stable renderer-side EventEnvelope shape.
+ *
+ * Core's wire envelope (TinadecCore/Contracts/Events/EventEnvelope.cs, serialized with
+ * SnakeCaseLower) carries `event_type`/`timestamp`/`version` and nests the sequence in
+ * `payload.sequence`; the SSE `id:` line mirrors that sequence. Legacy/mock payloads keep
+ * the older top-level `type`/`ts`/`seq` shape. Both are accepted here so consumers can
+ * rely on `type`/`seq`/`ts`/`v` always being present (never undefined).
+ */
+export function normalizeEventEnvelope(
+  raw: Record<string, unknown>,
+  lastEventId?: string | null,
+): EventEnvelope {
+  const payload =
+    raw.payload && typeof raw.payload === 'object' && !Array.isArray(raw.payload)
+      ? (raw.payload as Record<string, unknown>)
+      : {};
+  const seqFromPayload = Number(payload.sequence)
+  const seqFromId = Number(lastEventId)
+  const seqCandidate =
+    typeof raw.seq === 'number' && Number.isFinite(raw.seq)
+      ? raw.seq
+      : Number.isFinite(seqFromPayload)
+        ? seqFromPayload
+        : Number.isFinite(seqFromId)
+          ? seqFromId
+          : 0;
+  return {
+    ...raw,
+    v: typeof raw.v === 'string' ? raw.v : typeof raw.version === 'string' ? raw.version : '1.0',
+    type: typeof raw.type === 'string' ? raw.type : typeof raw.event_type === 'string' ? raw.event_type : 'unknown',
+    seq: seqCandidate,
+    ts: typeof raw.ts === 'string' ? raw.ts : typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
+    request_id: typeof raw.request_id === 'string' ? raw.request_id : '',
+    trace_id: typeof raw.trace_id === 'string' ? raw.trace_id : '',
+    capabilities: Array.isArray(raw.capabilities) ? raw.capabilities : [],
+    payload,
+  };
 }
 
 export const api = {
@@ -1787,7 +1848,7 @@ export const api = {
     return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
   },
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; agent_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; agent_mode?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
@@ -1982,20 +2043,27 @@ export const api = {
   connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {
     const params = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
     const source = new EventSource(`${gatewayUrl}/api/v1/events${params}`);
-    source.onmessage = (message) => onEvent(JSON.parse(message.data));
-    source.addEventListener('project.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('session.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('message.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('approval.requested', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('approval.approved', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('approval.rejected', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('tool.shell.approval_required', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('run.started', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('task_graph.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('task.assigned', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('step.result.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('supervision.checked', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
-    source.addEventListener('context.pack.created', (message) => onEvent(JSON.parse((message as MessageEvent).data)));
+    const handle = (message: MessageEvent) => {
+      try {
+        onEvent(normalizeEventEnvelope(JSON.parse(message.data), message.lastEventId));
+      } catch {
+        // Malformed SSE frames must not crash the renderer (rendererErrorFallback watches window errors).
+      }
+    };
+    source.onmessage = handle;
+    source.addEventListener('project.created', handle as EventListener);
+    source.addEventListener('session.created', handle as EventListener);
+    source.addEventListener('message.created', handle as EventListener);
+    source.addEventListener('approval.requested', handle as EventListener);
+    source.addEventListener('approval.approved', handle as EventListener);
+    source.addEventListener('approval.rejected', handle as EventListener);
+    source.addEventListener('tool.shell.approval_required', handle as EventListener);
+    source.addEventListener('run.started', handle as EventListener);
+    source.addEventListener('task_graph.created', handle as EventListener);
+    source.addEventListener('task.assigned', handle as EventListener);
+    source.addEventListener('step.result.created', handle as EventListener);
+    source.addEventListener('supervision.checked', handle as EventListener);
+    source.addEventListener('context.pack.created', handle as EventListener);
     return source;
   }
 };

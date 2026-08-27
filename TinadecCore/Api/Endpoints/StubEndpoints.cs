@@ -38,23 +38,39 @@ public static class StubEndpoints
             checks = Array.Empty<object>()
         }));
 
-        app.MapGet("/api/v1/model-readiness", () => Results.Ok(new
+        app.MapGet("/api/v1/model-readiness", async (IModelProvider models, CancellationToken ct) =>
         {
-            status = "warning",
-            generated_at = DateTimeOffset.UtcNow,
-            receipt_id = Guid.NewGuid().ToString("N"),
-            provider_count = 0,
-            ready_provider_count = 0,
-            warning_provider_count = 0,
-            blocked_provider_count = 0,
-            route_count = 0,
-            ready_route_count = 0,
-            warning_route_count = 0,
-            blocked_route_count = 0,
-            providers = Array.Empty<object>(),
-            routes = Array.Empty<object>(),
-            design_notes = new[] { "No model providers configured — skeleton mode." }
-        }));
+            var readiness = await models.CheckReadinessAsync(ct).ConfigureAwait(false);
+            return Results.Ok(new
+            {
+                status = readiness.IsReady ? "ready" : "warning",
+                generated_at = DateTimeOffset.UtcNow,
+                receipt_id = Guid.NewGuid().ToString("N"),
+                provider_count = 0,
+                ready_provider_count = 0,
+                warning_provider_count = 0,
+                blocked_provider_count = 0,
+                route_count = readiness.IsReady ? 1 : 0,
+                ready_route_count = readiness.IsReady ? 1 : 0,
+                warning_route_count = 0,
+                blocked_route_count = readiness.IsReady ? 0 : 1,
+                providers = Array.Empty<object>(),
+                routes = new[]
+                {
+                    new
+                    {
+                        purpose = "chat",
+                        provider_instance_id = (string?)null,
+                        provider_display_name = (string?)null,
+                        model = (string?)null,
+                        status = readiness.IsReady ? "ready" : "blocked",
+                        summary = readiness.StatusMessage ?? string.Empty,
+                        evidence = readiness.Warnings
+                    }
+                },
+                design_notes = readiness.IsReady ? Array.Empty<string>() : new[] { readiness.StatusMessage ?? "Chat model is not configured." }
+            });
+        });
 
         app.MapGet("/api/v1/model-catalog-readiness", () => Results.Ok(new
         {

@@ -170,3 +170,37 @@ test('interactions reassign/cancel and SSE stream proxy Last-Event-ID', async ()
   const streamReq = requests.find(r => r.url.includes('/stream'))!;
   assert.equal(streamReq.headers['last-event-id'], '42');
 });
+
+test('model-providers models/refresh thin proxy forwards POST and maps discovery errors', async () => {
+  const requests: Array<{ url: string; method: string; headers: Record<string,string> }> = [];
+  let refreshCalls = 0;
+  mockFetch((input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const headers: Record<string,string> = {};
+    if (init?.headers) new Headers(init.headers as HeadersInit).forEach((v,k)=>headers[k]=v);
+    requests.push({ url, method: init?.method ?? 'GET', headers });
+    if (url.includes('/models/refresh')) {
+      refreshCalls++;
+      if (refreshCalls === 1) {
+        return new Response(JSON.stringify({ models: [{ id: 'gpt-4o', display_name: 'gpt-4o' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      // Core's MODEL_DISCOVERY_FAILED shape: { code, message, status }
+      return new Response(JSON.stringify({ code: 'MODEL_DISCOVERY_FAILED', message: 'Provider returned HTTP 404 for GET /models.', status: 404 }), { status: 502, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+
+  const ok = await app.handle(new Request('http://gateway.local/api/v1/model-providers/p1/models/refresh', { method: 'POST', headers: { 'x-request-id': 'req-refresh-1' } }));
+  assert.equal(ok.status, 200);
+  const body = await ok.json() as { models?: Array<{ id: string }> };
+  assert.equal(body.models?.[0]?.id, 'gpt-4o');
+  const fwd = requests.find(r => r.url === 'http://127.0.0.1:48731/api/v1/model-providers/p1/models/refresh')!;
+  assert.equal(fwd.method, 'POST');
+  assert.equal(fwd.headers['x-request-id'], 'req-refresh-1');
+
+  const fail = await app.handle(new Request('http://gateway.local/api/v1/model-providers/p1/models/refresh', { method: 'POST' }));
+  assert.equal(fail.status, 502);
+  assert.ok(String(fail.headers.get('content-type') ?? '').includes('application/problem+json'));
+  const problem = await fail.json() as Record<string, unknown>;
+  assert.ok(String(problem.detail ?? '').includes('Provider returned HTTP 404'));
+});

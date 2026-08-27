@@ -21,6 +21,7 @@ import type { AgentMode, PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { DispatchMode } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
+import { createRunStream, type RunStreamHandle } from '@/composables/useRunStream'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -57,6 +58,8 @@ const currentMode = ref<AgentMode>('auto')
 const currentPermission = ref<PermissionLevel>('default')
 const runs = ref<Array<{ id: string; status: string }>>([])
 const queuedMessages = ref<Array<{ id: string; content: string }>>([])
+const runStreams = new Map<string, RunStreamHandle>()
+const runText = new Map<string, string>()
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
 const activeRuns = computed(() => runs.value.filter((r) => ['running', 'ready', 'pending', 'queued'].includes(r.status)))
@@ -169,6 +172,51 @@ async function loadMessagesAndApprovals() {
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
   runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String((r as Record<string, unknown>).id), status: String((r as Record<string, unknown>).status ?? '') }))
+  attachActiveRuns()
+}
+
+function streamDelta(chunk: import('@/generated/client').SseChunk): string {
+  const payload = chunk.payload as Record<string, unknown>
+  return typeof payload.delta === 'string' ? payload.delta : ''
+}
+
+function attachRun(runId: string) {
+  if (runStreams.has(runId)) return
+  const handle = createRunStream({
+    runId,
+    onChunk: (chunk) => {
+      if (chunk.kind === 'delta') {
+        const delta = streamDelta(chunk)
+        if (delta) {
+          const next = `${runText.get(runId) ?? ''}${delta}`
+          runText.set(runId, next)
+          streamingText.value = new Map(streamingText.value).set(runId, next)
+        }
+        return
+      }
+      if (chunk.kind === 'done' || chunk.kind === 'error') {
+        if (chunk.kind === 'error') {
+          const payload = chunk.payload as Record<string, unknown>
+          const message = payload.safe_error_message ?? payload.message ?? payload.error_category
+          invokeError.value = typeof message === 'string' ? message : '运行失败'
+        }
+        void loadMessagesAndApprovals()
+        runStreams.get(runId)?.disconnect()
+        runStreams.delete(runId)
+      }
+    },
+    onError: (error) => {
+      if (!navigator.onLine) invokeError.value = '网络已断开'
+      else if (error.message) invokeError.value = error.message
+    },
+  })
+  runStreams.set(runId, handle)
+  handle.connect()
+}
+
+function attachActiveRuns() {
+  if (!selectedSessionId.value) return
+  for (const run of activeRuns.value) attachRun(run.id)
 }
 
 async function openProject() {
@@ -206,7 +254,7 @@ const invokeError = ref<string | null>(null)
 const lastCursor = ref<number | null>(null)
 
 
-async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
+async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null; agent_mode?: AgentMode; permission_mode?: PermissionLevel }) {
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
     if (!sessionId && selectedProjectId.value) {
@@ -227,6 +275,8 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     const modeVersionId = opts?.mode_version_id ?? null
     const targetRunId = opts?.target_run_id ?? null
     const meetingModel = opts?.meeting_model ?? null
+    const requestedMode = opts?.agent_mode ?? currentMode.value
+    const requestedPermission = opts?.permission_mode ?? currentPermission.value
     if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
     try {
       messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
@@ -235,11 +285,16 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         content: snapshotContent,
         client_message_id: clientMessageId,
         mode_version_id: modeVersionId,
-        agent_mode: modeVersionId ? null : currentMode.value,
+        agent_mode: modeVersionId ? null : requestedMode,
+        permission_mode: requestedPermission,
         dispatch_mode: dispatchMode,
         target_run_id: targetRunId,
         meeting_model: meetingModel,
       })
+      if (resp.run_id) {
+        attachRun(resp.run_id)
+        runs.value = [{ id: resp.run_id, status: resp.status || 'planning' }, ...runs.value.filter((run) => run.id !== resp.run_id)]
+      }
       if (!resp.run_id && resp.status === 'queued') queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent }]
       // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
     } catch (err) {
@@ -387,6 +442,10 @@ watch(selectedProjectId, () => {
 })
 
 watch(selectedSessionId, () => {
+  for (const stream of runStreams.values()) stream.disconnect()
+  runStreams.clear()
+  runText.clear()
+  streamingText.value = new Map()
   void loadMessagesAndApprovals()
   reconnectEvents()
   queuedMessages.value = []
@@ -453,7 +512,7 @@ export const homeController = {
     if (!content) return
     await handleSend(content, opts)
   },
-  handleWelcomeSend: (content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => handleSend(content, opts),
+  handleWelcomeSend: (payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel }) => handleSend(payload.content, payload),
   requestShellApproval,
   decideApproval,
   recordApproval,

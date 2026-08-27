@@ -122,7 +122,14 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             else if (kind == "parent_select")
             {
                 await using var mdb = await _modelFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                var candidates = await mdb.Providers.AsNoTracking().Where(p => p.Enabled && p.DeletedAt == null).ToListAsync(ct).ConfigureAwait(false);
+                // Candidate providers are scoped to the session tenant (and workspace
+                // when the provider is not global) so one tenant can never steer a
+                // meeting through another tenant's configured model.
+                var candidates = await mdb.Providers.AsNoTracking()
+                    .Where(p => p.Enabled && p.DeletedAt == null
+                        && p.TenantId == sess.TenantId
+                        && (p.WorkspaceId == null || p.WorkspaceId == sess.WorkspaceId))
+                    .ToListAsync(ct).ConfigureAwait(false);
                 for (int attempt = 0; attempt < 3; attempt++)
                 {
                     var cand = candidates.ElementAtOrDefault(attempt);

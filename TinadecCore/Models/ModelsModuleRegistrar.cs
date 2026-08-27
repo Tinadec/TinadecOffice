@@ -67,17 +67,26 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         return Task.FromResult<IChatClient?>(null);
     }
 
-    public Task<ModelReadiness> CheckReadinessAsync(CancellationToken cancellationToken = default)
+    public async Task<ModelReadiness> CheckReadinessAsync(CancellationToken cancellationToken = default)
     {
-        // Keep readiness non-blocking for test environments that bind a scripted
-        // IAgentChatClientFactory at the DmaEA layer. Protocol drill is exercised
-        // via ChatResolution.Protocol normalization tests, not by failing every run.
-        return Task.FromResult(new ModelReadiness
+        // Readiness must reflect the real chat route: a scripted IAgentChatClientFactory
+        // still works when the route is missing, so that case is a warning, not ready.
+        var resolution = await ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (resolution.IsAvailable)
         {
-            IsReady = true,
-            StatusMessage = "Model readiness is assumed for scripted test environments.",
-            Warnings = []
-        });
+            return new ModelReadiness
+            {
+                IsReady = true,
+                StatusMessage = $"Chat route resolved to {resolution.ModelId}.",
+                Warnings = []
+            };
+        }
+        return new ModelReadiness
+        {
+            IsReady = false,
+            StatusMessage = "Chat model is not configured.",
+            Warnings = [resolution.Error ?? "No chat model route is configured."]
+        };
     }
 
     public async Task<ChatResolution> ResolveChatAsync(string? routePurpose = null, CancellationToken cancellationToken = default)

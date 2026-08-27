@@ -132,7 +132,7 @@ function confirmSteer(id: string) {
 
 <template>
   <div class="composer">
-    <div class="composer-box welcome-dialog">
+    <div class="composer-box welcome-dialog" :data-composer-active="modelValue.trim() ? 'true' : 'false'">
       <!-- queued cards sit inside dialog top when items are queued -->
       <div v-if="queued.length" class="composer-queued">
         <div v-for="item in queued" :key="item.id" class="queued-card">
@@ -200,7 +200,8 @@ function confirmSteer(id: string) {
             :disabled="!modelValue.trim()"
             @click="submit()"
           >
-            <ArrowUp :size="15" />
+            <span v-if="busy" class="composer-send-spinner" role="status" aria-label="sending" />
+            <ArrowUp v-else :size="15" />
           </UiButton>
           <div v-if="showAskMenu" class="ask-menu">
             <button class="ask-menu-item" @click="submit('queued')">排队发送</button>
@@ -247,6 +248,17 @@ function confirmSteer(id: string) {
   position: relative;
   display: flex;
   align-items: center;
+}
+.composer-send-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--border-muted);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: composer-spin 0.8s linear infinite;
+}
+@keyframes composer-spin {
+  to { transform: rotate(360deg); }
 }
 .ask-menu {
   position: absolute;

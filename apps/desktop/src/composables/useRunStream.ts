@@ -1,176 +1,243 @@
 import { ref, onUnmounted } from 'vue'
 import type { SseChunk } from '@/generated/client'
 
-/**
- * SSE encapsulation: cursor/Last-Event-ID, run_id+seq dedup, heartbeat, exponential backoff, replay-then-follow.
- * Reuses gatewayUrl from generated client; does not add new deps.
- */
-// ponytail: fetch+ReadableStream over EventSource to control Last-Event-ID/?cursor= & id=seq dedup
-
 function gatewayUrl(): string {
-  const w = window as unknown as { tinadec?: { gatewayUrl?: () => string } }
-  return w.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
+  const g = globalThis as unknown as { window?: { tinadec?: { gatewayUrl?: () => string } } }
+  return g.window?.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
 }
 
-export interface UseRunStreamOptions {
-  sessionId?: string
-  runId?: string
+export type RunStreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error'
+
+export interface RunStreamOptions {
+  runId: string
   cursor?: string | number | null
-  onChunk?: (c: SseChunk) => void
-  onError?: (e: Error) => void
+  onChunk?: (chunk: SseChunk) => void
+  onError?: (error: Error) => void
   autoReconnect?: boolean
+  fetchImpl?: typeof fetch
+  reconnectDelayMs?: number
 }
 
-export function useRunStream(opts: UseRunStreamOptions = {}) {
-  const chunks = ref<SseChunk[]>([])
-  const status = ref<'idle'|'connecting'|'open'|'reconnecting'|'closed'|'error'>('idle')
-  const lastSeq = ref<number | null>(opts.cursor != null ? Number(opts.cursor) : null)
-  const error = ref<Error | null>(null)
+export interface RunStreamHandle {
+  readonly status: { value: RunStreamStatus }
+  readonly lastSeq: { value: number | null }
+  readonly error: { value: Error | null }
+  readonly seen: Set<string>
+  connect: (cursor?: string | number | null) => void
+  disconnect: () => void
+  resetDedup: () => void
+  pushChunkForTest: (chunk: SseChunk) => boolean
+}
 
-  const seen = new Set<string>() // run_id+seq dedup
+function dedupKey(chunk: SseChunk): string {
+  return `${chunk.run_id}:${chunk.seq}`
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {}
+}
+
+/** Parse one complete SSE event. Fields may be split across multiple data lines. */
+export function parseRunSseBlock(block: string, fallbackRunId?: string): SseChunk | null {
+  let id: string | null = null
+  let event: string | null = null
+  const dataLines: string[] = []
+  for (const rawLine of block.replace(/\r/g, '').split('\n')) {
+    if (!rawLine || rawLine.startsWith(':')) continue
+    const separator = rawLine.indexOf(':')
+    const field = separator === -1 ? rawLine : rawLine.slice(0, separator)
+    const value = separator === -1 ? '' : rawLine.slice(separator + 1).replace(/^ /, '')
+    if (field === 'id') id = value.trim()
+    else if (field === 'event') event = value.trim()
+    else if (field === 'data') dataLines.push(value)
+  }
+  const data = dataLines.join('\n')
+  if (!data) return null
+  try {
+    const root = asRecord(JSON.parse(data))
+    const payload = asRecord(root.payload)
+    const seqValue = root.seq ?? payload.seq ?? id
+    const runId = String(root.run_id ?? root.runId ?? payload.run_id ?? payload.runId ?? fallbackRunId ?? '')
+    const kind = String(root.kind ?? root.event ?? payload.kind ?? event ?? 'delta')
+    const chunk: SseChunk = {
+      run_id: runId,
+      turn_id: (root.turn_id ?? root.turnId ?? payload.turn_id ?? payload.turnId ?? null) as string | null,
+      message_id: (root.message_id ?? root.messageId ?? payload.message_id ?? payload.messageId ?? null) as string | null,
+      seq: Number(seqValue ?? 0),
+      kind,
+      occurred_at: String(root.occurred_at ?? root.occurredAt ?? payload.occurred_at ?? payload.occurredAt ?? new Date().toISOString()),
+      payload: Object.keys(payload).length > 0 ? payload : root,
+    }
+    return Number.isFinite(chunk.seq) ? chunk : null
+  } catch {
+    return null
+  }
+}
+
+function isTerminal(kind: string): boolean {
+  return kind === 'done' || kind === 'error'
+}
+
+/**
+ * Lifecycle-free durable run stream. HomeController owns one handle per run;
+ * the Vue composable below only adds component unmount cleanup.
+ */
+export function createRunStream(options: RunStreamOptions): RunStreamHandle {
+  const status = ref<RunStreamStatus>('idle')
+  const lastSeq = ref<number | null>(options.cursor == null ? null : Number(options.cursor))
+  const error = ref<Error | null>(null)
+  const seen = new Set<string>()
+  const fetchImpl = options.fetchImpl ?? fetch
   let abort: AbortController | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let attempt = 0
-  let stopped = false
+  let stopped = true
+  let connecting = false
 
-  function dedupKey(c: SseChunk): string { return `${c.run_id}:${c.seq}` }
+  function resetDedup() {
+    seen.clear()
+  }
 
-  function resetDedup() { seen.clear(); chunks.value = [] }
+  function dispatch(chunk: SseChunk): boolean {
+    const key = dedupKey(chunk)
+    if (seen.has(key)) return false
+    seen.add(key)
+    if (lastSeq.value == null || chunk.seq > lastSeq.value) lastSeq.value = chunk.seq
+    if (chunk.kind !== 'heartbeat') options.onChunk?.(chunk)
+    return true
+  }
 
-  function parseSseBlock(block: string): SseChunk | null {
-    // block: id: seq\nevent: kind\ndata: json
-    let id: string | null = null
-    let kind: string | null = null
-    let data = ''
-    for (const line of block.split('\n')) {
-      if (line.startsWith('id:')) id = line.slice(3).trim()
-      else if (line.startsWith('event:')) kind = line.slice(7).trim()
-      else if (line.startsWith('data:')) data += line.slice(5).trim()
+  function scheduleReconnect(reason: Error) {
+    error.value = reason
+    options.onError?.(reason)
+    if (stopped || options.autoReconnect === false) {
+      status.value = 'error'
+      return
     }
-    if (!data) return null
-    try {
-      const obj = JSON.parse(data) as Record<string, unknown>
-      // external shape already has run_id/seq/kind etc; fallback to id/kind lines
-      const seq = Number((obj.seq as number) ?? id ?? 0)
-      const runId = String((obj.run_id as string) ?? (obj.runId as string) ?? opts.runId ?? opts.sessionId ?? 'unknown')
-      const k = String((obj.kind as string) ?? kind ?? 'delta')
-      const chunk: SseChunk = {
-        run_id: runId,
-        turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
-        message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
-        seq,
-        kind: k,
-        occurred_at: (obj.occurred_at as string) ?? (obj.occurredAt as string) ?? new Date().toISOString(),
-        payload: (obj.payload as Record<string, unknown>) ?? obj,
-      }
-      if (k === 'heartbeat') return chunk // still dedup but caller may ignore
-      return chunk
-    } catch { return null }
+    status.value = 'reconnecting'
+    const base = options.reconnectDelayMs ?? 500
+    const delay = Math.min(30_000, base * Math.pow(2, attempt++))
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      void connectWithCursor(lastSeq.value)
+    }, delay)
   }
 
   async function connectWithCursor(cursor: string | number | null) {
-    if (stopped) return
+    if (stopped || connecting) return
+    connecting = true
     abort?.abort()
     abort = new AbortController()
     status.value = attempt === 0 ? 'connecting' : 'reconnecting'
-
-    // Two modes: invoke-stream is POST, run stream is GET /runs/{runId}/stream?cursor=
-    // This composable is for GET follow; invoke uses api.invokeStream directly but shares dedup/heartbeat contract.
-    const runId = opts.runId
-    const path = runId
-      ? `/api/v1/runs/${encodeURIComponent(runId)}/stream${cursor != null ? `?cursor=${encodeURIComponent(String(cursor))}` : ''}`
-      : `/api/v1/events${cursor != null ? `?cursor=${encodeURIComponent(String(cursor))}` : ''}`
-
+    const search = cursor == null ? '' : `?after_seq=${encodeURIComponent(String(cursor))}`
     const headers: Record<string, string> = { accept: 'text/event-stream' }
     if (cursor != null) headers['last-event-id'] = String(cursor)
-
-    let res: Response
     try {
-      res = await fetch(`${gatewayUrl()}${path}`, { headers, signal: abort.signal })
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') return
-      handleDisconnect(e instanceof Error ? e : new Error(String(e)))
-      return
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      handleDisconnect(new Error(text || `SSE ${res.status} ${res.statusText}`))
-      return
-    }
-    status.value = 'open'
-    attempt = 0
-    error.value = null
-
-    const reader = res.body?.getReader()
-    if (!reader) { handleDisconnect(new Error('No SSE body')); return }
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let block = ''
-
-    try {
+      const response = await fetchImpl(`${gatewayUrl()}/api/v1/runs/${encodeURIComponent(options.runId)}/stream${search}`, {
+        headers,
+        signal: abort.signal,
+      })
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `SSE ${response.status} ${response.statusText}`)
+      }
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No SSE body')
+      status.value = 'open'
+      attempt = 0
+      error.value = null
+      const decoder = new TextDecoder()
+      let buffer = ''
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        // SSE blocks delimited by \n\n
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          block = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          if (!block.trim()) continue
-          // heartbeat may be comment : keep-alive
-          if (block.startsWith(':')) continue
-          const chunk = parseSseBlock(block)
+        buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        let boundary: number
+        while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const chunk = parseRunSseBlock(block, options.runId)
           if (!chunk) continue
-          if (chunk.kind === 'heartbeat') { lastSeq.value = chunk.seq; continue }
-          const key = dedupKey(chunk)
-          if (seen.has(key)) continue
-          seen.add(key)
-          lastSeq.value = chunk.seq
-          chunks.value.push(chunk)
-          opts.onChunk?.(chunk)
+          dispatch(chunk)
+          if (isTerminal(chunk.kind)) {
+            stopped = true
+            status.value = 'closed'
+            return
+          }
         }
       }
-      // normal close -> reconnect if not stopped
-      if (!stopped && status.value === 'open') handleDisconnect(new Error('SSE closed'))
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') return
-      handleDisconnect(e instanceof Error ? e : new Error(String(e)))
+      buffer += decoder.decode()
+      const finalBlock = buffer.trim()
+      if (finalBlock && !stopped) {
+        const chunk = parseRunSseBlock(finalBlock, options.runId)
+        if (chunk) {
+          dispatch(chunk)
+          if (isTerminal(chunk.kind)) {
+            stopped = true
+            status.value = 'closed'
+            return
+          }
+        }
+      }
+      if (!stopped) scheduleReconnect(new Error('SSE closed before terminal event'))
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === 'AbortError') return
+      scheduleReconnect(cause instanceof Error ? cause : new Error(String(cause)))
+    } finally {
+      connecting = false
     }
-  }
-
-  function handleDisconnect(e: Error) {
-    error.value = e
-    opts.onError?.(e)
-    if (stopped || opts.autoReconnect === false) { status.value = 'error'; return }
-    status.value = 'reconnecting'
-    const delay = Math.min(30000, 500 * Math.pow(2, attempt++)) + Math.random() * 200
-    reconnectTimer = setTimeout(() => connectWithCursor(lastSeq.value), delay)
   }
 
   function connect(cursor?: string | number | null) {
     stopped = false
-    if (cursor !== undefined) lastSeq.value = cursor as number
-    connectWithCursor(lastSeq.value)
+    if (cursor !== undefined) lastSeq.value = cursor == null ? null : Number(cursor)
+    void connectWithCursor(lastSeq.value)
   }
 
   function disconnect() {
     stopped = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = null
     abort?.abort()
+    abort = null
     status.value = 'closed'
   }
 
-  function pushChunkForTest(raw: SseChunk) {
-    const key = dedupKey(raw)
-    if (seen.has(key)) return false
-    seen.add(key)
-    chunks.value.push(raw)
-    lastSeq.value = raw.seq
-    return true
+  return {
+    status,
+    lastSeq,
+    error,
+    seen,
+    connect,
+    disconnect,
+    resetDedup,
+    pushChunkForTest: dispatch,
   }
+}
 
-  onUnmounted(disconnect)
+export interface UseRunStreamOptions extends Omit<RunStreamOptions, 'runId'> {
+  runId?: string
+  sessionId?: string
+}
 
-  return { chunks, status, lastSeq, error, connect, disconnect, resetDedup, pushChunkForTest, seen }
+/** Vue lifecycle wrapper retained for feature panels and existing callers. */
+export function useRunStream(options: UseRunStreamOptions = {}): RunStreamHandle & { chunks: ReturnType<typeof ref<SseChunk[]>> } {
+  const chunks = ref<SseChunk[]>([])
+  if (!options.runId) {
+    return {
+      ...createRunStream({ runId: options.sessionId ?? 'missing-run', ...options, autoReconnect: false }),
+      chunks,
+    }
+  }
+  const runner = createRunStream({
+    ...options,
+    runId: options.runId,
+    onChunk: (chunk) => {
+      chunks.value.push(chunk)
+      options.onChunk?.(chunk)
+    },
+  })
+  onUnmounted(runner.disconnect)
+  return { ...runner, chunks }
 }

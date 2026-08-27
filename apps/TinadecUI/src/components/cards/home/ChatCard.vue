@@ -23,6 +23,7 @@ const c = homeController
     :tool-calls="c.agentToolCalls.value"
     :runs-for-composer="c.runs.value"
     @update:draft="c.updateDraft($event)"
+    @update:mode="c.updateMode($event)"
     @update:permission="c.updatePermission($event)"
     @send="c.sendMessage($event as never)"
     @welcome-send="c.handleWelcomeSend($event as never)"

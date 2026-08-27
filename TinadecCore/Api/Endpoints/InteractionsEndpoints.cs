@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Endpoints;
 
@@ -75,14 +77,25 @@ public static class InteractionsEndpoints
         string? modelSelectionLog = null;
         if (modeVersionId.HasValue)
         {
-            try { (resolvedMeetingModel, modelSelectionLog) = await ResolveMeetingModelAsync(modeVersionId.Value, meetingModel, cfgFactory, req.HttpContext.RequestServices, ct).ConfigureAwait(false); } catch (Exception ex) { modelSelectionLog = ex.Message; }
+            try { (resolvedMeetingModel, modelSelectionLog) = await ResolveMeetingModelAsync(modeVersionId.Value, sessionId, meetingModel, cfgFactory, req.HttpContext.RequestServices, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex.GetType() != typeof(OperationCanceledException))
+            {
+                // A strategy that cannot be evaluated must not silently degrade the run's
+                // frozen meeting binding; surface it as admission failure with a safe log.
+                modelSelectionLog = ex.Message;
+                return Results.Json(new { code = "model_strategy_unresolved", message = $"Meeting model strategy could not be resolved: {ex.Message}" }, statusCode: 503);
+            }
         }
 
         // Persist the chosen mode_version onto the session so the run engine's roster resolver
         // reads the same relational mode the center edits — not a per-call event hint.
         if (modeVersionId.HasValue)
         {
-            try { await sessions.UpdateSessionModeAsync(sessionId, modeVersionId.Value, resolvedMeetingModel, null, ct).ConfigureAwait(false); } catch { }
+            try { await sessions.UpdateSessionModeAsync(sessionId, modeVersionId.Value, resolvedMeetingModel, null, ct).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                return Results.Json(new { code = "mode_binding_failed", message = $"Failed to bind mode version to session: {ex.Message}" }, statusCode: 503);
+            }
         }
 
         // dispatch to existing full-duplex engine via coordinator
@@ -172,7 +185,7 @@ public static class InteractionsEndpoints
         return Results.Ok(runs.Select(r => new { interaction_id = r.TurnId, run_id = r.Id, session_id = r.SessionId, status = r.Status, created_at = r.CreatedAt, updated_at = r.UpdatedAt }));
     }
 
-    static async Task<(string? resolved, string? log)> ResolveMeetingModelAsync(Guid modeVersionId, string? requested, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IServiceProvider sp, CancellationToken ct)
+    static async Task<(string? resolved, string? log)> ResolveMeetingModelAsync(Guid modeVersionId, Guid sessionId, string? requested, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IServiceProvider sp, CancellationToken ct)
     {
         await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == modeVersionId, ct).ConfigureAwait(false);
@@ -205,26 +218,59 @@ public static class InteractionsEndpoints
             return (model, $"fixed:{prov}:{model}");
         }
         if(kind=="parent_select"){
-            // select from workspace enabled models with up to 2 retries
+            // select from tenant/workspace enabled providers with up to 3 attempts
             try{
                 var modelFactory = sp.GetService(typeof(IDbContextFactory<TinadecCore.Models.ModelControlDbContext>)) as IDbContextFactory<TinadecCore.Models.ModelControlDbContext>;
                 if(modelFactory is not null){
+                    var sessions = sp.GetRequiredService<ProjectSessionStore>();
+                    var sess = await sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
                     await using var mdb = await modelFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                    var candidates = await mdb.Providers.AsNoTracking().Where(p=>p.Enabled && p.DeletedAt==null).ToListAsync(ct).ConfigureAwait(false);
-                    // simple: pick first with retry
+                    var candidates = mdb.Providers.AsNoTracking().Where(p=>p.Enabled && p.DeletedAt==null);
+                    if (sess is not null)
+                    {
+                        candidates = candidates.Where(p => p.TenantId == sess.TenantId && (p.WorkspaceId == null || p.WorkspaceId == sess.WorkspaceId));
+                    }
+                    var candidateList = await candidates.ToListAsync(ct).ConfigureAwait(false);
                     for(int attempt=0; attempt<3; attempt++){
-                        var cand = candidates.ElementAtOrDefault(attempt);
+                        var cand = candidateList.ElementAtOrDefault(attempt);
                         if(cand is null) break;
-                        // check if provider has model (via versions)
+                        // resolve the real configured model from the provider's current version content
                         var ver = await mdb.ProviderVersions.AsNoTracking().Where(v=>v.ProviderId==cand.Id).OrderByDescending(v=>v.Version).FirstOrDefaultAsync(ct).ConfigureAwait(false);
-                        if(ver is not null) return (ver.ContentReference, $"parent_select attempt {attempt+1}:{cand.Id}");
+                        if(ver is not null) return (await ResolveProviderModelNameAsync(cand.Id, ver.ContentReference, ver.ContentHash, ver.ContentLength, sp, ct).ConfigureAwait(false), $"parent_select attempt {attempt+1}:{cand.Id}");
                     }
                     return (requested, "parent_select: no enabled provider, fallback to requested");
                 }
-            }catch(Exception ex){ return (requested, $"parent_select failed:{ex.Message}"); }
+            }catch(Exception){ throw; }
             return (requested, "parent_select: no provider factory");
         }
         // inherit
         return (requested, "inherit");
+    }
+
+    /// <summary>
+    /// Reads the real model name from the provider version's immutable JSON config
+    /// (the ContentReference is a content-store pointer, never a model name).
+    /// </summary>
+    static async Task<string?> ResolveProviderModelNameAsync(Guid providerId, string contentReference, string contentHash, long contentLength, IServiceProvider sp, CancellationToken ct)
+    {
+        try
+        {
+            var providerFactory = sp.GetService(typeof(IDbContextFactory<TinadecCore.Models.ModelControlDbContext>)) as IDbContextFactory<TinadecCore.Models.ModelControlDbContext>;
+            if (providerFactory is null) return null;
+            var contentStore = sp.GetRequiredService<IContentStore>();
+            await using var stream = await contentStore.OpenReadAsync(new ContentReference(contentReference, contentHash, contentLength, "application/json"), ct).ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+            var root = doc.RootElement;
+            string? ReadStr(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            var model = ReadStr("model") ?? ReadStr("model_id") ?? (root.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0 ? models[0].GetString() : null);
+            if (!string.IsNullOrWhiteSpace(model)) return model;
+            await using var mdb = await providerFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var provider = await mdb.Providers.AsNoTracking().FirstOrDefaultAsync(p => p.Id == providerId, ct).ConfigureAwait(false);
+            return provider?.Driver;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

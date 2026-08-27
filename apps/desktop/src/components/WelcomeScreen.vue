@@ -34,7 +34,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'send': [content: string]
+  'send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel }]
   'create-project': []
   'select-project': [id: string]
   'add-image': []
@@ -68,7 +68,7 @@ function handleSend() {
   if (!content) return
   draft.value = ''
   resetTextareaHeight()
-  emit('send', content)
+  emit('send', { content, agent_mode: currentMode.value, permission_mode: currentPermission.value })
 }
 
 function handleKeydown(event: KeyboardEvent) {

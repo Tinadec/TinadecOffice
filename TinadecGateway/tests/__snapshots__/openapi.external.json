@@ -2891,6 +2891,28 @@
         ]
       }
     },
+    "/api/v1/model-providers/{providerInstanceId}/models/refresh": {
+      "post": {
+        "operationId": "postApiV1Model-providersByProviderInstanceIdModelsRefresh",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "providerInstanceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Refresh (discover) models from a provider",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
     "/api/v1/model-readiness": {
       "get": {
         "operationId": "getApiV1Model-readiness",
