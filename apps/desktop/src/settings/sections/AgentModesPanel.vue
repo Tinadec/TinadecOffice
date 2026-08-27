@@ -5,7 +5,7 @@ import { History, Plus, RefreshCw, Search, Trash2 } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel, UiSheet } from '@/components/ui'
 import AgentModeCanvas from '@/components/canvas/AgentModeCanvas.vue'
 import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'
-import { api, type AgentDefinitionDto, type AgentModeEdgeDto, type AgentModeNodeDto, type AgentModeTopologyDto, type ModeVersionDto } from '@/api'
+import { api, type AgentDefinitionDto, type AgentModeEdgeDto, type AgentModeNodeDto, type AgentModeTopologyDto, type ModeVersionDto, type ModelProviderInstanceDto, type ModelRouteDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
@@ -25,9 +25,20 @@ const modeBusy = ref(false)
 const selectedModeNode = ref<AgentModeNodeDto | null>(null)
 const selectedEdge = ref<AgentModeEdgeDto | null>(null)
 const edgeLabelDraft = ref('')
-const nodeOverride = ref({ agent_id: '', label: '' })
+const nodeOverride = ref({
+  agent_id: '',
+  label: '',
+  strategy_kind: 'inherit' as 'inherit' | 'route' | 'fixed',
+  strategy_route_purpose: '',
+  strategy_provider_instance_id: '',
+  strategy_model: '',
+})
+const nodePreviewSummary = ref('')
+const nodePreviewBusy = ref(false)
 
 const agents = ref<AgentDefinitionDto[]>([])
+const providers = ref<ModelProviderInstanceDto[]>([])
+const routes = ref<ModelRouteDto[]>([])
 
 const filteredModes = computed(() => {
   const q = modeQuery.value.trim().toLowerCase()
@@ -86,6 +97,7 @@ async function selectMode(id: string) {
         // Published projections carry null positions; give VueFlow a stable two-lane layout.
         position: (n.position as { x: number; y: number } | null) ?? { x: 60 + (slot % 4) * 230, y: 30 },
         label: (n.label as string) ?? '',
+        model_strategy_override: (n.model_strategy_override as AgentModeNodeDto['model_strategy_override']) ?? null,
       }
     }) as AgentModeNodeDto[]
     modeEdges.value = ((m.edges ?? []) as unknown as Array<Record<string, unknown>>).map((e) => ({
@@ -145,6 +157,7 @@ function toCoreTopology(nodes: AgentModeNodeDto[], edges: AgentModeEdgeDto[]) {
       layer: normalizeLayer(n.lane),
       label: n.label ?? null,
       position: n.position ?? null,
+      model_strategy_override: n.model_strategy_override ?? null,
     })),
     edges: edges.map((e) => ({
       source_node_key: e.source,
@@ -216,7 +229,18 @@ function addModeNode() {
 function handleSelectNode(n: AgentModeNodeDto | null) {
   selectedModeNode.value = n
   selectedEdge.value = null
-  if (n) nodeOverride.value = { agent_id: n.agent_id, label: n.label ?? '' }
+  nodePreviewSummary.value = ''
+  if (n) {
+    const strategy = n.model_strategy_override
+    nodeOverride.value = {
+      agent_id: n.agent_id,
+      label: n.label ?? '',
+      strategy_kind: strategy?.kind ?? 'inherit',
+      strategy_route_purpose: strategy?.route_purpose ?? routes.value[0]?.purpose ?? '',
+      strategy_provider_instance_id: strategy?.provider_instance_id ?? '',
+      strategy_model: strategy?.model ?? '',
+    }
+  }
 }
 
 function handleSelectEdge(e: AgentModeEdgeDto | null) {
@@ -225,11 +249,52 @@ function handleSelectEdge(e: AgentModeEdgeDto | null) {
   edgeLabelDraft.value = e?.label ?? ''
 }
 
-function applyNodeOverride() {
+/** Build the node's model_strategy_override from the editor state. */
+function nodeStrategyOverride(): Record<string, unknown> | null {
+  if (nodeOverride.value.strategy_kind === 'inherit') return null
+  if (nodeOverride.value.strategy_kind === 'route') {
+    return nodeOverride.value.strategy_route_purpose
+      ? { kind: 'route', route_purpose: nodeOverride.value.strategy_route_purpose }
+      : null
+  }
+  return nodeOverride.value.strategy_provider_instance_id
+    ? { kind: 'fixed', provider_instance_id: nodeOverride.value.strategy_provider_instance_id, model: nodeOverride.value.strategy_model || null }
+    : null
+}
+
+/** Resolve what the node's strategy would select before applying it. */
+async function previewNodeStrategy() {
+  if (!selectedModeNode.value) return
+  nodePreviewBusy.value = true
+  nodePreviewSummary.value = ''
+  try {
+    const preview = await api.previewModelResolution({
+      strategy: nodeStrategyOverride() as never,
+      agent_definition_id: selectedModeNode.value.agent_id,
+      mode_version_id: selectedModeId.value || null,
+      node_key: selectedModeNode.value.node_key ?? selectedModeNode.value.id,
+    })
+    const selection = preview.expected_selection
+    nodePreviewSummary.value = selection
+      ? `${selection.provider_instance_id ?? '—'}${selection.model ? ` · ${selection.model}` : ''}`
+      : t('settings.runtimeUnresolved')
+  } catch (e) {
+    nodePreviewSummary.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    nodePreviewBusy.value = false
+  }
+}
+
+async function applyNodeOverride() {
   if (!selectedModeNode.value || selectedModeReadOnly.value) return
   modeNodes.value = modeNodes.value.map((n) =>
     n.id === selectedModeNode.value!.id
-      ? { ...n, agent_id: nodeOverride.value.agent_id || n.agent_id, label: nodeOverride.value.label || n.label }
+      ? {
+          ...n,
+          agent_id: nodeOverride.value.agent_id || n.agent_id,
+          label: nodeOverride.value.label || n.label,
+          model_strategy_override: nodeStrategyOverride() as AgentModeNodeDto['model_strategy_override'],
+        }
       : n
   )
   selectedModeNode.value = null
@@ -269,6 +334,8 @@ async function loadModeVersions() {
 onMounted(() => {
   void loadAgents()
   void loadModes()
+  void api.listModelProviders().then((rows) => { providers.value = rows }).catch(() => { providers.value = [] })
+  void api.listModelRoutes().then((rows) => { routes.value = rows }).catch(() => { routes.value = [] })
 })
 
 onBeforeUnmount(() => { /* no timers held */ })
@@ -363,6 +430,37 @@ defineExpose({ loadModes })
           <UiLabel>{{ t('settings.nodeLabelField') }}</UiLabel>
           <UiInput v-model="nodeOverride.label" :placeholder="t('settings.nodeLabelPlaceholder')" />
         </div>
+        <div class="ac-node-strategy">
+          <UiLabel>{{ t('settings.nodeStrategyOverride') }}</UiLabel>
+          <select v-model="nodeOverride.strategy_kind" class="settings-select">
+            <option value="inherit">{{ t('settings.runtimeInherit') }}</option>
+            <option value="route">{{ t('settings.runtimeRoute') }}</option>
+            <option value="fixed">{{ t('settings.runtimeFixedModel') }}</option>
+          </select>
+          <div v-if="nodeOverride.strategy_kind === 'route'" class="ac-node-strategy-field">
+            <UiLabel>{{ t('settings.routePurpose') }}</UiLabel>
+            <select v-model="nodeOverride.strategy_route_purpose" class="settings-select">
+              <option value="" disabled>{{ t('settings.selectRoutePurpose') }}</option>
+              <option v-for="route in routes" :key="route.id ?? route.purpose" :value="route.purpose">{{ route.purpose }}</option>
+            </select>
+          </div>
+          <div v-else-if="nodeOverride.strategy_kind === 'fixed'" class="ac-node-strategy-field">
+            <UiLabel>{{ t('settings.selectProvider') }}</UiLabel>
+            <select v-model="nodeOverride.strategy_provider_instance_id" class="settings-select">
+              <option value="" disabled>{{ t('settings.selectProvider') }}</option>
+              <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.display_name }}</option>
+            </select>
+            <UiInput
+              v-model="nodeOverride.strategy_model"
+              :placeholder="t('settings.routeModel')"
+              class="ac-node-strategy-model"
+            />
+          </div>
+          <div v-if="nodePreviewSummary" class="ac-node-preview quiet">{{ nodePreviewSummary }}</div>
+          <UiButton size="sm" variant="outline" :disabled="nodePreviewBusy || nodeOverride.strategy_kind === 'inherit'" @click="previewNodeStrategy">
+            {{ t('settings.previewNodeStrategy') }}
+          </UiButton>
+        </div>
         <div class="ac-sheet-actions">
           <UiButton size="sm" variant="outline" @click="selectedModeNode = null">{{ t('settings.cancel') }}</UiButton>
           <UiButton size="sm" :disabled="selectedModeReadOnly" @click="applyNodeOverride">{{ t('settings.applyAction') }}</UiButton>
@@ -397,6 +495,24 @@ defineExpose({ loadModes })
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.ac-node-strategy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+}
+.ac-node-strategy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ac-node-preview {
+  font-size: 12px;
+  word-break: break-all;
 }
 .ac-mode-readonly-notice {
   display: flex;

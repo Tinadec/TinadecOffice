@@ -16,7 +16,7 @@ import type {
 } from './api'
 import { findTemplate, type ProviderCategory, type ProviderTemplate } from './providerTemplates'
 
-export type ModelCenterSection = 'suppliers' | 'api' | 'models' | 'cli' | 'acp'
+export type ModelCenterSection = 'suppliers' | 'api' | 'models' | 'routes' | 'cli' | 'acp'
 
 export const supplierPresentationAliases = new Map<string, string>([
   ['openai', 'openai-compatible'],
@@ -72,36 +72,12 @@ function cliRuntimeProvider(runtime: ModelCenterCliRuntimeDto): ModelProviderIns
   }
 }
 
-function legacyAcpProvider(runtime: ModelCenterAcpRuntimeDto): ModelProviderInstanceDto | null {
-  if (runtime.source !== 'legacy_provider' || !runtime.provider_instance_id) return null
-  return {
-    id: runtime.provider_instance_id,
-    driver: runtime.driver ?? 'acp',
-    display_name: runtime.display_name,
-    connection_kind: 'cli',
-    model: null,
-    has_api_key: false,
-    binary_path: runtime.binary_path ?? null,
-    home_path: runtime.home_path ?? null,
-    capabilities: runtime.capabilities,
-    enabled: runtime.enabled,
-    status: runtime.status,
-    status_message: runtime.status_message,
-    created_at: '',
-    updated_at: runtime.updated_at ?? ''
-  }
-}
-
 export function providersFromOverview(overview: ModelCenterOverviewDto | null) {
   if (!overview) return []
 
   return uniqueProviders([
     ...overview.api_connections.map(apiConnectionProvider),
-    ...overview.cli_runtimes.map(cliRuntimeProvider),
-    ...overview.acp_runtimes.flatMap((runtime) => {
-      const provider = legacyAcpProvider(runtime)
-      return provider ? [provider] : []
-    })
+    ...overview.cli_runtimes.map(cliRuntimeProvider)
   ])
 }
 
@@ -159,11 +135,7 @@ export function bindingForAgent(overview: AgentCenterOverviewDto | null, agentId
   return overview?.agents.find((agent) => agent.id === agentId)?.runtime_binding ?? null
 }
 
-/**
- * Derive the runtime-binding view from the versioned AgentDefinition.model_strategy.
- * Core kinds: inherit | fixed | parent_select | cli | acp. parent_select is a
- * runtime-only behavior and renders as inherit.
- */
+/** Derive a display binding from the formal inherit|route|fixed strategy. */
 export function bindingFromModelStrategy(
   agent: { id: string; model_route_purpose?: string | null; model_strategy?: unknown }
 ): AgentRuntimeBindingDto {
@@ -194,22 +166,18 @@ export function bindingFromModelStrategy(
     }
   }
 
-  if ((rawKind === 'cli' || rawKind === 'acp') && strategy) {
-    const rawRuntime = typeof strategy.runtime_id === 'string'
-      ? strategy.runtime_id
-      : typeof strategy.provider_instance_id === 'string' ? strategy.provider_instance_id : null
-    const legacy = rawRuntime?.startsWith('legacy_provider:') ?? false
-    const providerId = legacy ? rawRuntime!.slice('legacy_provider:'.length) : rawRuntime
+  if (rawKind === 'route') {
+    const purpose = typeof strategy?.route_purpose === 'string' ? strategy.route_purpose : routePurpose
     return {
-      selection_kind: rawKind,
+      selection_kind: 'route',
       source: 'agent_binding',
       writable: true,
-      route_purpose: routePurpose,
-      runtime_kind: rawKind,
-      runtime_id: rawRuntime,
-      provider_instance_id: providerId,
+      route_purpose: purpose,
+      runtime_kind: 'model',
+      runtime_id: null,
+      provider_instance_id: null,
       model_id: null,
-      model_source: 'unset',
+      model_source: 'route_override',
       shared_agent_ids: [],
       warnings: []
     }
@@ -217,7 +185,7 @@ export function bindingFromModelStrategy(
 
   return {
     selection_kind: 'inherit',
-    source: rawKind === 'parent_select' ? 'runtime_parent_select' : 'agent_binding',
+    source: 'agent_binding',
     writable: true,
     route_purpose: routePurpose,
     runtime_kind: 'unresolved',
@@ -261,6 +229,11 @@ export interface ModelCenterAggregateInput {
   acp_adapters?: AcpAdapterDto[] | null;
   model_readiness?: ModelReadinessReceiptDto | null;
   catalog_readiness?: ModelCatalogReadinessReceiptDto | null;
+}
+
+function routeCandidates(route: ModelRouteDto): Array<{ provider_instance_id: string; model?: string | null; position: number }> {
+  if (Array.isArray(route.candidates) && route.candidates.length > 0) return route.candidates
+  return []
 }
 
 type RuntimeKind = 'model' | 'cli' | 'acp';
@@ -378,10 +351,12 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
   const routePurposesByProviderId = new Map<string, string[]>();
 
   for (const route of routes) {
-    const key = route.provider_instance_id.toLowerCase();
-    const purposes = routePurposesByProviderId.get(key) ?? [];
-    purposes.push(route.purpose);
-    routePurposesByProviderId.set(key, purposes);
+    for (const candidate of routeCandidates(route)) {
+      const key = candidate.provider_instance_id.toLowerCase();
+      const purposes = routePurposesByProviderId.get(key) ?? [];
+      purposes.push(route.purpose);
+      routePurposesByProviderId.set(key, purposes);
+    }
   }
 
   const suppliers = templates.map(supplierFromTemplate);
@@ -562,11 +537,13 @@ function buildConfiguredModels(providers: ModelProviderInstanceDto[], routes: Mo
   }
 
   for (const route of routes) {
-    const provider = providersById.get(route.provider_instance_id.toLowerCase()) ?? null;
-    if (!provider || classifyProvider(provider) !== 'model') continue;
-    const modelId = route.model ?? provider.model ?? null;
-    if (!modelId) continue;
-    add(route.provider_instance_id, modelId, route.model ? 'route_override' : 'provider_default', route.purpose);
+    for (const candidate of routeCandidates(route)) {
+      const provider = providersById.get(candidate.provider_instance_id.toLowerCase()) ?? null;
+      if (!provider || classifyProvider(provider) !== 'model') continue;
+      const modelId = candidate.model ?? provider.model ?? null;
+      if (!modelId) continue;
+      add(candidate.provider_instance_id, modelId, candidate.model ? 'route_override' : 'provider_default', route.purpose);
+    }
   }
 
   return [...models.values()]

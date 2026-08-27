@@ -9,6 +9,7 @@ public sealed class ModelControlDbContext : DbContext
     public DbSet<ModelProviderVersionRecord> ProviderVersions => Set<ModelProviderVersionRecord>();
     public DbSet<ModelRouteRecord> Routes => Set<ModelRouteRecord>();
     public DbSet<ModelRouteVersionRecord> RouteVersions => Set<ModelRouteVersionRecord>();
+    public DbSet<ModelRouteCandidateRecord> RouteCandidates => Set<ModelRouteCandidateRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -35,6 +36,13 @@ public sealed class ModelControlDbContext : DbContext
         {
             entity.ToTable("model_route_versions"); entity.HasKey(x => x.Id); entity.HasIndex(x => new { x.RouteId, x.Version }).IsUnique();
         });
+        modelBuilder.Entity<ModelRouteCandidateRecord>(entity =>
+        {
+            entity.ToTable("model_route_candidates"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.Model).HasMaxLength(512);
+            entity.HasIndex(x => new { x.RouteVersionId, x.Position }).IsUnique();
+            entity.HasIndex(x => new { x.ProviderInstanceId, x.Model });
+        });
         modelBuilder.UseTinadecSnakeCase();
     }
 }
@@ -42,4 +50,5 @@ public sealed class ModelControlDbContext : DbContext
 public sealed class ModelProviderRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid? WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public string Scope { get; set; } = "workspace"; public string Driver { get; set; } = string.Empty; public string DisplayName { get; set; } = string.Empty; public string ConnectionKind { get; set; } = string.Empty; public string? SecretReference { get; set; } public bool Enabled { get; set; } = true; public long Revision { get; set; } public Guid CurrentVersionId { get; set; } public Guid CreatedByPrincipalId { get; set; } public Guid UpdatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? DeletedAt { get; set; } }
 public sealed class ModelProviderVersionRecord { public Guid Id { get; set; } public Guid ProviderId { get; set; } public int Version { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } }
 public sealed class ModelRouteRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid? WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public string Scope { get; set; } = "workspace"; public string Purpose { get; set; } = string.Empty; public long Revision { get; set; } public Guid CurrentVersionId { get; set; } public Guid CreatedByPrincipalId { get; set; } public Guid UpdatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? DeletedAt { get; set; } }
-public sealed class ModelRouteVersionRecord { public Guid Id { get; set; } public Guid RouteId { get; set; } public int Version { get; set; } public Guid ProviderId { get; set; } public string? Model { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } }
+public sealed class ModelRouteVersionRecord { public Guid Id { get; set; } public Guid RouteId { get; set; } public int Version { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } }
+public sealed class ModelRouteCandidateRecord { public Guid Id { get; set; } public Guid RouteVersionId { get; set; } public int Position { get; set; } public Guid ProviderInstanceId { get; set; } public string? Model { get; set; } }

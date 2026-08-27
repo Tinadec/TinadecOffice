@@ -30,7 +30,8 @@ public sealed record FullDuplexInvocation(
     string? AgentMode,
     string? PermissionMode,
     Guid? TargetRunId,
-    long? ExpectedContextRevision);
+    long? ExpectedContextRevision,
+    SessionModelOverride? MeetingModelOverride = null);
 
 public sealed record RunSubmission(
     Guid RunId,
@@ -164,6 +165,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             invocation.ApplicationMode,
             invocation.AgentMode,
             invocation.PermissionMode,
+            invocation.MeetingModelOverride,
             cancellationToken).ConfigureAwait(false);
 
         var active = await _lifecycle.CountActiveRunsAsync(invocation.SessionId.ToString(), cancellationToken).ConfigureAwait(false);
@@ -601,6 +603,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             invocation.ApplicationMode,
             invocation.AgentMode,
             invocation.PermissionMode,
+            invocation.MeetingModelOverride,
             cancellationToken).ConfigureAwait(false);
         if (!ModeMatches(requested, run))
         {

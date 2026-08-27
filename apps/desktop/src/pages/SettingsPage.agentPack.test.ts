@@ -7,6 +7,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const mocks = vi.hoisted(() => ({
   createAgentDraft: vi.fn(),
   listAgents: vi.fn(),
+  getAgent: vi.fn(),
   getAgentPack: vi.fn(),
 }))
 
@@ -15,6 +16,7 @@ vi.mock('../api', () => ({
     get(_target, property) {
       if (property === 'createAgentDraft') return mocks.createAgentDraft
       if (property === 'listAgents') return mocks.listAgents
+      if (property === 'getAgent') return mocks.getAgent
       if (property === 'getAgentPack') return mocks.getAgentPack
       if (property === 'getHarnessManifest') return vi.fn().mockResolvedValue({ tools: [] })
       if (property === 'getToolLayerReadiness'
@@ -72,23 +74,20 @@ const customAgent = {
   id: 'custom-agent-id',
   slug: 'custom_helper',
   display_name: 'Custom Helper',
-  name: 'Custom Helper',
   layer: 'operation',
   role: 'custom',
-  agent_type: 'custom',
-  mode: 'space.full_duplex',
-  description: 'Custom agent',
-  model_route_purpose: 'chat',
-  model_strategy: { kind: 'inherit' },
-  tool_scope: [],
-  allowed_tools: [],
-  capabilities: [],
-  system_prompt: 'Custom prompt',
+  source_kind: 'custom',
+  source_key: 'custom_helper',
+  managed: false,
+  writable: true,
   enabled: true,
-  is_built_in: false,
   status: 'published',
-  version: 1,
   revision: 1,
+  version: 1,
+  configured_strategy: { kind: 'inherit' },
+  mode_usages: [],
+  effective_previews: {},
+  recent_invocation: null,
   updated_at: '2026-08-25T12:00:00Z',
 }
 
@@ -96,21 +95,58 @@ const managedAgent = {
   id: 'managed-meeting-id',
   slug: 'meeting',
   display_name: 'Managed Meeting',
+  layer: 'operation',
+  role: 'session_coordinator',
+  source_kind: 'pack',
+  source_key: 'tinadec.office.agent-pack:meeting',
+  managed: true,
+  // Pack ownership is authoritative even when an older projection reports false.
+  writable: false,
+  enabled: true,
+  status: 'published',
+  revision: 1,
+  version: 1,
+  configured_strategy: { kind: 'inherit' },
+  mode_usages: [],
+  effective_previews: {},
+  recent_invocation: null,
+  updated_at: '2026-08-25T12:00:00Z',
+}
+
+const customAgentDefinition = {
+  id: 'custom-agent-id',
+  slug: 'custom_helper',
+  display_name: 'Custom Helper',
+  name: 'Custom Helper',
+  layer: 'operation',
+  role: 'custom',
+  description: 'Custom agent',
+  model_route_purpose: 'chat',
+  model_strategy: { kind: 'inherit' },
+  tool_scope: [],
+  capabilities: [],
+  system_prompt: 'Custom prompt',
+  enabled: true,
+  status: 'published',
+  version: 1,
+  revision: 1,
+  updated_at: '2026-08-25T12:00:00Z',
+}
+
+const managedAgentDefinition = {
+  id: 'managed-meeting-id',
+  slug: 'meeting',
+  display_name: 'Managed Meeting',
   name: 'Managed Meeting',
   layer: 'operation',
   role: 'session_coordinator',
-  agent_type: 'session_coordinator',
-  mode: 'space.full_duplex',
   description: 'Managed meeting agent',
   model_route_purpose: 'chat',
   model_strategy: { kind: 'inherit' },
   tool_scope: ['*'],
-  allowed_tools: ['*'],
   capabilities: ['user.respond'],
   system_prompt: 'Managed prompt',
   enabled: true,
-  // Pack ownership is authoritative even when an older projection reports false.
-  is_built_in: false,
   status: 'published',
   version: 1,
   revision: 1,
@@ -121,6 +157,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mocks.createAgentDraft.mockReset().mockResolvedValue({ id: 'clone-id' })
   mocks.listAgents.mockReset().mockResolvedValue([customAgent, managedAgent])
+  mocks.getAgent.mockReset().mockImplementation((agentId: string) =>
+    Promise.resolve(agentId === managedAgent.id ? managedAgentDefinition : customAgentDefinition))
   mocks.getAgentPack.mockReset().mockResolvedValue({
     resources: [{
       kind: 'agent',

@@ -95,6 +95,10 @@ public sealed record RuntimeAgentDefinition(
 
     public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
 
+    public string ModelStrategySource { get; init; } = "agent_version";
+
+    public FrozenModelPlan? ModelPlan { get; init; }
+
     public bool Enabled { get; init; } = true;
 
     public int RosterOrder { get; init; }
@@ -129,14 +133,27 @@ public sealed record AgentRuntimeConfigurationSnapshot(
     public (string ApplicationMode, string AgentMode, RuntimeProfileDefinition Profile) Resolve(string? applicationMode, string? agentMode)
     {
         var appId = NormalizeApplicationMode(applicationMode);
-        if (!ApplicationModes.TryGetValue(appId, out var app))
-            throw new InvalidOperationException($"Application mode '{appId}' is not configured.");
-
-        var selectedAgentMode = string.IsNullOrWhiteSpace(agentMode) ? app.DefaultAgentMode : agentMode.Trim().ToLowerInvariant();
-        if (!app.AllowedAgentModes.Contains(selectedAgentMode, StringComparer.OrdinalIgnoreCase))
+        var allowed = appId switch
+        {
+            "conversation" => new[] { "plan", "spec", "ask", "vibe", "auto", "agent" },
+            "space" => new[] { "agent" },
+            _ => throw new InvalidOperationException($"Application mode '{appId}' is not configured.")
+        };
+        var selectedAgentMode = string.IsNullOrWhiteSpace(agentMode)
+            ? appId == "conversation" ? "auto" : "agent"
+            : agentMode.Trim().ToLowerInvariant();
+        if (!allowed.Contains(selectedAgentMode, StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Agent mode '{selectedAgentMode}' is unavailable in application mode '{appId}'.");
-        if (!app.Bindings.TryGetValue(selectedAgentMode, out var profileId) || !Profiles.TryGetValue(profileId, out var profile))
-            throw new InvalidOperationException($"No runtime profile is bound to '{appId}/{selectedAgentMode}'.");
+        var profileId = appId == "space" ? "space.full_duplex" : $"conversation.{selectedAgentMode}";
+        var activation = profileId switch
+        {
+            "conversation.plan" => "plan_only",
+            "conversation.spec" => "specification",
+            "conversation.agent" => "execute",
+            "space.full_duplex" => "full_duplex",
+            _ => "intent_adaptive"
+        };
+        var profile = new RuntimeProfileDefinition(profileId, activation, [], [], selectedAgentMode is "ask" or "vibe" or "auto");
         return (appId, selectedAgentMode, profile);
     }
 
@@ -255,42 +272,6 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
         var memory = Table(root, "memory");
         var tools = Table(root, "tools");
 
-        var applications = new Dictionary<string, ApplicationModeDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, value) in Table(root, "application_modes"))
-        {
-            if (value is not TomlTable mode) continue;
-            var bindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (mode.TryGetValue("bindings", out var bindingValue) && bindingValue is TomlTable bindingTable)
-                foreach (var (agentMode, profile) in bindingTable) bindings[agentMode] = profile?.ToString() ?? string.Empty;
-            applications[id] = new ApplicationModeDefinition(id, Text(mode, "default_agent_mode"), Strings(mode, "allowed_agent_modes"), bindings);
-        }
-
-        var profiles = new Dictionary<string, RuntimeProfileDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, value) in Table(root, "profiles"))
-        {
-            if (value is not TomlTable profile) continue;
-            profiles[id] = new RuntimeProfileDefinition(id, Text(profile, "activation_policy"), Strings(profile, "operation_agents"), Strings(profile, "execution_agents"), Boolean(profile, "direct_answer_allowed"));
-        }
-
-        var agents = new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, value) in Table(root, "agents"))
-        {
-            if (value is not TomlTable agent) continue;
-            var layer = NormalizeLayer(Text(agent, "layer"));
-            var capabilities = NormalizeCapabilities(Strings(agent, "capabilities"));
-            agents[id] = new RuntimeAgentDefinition(id, layer, Text(agent, "role"), Text(agent, "lifecycle"), capabilities, Boolean(agent, "direct_user_output"), Text(agent, "context_access"))
-            {
-                AllowedTools = Strings(agent, "allowed_tools"),
-                PromptProfile = Text(agent, "prompt_profile"),
-                Triggers = Strings(agent, "triggers"),
-                Accepts = Strings(agent, "accepts"),
-                Emits = Strings(agent, "emits"),
-                Decisions = Strings(agent, "decisions"),
-                MemoryWritePolicy = Text(agent, "memory_write_policy")
-            };
-        }
-
-        Validate(applications, profiles, agents);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
         var toolPolicy = new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4));
         ToolRuntimePolicy.Validate(toolPolicy);
@@ -304,66 +285,16 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             new ContextPolicy(Integer(context, "default_token_budget", 8192), Integer(context, "recent_message_limit", 24), Boolean(context, "optimistic_revision")),
             new MemoryPolicy(Boolean(memory, "candidate_only"), Integer(memory, "retrieval_limit", 8), Strings(memory, "allowed_scopes"), Strings(memory, "allowed_kinds")),
             toolPolicy,
-            applications,
-            profiles,
-            agents);
+            new Dictionary<string, ApplicationModeDefinition>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, RuntimeProfileDefinition>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase));
     }
 
     public static string NormalizeLayer(string? layer) => string.Equals(layer, "planning", StringComparison.OrdinalIgnoreCase) ? "operation" : layer?.Trim().ToLowerInvariant() ?? string.Empty;
-
-    private static void Validate(
-        IReadOnlyDictionary<string, ApplicationModeDefinition> applications,
-        IReadOnlyDictionary<string, RuntimeProfileDefinition> profiles,
-        IReadOnlyDictionary<string, RuntimeAgentDefinition> agents)
-    {
-        if (!applications.ContainsKey("conversation") || !applications.ContainsKey("space")) throw new InvalidDataException("Both conversation and space application modes are required.");
-        foreach (var app in applications.Values)
-        {
-            if (!app.AllowedAgentModes.Contains(app.DefaultAgentMode, StringComparer.OrdinalIgnoreCase)) throw new InvalidDataException($"Default agent mode '{app.DefaultAgentMode}' is not allowed by '{app.Id}'.");
-            foreach (var mode in app.AllowedAgentModes)
-                if (!app.Bindings.TryGetValue(mode, out var profile) || !profiles.ContainsKey(profile)) throw new InvalidDataException($"Application mode '{app.Id}' has no valid profile binding for '{mode}'.");
-        }
-        if (!agents.TryGetValue("meeting", out var meeting) || meeting.Layer != "operation" || !meeting.DirectUserOutput) throw new InvalidDataException("The operation-layer meeting agent must be the direct user entry.");
-        if (agents.Values.Any(a => a.Id != "meeting" && a.DirectUserOutput)) throw new InvalidDataException("Only the meeting agent may set direct_user_output=true.");
-        if (agents.Values.Any(a => a.Layer is not ("operation" or "execution"))) throw new InvalidDataException("Agent layers must be operation or execution.");
-        // Dual-layer invariant: execution specialists are execution workers, never a third layer.
-        // Creation granularity is explicit: temporary/persistent/profile. Legacy agent.spawn is
-        // normalized to agent.create_temporary for compatibility.
-        var allowedCreation = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "agent.create_temporary", "agent.create_persistent", "agent.create_profile" };
-        foreach (var agent in agents.Values)
-        {
-            if (agent.Capabilities.Any(c => string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) || string.Equals(c, "agent.create_profile", StringComparison.OrdinalIgnoreCase)) && agent.Layer != "operation")
-            {
-                // task_planner historically carries execution-layer temporary creation; profile creation must remain operation-only.
-                if (agent.Capabilities.Any(c => string.Equals(c, "agent.create_profile", StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidDataException("Only operation-layer agents may carry agent.create_profile.");
-            }
-            if (agent.Capabilities.Any(c => !string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) && !allowedCreation.Contains(c) && c.StartsWith("agent.create", StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException($"Agent '{agent.Id}' has an unknown agent creation capability.");
-        }
-        // Profiles must reference known agents and respect layer boundaries.
-        foreach (var profile in profiles.Values)
-        {
-            foreach (var id in profile.OperationAgents)
-                if (!agents.ContainsKey(id)) throw new InvalidDataException($"Profile '{profile.Id}' references unknown operation agent '{id}'.");
-            foreach (var id in profile.ExecutionAgents)
-                if (!agents.ContainsKey(id)) throw new InvalidDataException($"Profile '{profile.Id}' references unknown execution agent '{id}'.");
-        }
-    }
 
     private static TomlTable Table(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : throw new InvalidDataException($"Missing TOML table '{key}'.");
     private static string Text(TomlTable table, string key, string fallback = "") => table.TryGetValue(key, out var value) ? value?.ToString() ?? fallback : fallback;
     private static int Integer(TomlTable table, string key, int fallback) => table.TryGetValue(key, out var value) ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
     private static bool Boolean(TomlTable table, string key) => table.TryGetValue(key, out var value) && Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);
     private static string[] Strings(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlArray array ? array.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToArray() : [];
-    private static IReadOnlyList<string> NormalizeCapabilities(IReadOnlyList<string> caps)
-    {
-        var list = new List<string>(caps.Count);
-        foreach (var c in caps)
-        {
-            if (string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase)) list.Add("agent.create_temporary");
-            else list.Add(c);
-        }
-        return list.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    }
 }

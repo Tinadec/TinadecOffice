@@ -20,6 +20,7 @@ public sealed class LifecycleDbContext : DbContext
     public DbSet<WorkspaceSnapshotRecord> WorkspaceSnapshots => Set<WorkspaceSnapshotRecord>();
     public DbSet<SessionMetadataSnapshotRecord> SessionMetadataSnapshots => Set<SessionMetadataSnapshotRecord>();
     public DbSet<UserToolActionRecord> UserToolActions => Set<UserToolActionRecord>();
+    public DbSet<ModelInvocationRecord> ModelInvocations => Set<ModelInvocationRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -183,6 +184,21 @@ public sealed class LifecycleDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.CreatedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => x.ActionApprovalId);
+        });
+        modelBuilder.Entity<ModelInvocationRecord>(entity =>
+        {
+            entity.ToTable("model_invocations"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.StrategySource).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Model).HasMaxLength(512);
+            entity.Property(x => x.Protocol).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.ErrorCategory).HasMaxLength(128);
+            entity.Property(x => x.SafeErrorMessage).HasMaxLength(4096);
+            entity.HasIndex(x => new { x.CallId, x.Attempt }).IsUnique();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.RunId, x.StartedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.AgentDefinitionId, x.StartedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ModeVersionId, x.StartedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProviderInstanceId, x.Model, x.StartedAt });
         });
         modelBuilder.UseTinadecSnakeCase();
     }
@@ -349,5 +365,37 @@ public sealed class UserToolActionRecord
     public int Attempt { get; set; } = 1;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+}
+
+public sealed class ModelInvocationRecord
+{
+    public Guid Id { get; set; }
+    public Guid CallId { get; set; }
+    public int Attempt { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid RunId { get; set; }
+    public Guid? TurnId { get; set; }
+    public Guid? AgentInstanceId { get; set; }
+    public Guid AgentDefinitionId { get; set; }
+    public Guid AgentVersionId { get; set; }
+    public Guid ModeVersionId { get; set; }
+    public string StrategySource { get; set; } = string.Empty;
+    public Guid? RouteId { get; set; }
+    public Guid? RouteVersionId { get; set; }
+    public Guid ProviderInstanceId { get; set; }
+    public Guid ProviderVersionId { get; set; }
+    public string? Model { get; set; }
+    public string Protocol { get; set; } = string.Empty;
+    public int FallbackPosition { get; set; }
+    public string Status { get; set; } = "started";
+    public string? ErrorCategory { get; set; }
+    public string? SafeErrorMessage { get; set; }
+    public long? InputTokens { get; set; }
+    public long? OutputTokens { get; set; }
+    public long? TotalTokens { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
 }

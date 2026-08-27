@@ -33,7 +33,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private readonly IPromptAssembler _promptAssembler;
     private readonly IAgentChatClientFactory _chatClients;
     private readonly IServiceProvider _services;
-    private readonly IFormalModeResolver? _formalResolver;
+    private readonly IAgentModelResolver? _modelResolver;
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
     {
@@ -57,7 +57,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IAgentChatClientFactory chatClients,
         IServiceProvider services,
         ILogger<FullDuplexRunEngine> logger,
-        IFormalModeResolver? formalResolver = null)
+        IAgentModelResolver? modelResolver = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -66,7 +66,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _promptAssembler = promptAssembler;
         _chatClients = chatClients;
         _services = services;
-        _formalResolver = formalResolver ?? services.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
+        _modelResolver = modelResolver ?? services.GetService(typeof(IAgentModelResolver)) as IAgentModelResolver;
         _logger = logger;
     }
 
@@ -399,8 +399,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             try
             {
                 var contextForPlanner = CreateRunContext(run, checkpoint);
-                var formal = await ResolveFrozenChatAsync(checkpoint, plannerDefinition, cancellationToken).ConfigureAwait(false);
-                var planner = new PlanningAgent(formal is null ? _chatClients : new FixedChatFactory(formal, _chatClients), _logger);
+                var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
+                    checkpoint.PlannerAgentId, null), _logger);
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
@@ -930,9 +930,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             AllowedTools = worker.AllowedTools,
             Enabled = true
         };
-        var formal = await ResolveFrozenChatAsync(checkpoint, workerDefinition, cancellationToken).ConfigureAwait(false);
-        var factory = formal is not null ? new FixedChatFactory(formal, _chatClients) : _chatClients;
-        return await new ExecutionAgent(factory, _logger).GetNextTurnAsync(
+        return await new ExecutionAgent(CreateModelFactory(configuration, checkpoint, workerDefinition,
+            worker.Id, worker.ParentInstanceId), _logger).GetNextTurnAsync(
             CreateRunContext(run, checkpoint),
             agent,
             ToPlannedTask(task),
@@ -1096,27 +1095,21 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             definition.PromptVersionContentHash,
             definition.PromptGraphJson), cancellationToken).ConfigureAwait(false);
 
-    private async Task<ChatResolution?> ResolveFrozenChatAsync(
+    private IAgentChatClientFactory CreateModelFactory(
+        FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         RuntimeAgentDefinition definition,
-        CancellationToken cancellationToken) =>
-        _formalResolver is null
-            ? null
-            : await _formalResolver.TryResolveFormalChatAsync(new FrozenAgentChatRequest(
-                checkpoint.SessionId,
-                definition.Id,
-                definition.Layer,
-                definition.ModelStrategyJson,
-                checkpoint.RunId,
-                checkpoint.TurnId), cancellationToken).ConfigureAwait(false);
-
-    private sealed class FixedChatFactory : IAgentChatClientFactory
+        Guid? instanceId,
+        Guid? parentInstanceId)
     {
-        private readonly ChatResolution _fixed;
-        private readonly IAgentChatClientFactory _inner;
-        public FixedChatFactory(ChatResolution f, IAgentChatClientFactory inner) { _fixed = f; _inner = inner; }
-        public Task<ChatResolution> ResolveChatAsync(string? routePurpose = null, CancellationToken cancellationToken = default) => Task.FromResult(_fixed);
-        public Task<IChatClient> CreateAsync(ChatResolution resolution, CancellationToken cancellationToken = default) => _inner.CreateAsync(resolution, cancellationToken);
+        var resolver = _modelResolver ?? throw new InvalidOperationException("The agent model resolver is not registered.");
+        var plan = definition.ModelPlan ?? throw new InvalidDataException($"Frozen agent '{definition.Id}' has no model plan.");
+        var definitionId = definition.AgentDefinitionId ?? throw new InvalidDataException($"Frozen agent '{definition.Id}' has no definition id.");
+        var versionId = definition.AgentVersionId ?? throw new InvalidDataException($"Frozen agent '{definition.Id}' has no version id.");
+        var modeVersionId = configuration.Bindings.Single(binding => binding.ConfigurationKind == "agent_mode_version").ConfigurationVersionId;
+        return new ModelInvocationChatFactory(resolver, _chatClients, plan, new ModelInvocationContext(
+            checkpoint.SessionId, checkpoint.RunId, checkpoint.TurnId, instanceId, parentInstanceId,
+            definitionId, versionId, modeVersionId, plan.StrategySource));
     }
 
     private async Task ApplyTaskResultAsync(
@@ -1227,8 +1220,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint.SupervisorAgentId = supervisorInstance.Id;
             var context = await BuildContextAsync(run, configuration, supervisorDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
             var assembly = await AssemblePromptAsync(supervisorDefinition, context, cancellationToken).ConfigureAwait(false);
-            var formal = await ResolveFrozenChatAsync(checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
-            var supervisor = new SupervisionAgent(formal is null ? _chatClients : new FixedChatFactory(formal, _chatClients), _logger);
+            var supervisor = new SupervisionAgent(CreateModelFactory(configuration, checkpoint, supervisorDefinition,
+                supervisorInstance.Id, supervisorInstance.ParentInstanceId), _logger);
             verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, assembly.Instructions, cancellationToken).ConfigureAwait(false);
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
         }
@@ -1395,7 +1388,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         {
             var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
             var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-            checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(configuration, checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "meeting-response", cancellationToken).ConfigureAwait(false);
         }
 
@@ -1622,13 +1615,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             config.Memory.RetrievalLimit), cancellationToken).ConfigureAwait(false);
 
     private async Task<string> GenerateMeetingResponseAsync(
+        FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         RuntimeAgentDefinition meetingDefinition,
         ContextPack context,
         CancellationToken cancellationToken)
     {
-        var formal = await ResolveFrozenChatAsync(checkpoint, meetingDefinition, cancellationToken).ConfigureAwait(false);
-        var resolution = formal ?? await _chatClients.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        var factory = CreateModelFactory(configuration, checkpoint, meetingDefinition, checkpoint.MeetingAgentId, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(meetingDefinition, context, cancellationToken).ConfigureAwait(false);
         var escalation = checkpoint.SupervisionDecision == "escalate"
@@ -1638,13 +1632,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var instructions = assembly.Instructions + "\n\nYou are the meeting agent, the only user-facing agent. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}";
         using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
-            await _chatClients.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
             "operation.meeting",
             "meeting",
             "Produces the only formal user-facing response from governed evidence.",
             new ChatOptions { Instructions = instructions });
-        var response = await agent.RunStreamingAsync(prompt, cancellationToken: cancellationToken)
-            .ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
         checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));

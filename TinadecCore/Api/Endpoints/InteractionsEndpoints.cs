@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -21,7 +22,7 @@ public static class InteractionsEndpoints
         return app;
     }
 
-    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, ITenantContextAccessor tenant, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, StorageLifecycleService lifecycle, CancellationToken ct)
+    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, StorageLifecycleService lifecycle, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
@@ -36,7 +37,23 @@ public static class InteractionsEndpoints
         Guid? targetRunId = null;
         if (el.TryGetProperty("target_run_id", out var tr) && Guid.TryParse(tr.GetString(), out var tg)) targetRunId = tg;
         if (dispatchMode == "insert" && targetRunId is null) return Results.BadRequest(new { code = "invalid_request", message = "insert requires target_run_id" });
-        var meetingModel = el.TryGetProperty("meeting_model", out var mm) ? mm.GetString() : null;
+        MeetingModelOverrideDto? meetingModelOverride = null;
+        if (el.TryGetProperty("meeting_model_override", out var overrideElement)
+            && overrideElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            try { meetingModelOverride = overrideElement.Deserialize<MeetingModelOverrideDto>(); }
+            catch (JsonException) { return Results.BadRequest(new { code = "invalid_model_override", message = "meeting_model_override must be an object." }); }
+            if (meetingModelOverride is null || meetingModelOverride.ProviderInstanceId == Guid.Empty)
+                return Results.BadRequest(new { code = "invalid_model_override", message = "meeting_model_override.provider_instance_id is required." });
+            try
+            {
+                await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto { MeetingModelOverride = meetingModelOverride }, ct).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidDataException)
+            {
+                return Results.BadRequest(new { code = "invalid_model_override", message = exception.Message });
+            }
+        }
         var expectedRev = el.TryGetProperty("expected_context_revision", out var er) && er.TryGetInt64(out var rv) ? rv : (long?)null;
 
         // session existence + session's default mode handling
@@ -47,8 +64,10 @@ public static class InteractionsEndpoints
         if (modeVersionId.HasValue)
         {
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
-            var mvRec = await cfg.ModeVersions.FirstOrDefaultAsync(x => x.Id == modeVersionId.Value, ct);
-            if (mvRec is null) return Results.BadRequest(new { code = "invalid_request", message = "mode_version_id not found" });
+            var mvRec = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
+                x.Id == modeVersionId.Value && x.TenantId == session.TenantId
+                && x.WorkspaceId == session.WorkspaceId && x.Status == "published", ct);
+            if (mvRec is null) return Results.BadRequest(new { code = "invalid_request", message = "mode_version_id must reference a published mode in this workspace" });
         }
 
         // Composer agent_mode selects a published conversation mode for this workspace.
@@ -60,11 +79,39 @@ public static class InteractionsEndpoints
         {
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
             var slug = $"conversation.{agentMode}";
-            var mode = await cfg.AgentModes.AsNoTracking().FirstOrDefaultAsync(
-                x => x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId && x.Slug == slug && x.Status == "published", ct);
+            var candidateModes = await cfg.AgentModes.AsNoTracking().Where(
+                x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.Slug == slug && x.Status == "published").ToListAsync(ct);
+            Guid? sourceInstallationId = null;
+            if (session.ModeVersionId is { } currentModeVersionId)
+            {
+                var currentModeId = await cfg.ModeVersions.AsNoTracking()
+                    .Where(version => version.Id == currentModeVersionId && version.TenantId == session.TenantId && version.WorkspaceId == session.WorkspaceId)
+                    .Select(version => (Guid?)version.AgentModeId)
+                    .SingleOrDefaultAsync(ct);
+                if (currentModeId is { } logicalModeId)
+                    sourceInstallationId = await cfg.AgentPackManagedResources.AsNoTracking()
+                        .Where(resource => resource.ResourceKind == "mode" && resource.LogicalEntityId == logicalModeId)
+                        .Select(resource => (Guid?)resource.InstallationId)
+                        .SingleOrDefaultAsync(ct);
+            }
+            AgentModeRecord? mode = null;
+            if (sourceInstallationId is { } installationId)
+            {
+                var managedModeId = await cfg.AgentPackManagedResources.AsNoTracking()
+                    .Where(resource => resource.InstallationId == installationId
+                        && resource.ResourceKind == "mode"
+                        && candidateModes.Select(candidate => candidate.Id).Contains(resource.LogicalEntityId))
+                    .Select(resource => (Guid?)resource.LogicalEntityId)
+                    .SingleOrDefaultAsync(ct);
+                mode = candidateModes.SingleOrDefault(candidate => candidate.Id == managedModeId);
+            }
+            mode ??= candidateModes
+                .Where(candidate => !cfg.AgentPackManagedResources.AsNoTracking().Any(resource => resource.ResourceKind == "mode" && resource.LogicalEntityId == candidate.Id))
+                .OrderByDescending(candidate => candidate.UpdatedAt)
+                .FirstOrDefault();
             if (mode is null) return Results.BadRequest(new { code = "invalid_request", message = $"agent_mode '{agentMode}' has no published mode for this workspace" });
             var version = await cfg.ModeVersions.AsNoTracking()
-                .Where(x => x.AgentModeId == mode.Id && x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId && x.Status == "published")
+                .Where(x => x.AgentModeId == mode.Id && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.Status == "published")
                 .OrderByDescending(x => x.Version)
                 .Select(x => (Guid?)x.Id)
                 .FirstOrDefaultAsync(ct);
@@ -72,26 +119,21 @@ public static class InteractionsEndpoints
             modeVersionId = version;
         }
 
-        // model strategy resolution (inherit/fixed/parent_select) with 2 retries
-        string? resolvedMeetingModel = meetingModel;
-        string? modelSelectionLog = null;
-        if (modeVersionId.HasValue)
-        {
-            try { (resolvedMeetingModel, modelSelectionLog) = await ResolveMeetingModelAsync(modeVersionId.Value, sessionId, meetingModel, cfgFactory, req.HttpContext.RequestServices, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex.GetType() != typeof(OperationCanceledException))
-            {
-                // A strategy that cannot be evaluated must not silently degrade the run's
-                // frozen meeting binding; surface it as admission failure with a safe log.
-                modelSelectionLog = ex.Message;
-                return Results.Json(new { code = "model_strategy_unresolved", message = $"Meeting model strategy could not be resolved: {ex.Message}" }, statusCode: 503);
-            }
-        }
+        modeVersionId ??= session.ModeVersionId;
+        if (modeVersionId is null)
+            return Results.Conflict(new { code = "agent_mode_not_configured", message = "A published Agent Mode must be configured before creating an interaction." });
+
+        if (dispatchMode == "insert" && meetingModelOverride is not null)
+            return Results.Conflict(new { code = "model_override_frozen", message = "A model override cannot be changed when inserting into an already frozen run." });
 
         // Persist the chosen mode_version onto the session so the run engine's roster resolver
         // reads the same relational mode the center edits — not a per-call event hint.
         if (modeVersionId.HasValue)
         {
-            try { await sessions.UpdateSessionModeAsync(sessionId, modeVersionId.Value, resolvedMeetingModel, null, ct).ConfigureAwait(false); }
+            try
+            {
+                await sessions.UpdateSessionModeAsync(sessionId, modeVersionId, null, ct).ConfigureAwait(false);
+            }
             catch (Exception ex)
             {
                 return Results.Json(new { code = "mode_binding_failed", message = $"Failed to bind mode version to session: {ex.Message}" }, statusCode: 503);
@@ -111,11 +153,11 @@ public static class InteractionsEndpoints
                 await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "context_conflict", null, IdempotencyKey: $"run:{targetRunId}:conflict:{Guid.NewGuid():N}", FinishReason: "stale"), ct);
                 return Results.Conflict(new { code = "context_conflict", message = $"Context revision conflict: base {baseRev} vs current {patch.CurrentRevision}", base_revision = baseRev, current_revision = patch.CurrentRevision });
             }
-            await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.steering", new { interaction_id = Guid.NewGuid(), target_run_id = targetRunId.Value, content, meeting_model = resolvedMeetingModel, dispatch_mode = dispatchMode }, $"Steering injected into run {targetRunId}", "info", cancellationToken: ct);
+            await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.steering", new { interaction_id = Guid.NewGuid(), target_run_id = targetRunId.Value, content, dispatch_mode = dispatchMode }, $"Steering injected into run {targetRunId}", "info", cancellationToken: ct);
             await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "steering", null, IdempotencyKey: $"run:{targetRunId}:steering:{Guid.NewGuid():N}"), ct);
             var engine = (IFullDuplexRunEngine)req.HttpContext.RequestServices.GetRequiredService(typeof(IFullDuplexRunEngine));
             await engine.EnqueueAsync(targetRunId.Value, ct);
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content, resolved_meeting_model = resolvedMeetingModel });
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content });
         }
 
         // queued / parallel: normal admission via coordinator
@@ -128,7 +170,10 @@ public static class InteractionsEndpoints
         // while the roster freezes from the resolved relational mode version. No selection
         // keeps the legacy space/full_duplex admission behavior.
         var applicationMode = agentMode is null ? "space" : "conversation";
-        admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, applicationMode, agentMode ?? "agent", "default", targetRunId, expectedRev), ct);
+        var invocationOverride = meetingModelOverride is null
+            ? null
+            : new SessionModelOverride(meetingModelOverride.ProviderInstanceId, meetingModelOverride.Model);
+        admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, applicationMode, agentMode ?? "agent", "default", targetRunId, expectedRev, invocationOverride), ct);
             admissionStatus = dispatchMode == "parallel" ? "assigned" : "queued";
         }
         catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")
@@ -136,7 +181,7 @@ public static class InteractionsEndpoints
             // meeting busy -> keep queued without run
             var queuedId = Guid.NewGuid();
             // ponytail: no run yet, keep as transient queued interaction without durable event
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = (Guid?)null, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model = resolvedMeetingModel, reason = ex.Message });
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = (Guid?)null, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message });
         }
         catch (RunAdmissionException ex) when (ex.Code == "CONTEXT_REVISION_CONFLICT")
         {
@@ -146,13 +191,11 @@ public static class InteractionsEndpoints
         // if mode_version provided, store it as frozen binding hint (best-effort)
         if (modeVersionId.HasValue)
         {
-            try { await lifecycle.AppendEventAsync(admission.RunId, "interaction.created", new { interaction_id = admission.TurnId, mode_version_id = modeVersionId.Value, dispatch_mode = dispatchMode, meeting_model = resolvedMeetingModel, model_selection_log = modelSelectionLog }, $"Interaction {dispatchMode} with mode_version {modeVersionId}", "info", cancellationToken: ct); } catch { }
+            try { await lifecycle.AppendEventAsync(admission.RunId, "interaction.created", new { interaction_id = admission.TurnId, mode_version_id = modeVersionId.Value, dispatch_mode = dispatchMode, meeting_model_override = meetingModelOverride }, $"Interaction {dispatchMode} with mode_version {modeVersionId}", "info", cancellationToken: ct); } catch { }
             try { await lifecycle.AppendRunStreamAsync(admission.RunId, new DurableRunStreamAppend(admission.TurnId, dispatchMode == "parallel" ? "assigned" : "queued", admission.MessageId, IdempotencyKey: $"run:{admission.RunId}:turn:{admission.TurnId}:{dispatchMode}"), ct); } catch { }
-            if (modelSelectionLog is not null)
-                try { await lifecycle.AppendRunStreamAsync(admission.RunId, new DurableRunStreamAppend(admission.TurnId, "model_selection", admission.MessageId, IdempotencyKey: $"run:{admission.RunId}:model_sel:{admission.TurnId}"), ct); } catch { }
         }
         var status = admissionStatus;
-        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model = resolvedMeetingModel, model_selection_log = modelSelectionLog });
+        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride });
     }
 
     static async Task<IResult> ReassignInteraction(Guid sessionId, Guid interactionId, HttpRequest req, StorageLifecycleService lifecycle, ITenantContextAccessor tenant, CancellationToken ct)
@@ -185,92 +228,4 @@ public static class InteractionsEndpoints
         return Results.Ok(runs.Select(r => new { interaction_id = r.TurnId, run_id = r.Id, session_id = r.SessionId, status = r.Status, created_at = r.CreatedAt, updated_at = r.UpdatedAt }));
     }
 
-    static async Task<(string? resolved, string? log)> ResolveMeetingModelAsync(Guid modeVersionId, Guid sessionId, string? requested, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IServiceProvider sp, CancellationToken ct)
-    {
-        await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == modeVersionId, ct).ConfigureAwait(false);
-        if (mv is null || string.IsNullOrWhiteSpace(mv.SnapshotJson)) return (requested, null);
-        // find meeting node (operation)
-        JsonElement snap;
-        try { snap = JsonDocument.Parse(mv.SnapshotJson).RootElement; } catch { return (requested, null); }
-        Guid? meetingAgentId = null;
-        if (snap.TryGetProperty("nodes", out var nodes) && nodes.ValueKind==JsonValueKind.Array)
-        {
-            foreach(var n in nodes.EnumerateArray()){
-                var layer = n.TryGetProperty("Layer", out var l) ? l.GetString() : n.TryGetProperty("layer", out var ll) ? ll.GetString(): null;
-                if(string.Equals(layer,"operation",StringComparison.OrdinalIgnoreCase)){
-                    if(n.TryGetProperty("AgentDefinitionId", out var aid) && Guid.TryParse(aid.GetString(), out var g)) meetingAgentId=g;
-                    else if(n.TryGetProperty("agentDefinitionId", out var aid2) && Guid.TryParse(aid2.GetString(), out var g2)) meetingAgentId=g2;
-                    break;
-                }
-            }
-        }
-        if(meetingAgentId is null) return (requested, null);
-        var agent = await cfg.AgentDefinitions.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==meetingAgentId.Value, ct).ConfigureAwait(false);
-        if(agent is null || string.IsNullOrWhiteSpace(agent.ModelStrategyJson)) return (requested, null);
-        JsonElement strat;
-        try{ strat = JsonDocument.Parse(agent.ModelStrategyJson).RootElement; } catch{ return (requested, null);}
-        var kind = strat.TryGetProperty("kind", out var k) ? k.GetString()?.Trim().ToLowerInvariant() : strat.TryGetProperty("selection_kind", out var sk) ? sk.GetString()?.Trim().ToLowerInvariant(): "inherit";
-        if(kind=="fixed"){
-            var prov = strat.TryGetProperty("provider_instance_id", out var p) ? p.GetString() : null;
-            var model = strat.TryGetProperty("model", out var m) ? m.GetString() : strat.TryGetProperty("model_id", out var mi) ? mi.GetString(): null;
-            // fixed ignores requested
-            return (model, $"fixed:{prov}:{model}");
-        }
-        if(kind=="parent_select"){
-            // select from tenant/workspace enabled providers with up to 3 attempts
-            try{
-                var modelFactory = sp.GetService(typeof(IDbContextFactory<TinadecCore.Models.ModelControlDbContext>)) as IDbContextFactory<TinadecCore.Models.ModelControlDbContext>;
-                if(modelFactory is not null){
-                    var sessions = sp.GetRequiredService<ProjectSessionStore>();
-                    var sess = await sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-                    await using var mdb = await modelFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                    var candidates = mdb.Providers.AsNoTracking().Where(p=>p.Enabled && p.DeletedAt==null);
-                    if (sess is not null)
-                    {
-                        candidates = candidates.Where(p => p.TenantId == sess.TenantId && (p.WorkspaceId == null || p.WorkspaceId == sess.WorkspaceId));
-                    }
-                    var candidateList = await candidates.ToListAsync(ct).ConfigureAwait(false);
-                    for(int attempt=0; attempt<3; attempt++){
-                        var cand = candidateList.ElementAtOrDefault(attempt);
-                        if(cand is null) break;
-                        // resolve the real configured model from the provider's current version content
-                        var ver = await mdb.ProviderVersions.AsNoTracking().Where(v=>v.ProviderId==cand.Id).OrderByDescending(v=>v.Version).FirstOrDefaultAsync(ct).ConfigureAwait(false);
-                        if(ver is not null) return (await ResolveProviderModelNameAsync(cand.Id, ver.ContentReference, ver.ContentHash, ver.ContentLength, sp, ct).ConfigureAwait(false), $"parent_select attempt {attempt+1}:{cand.Id}");
-                    }
-                    return (requested, "parent_select: no enabled provider, fallback to requested");
-                }
-            }catch(Exception){ throw; }
-            return (requested, "parent_select: no provider factory");
-        }
-        // inherit
-        return (requested, "inherit");
-    }
-
-    /// <summary>
-    /// Reads the real model name from the provider version's immutable JSON config
-    /// (the ContentReference is a content-store pointer, never a model name).
-    /// </summary>
-    static async Task<string?> ResolveProviderModelNameAsync(Guid providerId, string contentReference, string contentHash, long contentLength, IServiceProvider sp, CancellationToken ct)
-    {
-        try
-        {
-            var providerFactory = sp.GetService(typeof(IDbContextFactory<TinadecCore.Models.ModelControlDbContext>)) as IDbContextFactory<TinadecCore.Models.ModelControlDbContext>;
-            if (providerFactory is null) return null;
-            var contentStore = sp.GetRequiredService<IContentStore>();
-            await using var stream = await contentStore.OpenReadAsync(new ContentReference(contentReference, contentHash, contentLength, "application/json"), ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            var root = doc.RootElement;
-            string? ReadStr(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-            var model = ReadStr("model") ?? ReadStr("model_id") ?? (root.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array && models.GetArrayLength() > 0 ? models[0].GetString() : null);
-            if (!string.IsNullOrWhiteSpace(model)) return model;
-            await using var mdb = await providerFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-            var provider = await mdb.Providers.AsNoTracking().FirstOrDefaultAsync(p => p.Id == providerId, ct).ConfigureAwait(false);
-            return provider?.Driver;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }

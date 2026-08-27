@@ -99,8 +99,10 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         if (route is null) return Unavailable("No chat model route is configured for this workspace.");
         var routeVersion = await db.RouteVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == route.CurrentVersionId, cancellationToken).ConfigureAwait(false);
         if (routeVersion is null) return Unavailable("Chat route has no current version.");
+        var candidate = await db.RouteCandidates.AsNoTracking().Where(x => x.RouteVersionId == routeVersion.Id).OrderBy(x => x.Position).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (candidate is null) return Unavailable("Chat route has no candidates.");
 
-        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == routeVersion.ProviderId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == candidate.ProviderInstanceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (provider is null) return Unavailable("Chat route references a missing provider instance.");
         if (!provider.Enabled) return Unavailable("Configured chat provider is disabled.");
 
@@ -113,7 +115,7 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
         var protocol = ChatProtocols.Normalize(String("protocol") ?? ChatProtocols.InferFromDriver(provider.Driver));
         var isCli = protocol is ChatProtocols.Acp or ChatProtocols.OpencodeServe;
 
-        var model = string.IsNullOrWhiteSpace(routeVersion.Model) ? String("model") : routeVersion.Model;
+        var model = string.IsNullOrWhiteSpace(candidate.Model) ? String("model") : candidate.Model;
         if (string.IsNullOrWhiteSpace(model) && !isCli) return Unavailable("Chat model name is not configured.");
         model ??= provider.Driver; // CLI runtimes select their own model; the route just names the runtime.
 
@@ -148,7 +150,13 @@ internal sealed class ModelProvider : IModelProvider, IChatResolver
             ServerUrl = String("server_url"),
             BinaryPath = String("binary_path"),
             LaunchArgs = String("launch_args"),
-            HomePath = String("home_path")
+            HomePath = String("home_path"),
+            ProviderInstanceId = provider.Id,
+            ProviderVersionId = providerVersion.Id,
+            RouteId = route.Id,
+            RouteVersionId = routeVersion.Id,
+            CandidatePosition = candidate.Position,
+            StrategySource = "route"
         };
     }
 
@@ -216,8 +224,10 @@ internal sealed class EmbeddingProvider : IEmbeddingProvider
         if (route is null) return new ResolvedEmbedding { Error = "No embedding model route is configured for this workspace." };
         var routeVersion = await db.RouteVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == route.CurrentVersionId, cancellationToken).ConfigureAwait(false);
         if (routeVersion is null) return new ResolvedEmbedding { Error = "Embedding route has no current version." };
+        var candidate = await db.RouteCandidates.AsNoTracking().Where(x => x.RouteVersionId == routeVersion.Id).OrderBy(x => x.Position).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (candidate is null) return new ResolvedEmbedding { Error = "Embedding route has no candidates." };
 
-        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == routeVersion.ProviderId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var provider = await db.Providers.AsNoTracking().Where(x => x.Id == candidate.ProviderInstanceId && x.DeletedAt == null).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (provider is null) return new ResolvedEmbedding { Error = "Embedding route references a missing provider instance." };
         if (!provider.Enabled) return new ResolvedEmbedding { Error = "Configured embedding provider is disabled." };
 
@@ -227,7 +237,7 @@ internal sealed class EmbeddingProvider : IEmbeddingProvider
         var configJson = await ReadContentAsync(providerVersion.ContentReference, cancellationToken).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(configJson);
         string? String(string key) => doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        var model = string.IsNullOrWhiteSpace(routeVersion.Model) ? String("model") : routeVersion.Model;
+        var model = string.IsNullOrWhiteSpace(candidate.Model) ? String("model") : candidate.Model;
         if (string.IsNullOrWhiteSpace(model)) return new ResolvedEmbedding { Error = "Embedding model name is not configured." };
         var baseUrl = String("base_url");
         if (string.IsNullOrWhiteSpace(baseUrl)) return new ResolvedEmbedding { Error = "Provider base_url is not configured." };

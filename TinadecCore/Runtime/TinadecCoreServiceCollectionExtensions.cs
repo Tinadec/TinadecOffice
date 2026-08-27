@@ -52,6 +52,7 @@ public static class TinadecCoreServiceCollectionExtensions
         // with the Core-state resolver only in the full runtime.
         services.Replace(ServiceDescriptor.Singleton<IAuthorizationContextResolver, CoreAuthorizationContextResolver>());
         services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
+        services.AddSingleton<IAgentModelResolver, AgentModelResolver>();
         services.AddSingleton<UserToolActionService>();
         services.AddSingleton<IUserToolActionService>(sp => sp.GetRequiredService<UserToolActionService>());
         services.AddSingleton<IUserToolActionRecovery>(sp => sp.GetRequiredService<UserToolActionService>());

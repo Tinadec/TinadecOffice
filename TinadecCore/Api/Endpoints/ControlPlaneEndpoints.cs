@@ -22,7 +22,7 @@ public static class ControlPlaneEndpoints
             new { provider_family = "anthropic", driver = "anthropic", protocol = "anthropic-messages", display_name = "Anthropic Claude", connection_kind = "api-key", credential_kind = "api-key", summary = "Anthropic Messages API model provider", contributor_description = "Core built-in template", default_base_url = "https://api.anthropic.com/v1", default_model = "claude-sonnet-4-6", default_timeout_seconds = 60, capabilities = new { supports_streaming = true, supports_tools = true, supports_json_mode = false, supports_system_prompt = true, requires_workspace = false, credential_kind = "api-key", health_status = "unknown" } }
         }));
         app.MapGet("/api/v1/model-routes", (ControlPlaneService service, CancellationToken ct) => service.ListRoutes(ct));
-        app.MapPut("/api/v1/model-routes/{purpose}", async (string purpose, HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SaveRoute(purpose, await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), request.Headers.IfMatch.FirstOrDefault(), ct));
+        app.MapPut("/api/v1/model-routes/{purpose}", (string purpose, ModelRouteWriteRequestDto request, HttpRequest httpRequest, ControlPlaneService service, CancellationToken ct) => service.SaveRoute(purpose, request, httpRequest.Headers.IfMatch.FirstOrDefault(), ct));
         app.MapGet("/api/v1/model-settings", () => Results.Ok(new { base_url = "", model = "", has_api_key = false, revision = 0L, updated_at = DateTimeOffset.UtcNow }));
         app.MapPut("/api/v1/model-settings", () => Results.Json(new { code = "capability_unavailable", message = "Use model-providers for persisted provider configuration." }, statusCode: 501));
 

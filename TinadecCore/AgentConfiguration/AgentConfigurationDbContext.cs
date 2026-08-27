@@ -52,12 +52,15 @@ public sealed class AgentConfigurationDbContext : DbContext
             entity.Property(x => x.ToolScopeJson).HasMaxLength(4096);
             entity.Property(x => x.SystemPrompt).HasMaxLength(16384);
             entity.Property(x => x.Description).HasMaxLength(2048);
+            entity.Property(x => x.SourceKind).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.SourceKey).HasMaxLength(512).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             // single draft per workspace logical agent
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Slug }).IsUnique().HasFilter("status = 'draft'");
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Status, x.UpdatedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Layer, x.Status });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SourceKind, x.SourceKey }).IsUnique();
         });
 
         modelBuilder.Entity<AgentVersionRecord>(entity =>
@@ -109,6 +112,7 @@ public sealed class AgentConfigurationDbContext : DbContext
             entity.Property(x => x.Label).HasMaxLength(256);
             entity.Property(x => x.PositionJson).HasMaxLength(4096);
             entity.Property(x => x.ConfigJson).HasMaxLength(8192);
+            entity.Property(x => x.ModelStrategyOverrideJson).HasMaxLength(4096);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ModeId, x.NodeKey }).IsUnique().HasFilter("status = 'draft'");
@@ -288,12 +292,15 @@ public sealed class AgentDefinitionRecord
     public string Role { get; set; } = string.Empty;
     public string? CapabilitiesJson { get; set; }
     public Guid? BasePromptPipelineId { get; set; }
-    // json: { kind: inherit|fixed|parent_select|cli|acp, provider_instance_id, model, runtime_id }
+    // json: { kind: inherit } | { kind: route, route_purpose } | { kind: fixed, provider_instance_id, model }
     public string? ModelStrategyJson { get; set; }
     // json: { allowed_tools: string[], deny, etc }
     public string? ToolScopeJson { get; set; }
     public string? SystemPrompt { get; set; }
     public string? Description { get; set; }
+    public string SourceKind { get; set; } = "custom";
+    public string SourceKey { get; set; } = string.Empty;
+    public bool Managed { get; set; }
     public bool Enabled { get; set; } = true;
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }
@@ -371,6 +378,7 @@ public sealed class ModeNodeRecord
     public string? Label { get; set; }
     public string? PositionJson { get; set; }
     public string? ConfigJson { get; set; }
+    public string? ModelStrategyOverrideJson { get; set; }
     public string Status { get; set; } = "draft";
     public long Revision { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

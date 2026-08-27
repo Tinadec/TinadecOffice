@@ -6,7 +6,6 @@ import {
   api,
   type AgentEvolutionProposalDto,
   type AgentModeDto,
-  type AgentProfileDto,
   type PromoteAgentCandidateInput
 } from '../api'
 import { UiBadge, UiButton, UiCard, UiInput, UiLabel, UiSheet, UiSkeleton } from '@/components/ui'
@@ -16,7 +15,6 @@ const { t } = useI18n()
 const { notify, status, confirm, dismissByKey } = useNotifications()
 
 const proposals = ref<AgentEvolutionProposalDto[]>([])
-const agents = ref<AgentProfileDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
 const loading = ref(false)
 const busy = ref(false)
@@ -47,7 +45,7 @@ watch(selectedProposalId, () => {
 })
 
 const sortedProposals = computed(() =>
-  [...proposals.value].sort((a, b) => b.confidence_score - a.confidence_score)
+  [...proposals.value].sort((a, b) => b.confidence - a.confidence)
 )
 
 function agentLayerLabel(layer: string): string {
@@ -83,13 +81,11 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 async function loadProposals() {
   loading.value = true
   try {
-    const [proposalList, agentList, modes] = await Promise.all([
+    const [proposalList, modes] = await Promise.all([
       api.listEvolutionProposals(),
-      api.listAgents(),
       api.listAgentModes()
     ])
     proposals.value = proposalList
-    agents.value = agentList
     agentModes.value = modes
     if (!selectedProposalId.value && proposalList.length > 0) {
       selectedProposalId.value = proposalList[0].id
@@ -136,7 +132,7 @@ function openPromotePanel(proposal: AgentEvolutionProposalDto) {
     agent_id: baseAgentId,
     mode: proposal.layer === 'planning' ? 'plan' : 'execute',
     model_route_purpose: proposal.layer === 'planning' ? 'planner' : 'chat',
-    allowed_tools: [...proposal.suggested_tools],
+    allowed_tools: [],
     capabilities: [],
     system_prompt: null
   }
@@ -273,14 +269,14 @@ defineExpose({ loadProposals })
               <strong>{{ proposal.name }}</strong>
               <span>{{ agentLayerLabel(proposal.layer) }} · {{ proposal.agent_type }}</span>
             </div>
-            <UiBadge :variant="confidenceVariant(proposal.confidence_score)">
-              {{ (proposal.confidence_score * 100).toFixed(0) }}%
+            <UiBadge :variant="confidenceVariant(proposal.confidence)">
+              {{ (proposal.confidence * 100).toFixed(0) }}%
             </UiBadge>
           </div>
-          <p class="evolution-proposal-desc">{{ proposal.description }}</p>
+          <p class="evolution-proposal-desc">{{ proposal.decision_reason ?? '' }}</p>
           <div class="evolution-proposal-meta">
             <UiBadge :variant="statusVariant(proposal.status)">{{ statusLabel(proposal.status) }}</UiBadge>
-            <span class="evolution-proposal-by">{{ t('agentCenter.evolution.generatedBy', { id: proposal.generated_by_agent_id }) }}</span>
+            <span class="evolution-proposal-by">{{ t('agentCenter.evolution.generatedBy', { id: proposal.generated_by_instance_id }) }}</span>
           </div>
         </button>
       </div>
@@ -295,35 +291,14 @@ defineExpose({ loadProposals })
               <h3>{{ selectedProposal.name }}</h3>
               <p>{{ agentLayerLabel(selectedProposal.layer) }} · {{ selectedProposal.agent_type }} · {{ statusLabel(selectedProposal.status) }}</p>
             </div>
-            <UiBadge :variant="confidenceVariant(selectedProposal.confidence_score)">
-              {{ t('agentCenter.evolution.confidence') }} {{ (selectedProposal.confidence_score * 100).toFixed(0) }}%
+            <UiBadge :variant="confidenceVariant(selectedProposal.confidence)">
+              {{ t('agentCenter.evolution.confidence') }} {{ (selectedProposal.confidence * 100).toFixed(0) }}%
             </UiBadge>
           </div>
 
           <div class="evolution-detail-section">
             <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.description') }}</div>
-            <p>{{ selectedProposal.description }}</p>
-          </div>
-
-          <div v-if="selectedProposal.observed_patterns.length > 0" class="evolution-detail-section">
-            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.patterns') }}</div>
-            <ul class="evolution-pattern-list">
-              <li v-for="pattern in selectedProposal.observed_patterns" :key="pattern">{{ pattern }}</li>
-            </ul>
-          </div>
-
-          <div v-if="selectedProposal.suggested_tools.length > 0" class="evolution-detail-section">
-            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.suggestedTools') }}</div>
-            <div class="evolution-tag-row">
-              <span v-for="tool in selectedProposal.suggested_tools" :key="tool" class="evolution-tag">{{ tool }}</span>
-            </div>
-          </div>
-
-          <div v-if="selectedProposal.evaluation_notes.length > 0" class="evolution-detail-section">
-            <div class="evolution-detail-section-title">{{ t('agentCenter.evolution.notes') }}</div>
-            <ul class="evolution-pattern-list">
-              <li v-for="note in selectedProposal.evaluation_notes" :key="note">{{ note }}</li>
-            </ul>
+            <p>{{ selectedProposal.decision_reason ?? '' }}</p>
           </div>
 
           <div v-if="selectedProposal.status === 'proposed' || selectedProposal.status === 'evaluating'" class="evolution-detail-actions">

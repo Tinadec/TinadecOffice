@@ -115,9 +115,9 @@ function overview(): ModelCenterOverviewDto {
 }
 
 describe('runtime center view', () => {
-  it('collects API, CLI, and legacy ACP provider instances without duplicates', () => {
+  it('collects API and CLI provider instances without ACP legacy runtimes or duplicates', () => {
     const providers = providersFromOverview(overview())
-    expect(providers.map((item) => item.id)).toEqual(['provider-http', 'provider-cli', 'provider-acp'])
+    expect(providers.map((item) => item.id)).toEqual(['provider-http', 'provider-cli'])
   })
 
   it('derives form fields from the Core supplier contract for unknown drivers', () => {
@@ -247,7 +247,7 @@ describe('runtime center view', () => {
     expect(modelOptionKey('a:b', 'c')).not.toBe(modelOptionKey('a', 'b:c'))
   })
 
-  it('derives runtime bindings from versioned model_strategy values', () => {
+  it('derives runtime bindings from the formal inherit|route|fixed strategy', () => {
     expect(bindingFromModelStrategy({ id: 'a', model_route_purpose: 'chat', model_strategy: { kind: 'inherit' } }))
       .toMatchObject({ selection_kind: 'inherit', writable: true, route_purpose: 'chat', runtime_kind: 'unresolved' })
 
@@ -259,21 +259,27 @@ describe('runtime center view', () => {
       selection_kind: 'fixed_model',
       source: 'agent_binding',
       writable: true,
+      runtime_kind: 'model',
       provider_instance_id: 'prov-1',
       model_id: 'gpt-x'
     })
 
-    expect(bindingFromModelStrategy({ id: 'c', model_strategy: { kind: 'cli', runtime_id: 'cli-9' } }))
-      .toMatchObject({ selection_kind: 'cli', runtime_kind: 'cli', provider_instance_id: 'cli-9' })
+    expect(bindingFromModelStrategy({
+      id: 'c',
+      model_strategy: { kind: 'route', route_purpose: 'search' }
+    })).toMatchObject({
+      selection_kind: 'route',
+      source: 'agent_binding',
+      writable: true,
+      route_purpose: 'search',
+      runtime_kind: 'model'
+    })
 
-    expect(bindingFromModelStrategy({ id: 'd', model_strategy: { kind: 'acp', runtime_id: 'legacy_provider:prov-7' } }))
-      .toMatchObject({ selection_kind: 'acp', runtime_kind: 'acp', runtime_id: 'legacy_provider:prov-7', provider_instance_id: 'prov-7' })
+    // CLI/ACP are provider instances under `fixed` and may omit the model.
+    expect(bindingFromModelStrategy({ id: 'd', model_strategy: { kind: 'fixed', provider_instance_id: 'cli-9' } }))
+      .toMatchObject({ selection_kind: 'fixed_model', provider_instance_id: 'cli-9', model_id: null })
 
-    // parent_select is a runtime-only behavior and renders as inherit.
-    expect(bindingFromModelStrategy({ id: 'e', model_strategy: { kind: 'parent_select' } }))
-      .toMatchObject({ selection_kind: 'inherit', source: 'runtime_parent_select' })
-
-    expect(bindingFromModelStrategy({ id: 'f', model_strategy: null }).selection_kind).toBe('inherit')
-    expect(bindingFromModelStrategy({ id: 'g', model_strategy: 'fixed' })).toMatchObject({ selection_kind: 'fixed_model' })
+    expect(bindingFromModelStrategy({ id: 'e', model_strategy: null }).selection_kind).toBe('inherit')
+    expect(bindingFromModelStrategy({ id: 'f', model_strategy: 'fixed' })).toMatchObject({ selection_kind: 'fixed_model' })
   })
 })

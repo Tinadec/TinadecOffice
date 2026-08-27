@@ -1590,18 +1590,6 @@
         ]
       }
     },
-    "/api/v1/agents/catalog": {
-      "get": {
-        "operationId": "getApiV1AgentsCatalog",
-        "responses": {
-          "200": {}
-        },
-        "summary": "Agent catalog (dual-layer)",
-        "tags": [
-          "Agents"
-        ]
-      }
-    },
     "/api/v1/agents/{agentId}": {
       "get": {
         "operationId": "getApiV1AgentsByAgentId",
@@ -1688,28 +1676,6 @@
         ]
       }
     },
-    "/api/v1/agents/{agentId}/mode": {
-      "put": {
-        "operationId": "putApiV1AgentsByAgentIdMode",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "agentId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Update agent mode (501)",
-        "tags": [
-          "AgentCenter"
-        ]
-      }
-    },
     "/api/v1/agents/{agentId}/publish": {
       "post": {
         "operationId": "postApiV1AgentsByAgentIdPublish",
@@ -1781,18 +1747,6 @@
         "summary": "Get agent version",
         "tags": [
           "Agents"
-        ]
-      }
-    },
-    "/api/v1/application-modes": {
-      "get": {
-        "operationId": "getApiV1Application-modes",
-        "responses": {
-          "200": {}
-        },
-        "summary": "List application modes (TOML baseline)",
-        "tags": [
-          "AgentCenter"
         ]
       }
     },
@@ -2791,6 +2745,18 @@
         ]
       }
     },
+    "/api/v1/model-invocations": {
+      "get": {
+        "operationId": "getApiV1Model-invocations",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Page model invocation audit records",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
     "/api/v1/model-provider-templates": {
       "get": {
         "operationId": "getApiV1Model-provider-templates",
@@ -2922,6 +2888,30 @@
         "summary": "Model readiness",
         "tags": [
           "Health"
+        ]
+      }
+    },
+    "/api/v1/model-references": {
+      "get": {
+        "operationId": "getApiV1Model-references",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List reverse references for a provider/model",
+        "tags": [
+          "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-resolution/preview": {
+      "post": {
+        "operationId": "postApiV1Model-resolutionPreview",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Preview model resolution without invoking a provider",
+        "tags": [
+          "ModelCenter"
         ]
       }
     },

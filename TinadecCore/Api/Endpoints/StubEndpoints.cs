@@ -88,7 +88,7 @@ public static class StubEndpoints
             design_notes = new[] { "No provider templates configured — skeleton mode." }
         }));
 
-        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration configuration, CancellationToken ct) =>
+        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, CancellationToken ct) =>
         {
             IReadOnlyList<ToolManifestEntryDto> tools = [];
             string[] notes = [];
@@ -100,25 +100,7 @@ public static class StubEndpoints
             {
                 notes = [$"TinadecTools manifest unavailable: {ex.Message}"];
             }
-            var snapshot = configuration.Current;
-            RuntimeProfileDefinition? profile = null;
-            try { profile = snapshot.Resolve(null, null).Profile; }
-            catch (InvalidOperationException) { }
-            var agents = (profile?.ExecutionAgents ?? [])
-                .Select(id => snapshot.Agents.TryGetValue(id, out var agent) ? (Id: id, Agent: agent) : ((string Id, RuntimeAgentDefinition Agent)?)null)
-                .Where(item => item is not null)
-                .Select(item => item!.Value)
-                .ToArray();
-            var scopes = agents.Select(item => new
-            {
-                id = item.Id,
-                role = item.Agent.Role,
-                allowed_tools = item.Agent.AllowedTools,
-                tool_count = item.Agent.AllowedTools
-                    .Where(value => !string.Equals(value, "*", StringComparison.Ordinal))
-                    .Count(value => tools.Any(tool => string.Equals(tool.Id, value, StringComparison.OrdinalIgnoreCase))),
-                scope_status = item.Agent.AllowedTools.Count == 0 ? "warning" : "ready"
-            }).ToArray();
+            var scopes = Array.Empty<object>();
             return Results.Ok(new
             {
                 status = tools.Count == 0 ? "warning" : "ready",
@@ -130,8 +112,8 @@ public static class StubEndpoints
                 warning_tool_count = 0,
                 blocked_tool_count = 0,
                 execution_agent_count = scopes.Length,
-                ready_agent_count = scopes.Count(scope => scope.scope_status == "ready"),
-                warning_agent_count = scopes.Count(scope => scope.scope_status == "warning"),
+                ready_agent_count = 0,
+                warning_agent_count = 0,
                 blocked_agent_count = 0,
                 approval_gated_tool_count = tools.Count(tool => tool.RequiresApproval),
                 human_checkpoint_tool_count = tools.Count(tool => tool.ConfirmationFields.Count != 0),

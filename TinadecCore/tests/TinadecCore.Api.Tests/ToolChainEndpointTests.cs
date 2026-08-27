@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Tests;
 
@@ -331,6 +332,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IAgentChatClientFactory>(new ToolScriptedFactory(_client));
+                services.AddSingleton<ISecretStore>(new TestModelSecretStore());
             });
         }
     }

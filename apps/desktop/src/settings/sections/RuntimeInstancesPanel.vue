@@ -132,6 +132,20 @@ defineExpose({ loadRuntimeInstances })
           <UiBadge :variant="readinessVariant(inst.status)">{{ inst.status }}</UiBadge>
           <span class="ac-instance-ids">run {{ inst.run_id.slice(0, 8) }} · session {{ String(inst.session_id ?? '—').slice(0, 8) }}</span>
         </div>
+        <div v-if="inst.source_definition || inst.frozen_version || inst.recent_actual_model" class="ac-instance-evidence">
+          <span v-if="inst.source_definition">
+            {{ t('agentCenter.runtimeInfo.sourceDefinition') }}: {{ inst.source_definition.display_name }} · {{ inst.source_definition.source_kind }}<template v-if="inst.source_definition.managed"> · {{ t('settings.agentSourceManaged') }}</template>
+          </span>
+          <span v-if="inst.frozen_version">
+            {{ t('agentCenter.runtimeInfo.frozenVersion') }}: {{ inst.frozen_version.agent_version_id.slice(0, 8) }} · {{ inst.frozen_version.content_hash.slice(0, 8) }}
+          </span>
+          <span v-if="inst.recent_actual_model">
+            {{ t('agentCenter.runtimeInfo.recentModel') }}: {{ inst.recent_actual_model.provider_instance_id }}{{ inst.recent_actual_model.model ? ` · ${inst.recent_actual_model.model}` : '' }} · {{ inst.recent_actual_model.strategy_source }}<template v-if="inst.recent_actual_model.fallback_position > 0"> · fallback #{{ inst.recent_actual_model.fallback_position }}</template>
+          </span>
+          <span v-if="inst.fallback_summary">
+            {{ t('agentCenter.runtimeInfo.fallbackSummary') }}: {{ inst.fallback_summary.attempts - inst.fallback_summary.failed_attempts }}/{{ inst.fallback_summary.attempts }}<template v-if="inst.fallback_summary.used_fallback"> · {{ t('agentCenter.runtimeInfo.usedFallback') }}</template>
+          </span>
+        </div>
         <div class="ac-instance-actions">
           <UiButton size="xs" variant="outline" :disabled="runtimeControlBusy === `${inst.run_id}:pause`" @click="controlInstance(inst.run_id, 'pause')">{{ t('agentCenter.runtimeInfo.actionPause') }}</UiButton>
           <UiButton size="xs" variant="outline" :disabled="runtimeControlBusy === `${inst.run_id}:resume`" @click="controlInstance(inst.run_id, 'resume')">{{ t('agentCenter.runtimeInfo.actionResume') }}</UiButton>
@@ -190,6 +204,18 @@ defineExpose({ loadRuntimeInstances })
   color: var(--text-muted);
   font-size: 11px;
   font-family: ui-monospace, monospace;
+}
+.ac-instance-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.ac-instance-evidence > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ac-instance-actions {
   display: flex;

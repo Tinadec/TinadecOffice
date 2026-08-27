@@ -13,8 +13,7 @@ export interface SessionDto {
   title: string;
   status: string;
   mode_version_id?: string | null;
-  meeting_model?: string | null;
-  meeting_provider_id?: string | null;
+  meeting_model_override?: MeetingModelOverrideDto | null;
   created_at: string;
   updated_at: string;
 }
@@ -277,10 +276,107 @@ export interface ModelProviderInstanceDto {
 }
 
 export interface ModelRouteDto {
+  id?: string;
   purpose: string;
+  version_id?: string;
+  version?: number;
+  candidates: ModelRouteCandidateDto[];
+  revision?: number;
+  updated_at: string;
+}
+
+export interface ModelRouteCandidateDto {
   provider_instance_id: string;
   model?: string | null;
-  updated_at: string;
+  position: number;
+}
+
+export interface ModelRouteWriteRequestDto {
+  candidates: Array<{ provider_instance_id: string; model?: string | null }>;
+}
+
+export interface MeetingModelOverrideDto {
+  provider_instance_id: string;
+  model?: string | null;
+}
+
+export interface ModelResolutionPreviewRequestDto {
+  strategy?: { kind: 'inherit' | 'route' | 'fixed'; route_purpose?: string; provider_instance_id?: string; model?: string | null } | null;
+  meeting_model_override?: MeetingModelOverrideDto | null;
+  agent_definition_id?: string | null;
+  agent_version_id?: string | null;
+  mode_version_id?: string | null;
+  node_key?: string | null;
+  parent_instance_id?: string | null;
+}
+
+export interface ModelResolutionStepDto {
+  source: string;
+  strategy: Record<string, unknown>;
+  selected: boolean;
+}
+
+export interface ModelResolutionCandidatePreviewDto {
+  position: number;
+  provider_instance_id: string;
+  provider_version_id?: string | null;
+  route_id?: string | null;
+  route_version_id?: string | null;
+  model?: string | null;
+  protocol?: string | null;
+  available: boolean;
+  unavailable_reason?: string | null;
+}
+
+export interface ModelResolutionPreviewDto {
+  strategy_source: string;
+  chain: ModelResolutionStepDto[];
+  candidates: ModelResolutionCandidatePreviewDto[];
+  expected_selection?: ModelResolutionCandidatePreviewDto | null;
+}
+
+export interface ModelReferenceDto {
+  reference_kind: string;
+  reference_id?: string | null;
+  reference_key?: string | null;
+  provider_instance_id: string;
+  model?: string | null;
+  detail?: string | null;
+  last_used_at?: string | null;
+}
+
+export interface ModelInvocationDto {
+  id: string;
+  call_id: string;
+  attempt: number;
+  session_id: string;
+  run_id: string;
+  turn_id?: string | null;
+  agent_instance_id?: string | null;
+  agent_definition_id: string;
+  agent_version_id: string;
+  mode_version_id: string;
+  strategy_source: string;
+  route_id?: string | null;
+  route_version_id?: string | null;
+  provider_instance_id: string;
+  provider_version_id: string;
+  model?: string | null;
+  protocol: string;
+  fallback_position: number;
+  status: string;
+  error_category?: string | null;
+  safe_error_message?: string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface ModelInvocationPageDto {
+  items: ModelInvocationDto[];
+  next_cursor?: string | null;
 }
 
 export interface ModelDiscoveryResultDto {
@@ -722,7 +818,7 @@ export interface ModelCenterOverviewDto {
   diagnostics: CenterDiagnosticDto[];
 }
 
-export type AgentRuntimeSelectionKind = 'inherit' | 'fixed_model' | 'provider_auto' | 'cli' | 'acp';
+export type AgentRuntimeSelectionKind = 'inherit' | 'route' | 'fixed_model';
 
 export interface AgentRuntimeBindingWarningDto {
   code: 'LEGACY_SHARED_ROUTE' | string;
@@ -745,7 +841,7 @@ export interface AgentRuntimeBindingDto {
   warnings: AgentRuntimeBindingWarningDto[];
 }
 
-export interface AgentCenterAgentDto extends AgentProfileDto {
+export interface AgentCenterAgentDto extends AgentViewDto {
   runtime_binding: AgentRuntimeBindingDto;
 }
 
@@ -767,7 +863,7 @@ export interface AgentCenterOverviewDto {
   diagnostics: CenterDiagnosticDto[];
 }
 
-export interface AgentProfileDto {
+export interface AgentViewDto {
   id: string;
   name: string;
   layer: 'planning' | 'execution' | string;
@@ -792,14 +888,50 @@ export interface AgentProfileDto {
   version?: number | null;
 }
 
+export interface AgentModeUsageDto {
+  mode_id: string;
+  mode_version_id?: string | null;
+  mode_slug: string;
+  node_key: string;
+  model_strategy_override?: Record<string, unknown> | null;
+}
+
+export interface AgentDirectoryItemDto {
+  id: string;
+  slug: string;
+  display_name: string;
+  layer: 'operation' | 'execution' | string;
+  role: string;
+  source_kind: 'custom' | 'pack' | 'bootstrap' | 'missing_reference' | string;
+  source_key: string;
+  managed: boolean;
+  writable: boolean;
+  enabled: boolean;
+  status: string;
+  revision: number;
+  version: number;
+  current_version_id?: string | null;
+  configured_strategy: { kind: 'inherit' | 'route' | 'fixed'; route_purpose?: string; provider_instance_id?: string; model?: string | null };
+  mode_usages: AgentModeUsageDto[];
+  effective_previews: Record<string, ModelResolutionPreviewDto>;
+  recent_invocation?: ModelInvocationDto | null;
+  updated_at: string;
+}
+
 export interface AgentModeDto {
   id: string;
+  slug?: string;
   display_name: string;
-  summary: string;
-  max_parallel_executors: number;
-  worktree_isolation: boolean;
-  approval_required: boolean;
-  budget_policy: string;
+  summary?: string;
+  description?: string | null;
+  max_parallel_executors?: number;
+  worktree_isolation?: boolean;
+  approval_required?: boolean;
+  budget_policy?: string;
+  status?: string;
+  managed?: boolean;
+  revision?: number;
+  version?: number;
 }
 
 export interface AgentCandidateDto {
@@ -818,7 +950,7 @@ export interface AgentCandidateDto {
 // ── New config objects (snake_case, If-Match via etag/revision) ──
 export interface AgentDefinitionDto {
   id: string;
-  /** Legacy flat shape (old AgentProfile projection). */
+  /** Flat legacy shape (pre-directory projection). */
   name?: string;
   /** Versioned AgentDefinition shape (Core ToAgentDto). */
   slug?: string;
@@ -829,8 +961,8 @@ export interface AgentDefinitionDto {
   /** Versioned shape. */
   role?: string;
   model_route_purpose?: string | null;
-  /** Versioned shape: { kind: inherit|fixed|parent_select, ... }. */
-  model_strategy?: Record<string, unknown> | 'inherit' | 'fixed' | 'parent_select' | string | null;
+  /** Versioned shape: { kind: inherit|route|fixed, ... }. */
+  model_strategy?: Record<string, unknown> | 'inherit' | 'route' | 'fixed' | string | null;
   /** Legacy flat shape. */
   allowed_tools?: string[];
   /** Versioned shape: string[] or "*". */
@@ -959,6 +1091,7 @@ export interface AgentModeNodeDto {
   lane: 'operation' | 'execution';
   position: { x: number; y: number };
   label?: string | null;
+  model_strategy_override?: { kind: 'inherit' | 'route' | 'fixed'; route_purpose?: string; provider_instance_id?: string; model?: string | null } | null;
   /** Core node_key for published projections; write-back uses it before id. */
   node_key?: string;
   data?: Record<string, unknown> | null;
@@ -973,7 +1106,7 @@ export interface AgentModeEdgeDto {
 
 /** Core UpsertModeTopology write contract (node_key/agent_definition_id/layer). */
 export interface AgentModeTopologyWriteDto {
-  nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null }>;
+  nodes: Array<{ node_key: string; agent_definition_id: string; layer: 'operation' | 'execution'; label?: string | null; position?: { x: number; y: number } | null; model_strategy_override?: Record<string, unknown> | null }>;
   edges: Array<{ source_node_key: string; target_node_key: string; condition?: Record<string, unknown> }>;
   canvas_layout?: Record<string, unknown> | null;
 }
@@ -1039,6 +1172,12 @@ export interface AgentRuntimeInstanceDto {
   agent_name?: string | null;
   status: string;
   lane?: string | null;
+  parent_instance_id?: string | null;
+  task_id?: string | null;
+  source_definition?: { id: string; slug: string; display_name: string; source_kind: string; source_key: string; managed: boolean } | null;
+  frozen_version?: { agent_version_id: string; content_hash: string } | null;
+  recent_actual_model?: { invocation_id: string; provider_instance_id: string; provider_version_id: string; model?: string | null; protocol: string; route_id?: string | null; route_version_id?: string | null; mode_version_id?: string | null; strategy_source: string; fallback_position: number; completed_at?: string | null } | null;
+  fallback_summary?: { call_id: string; attempts: number; failed_attempts: number; used_fallback: boolean } | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -1053,8 +1192,7 @@ export interface SessionInteractionDto {
   mode_version_id?: string | null;
   dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
   target_run_id?: string | null;
-  meeting_model?: string | null;
-  meeting_provider_id?: string | null;
+  meeting_model_override?: MeetingModelOverrideDto | null;
   permission_mode?: string | null;
   status: string;
   error?: { code?: string; message?: string; detail?: string | null } | null;
@@ -1066,17 +1204,18 @@ export type DispatchMode = 'queued' | 'insert' | 'parallel';
 
 export interface AgentEvolutionProposalDto {
   id: string;
-  generated_by_agent_id: string;
+  source_run_id: string;
+  source_instance_id: string;
+  generated_by_instance_id: string;
   name: string;
   layer: string;
   agent_type: string;
-  description: string;
-  suggested_tools: string[];
-  evaluation_notes: string[];
-  observed_patterns: string[];
-  confidence_score: number;
   status: string;
+  confidence: number;
+  promoted_agent_id?: string | null;
+  decision_reason?: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface PromoteAgentCandidateInput {
@@ -1579,8 +1718,6 @@ function extractErrorMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
-export type AgentCatalogItem = { id: string; layer: string; role: string; lifecycle: string; prompt_profile: string; capabilities: string[]; allowed_tools: string[]; context_access: string; direct_user_output: boolean; triggers: string[]; accepts: string[]; emits: string[]; decisions: string[]; memory_write_policy: string };
-export async function getAgentCatalog(): Promise<AgentCatalogItem[]> { const r = await fetch(`${gatewayUrl}/api/v1/agents/catalog`, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 export async function spawnRunAgent(runId: string, body: { parent_instance_id: string; goal: string; intent?: string; role?: string; allowed_tools?: string[]; allowed_resources?: string[]; success_criteria?: string[]; context_selectors?: string[]; model_route_purpose?: string; budget_tokens?: number }): Promise<unknown> { const r = await fetch(`${gatewayUrl}/api/v1/runs/${runId}/agents/spawn`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 
 /** Resolve the Core project identity for a desktop workspace path. */
@@ -1749,10 +1886,29 @@ export const api = {
     method: 'DELETE'
   }),
   listModelRoutes: () => request<ModelRouteDto[]>('/api/v1/model-routes'),
-  saveModelRoute: (purpose: string, providerInstanceId: string, model?: string | null) => request<ModelRouteDto>(`/api/v1/model-routes/${encodeURIComponent(purpose)}`, {
+  saveModelRoute: (purpose: string, candidates: ModelRouteWriteRequestDto | string, model?: string | null) => request<ModelRouteDto>(`/api/v1/model-routes/${encodeURIComponent(purpose)}`, {
     method: 'PUT',
-    body: JSON.stringify({ provider_instance_id: providerInstanceId, model })
+    body: JSON.stringify(typeof candidates === 'string'
+      ? { candidates: [{ provider_instance_id: candidates, model: model ?? null }] }
+      : candidates)
   }),
+  previewModelResolution: (input: ModelResolutionPreviewRequestDto) => request<ModelResolutionPreviewDto>('/api/v1/model-resolution/preview', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  }),
+  listModelReferences: (params: { provider_instance_id?: string; model?: string } = {}) => {
+    const search = new URLSearchParams()
+    if (params.provider_instance_id) search.set('provider_instance_id', params.provider_instance_id)
+    if (params.model) search.set('model', params.model)
+    const suffix = search.toString() ? `?${search.toString()}` : ''
+    return request<ModelReferenceDto[]>(`/api/v1/model-references${suffix}`)
+  },
+  listModelInvocations: (params: { run_id?: string; agent_id?: string; mode_version_id?: string; provider_instance_id?: string; model?: string; status?: string; from?: string; to?: string; cursor?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') search.set(key, String(value))
+    const suffix = search.toString() ? `?${search.toString()}` : ''
+    return request<ModelInvocationPageDto>(`/api/v1/model-invocations${suffix}`)
+  },
   getModelSettings: () => request<ModelSettingsDto>('/api/v1/model-settings'),
   saveModelSettings: (settings: { base_url: string; model: string; api_key?: string; clear_api_key?: boolean }) => request<ModelSettingsDto>('/api/v1/model-settings', {
     method: 'PUT',
@@ -1794,9 +1950,19 @@ export const api = {
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),
-  listAgents: () => request<AgentProfileDto[]>('/api/v1/agents'),
+  listAgents: () => request<AgentDirectoryItemDto[]>('/api/v1/agents'),
+  getAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}`),
   // ── New 5-tab config objects (snake_case, If-Match via etag) ──
-  listAgentDefinitions: () => request<AgentDefinitionDto[]>('/api/v1/agents'),
+  // `/api/v1/agents` is the directory projection; full definitions are fetched per id.
+  listAgentDefinitions: async (): Promise<AgentDefinitionDto[]> => {
+    const directory = await request<AgentDirectoryItemDto[]>('/api/v1/agents')
+    if (!Array.isArray(directory)) return []
+    const live = directory.filter((item) => item.source_kind !== 'missing_reference')
+    const definitions = await Promise.all(live.map((item) =>
+      request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(item.id)}`).catch(() => null)
+    ))
+    return definitions.filter((item): item is AgentDefinitionDto => item !== null)
+  },
   createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
   updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
   publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
@@ -1848,7 +2014,7 @@ export const api = {
     return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
   },
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; agent_mode?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model?: string | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; agent_mode?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
@@ -1935,7 +2101,7 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<AgentEvolutionProposalDto[]>(`/api/v1/agent-evolution/generate${suffix}`, { method: 'POST' });
   },
-  promoteAgentCandidate: (candidateId: string, input: PromoteAgentCandidateInput) => request<AgentProfileDto>(`/api/v1/agent-evolution/proposals/${encodeURIComponent(candidateId)}/promote`, {
+  promoteAgentCandidate: (candidateId: string, input: PromoteAgentCandidateInput) => request<AgentEvolutionProposalDto>(`/api/v1/agent-evolution/proposals/${encodeURIComponent(candidateId)}/promote`, {
     method: 'POST',
     body: JSON.stringify(input)
   }),

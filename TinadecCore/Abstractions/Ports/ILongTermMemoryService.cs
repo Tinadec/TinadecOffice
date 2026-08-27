@@ -18,7 +18,7 @@ public sealed record MemoryCandidateProposal(
     string Content,
     double Confidence,
     Guid? ProjectId = null,
-    Guid? AgentProfileId = null,
+    Guid? AgentId = null,
     string? Evidence = null,
     string? Applicability = null,
     string? ExpiryCondition = null);

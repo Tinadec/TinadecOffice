@@ -1,5 +1,7 @@
 namespace TinadecCore.Runtime;
 
+using TinadecCore.Contracts.Dtos;
+
 /// <summary>Body contract for <c>POST /api/v1/sessions/{sessionId}/invoke-stream</c>.</summary>
 public sealed class InvokeStreamRequest
 {
@@ -10,6 +12,7 @@ public sealed class InvokeStreamRequest
     public string? PermissionMode { get; set; }
     public Guid? TargetRunId { get; set; }
     public long? ExpectedContextRevision { get; set; }
+    public MeetingModelOverrideDto? MeetingModelOverride { get; set; }
 }
 
 public sealed class RunControlRequest

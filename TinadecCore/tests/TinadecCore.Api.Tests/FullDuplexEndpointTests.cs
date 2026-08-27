@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
+using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Tests;
 
@@ -812,28 +813,28 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ApplicationModes_AndAgentModes_AreTomlDriven()
+    public async Task AgentModes_ExposeTheBootstrapDirectory()
     {
         var factory = CreateFactory();
         var client = factory.CreateClient();
 
-        var modes = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/application-modes");
-        Assert.Contains(modes!, m => m.GetProperty("id").GetString() == "conversation");
-        Assert.Contains(modes!, m => m.GetProperty("id").GetString() == "space");
-
         var conversation = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-modes?application_mode=conversation");
-        Assert.Contains(conversation!, m => m.GetProperty("id").GetString() == "auto" && m.GetProperty("is_default").GetBoolean());
-        Assert.Contains(conversation!, m => m.GetProperty("id").GetString() == "plan");
+        Assert.Contains(conversation!, m => m.GetProperty("slug").GetString() == "conversation.auto");
+        Assert.Contains(conversation!, m => m.GetProperty("slug").GetString() == "conversation.plan");
 
         var space = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-modes?application_mode=space");
-        var single = Assert.Single(space!);
-        Assert.Equal("agent", single.GetProperty("id").GetString());
+        Assert.Contains(space!, m => m.GetProperty("slug").GetString() == "default-mode");
 
+        // `im` remains a conversation alias.
         var im = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-modes?application_mode=im");
-        Assert.Equal("conversation", im![0].GetProperty("application_mode").GetString());
+        Assert.Contains(im!, m => m.GetProperty("slug").GetString() == "conversation.auto");
 
         var unknown = await client.GetAsync("/api/v1/agent-modes?application_mode=nope");
         Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+
+        // The TOML-era projection is gone: the mode directory is the only surface.
+        var legacy = await client.GetAsync("/api/v1/application-modes");
+        Assert.Equal(HttpStatusCode.NotFound, legacy.StatusCode);
     }
 
     [Fact]
@@ -948,6 +949,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IAgentChatClientFactory>(new ScriptedFactory(_client, _available));
+                services.AddSingleton<ISecretStore>(new TestModelSecretStore(_available));
                 services.AddSingleton<IToolManifestSnapshotResolver, EmptyToolManifestSnapshotResolver>();
                 if (_promptAssembler is not null) services.AddSingleton(_promptAssembler);
             });

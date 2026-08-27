@@ -48,7 +48,7 @@ export interface InvokeStreamRequest {
 }
 
 export interface ProjectDto { id: string; name: string; path: string; created_at: string }
-export interface SessionDto { id: string; project_id: string; title: string; status: string; mode_version_id?: string | null; meeting_model?: string | null; meeting_provider_id?: string | null; created_at: string; updated_at: string }
+export interface SessionDto { id: string; project_id: string; title: string; status: string; mode_version_id?: string | null; meeting_model_override?: { provider_instance_id: string; model?: string | null } | null; created_at: string; updated_at: string }
 export interface MessageDto { id: string; session_id: string; role: string; content: string; created_at: string }
 export interface RunDto { id: string; session_id: string; trigger_message_id: string | null; status: RunStatus | string; summary: string | null; task_revision?: number | null; created_at: string | null; updated_at: string | null }
 export interface TaskNodeDto { id: string; graph_id: string | null; run_id: string; session_id: string; title: string; description: string; status: string; priority: number; risk: string; success_criteria: string[]; dependencies: string[]; required_capabilities: string[]; created_at: string | null; updated_at: string | null }

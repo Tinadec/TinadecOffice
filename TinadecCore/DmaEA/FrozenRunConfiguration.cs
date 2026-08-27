@@ -20,6 +20,7 @@ public interface IAgentRuntimeConfigurationResolver
         string? applicationMode,
         string? agentMode,
         string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -93,6 +94,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     private readonly IAgentRuntimeConfiguration _baseline;
     private readonly IDbContextFactory<AgentControlDbContext> _agents;
     private readonly IFormalModeResolver _formal;
+    private readonly IAgentModelResolver _models;
     private readonly IContentStore _content;
     private readonly ISessionLocator _sessions;
     private readonly IPolicySnapshotProvider? _policySnapshots;
@@ -101,6 +103,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         IAgentRuntimeConfiguration baseline,
         IDbContextFactory<AgentControlDbContext> agents,
         IFormalModeResolver formal,
+        IAgentModelResolver models,
         IContentStore content,
         ISessionLocator sessions,
         IPolicySnapshotProvider? policySnapshots = null)
@@ -108,6 +111,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         _baseline = baseline;
         _agents = agents;
         _formal = formal;
+        _models = models;
         _content = content;
         _sessions = sessions;
         _policySnapshots = policySnapshots;
@@ -118,10 +122,13 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         string? applicationMode,
         string? agentMode,
         string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
         CancellationToken cancellationToken = default)
     {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
+        if (session.ModeVersionId is null)
+            throw new RunAdmissionException("agent_mode_not_configured", "A published default Agent Mode must be configured before creating a run.");
         var snapshot = _baseline.Current;
         var (app, mode, profile) = snapshot.Resolve(applicationMode, agentMode);
         var policySnapshot = _policySnapshots is null
@@ -133,47 +140,36 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             ? new EffectivePolicy(snapshot.Spawn, snapshot.Scheduling, snapshot.Supervision, snapshot.Context, snapshot.Memory, snapshot.Tools, profile)
             : await ApplyOverrideAsync(snapshot, profile, overrideRow, cancellationToken).ConfigureAwait(false);
 
-        // Roster: prefer the published relational agent mode when the session has one.
-        // The TOML baseline remains the source for policy budgets; the agent roster
-        // (who runs, their layer/role/capabilities/tools) comes from the relational
-        // AgentConfiguration mode that the agent-center UI actually edits.
-        IReadOnlyList<RuntimeAgentDefinition> operation;
-        IReadOnlyList<RuntimeAgentDefinition> execution;
-        string runtimeProfileId;
+        // Policy budgets remain in the runtime baseline. Agent identity and topology
+        // are always frozen from the session's published relational ModeVersion.
         var bindings = new List<RunConfigurationBinding>
         {
             // The TOML baseline itself has no relational version. A deterministic id
             // makes it visible to lifecycle audit without inventing a mutable record.
             new("agent_runtime_baseline", DeterministicGuid(snapshot.ContentHash), DeterministicGuid(snapshot.ContentHash + ":" + snapshot.Version), snapshot.ContentHash)
         };
-        if (session.ModeVersionId is { } modeVersionId)
+        var modeVersionId = session.ModeVersionId.Value;
+        var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
+        var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
+        var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
+        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        var runtimeProfileId = relational.RuntimeProfileId;
+        bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
+        foreach (var agent in relational.Operation.Concat(relational.Execution))
         {
-            var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
-            operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
-            execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
-            runtimeProfileId = relational.RuntimeProfileId;
-            bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
-            foreach (var agent in relational.Operation.Concat(relational.Execution))
+            if (agent.AgentDefinitionId is { } definitionId && agent.AgentVersionId is { } versionId)
             {
-                if (agent.AgentDefinitionId is { } definitionId && agent.AgentVersionId is { } versionId)
+                bindings.Add(new RunConfigurationBinding("agent_version", definitionId, versionId, agent.VersionContentHash));
+            }
+            if (agent.PromptPipelineId is { } pipelineId && agent.PromptVersionId is { } promptVersionId)
+            {
+                if (!bindings.Any(binding => binding.ConfigurationKind == "prompt_version" && binding.ConfigurationVersionId == promptVersionId))
                 {
-                    bindings.Add(new RunConfigurationBinding("agent_version", definitionId, versionId, agent.VersionContentHash));
-                }
-                if (agent.PromptPipelineId is { } pipelineId && agent.PromptVersionId is { } promptVersionId)
-                {
-                    if (!bindings.Any(binding => binding.ConfigurationKind == "prompt_version" && binding.ConfigurationVersionId == promptVersionId))
-                    {
-                        bindings.Add(new RunConfigurationBinding("prompt_version", pipelineId, promptVersionId, agent.PromptVersionContentHash));
-                    }
+                    bindings.Add(new RunConfigurationBinding("prompt_version", pipelineId, promptVersionId, agent.PromptVersionContentHash));
                 }
             }
-        }
-        else
-        {
-            operation = ResolveAgents(snapshot, effective.Profile.OperationAgents, "operation");
-            execution = ResolveAgents(snapshot, effective.Profile.ExecutionAgents, "execution");
-            runtimeProfileId = effective.Profile.Id;
         }
         FrozenRuntimeOverride? frozenOverride = null;
         if (overrideRow is not null)
@@ -205,6 +201,28 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             PolicyBundles = policySnapshot?.Bundles ?? []
         };
         return frozen;
+    }
+
+    private async Task<IReadOnlyList<RuntimeAgentDefinition>> FreezeModelPlansAsync(
+        IReadOnlyList<RuntimeAgentDefinition> definitions,
+        Guid sessionId,
+        Guid modeVersionId,
+        SessionModelOverride? meetingModelOverride,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<RuntimeAgentDefinition>(definitions.Count);
+        foreach (var definition in definitions)
+        {
+            var definitionId = definition.AgentDefinitionId ?? throw new InvalidDataException($"Agent '{definition.Id}' has no definition id.");
+            var versionId = definition.AgentVersionId ?? throw new InvalidDataException($"Agent '{definition.Id}' has no version id.");
+            var plan = await _models.FreezeAsync(new AgentModelFreezeRequest(
+                sessionId, modeVersionId, definitionId, versionId, definition.Id,
+                definition.ModelStrategyJson, definition.ModelStrategySource,
+                definition.Layer == "operation" && definition.Id == "meeting",
+                meetingModelOverride), cancellationToken).ConfigureAwait(false);
+            result.Add(definition with { ModelPlan = plan });
+        }
+        return result;
     }
 
     private async Task<RuntimeProfileOverrideRecord?> LoadLatestOverrideAsync(
@@ -248,35 +266,6 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             profileOverride);
     }
 
-    private static IReadOnlyList<RuntimeAgentDefinition> ResolveAgents(
-        AgentRuntimeConfigurationSnapshot snapshot,
-        IReadOnlyList<string> ids,
-        string layer)
-    {
-        var result = new List<RuntimeAgentDefinition>(ids.Count);
-        foreach (var id in ids)
-        {
-            if (!snapshot.Agents.TryGetValue(id, out var agent))
-            {
-                throw new InvalidDataException($"Runtime profile references unknown agent '{id}'.");
-            }
-            if (!string.Equals(agent.Layer, layer, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException($"Runtime profile agent '{id}' is not in the {layer} layer.");
-            }
-            // TOML built-in roles do not have relational rows. Bind them to
-            // deterministic virtual identities so a hot reload cannot make an
-            // existing run drift to a different agent version.
-            result.Add(agent with
-            {
-                AgentDefinitionId = agent.AgentDefinitionId ?? DeterministicGuid($"virtual-agent-definition:{agent.Id}"),
-                AgentVersionId = agent.AgentVersionId ?? DeterministicGuid($"virtual-agent-version:{snapshot.ContentHash}:{agent.Id}"),
-                VersionContentHash = string.IsNullOrWhiteSpace(agent.VersionContentHash) ? snapshot.ContentHash : agent.VersionContentHash
-            });
-        }
-        return result;
-    }
-
     private static RuntimeAgentDefinition ToRuntimeAgentDefinition(RuntimeAgentRosterEntry e) => new(
         e.Id,
         e.Layer,
@@ -293,6 +282,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         PromptProfile = e.PromptProfile,
         SystemPrompt = e.SystemPrompt,
         ModelStrategyJson = e.ModelStrategyJson,
+        ModelStrategySource = e.ModelStrategySource,
         Enabled = e.Enabled,
         RosterOrder = e.RosterOrder,
         PromptPipelineId = e.PromptPipelineId,

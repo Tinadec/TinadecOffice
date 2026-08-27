@@ -56,8 +56,8 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Summary).HasColumnName("summary");
             entity.Property(x => x.HistoryRevision).HasColumnName("history_revision");
             entity.Property(x => x.ModeVersionId).HasColumnName("mode_version_id");
-            entity.Property(x => x.MeetingModel).HasColumnName("meeting_model");
-            entity.Property(x => x.MeetingProviderId).HasColumnName("meeting_provider_id");
+            entity.Property(x => x.MeetingModelOverrideProviderInstanceId).HasColumnName("meeting_model_override_provider_instance_id");
+            entity.Property(x => x.MeetingModelOverrideModel).HasColumnName("meeting_model_override_model");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             entity.Property(x => x.Archived).HasColumnName("archived");
@@ -65,8 +65,7 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Mode).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096);
-            entity.Property(x => x.MeetingModel).HasMaxLength(256);
-            entity.Property(x => x.MeetingProviderId).HasMaxLength(256);
+            entity.Property(x => x.MeetingModelOverrideModel).HasMaxLength(512);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProjectId, x.Archived, x.UpdatedAt });
         });
 
@@ -118,6 +117,11 @@ public sealed class MemoryDbContext : DbContext
             entity.HasIndex(x => new { x.MemoryItemId, x.Version }).IsUnique();
         });
         modelBuilder.UseTinadecSnakeCase();
+        // UseTinadecSnakeCase rewrites every column name from the property name;
+        // the memory tables keep their historical agent_profile_id columns, so the
+        // explicit mapping must be applied after the convention.
+        modelBuilder.Entity<MemoryCandidateRecord>().Property(x => x.AgentId).HasColumnName("agent_profile_id");
+        modelBuilder.Entity<MemoryItemRecord>().Property(x => x.AgentId).HasColumnName("agent_profile_id");
     }
 }
 
@@ -147,8 +151,8 @@ public sealed class SessionRecord
     public string? Summary { get; set; }
     public long HistoryRevision { get; set; }
     public Guid? ModeVersionId { get; set; }
-    public string? MeetingModel { get; set; }
-    public string? MeetingProviderId { get; set; }
+    public Guid? MeetingModelOverrideProviderInstanceId { get; set; }
+    public string? MeetingModelOverrideModel { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public bool Archived { get; set; }
@@ -158,6 +162,6 @@ public sealed class MessageRecord { public Guid Id { get; set; } public Guid Ten
 public sealed class TurnRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid UserMessageId { get; set; } public Guid? AssistantMessageId { get; set; } public Guid? RunId { get; set; } public string Kind { get; set; } = "new_task"; public string Status { get; set; } = "accepted"; public long BaseContextRevision { get; set; } public long ResultContextRevision { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } }
 public sealed class ContextSnapshotRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public long Revision { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } }
 public sealed class ContextPatchRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public Guid? AgentInstanceId { get; set; } public long BaseRevision { get; set; } public long? AppliedRevision { get; set; } public string Status { get; set; } = "pending"; public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset? AppliedAt { get; set; } }
-public sealed class MemoryCandidateRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public Guid? AgentProfileId { get; set; } public Guid SourceRunId { get; set; } public Guid GeneratedByInstanceId { get; set; } public string Scope { get; set; } = "workspace"; public string Kind { get; set; } = "fact"; public string Status { get; set; } = "proposed"; public double Confidence { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public string? DecisionReason { get; set; } public Guid? PromotedMemoryItemId { get; set; } public Guid CreatedByPrincipalId { get; set; } public Guid? DecidedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } }
-public sealed class MemoryItemRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public Guid? PrincipalId { get; set; } public Guid? AgentProfileId { get; set; } public string Scope { get; set; } = "workspace"; public string Kind { get; set; } = "fact"; public string Status { get; set; } = "active"; public int CurrentVersion { get; set; } public Guid CurrentVersionId { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? RevokedAt { get; set; } public Guid? SupersededById { get; set; } }
+public sealed class MemoryCandidateRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public Guid? AgentId { get; set; } public Guid SourceRunId { get; set; } public Guid GeneratedByInstanceId { get; set; } public string Scope { get; set; } = "workspace"; public string Kind { get; set; } = "fact"; public string Status { get; set; } = "proposed"; public double Confidence { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public string? DecisionReason { get; set; } public Guid? PromotedMemoryItemId { get; set; } public Guid CreatedByPrincipalId { get; set; } public Guid? DecidedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } }
+public sealed class MemoryItemRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public Guid? PrincipalId { get; set; } public Guid? AgentId { get; set; } public string Scope { get; set; } = "workspace"; public string Kind { get; set; } = "fact"; public string Status { get; set; } = "active"; public int CurrentVersion { get; set; } public Guid CurrentVersionId { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? RevokedAt { get; set; } public Guid? SupersededById { get; set; } }
 public sealed class MemoryVersionRecord { public Guid Id { get; set; } public Guid MemoryItemId { get; set; } public int Version { get; set; } public Guid? SourceCandidateId { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public Guid CreatedByPrincipalId { get; set; } public DateTimeOffset CreatedAt { get; set; } }

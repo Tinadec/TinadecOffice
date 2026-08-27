@@ -1,22 +1,15 @@
-# TinadecCore dual-layer runtime baseline.
-#
-# This file is a read-only built-in baseline. Workspace-scoped database versions
-# may override profiles, but every run freezes the resolved config version/hash.
-# A valid edit is hot-reloaded for new runs only. Invalid edits keep the previous
-# snapshot active and appear in readiness diagnostics.
+# Runtime-only policy baseline. Formal Agent and Mode definitions are bootstrapped
+# once from Runtime/Configuration/bootstrap-agent-directory.toml and then live in
+# the AgentConfiguration database. This file is never an Agent roster.
 
 schema_version = 1
 
 [spawn]
-# Maximum parent -> child generation depth. A root operation agent is depth 0.
 max_depth = 2
-# Maximum generated (non-profile) agent instances in one run.
 max_agents_per_run = 8
-# Maximum simultaneously running execution workers in one run.
 max_parallel_workers = 4
 
 [scheduling]
-# Multiple top-level runs may stay active in one session, subject to this limit.
 max_active_runs_per_session = 2
 worker_retry_limit = 2
 preserve_partial_results = true
@@ -26,7 +19,6 @@ required_before_final = true
 max_revision_rounds = 2
 
 [context]
-# Used only when the resolved model does not publish a smaller context budget.
 default_token_budget = 8192
 recent_message_limit = 24
 optimistic_revision = true
@@ -42,203 +34,4 @@ provider = "tinadec-tools-process"
 mutation_requires_approval = true
 serialize_workspace_writes = true
 default_timeout_seconds = 120
-# Maximum tool-call rounds an execution worker may chain before it must
-# converge to a textual conclusion.
 max_tool_rounds = 4
-
-# Application modes decide which agent-mode choices the UI may present.
-[application_modes.conversation]
-default_agent_mode = "auto"
-allowed_agent_modes = ["plan", "spec", "ask", "vibe", "auto", "agent"]
-
-[application_modes.conversation.bindings]
-plan = "conversation.plan"
-spec = "conversation.spec"
-ask = "conversation.ask"
-vibe = "conversation.vibe"
-auto = "conversation.auto"
-agent = "conversation.agent"
-
-[application_modes.space]
-default_agent_mode = "agent"
-allowed_agent_modes = ["agent"]
-
-[application_modes.space.bindings]
-agent = "space.full_duplex"
-
-# Every profile preserves the operation/execution architecture. The activation
-# policy decides which roles are used for a specific turn.
-[profiles."conversation.ask"]
-activation_policy = "intent_adaptive"
-operation_agents = ["meeting"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = true
-
-[profiles."conversation.plan"]
-activation_policy = "plan_only"
-operation_agents = ["meeting", "context_compressor", "supervisor"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = false
-
-[profiles."conversation.spec"]
-activation_policy = "specification"
-operation_agents = ["meeting", "context_compressor", "supervisor"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = false
-
-[profiles."conversation.vibe"]
-activation_policy = "intent_adaptive"
-operation_agents = ["meeting"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = true
-
-[profiles."conversation.auto"]
-activation_policy = "intent_adaptive"
-operation_agents = ["meeting", "context_compressor", "skill_recommender", "supervisor"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = true
-
-[profiles."conversation.agent"]
-activation_policy = "execute"
-operation_agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution"]
-execution_agents = ["task_planner"]
-direct_answer_allowed = false
-
-[profiles."space.full_duplex"]
-activation_policy = "full_duplex"
-operation_agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution", "git_steward"]
-execution_agents = ["task_planner", "worker.git"]
-direct_answer_allowed = false
-
-# Built-in operation-layer roles. Only meeting may emit user-facing messages.
-[agents.meeting]
-layer = "operation"
-role = "session_coordinator"
-lifecycle = "session"
-capabilities = ["user.respond", "task.dispatch", "agent.create_temporary", "agent.create_persistent", "agent.create_profile"]
-direct_user_output = true
-context_access = "manage"
-prompt_profile = "space.full_duplex.meeting"
-accepts = ["user.message", "user.control", "task.accepted", "task.progress", "task.completed", "task.failed", "supervision.completed"]
-emits = ["user.response", "task.dispatched", "task.replan_requested", "supervision.requested"]
-triggers = ["user.message", "task.event", "supervision.completed"]
-
-[agents.context_compressor]
-layer = "operation"
-role = "context_maintenance"
-lifecycle = "session_background"
-capabilities = ["context.read", "context.patch"]
-direct_user_output = false
-context_access = "patch"
-prompt_profile = "space.full_duplex.context_compressor"
-triggers = ["context_threshold", "task_milestone", "task_closed"]
-emits = ["context.compacted"]
-
-[agents.skill_recommender]
-layer = "operation"
-role = "capability_advisor"
-lifecycle = "on_demand"
-capabilities = ["tool.search", "agent.propose"]
-direct_user_output = false
-context_access = "read"
-prompt_profile = "space.full_duplex.skill_recommender"
-triggers = ["task_created", "task_replanning", "capability_missing"]
-emits = ["capability.recommended"]
-
-[agents.supervisor]
-layer = "operation"
-role = "quality_controller"
-lifecycle = "task"
-capabilities = ["supervision.review"]
-direct_user_output = false
-context_access = "read"
-prompt_profile = "space.full_duplex.supervisor"
-triggers = ["risk_detected", "artifact_ready", "before_final_output"]
-emits = ["supervision.completed"]
-
-[agents.evolution]
-layer = "operation"
-role = "experience_curator"
-lifecycle = "post_task_background"
-capabilities = ["memory.candidate", "agent.candidate", "agent.create_persistent"]
-direct_user_output = false
-context_access = "read"
-prompt_profile = "space.full_duplex.evolution"
-triggers = ["task_closed", "user_feedback_received"]
-emits = ["memory.candidate_created", "agent.candidate_created"]
-
-[agents.git_steward]
-layer = "operation"
-role = "git_steward"
-lifecycle = "task"
-capabilities = ["git.review", "git.commit_plan", "approval.request"]
-direct_user_output = false
-context_access = "read"
-allowed_tools = []
-prompt_profile = "space.full_duplex.git_steward"
-triggers = ["git.change_detected", "before_commit", "before_push"]
-emits = ["git.plan_created", "git.approval_requested"]
-
-[agents.task_planner]
-layer = "execution"
-role = "execution_coordinator"
-lifecycle = "task"
-capabilities = ["task.plan", "task.replan", "agent.create_temporary"]
-# The planner may delegate any tool declared by the trusted v2 manifest. Each
-# generated worker is still narrowed to its task's required tool ids.
-allowed_tools = ["*"]
-direct_user_output = false
-context_access = "read_patch"
-prompt_profile = "space.full_duplex.task_planner"
-accepts = ["task.dispatched", "task.replan_requested", "task.pause_requested", "task.resume_requested", "task.cancel_requested"]
-emits = ["task.accepted", "task.progress", "task.partial_result", "task.completed", "task.failed", "worker.dispatched"]
-
-# Built-in execution specialists. They remain execution-layer workers; the task planner
-# selects and orchestrates them per subtask. Only the coordinator may spawn.
-[agents.search]
-layer = "execution"
-role = "search_specialist"
-lifecycle = "on_demand"
-capabilities = ["tool.search", "tool.browser"]
-direct_user_output = false
-context_access = "read"
-allowed_tools = ["browser.search", "browser.fetch", "mcp_search", "mcp_invoke"]
-prompt_profile = "space.full_duplex.search"
-accepts = ["worker.dispatched"]
-emits = ["worker.progress", "worker.completed", "worker.failed"]
-
-[agents.programming]
-layer = "execution"
-role = "programming_specialist"
-lifecycle = "on_demand"
-capabilities = ["tool.code", "tool.file"]
-direct_user_output = false
-context_access = "read_patch"
-allowed_tools = ["write_file", "read_file", "shell.execute", "mcp_invoke"]
-prompt_profile = "space.full_duplex.programming"
-accepts = ["worker.dispatched"]
-emits = ["worker.progress", "worker.completed", "worker.failed"]
-
-[agents.testing]
-layer = "execution"
-role = "testing_specialist"
-lifecycle = "on_demand"
-capabilities = ["tool.test", "tool.code"]
-direct_user_output = false
-context_access = "read"
-allowed_tools = ["shell.execute", "read_file", "mcp_invoke"]
-prompt_profile = "space.full_duplex.testing"
-accepts = ["worker.dispatched"]
-emits = ["worker.progress", "worker.completed", "worker.failed"]
-
-[agents."worker.git"]
-layer = "execution"
-role = "git_specialist"
-lifecycle = "on_demand"
-capabilities = ["tool.git"]
-direct_user_output = false
-context_access = "read_patch"
-allowed_tools = ["git_status", "git_diff", "git_stage", "git_unstage", "git_commit", "git_push", "git_push_readiness", "git_fetch", "git_pull", "git_branch_list", "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_worktree_list", "git_worktree_create", "git_worktree_remove", "git_merge", "git_rebase", "git_conflict_preview", "git_conflict_resolve"]
-prompt_profile = "space.full_duplex.worker.git"
-accepts = ["worker.dispatched"]
-emits = ["worker.progress", "worker.completed", "worker.failed"]

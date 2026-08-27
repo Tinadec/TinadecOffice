@@ -57,33 +57,46 @@ public sealed class AgentPackEndpointTests
 
         var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
         Assert.NotNull(agents);
-        Assert.Equal(14, agents!.Length);
+        // Bootstrap seeded 14 formal agents; the pack installs its own 14 alongside them
+        // (same slugs coexist — pack/bootstrap/custom are distinguished by source_kind).
+        Assert.Equal(28, agents!.Length);
         Assert.All(agents, agent => Assert.Equal("published", agent.GetProperty("status").GetString()));
-        Assert.Equal(6, agents.Count(agent => agent.GetProperty("layer").GetString() == "operation"));
-        Assert.Equal(8, agents.Count(agent => agent.GetProperty("layer").GetString() == "execution"));
+        Assert.Equal(14, agents.Count(agent => agent.GetProperty("source_kind").GetString() == "bootstrap"));
+        Assert.Equal(14, agents.Count(agent => agent.GetProperty("source_kind").GetString() == "pack"));
+        Assert.Equal(12, agents.Count(agent => agent.GetProperty("layer").GetString() == "operation"));
+        Assert.Equal(16, agents.Count(agent => agent.GetProperty("layer").GetString() == "execution"));
 
         var modes = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-modes");
         Assert.NotNull(modes);
-        Assert.Equal(7, modes!.Length);
-        Assert.Equal("default-mode", Assert.Single(modes!, mode => mode.GetProperty("slug").GetString() == "default-mode").GetProperty("slug").GetString());
+        Assert.Equal(14, modes!.Length);
+        Assert.Equal(2, modes!.Count(mode => mode.GetProperty("slug").GetString() == "default-mode"));
         foreach (var composer in new[] { "ask", "vibe", "plan", "spec", "auto", "agent" })
         {
-            var conversationMode = Assert.Single(modes!, mode => mode.GetProperty("slug").GetString() == $"conversation.{composer}");
-            Assert.Equal("published", conversationMode.GetProperty("status").GetString());
+            Assert.Equal(2, modes.Count(mode => mode.GetProperty("slug").GetString() == $"conversation.{composer}"));
         }
 
         // Pack-managed/published modes must expose their topology on a plain read so the
         // Desktop mode-topology canvas renders the agents (regression: draft-only guard 409'd).
-        var defaultModeId = modes.Single(mode => mode.GetProperty("slug").GetString() == "default-mode").GetProperty("id").GetGuid();
-        var topology = await client.GetFromJsonAsync<JsonElement>($"/api/v1/agent-modes/{defaultModeId}");
-        Assert.Equal(14, topology.GetProperty("nodes").GetArrayLength());
-        Assert.True(topology.GetProperty("managed").GetBoolean());
-        Assert.Equal("published", topology.GetProperty("status").GetString());
+        var defaultModeIds = modes.Where(mode => mode.GetProperty("slug").GetString() == "default-mode").Select(mode => mode.GetProperty("id").GetGuid()).ToArray();
+        var packDefaultTopologies = new List<JsonElement>();
+        foreach (var modeId in defaultModeIds)
+        {
+            var topology = await client.GetFromJsonAsync<JsonElement>($"/api/v1/agent-modes/{modeId}");
+            if (topology.GetProperty("managed").GetBoolean()) packDefaultTopologies.Add(topology);
+        }
+        var packTopology = Assert.Single(packDefaultTopologies);
+        Assert.Equal(14, packTopology.GetProperty("nodes").GetArrayLength());
+        Assert.Equal("published", packTopology.GetProperty("status").GetString());
 
-        var planModeId = modes.Single(mode => mode.GetProperty("slug").GetString() == "conversation.plan").GetProperty("id").GetGuid();
-        var planTopology = await client.GetFromJsonAsync<JsonElement>($"/api/v1/agent-modes/{planModeId}");
+        var planModeIds = modes.Where(mode => mode.GetProperty("slug").GetString() == "conversation.plan").Select(mode => mode.GetProperty("id").GetGuid()).ToArray();
+        var packPlanTopologies = new List<JsonElement>();
+        foreach (var modeId in planModeIds)
+        {
+            var topology = await client.GetFromJsonAsync<JsonElement>($"/api/v1/agent-modes/{modeId}");
+            if (topology.GetProperty("managed").GetBoolean()) packPlanTopologies.Add(topology);
+        }
+        var planTopology = Assert.Single(packPlanTopologies);
         Assert.Equal(6, planTopology.GetProperty("nodes").GetArrayLength());
-        Assert.True(planTopology.GetProperty("managed").GetBoolean());
         var planNodeAgentRefs = planTopology.GetProperty("nodes").EnumerateArray()
             .Select(node => node.GetProperty("label").GetString()).ToArray();
         Assert.Contains(planNodeAgentRefs, label => label == "会议智能体");
@@ -91,8 +104,10 @@ public sealed class AgentPackEndpointTests
         Assert.Contains(planNodeAgentRefs, label => label == "文档生成智能体");
 
         var pipelines = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/prompt-pipelines");
-        var baseline = Assert.Single(pipelines!, pipeline => pipeline.GetProperty("slug").GetString() == "baseline-prompt");
-        Assert.Equal("published", baseline.GetProperty("status").GetString());
+        // Bootstrap and the installed pack each publish their own baseline prompt.
+        var baselines = pipelines!.Where(pipeline => pipeline.GetProperty("slug").GetString() == "baseline-prompt").ToArray();
+        Assert.Equal(2, baselines.Length);
+        Assert.All(baselines, baseline => Assert.Equal("published", baseline.GetProperty("status").GetString()));
     }
 
     [Fact]
@@ -239,21 +254,18 @@ public sealed class AgentPackEndpointTests
         var customPromptVersion = Guid.NewGuid();
         await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync())
         {
-            db.WorkspaceDefaults.Add(new WorkspaceDefaultsRecord
-            {
-                TenantId = scope.TenantId,
-                WorkspaceId = scope.WorkspaceId,
-                DefaultAgentDefinitionId = customAgent,
-                DefaultAgentVersionId = customAgentVersion,
-                DefaultAgentModeId = customMode,
-                DefaultModeVersionId = customModeVersion,
-                DefaultPromptPipelineId = customPrompt,
-                DefaultPromptVersionId = customPromptVersion,
-                Status = "active",
-                Revision = 7,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
+            // Bootstrap already seeded an active defaults row for this workspace;
+            // user customization rewrites that row instead of inserting a second one
+            // (UNIQUE(tenant_id, workspace_id) holds exactly one active defaults).
+            var existing = await db.WorkspaceDefaults.SingleAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId && item.Status == "active");
+            existing.DefaultAgentDefinitionId = customAgent;
+            existing.DefaultAgentVersionId = customAgentVersion;
+            existing.DefaultAgentModeId = customMode;
+            existing.DefaultModeVersionId = customModeVersion;
+            existing.DefaultPromptPipelineId = customPrompt;
+            existing.DefaultPromptVersionId = customPromptVersion;
+            existing.Revision = 7;
+            existing.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync();
         }
 
@@ -327,16 +339,18 @@ public sealed class AgentPackEndpointTests
     }
 
     [Fact]
-    public async Task OfficePack_PreviewReportsResourceConflict_AndMemberCannotManage()
+    public async Task OfficePack_CustomSlugCoexists_AndMemberCannotManage()
     {
+        Guid customAgentId;
         using (var factory = new AgentPackFactory())
         using (var client = factory.CreateClient())
         {
             var scope = factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
             await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+            customAgentId = Guid.NewGuid();
             db.AgentDefinitions.Add(new AgentDefinitionRecord
             {
-                Id = Guid.NewGuid(),
+                Id = customAgentId,
                 TenantId = scope.TenantId,
                 WorkspaceId = scope.WorkspaceId,
                 Slug = "meeting",
@@ -346,6 +360,9 @@ public sealed class AgentPackEndpointTests
                 CapabilitiesJson = "[]",
                 ToolScopeJson = "[]",
                 ModelStrategyJson = "{\"kind\":\"inherit\"}",
+                SourceKind = "custom",
+                SourceKey = "meeting",
+                Managed = false,
                 Status = "published",
                 Revision = 1,
                 Version = 1,
@@ -356,12 +373,29 @@ public sealed class AgentPackEndpointTests
             });
             await db.SaveChangesAsync();
 
+            // Same-slug custom agents no longer conflict: the pack creates its own
+            // managed agent and the user-owned definition stays untouched.
             var preview = await PreviewAsync(client, OfficeEnvelope());
-            Assert.Equal("conflict", preview.GetProperty("action").GetString());
+            Assert.Equal("install", preview.GetProperty("action").GetString());
             Assert.Contains(preview.GetProperty("resources").EnumerateArray(), resource =>
                 resource.GetProperty("resource_key").GetString() == "meeting"
-                && resource.GetProperty("disposition").GetString() == "conflict");
-            Assert.NotEmpty(preview.GetProperty("differences").EnumerateArray());
+                && resource.GetProperty("disposition").GetString() == "created");
+            // `differences` carries the conflict strings; coexisting custom slugs
+            // must not produce any.
+            Assert.Empty(preview.GetProperty("differences").EnumerateArray());
+
+            using var install = await ApplyAsync(client, OfficeEnvelope(), preview.GetProperty("preview_id").GetGuid(), "custom-coexist-install");
+            Assert.Equal(HttpStatusCode.Created, install.StatusCode);
+
+            var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+            Assert.NotNull(agents);
+            Assert.Equal(3, agents!.Count(agent => agent.GetProperty("slug").GetString() == "meeting"));
+            var custom = agents.Single(agent => agent.GetProperty("id").GetGuid() == customAgentId);
+            Assert.Equal("custom", custom.GetProperty("source_kind").GetString());
+            Assert.False(custom.GetProperty("managed").GetBoolean());
+            Assert.Equal("User Meeting", custom.GetProperty("display_name").GetString());
+            var packMeeting = agents.Single(agent => agent.GetProperty("source_kind").GetString() == "pack" && agent.GetProperty("slug").GetString() == "meeting");
+            Assert.True(packMeeting.GetProperty("managed").GetBoolean());
         }
 
         using (var memberFactory = new AgentPackFactory("member"))

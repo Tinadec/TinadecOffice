@@ -857,7 +857,7 @@ const app = new Elysia()
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
-    for (const key of ['status', 'scope', 'kind', 'session_id', 'run_id', 'project_id', 'agent_profile_id', 'limit']) {
+    for (const key of ['status', 'scope', 'kind', 'session_id', 'run_id', 'project_id', 'limit']) {
       const value = (query as Record<string,unknown>)[key];
       if (value !== undefined && value !== '') search.set(key, String(value));
     }
@@ -1093,6 +1093,33 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Upsert model route', tags: ['ModelCenter'] } })
+  .post('/api/v1/model-resolution/preview', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = '/api/v1/model-resolution/preview';
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Preview model resolution without invoking a provider', tags: ['ModelCenter'] } })
+  .get('/api/v1/model-references', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/model-references${new URL(request.url).search}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/model-references'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List reverse references for a provider/model', tags: ['ModelCenter'] } })
+  .get('/api/v1/model-invocations', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/model-invocations${new URL(request.url).search}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/model-invocations'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Page model invocation audit records', tags: ['ModelCenter'] } })
   .get('/api/v1/model-settings', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/model-settings', { headers });
@@ -1250,14 +1277,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Probe ACP adapter', tags: ['System'] } })
-  .get('/api/v1/application-modes', async ({ set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/application-modes', { headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/application-modes'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'List application modes (TOML baseline)', tags: ['AgentCenter'] } })
   .get('/api/v1/agent-packs', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/agent-packs', { headers });
@@ -1378,14 +1397,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update agent', tags: ['AgentCenter'] } })
-  .put('/api/v1/agents/:agentId/mode', async ({ params, body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/agents/${params.agentId}/mode`, { method: 'PUT', body: body as Record<string, unknown>, headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/mode`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Update agent mode (501)', tags: ['AgentCenter'] } })
   // --- Thin proxy: agents CRUD + draft/publish/archive/versions (snake_case passthrough) ---
   .post('/api/v1/agents', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
@@ -1396,14 +1407,6 @@ const app = new Elysia()
     return result.data;
   }, { detail: { summary: 'Create agent', tags: ['Agents'] } })
   .get('/api/v1/agents/:agentId', async ({ params, set, request }) => {
-    if ((params as Record<string,string>).agentId === 'catalog') {
-      const headers = forwardHeaders(request);
-      const result = await proxyJson('/api/v1/agents/catalog', { headers });
-      setStatus(set, result.status);
-      if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents/catalog'); }
-      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-      return result.data;
-    }
     const headers = forwardHeaders(request);
     const search = new URL(request.url).search;
     const result = await proxyJson(`/api/v1/agents/${params.agentId}${search}`, { headers });
@@ -1910,14 +1913,6 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Delete breakpoint', tags: ['System'] } })
-    .get('/api/v1/agents/catalog', async ({ set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/agents/catalog', { headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/agents/catalog'); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Agent catalog (dual-layer)', tags: ['Agents'] } })
   .post('/api/v1/runs/:runId/agents/spawn', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/runs/${(params as {runId:string}).runId}/agents/spawn`, { method: 'POST', body: body as Record<string, unknown>, headers });

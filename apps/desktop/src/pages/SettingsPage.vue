@@ -31,6 +31,7 @@ import {
   PawPrint,
   Plus,
   RefreshCw,
+  Route,
   Save,
   Search,
   Server,
@@ -59,8 +60,9 @@ import {
   type AgentCandidateDto,
   type AgentCenterOverviewDto,
   type AgentDefinitionDto,
+  type AgentDirectoryItemDto,
   type AgentModeDto,
-  type AgentProfileDto,
+  type AgentViewDto,
   type AgentRuntimeSelectionKind,
   type AgentVersionDto,
   type PermissionRequestDto,
@@ -74,6 +76,7 @@ import {
   type ModelProviderInstanceDto,
   type ModelProviderTemplateDto,
   type ModelReadinessReceiptDto,
+  type ModelReferenceDto,
   type ModelRouteDto,
   type ModelCenterApiConnectionDto,
   type SaveModelProviderInstanceInput,
@@ -276,7 +279,8 @@ const modelReadiness = ref<ModelReadinessReceiptDto | null>(null)
 const modelCatalogReadiness = ref<ModelCatalogReadinessReceiptDto | null>(null)
 const routes = ref<ModelRouteDto[]>([])
 const agentModes = ref<AgentModeDto[]>([])
-const agents = ref<AgentProfileDto[]>([])
+const agentDirectory = ref<AgentDirectoryItemDto[]>([])
+const agents = ref<AgentViewDto[]>([])
 const agentCandidates = ref<AgentCandidateDto[]>([])
 const availableTools = ref<ToolDescriptorDto[]>([])
 const harnessManifest = ref<HarnessManifestDto | null>(null)
@@ -289,11 +293,8 @@ const configuringAgentId = ref('')
 const modelCenterSection = ref<ModelCenterSection>('api')
 const agentRuntimeSelection = ref<AgentRuntimeSelectionKind>('inherit')
 const agentRuntimeModelKey = ref('')
-const agentRuntimeCliId = ref('')
-const agentRuntimeAcpId = ref('')
+const agentRuntimeRoutePurpose = ref('')
 const agentRuntimeModelQuery = ref('')
-const agentRuntimeCliQuery = ref('')
-const agentRuntimeAcpQuery = ref('')
 const agentEditTools = ref<string[]>([])
 const agentEditCapabilities = ref<string[]>([])
 const agentEditSystemPrompt = ref('')
@@ -367,6 +368,7 @@ const navItems = computed(() => [
 const modelCenterSections = computed(() => [
   { key: 'api' as const, label: t('settings.centerSuppliers'), count: modelCenterOverview.value?.api_connections.length ?? 0 },
   { key: 'models' as const, label: t('settings.centerModels'), count: modelCenterOverview.value?.models.length ?? 0 },
+  { key: 'routes' as const, label: t('settings.centerRoutes'), count: routes.value.length },
   { key: 'cli' as const, label: 'CLI', count: modelCenterOverview.value?.cli_runtimes.length ?? 0 },
   { key: 'acp' as const, label: 'ACP', count: modelCenterOverview.value?.acp_runtimes.length ?? 0 }
 ])
@@ -391,12 +393,6 @@ const pickerTemplateGroups = computed(() => {
   return groups
 })
 
-const chatRoute = computed(() =>
-  routes.value.find((route) => route.purpose === 'planner') ?? routes.value.find((route) => route.purpose === 'chat') ?? null
-)
-const chatProvider = computed(() =>
-  providers.value.find((provider) => provider.id === chatRoute.value?.provider_instance_id) ?? null
-)
 const providerReadinessById = computed(() => {
   const map = new Map<string, ModelProviderReadinessDto>()
   for (const provider of modelReadiness.value?.providers ?? []) {
@@ -463,6 +459,36 @@ const configuringRuntimeBinding = computed(() =>
     : null
 )
 const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
+const configuringDirectoryItem = computed(() =>
+  agentDirectory.value.find((item) => item.id === configuringAgentId.value) ?? null
+)
+
+function agentSourceKindLabel(kind: string): string {
+  if (kind === 'custom') return t('settings.agentSourceCustom')
+  if (kind === 'pack') return t('settings.agentSourcePack')
+  if (kind === 'bootstrap') return t('settings.agentSourceBootstrap')
+  if (kind === 'missing_reference') return t('settings.agentSourceMissing')
+  return kind
+}
+
+function agentSourceKindFor(agentId: string): string {
+  return agentDirectory.value.find((item) => item.id === agentId)?.source_kind ?? 'custom'
+}
+
+/** Summarize one effective preview (per mode:node) into a compact evidence line. */
+function agentPreviewLine(modeSlug: string, nodeKey: string, preview: { expected_selection?: { provider_instance_id?: string; model?: string | null } | null }): string {
+  const selection = preview.expected_selection
+  const target = selection
+    ? `${selection.provider_instance_id ?? '—'}${selection.model ? ` · ${selection.model}` : ''}`
+    : '—'
+  return `${modeSlug}:${nodeKey} → ${target}`
+}
+
+function agentInvocationLine(invocation: { provider_instance_id: string; model?: string | null; status: string; completed_at?: string | null }): string {
+  const model = invocation.model ? ` · ${invocation.model}` : ''
+  const time = invocation.completed_at ? ` · ${invocation.completed_at}` : ''
+  return `${invocation.provider_instance_id}${model} · ${invocation.status}${time}`
+}
 const runtimeModels = computed(() => agentCenterOverview.value?.runtime_sources.models ?? modelCenterOverview.value?.models ?? [])
 const runtimeCliOptions = computed(() => agentCenterOverview.value?.runtime_sources.cli_runtimes ?? modelCenterOverview.value?.cli_runtimes ?? [])
 const runtimeAcpOptions = computed(() => agentCenterOverview.value?.runtime_sources.acp_runtimes ?? modelCenterOverview.value?.acp_runtimes ?? [])
@@ -479,7 +505,7 @@ const filteredRuntimeModels = computed(() => runtimeModels.value.filter((model) 
 )))
 
 const filteredRuntimeCliOptions = computed(() => runtimeCliOptions.value.filter((runtime) => runtimeQueryMatches(
-  agentRuntimeCliQuery.value,
+  agentRuntimeModelQuery.value,
   runtime.display_name,
   runtime.runtime_id,
   runtime.driver,
@@ -488,7 +514,7 @@ const filteredRuntimeCliOptions = computed(() => runtimeCliOptions.value.filter(
   runtime.home_path
 )))
 const filteredRuntimeAcpOptions = computed(() => runtimeAcpOptions.value.filter((runtime) => runtimeQueryMatches(
-  agentRuntimeAcpQuery.value,
+  agentRuntimeModelQuery.value,
   runtime.display_name,
   runtime.runtime_id,
   runtime.source,
@@ -516,7 +542,6 @@ function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
 }
 const planningAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
 const executionAgents = computed(() => agents.value.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
-const configuredAgentMode = computed(() => agentModes.value.find((mode) => mode.id === configuringAgent.value?.mode) ?? null)
 const manifestToolList = computed(() => manifestTools(harnessManifest.value, availableTools.value))
 // ponytail: agent tool panel filters — reuse manifestTools, no new deps
 const filteredAgentTools = computed(() => {
@@ -859,8 +884,9 @@ async function removeModel(providerId: string, modelId: string) {
     // Clear every source that contributes the model so it stays gone after reload.
     const routes = await api.listModelRoutes()
     for (const route of routes) {
-      if (route.model === modelId) {
-        await api.saveModelRoute(route.purpose, route.provider_instance_id, null)
+      if (route.candidates?.some((candidate) => candidate.model === modelId)) {
+        const kept = route.candidates.filter((candidate) => candidate.model !== modelId)
+        await api.saveModelRoute(route.purpose, { candidates: kept.map((candidate, index) => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model ?? null })) })
       }
     }
     const merged = (provider.models ?? []).filter((id) => id !== modelId)
@@ -986,11 +1012,11 @@ async function loadAgentCenter() {
   agentCenterLoading.value = true
   dismissByKey('agent-center')
   // getAgentCenterOverview is a deleted 404 route (docs/app-core-ui.md §4.8).
-  // Load the versioned catalog directly; overview-only projections degrade.
+  // Load the versioned directory + full definitions directly; overview-only projections degrade.
   loading.value = true
   try {
-      const [definitions, modes, candidates, toolReadiness, packDetail] = await Promise.all([
-        api.listAgents().catch(() => [] as AgentProfileDto[]),
+      const [directory, modes, candidates, toolReadiness, packDetail] = await Promise.all([
+        api.listAgents().catch(() => [] as AgentDirectoryItemDto[]),
         api.listAgentModes().catch(() => [] as AgentModeDto[]),
         api.listAgentCandidates().catch(() => [] as AgentCandidateDto[]),
         api.getToolLayerReadiness().catch(() => null),
@@ -1001,19 +1027,44 @@ async function loadAgentCenter() {
           .filter((resource) => resource.kind === 'agent' && resource.logical_entity_id)
           .map((resource) => resource.logical_entity_id!),
       )
+      // Full definitions power the editor (prompt/tools/capabilities); the directory
+      // projection carries source/usage/preview/invocation evidence.
+      const definitions = await Promise.all(
+        directory
+          .filter((item) => item.source_kind !== 'missing_reference')
+          .map((item) => api.getAgent(item.id).catch(() => null)),
+      )
+      const definitionById = new Map(
+        definitions.filter((item): item is AgentDefinitionDto => item !== null).map((item) => [item.id, item]),
+      )
       agentCenterOverview.value = null
       agentModes.value = modes
-      agents.value = (definitions as Array<AgentProfileDto & Partial<AgentDefinitionDto>>).map((definition) => ({
-        ...definition,
-        name: definition.display_name ?? definition.slug ?? definition.name,
-        agent_type: definition.role ?? definition.agent_type,
-        allowed_tools: definition.tool_scope
-          ? Array.isArray(definition.tool_scope)
-            ? definition.tool_scope
-            : []
-          : (definition as unknown as AgentProfileDto).allowed_tools,
-        is_built_in: Boolean(definition.is_built_in || managedAgentIds.has(definition.id)),
-      }))
+      agentDirectory.value = directory
+      agents.value = directory.map((item) => {
+        const definition = definitionById.get(item.id)
+        return {
+          id: item.id,
+          slug: item.slug,
+          display_name: item.display_name,
+          name: item.display_name ?? item.slug,
+          layer: item.layer,
+          role: item.role,
+          agent_type: item.role,
+          mode: '',
+          description: definition?.description ?? '',
+          model_route_purpose: item.configured_strategy?.route_purpose ?? '',
+          allowed_tools: Array.isArray(definition?.tool_scope) ? definition!.tool_scope as string[] : [],
+          capabilities: definition?.capabilities ?? [],
+          system_prompt: definition?.system_prompt ?? null,
+          enabled: item.enabled,
+          is_built_in: item.managed || item.source_kind !== 'custom' || managedAgentIds.has(item.id),
+          model_strategy: item.configured_strategy as unknown as Record<string, unknown>,
+          status: item.status,
+          revision: item.revision,
+          version: item.version,
+          updated_at: item.updated_at ?? null,
+        }
+      })
       agentCandidates.value = candidates as unknown as AgentCandidateDto[]
       toolLayerReadiness.value = toolReadiness
       // Harness manifest is non-critical: fall back to the legacy tool list for older Core builds.
@@ -1107,7 +1158,7 @@ async function resolveAgentConflict(agentId: string, body: Partial<AgentDefiniti
 
 /** Shared versioned write path; 412 revision conflicts open the conflict dialog instead of a generic toast. */
 async function publishAgentDraft(
-  agent: AgentProfileDto,
+  agent: AgentViewDto,
   body: Partial<AgentDefinitionDto>,
   revision: number | null | undefined,
   successTitle: string
@@ -1123,33 +1174,7 @@ async function publishAgentDraft(
   notify.success(successTitle)
 }
 
-async function updateAgentMode(agent: AgentProfileDto, mode: string) {
-  if (agent.is_built_in) {
-    status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
-    return
-  }
-  busy.value = true
-  try {
-    // Legacy flat `mode` has no versioned column; the operation/execution layer is the
-    // versioned identity. Keep the call surface but persist nothing beyond the current profile.
-    await publishAgentDraft(agent, {
-      display_name: agent.name,
-      layer: agent.layer,
-      role: agent.agent_type,
-      tool_scope: agent.allowed_tools,
-      capabilities: agent.capabilities,
-      system_prompt: agent.system_prompt ?? null,
-      description: agent.description || null,
-      enabled: agent.enabled
-    }, agent.revision, agent.name)
-  } catch (error) {
-    notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
+async function setAgentEnabled(agent: AgentViewDto, enabled: boolean) {
   if (agent.is_built_in) {
     status.warning({ key: 'agent-builtin', source: 'agents', message: t('settings.builtInCloneHint') })
     return
@@ -1164,7 +1189,7 @@ async function setAgentEnabled(agent: AgentProfileDto, enabled: boolean) {
   }
 }
 
-async function cloneAgentProfile() {
+async function cloneAgent() {
   const agent = configuringAgent.value
   if (!agent) return
   agentCloneBusy.value = true
@@ -1183,7 +1208,7 @@ async function cloneAgentProfile() {
       enabled: true
     })
     await loadAgentCenter()
-    const cloned = agents.value.find((a) => (a as AgentProfileDto & { display_name?: string }).display_name === newName)
+    const cloned = agents.value.find((a) => (a as AgentViewDto & { display_name?: string }).display_name === newName)
       ?? agents.value.find((a) => a.name === newName)
     if (cloned) openAgentConfig(cloned)
     notify.success(newName)
@@ -1212,7 +1237,7 @@ async function openOfficeAgentPackCloneFlow() {
   openAgentConfig(managedAgent)
 }
 
-async function saveAgentProfile() {
+async function saveAgent() {
   const agent = configuringAgent.value
   if (!agent) return
   if (agent.is_built_in) {
@@ -1271,7 +1296,7 @@ function addAgentCapability() {
   }
 }
 
-function openAgentConfig(agent: AgentProfileDto) {
+function openAgentConfig(agent: AgentViewDto) {
   selectedAgentId.value = agent.id
   configuringAgentId.value = agent.id
   agentEditTools.value = [...(agent.allowed_tools ?? [])]
@@ -1290,11 +1315,11 @@ function openAgentConfig(agent: AgentProfileDto) {
     : runtimeModels.value[0]
       ? modelOptionKey(runtimeModels.value[0].provider_instance_id, runtimeModels.value[0].model_id)
       : ''
-  agentRuntimeCliId.value = binding?.runtime_kind === 'cli' ? binding.provider_instance_id ?? '' : runtimeCliOptions.value[0]?.runtime_id ?? ''
-  agentRuntimeAcpId.value = binding?.runtime_kind === 'acp' ? binding.provider_instance_id ?? '' : runtimeAcpOptions.value[0]?.runtime_id ?? ''
+  agentRuntimeRoutePurpose.value = binding?.route_purpose
+    || (agent as AgentViewDto & { model_route_purpose?: string }).model_route_purpose
+    || routes.value[0]?.purpose
+    || ''
   agentRuntimeModelQuery.value = ''
-  agentRuntimeCliQuery.value = ''
-  agentRuntimeAcpQuery.value = ''
   void loadAgentVersionHistory(agent.id)
   nextTick(() => {
     if (!window.matchMedia('(max-width: 760px)').matches) return
@@ -1336,21 +1361,21 @@ function openAgentConfigById(agentId: string) {
 
 /** Build the Core model_strategy JSON from the current runtime-source selection. */
 function agentModelStrategy(): Record<string, unknown> | null {
-  if (agentRuntimeSelection.value === 'cli') {
-    return agentRuntimeCliId.value ? { kind: 'cli', runtime_id: agentRuntimeCliId.value } : null
-  }
-  if (agentRuntimeSelection.value === 'acp') {
-    return agentRuntimeAcpId.value ? { kind: 'acp', runtime_id: agentRuntimeAcpId.value } : null
+  if (agentRuntimeSelection.value === 'route') {
+    return agentRuntimeRoutePurpose.value ? { kind: 'route', route_purpose: agentRuntimeRoutePurpose.value } : null
   }
   if (agentRuntimeSelection.value === 'fixed_model') {
     const selected = runtimeModels.value.find((model) =>
       modelOptionKey(model.provider_instance_id, model.model_id) === agentRuntimeModelKey.value
     )
-    return selected
-      ? { kind: 'fixed', provider_instance_id: selected.provider_instance_id, model: selected.model_id }
-      : null
+    if (selected) {
+      return { kind: 'fixed', provider_instance_id: selected.provider_instance_id, model: selected.model_id }
+    }
+    // CLI/ACP provider instances participate in `fixed` and may omit the model.
+    const runtime = [...runtimeCliOptions.value, ...runtimeAcpOptions.value]
+      .find((item) => item.provider_instance_id === agentRuntimeModelKey.value)
+    return runtime ? { kind: 'fixed', provider_instance_id: runtime.provider_instance_id, model: null } : null
   }
-  // provider_auto has no Core persistence; inherit covers it.
   return { kind: 'inherit' }
 }
 
@@ -1358,7 +1383,7 @@ function agentStrategySaveable(): boolean {
   return agentModelStrategy() !== null
 }
 
-async function saveAgentModelStrategy(agent: AgentProfileDto) {
+async function saveAgentModelStrategy(agent: AgentViewDto) {
   const strategy = agentModelStrategy()
   if (!strategy) return
   agentRuntimeBusy.value = true
@@ -1369,6 +1394,128 @@ async function saveAgentModelStrategy(agent: AgentProfileDto) {
   } finally {
     agentRuntimeBusy.value = false
   }
+}
+
+// ── Model Center route fallback editor ──────────────────────────────
+// Ordered candidate chains: one write publishes an immutable route version.
+const routeEditorPurpose = ref('')
+const routeEditorCandidates = ref<Array<{ provider_instance_id: string; model: string | null }>>([])
+const routeEditorBusy = ref(false)
+const routeEditorAdding = ref(false)
+const routeEditorNewProviderId = ref('')
+const routeEditorNewModelId = ref('')
+const modelReferenceRows = ref<Record<string, ModelReferenceDto[]>>({})
+const modelReferenceBusy = ref<Record<string, boolean>>({})
+
+const routeEditorRoute = computed(() =>
+  routes.value.find((route) => route.purpose === routeEditorPurpose.value) ?? null
+)
+const routeEditorDirty = computed(() => {
+  const route = routeEditorRoute.value
+  if (!route) return false
+  const current = route.candidates?.map((candidate) => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model ?? null })) ?? []
+  const editing = routeEditorCandidates.value
+  return current.length !== editing.length
+    || current.some((candidate, index) =>
+      candidate.provider_instance_id !== editing[index]?.provider_instance_id
+      || (candidate.model ?? null) !== (editing[index]?.model ?? null))
+})
+
+function openRouteEditor(purpose: string) {
+  const route = routes.value.find((item) => item.purpose === purpose)
+  routeEditorPurpose.value = purpose
+  routeEditorCandidates.value = (route?.candidates ?? []).map((candidate) => ({
+    provider_instance_id: candidate.provider_instance_id,
+    model: candidate.model ?? null,
+  }))
+  routeEditorAdding.value = false
+  routeEditorNewProviderId.value = ''
+  routeEditorNewModelId.value = ''
+}
+
+function routeCandidateProviderLabel(providerInstanceId: string): string {
+  const provider = providers.value.find((item) => item.id === providerInstanceId)
+  if (provider) return provider.display_name
+  const cli = runtimeCliOptions.value.find((item) => item.provider_instance_id === providerInstanceId)
+  if (cli) return `${cli.display_name} (CLI)`
+  const acp = runtimeAcpOptions.value.find((item) => item.provider_instance_id === providerInstanceId)
+  if (acp) return `${acp.display_name} (ACP)`
+  return providerInstanceId
+}
+
+function moveRouteCandidate(index: number, delta: -1 | 1) {
+  const target = index + delta
+  if (target < 0 || target >= routeEditorCandidates.value.length) return
+  const candidates = [...routeEditorCandidates.value]
+  const [moved] = candidates.splice(index, 1)
+  candidates.splice(target, 0, moved)
+  routeEditorCandidates.value = candidates
+}
+
+function removeRouteCandidate(index: number) {
+  routeEditorCandidates.value = routeEditorCandidates.value.filter((_, i) => i !== index)
+}
+
+function addRouteCandidate() {
+  const providerInstanceId = routeEditorNewProviderId.value
+  if (!providerInstanceId) return
+  routeEditorCandidates.value = [
+    ...routeEditorCandidates.value,
+    { provider_instance_id: providerInstanceId, model: routeEditorNewModelId.value || null },
+  ]
+  routeEditorAdding.value = false
+  routeEditorNewProviderId.value = ''
+  routeEditorNewModelId.value = ''
+}
+
+async function saveRouteCandidates() {
+  if (!routeEditorPurpose.value) return
+  routeEditorBusy.value = true
+  try {
+    await api.saveModelRoute(routeEditorPurpose.value, {
+      candidates: routeEditorCandidates.value.map((candidate) => ({
+        provider_instance_id: candidate.provider_instance_id,
+        model: candidate.model ?? null,
+      })),
+    })
+    await loadModelCenter()
+    openRouteEditor(routeEditorPurpose.value)
+    notify.success(routeEditorPurpose.value)
+  } catch (error) {
+    notify.error(error, { title: routeEditorPurpose.value })
+  } finally {
+    routeEditorBusy.value = false
+  }
+}
+
+/** Reverse references (agents / modes / routes / recent invocations) for one configured model. */
+async function toggleModelReferences(providerInstanceId: string, modelId: string) {
+  const key = `${providerInstanceId}:${modelId}`
+  if (modelReferenceRows.value[key]) {
+    delete modelReferenceRows.value[key]
+    modelReferenceRows.value = { ...modelReferenceRows.value }
+    return
+  }
+  modelReferenceBusy.value = { ...modelReferenceBusy.value, [key]: true }
+  try {
+    const references = await api.listModelReferences({ provider_instance_id: providerInstanceId, model: modelId })
+    modelReferenceRows.value = { ...modelReferenceRows.value, [key]: references }
+  } catch {
+    modelReferenceRows.value = { ...modelReferenceRows.value, [key]: [] }
+  } finally {
+    modelReferenceBusy.value = { ...modelReferenceBusy.value, [key]: false }
+  }
+}
+
+function referenceKindLabel(kind: string): string {
+  const map: Record<string, string> = {
+    route: t('settings.centerRoutes'),
+    agent_default: t('settings.referenceAgentDefault'),
+    mode_override: t('settings.referenceModeOverride'),
+    meeting_override: t('settings.referenceMeetingOverride'),
+    recent_invocation: t('settings.referenceRecentInvocation'),
+  }
+  return map[kind] ?? kind
 }
 
 async function saveProvider() {
@@ -1902,9 +2049,24 @@ import '../settings/settings.css'
                         <span v-for="source in model.configuration_sources" :key="source">{{ configuredModelSourceLabel(source) }}</span>
                         <span v-for="purpose in model.route_purposes" :key="purpose">{{ purpose }}</span>
                       </div>
+                      <div v-if="modelReferenceRows[`${provider.id}:${model.model_id}`]" class="model-reference-rows">
+                        <span v-for="(reference, index) in modelReferenceRows[`${provider.id}:${model.model_id}`]" :key="index">
+                          {{ referenceKindLabel(reference.reference_kind) }}<template v-if="reference.detail"> · {{ reference.detail }}</template>
+                        </span>
+                        <span v-if="modelReferenceRows[`${provider.id}:${model.model_id}`].length === 0" class="quiet">{{ t('settings.noModelReferences') }}</span>
+                      </div>
                     </div>
                   </div>
                   <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
+                  <UiButton
+                    variant="ghost"
+                    size="sm"
+                    :disabled="modelReferenceBusy[`${provider.id}:${model.model_id}`]"
+                    :title="t('settings.toggleModelReferences')"
+                    @click="toggleModelReferences(provider.id, model.model_id)"
+                  >
+                    <Info :size="14" />
+                  </UiButton>
                   <UiButton
                     variant="ghost"
                     size="sm"
@@ -1924,6 +2086,90 @@ import '../settings/settings.css'
             <div v-if="(modelCenterOverview?.api_connections.length ?? 0) === 0" class="center-empty-state">
               <Cpu :size="20" />
               <span>{{ t('settings.noConfiguredModels') }}</span>
+            </div>
+          </section>
+
+          <section v-if="modelCenterSection === 'routes'" class="center-resource-section">
+            <div class="center-resource-heading">
+              <div>
+                <h3>{{ t('settings.centerRoutes') }}</h3>
+                <p>{{ t('settings.centerRoutesHint') }}</p>
+              </div>
+              <UiBadge variant="outline">{{ routes.length }}</UiBadge>
+            </div>
+            <div class="center-resource-list-row" :class="{ active: routeEditorPurpose === route.purpose }" v-for="route in routes" :key="route.id ?? route.purpose">
+              <button class="agent-card-select" @click="openRouteEditor(route.purpose)">
+                <Route :size="15" />
+                <div class="center-resource-primary">
+                  <strong>{{ route.purpose }}</strong>
+                  <span>
+                    {{ (route.candidates ?? []).map((candidate) => `${routeCandidateProviderLabel(candidate.provider_instance_id)}${candidate.model ? ` · ${candidate.model}` : ''}`).join(' → ') || t('settings.routeNoCandidates') }}
+                  </span>
+                </div>
+              </button>
+            </div>
+            <div v-if="routes.length === 0" class="center-empty-state">
+              <Route :size="20" />
+              <span>{{ t('settings.routeNoCandidates') }}</span>
+            </div>
+
+            <div v-if="routeEditorPurpose" class="route-candidate-editor">
+              <div class="route-candidate-head">
+                <strong>{{ routeEditorPurpose }}</strong>
+                <span>{{ t('settings.routeEditorHint') }}</span>
+              </div>
+              <div v-for="(candidate, index) in routeEditorCandidates" :key="`${candidate.provider_instance_id}:${index}`" class="route-candidate-row">
+                <UiBadge variant="secondary">{{ index + 1 }}</UiBadge>
+                <div class="route-candidate-main">
+                  <strong>{{ routeCandidateProviderLabel(candidate.provider_instance_id) }}</strong>
+                  <span>{{ candidate.model ?? t('settings.fixedModelNoModel') }}</span>
+                </div>
+                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy || index === 0" :title="t('settings.routeCandidateUp')" @click="moveRouteCandidate(index, -1)">
+                  <ChevronRight :size="14" class="rotate-[-90deg]" />
+                </UiButton>
+                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy || index === routeEditorCandidates.length - 1" :title="t('settings.routeCandidateDown')" @click="moveRouteCandidate(index, 1)">
+                  <ChevronRight :size="14" class="rotate-90" />
+                </UiButton>
+                <UiButton variant="ghost" size="icon" :disabled="routeEditorBusy" :title="t('settings.delete')" @click="removeRouteCandidate(index)">
+                  <Trash2 :size="14" />
+                </UiButton>
+              </div>
+              <div v-if="routeEditorCandidates.length === 0" class="center-empty-state">
+                <Route :size="20" />
+                <span>{{ t('settings.routeNoCandidates') }}</span>
+              </div>
+
+              <div v-if="routeEditorAdding" class="route-candidate-add">
+                <select v-model="routeEditorNewProviderId" class="settings-select">
+                  <option value="" disabled>{{ t('settings.selectProvider') }}</option>
+                  <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.display_name }}</option>
+                  <option v-for="runtime in runtimeCliOptions" :key="runtime.runtime_id" :value="runtime.provider_instance_id">{{ runtime.display_name }} (CLI)</option>
+                  <option v-for="runtime in runtimeAcpOptions" :key="runtime.runtime_id" :value="runtime.provider_instance_id ?? runtime.runtime_id">{{ runtime.display_name }} (ACP)</option>
+                </select>
+                <select v-if="modelsForProvider(routeEditorNewProviderId).length > 0" v-model="routeEditorNewModelId" class="settings-select">
+                  <option value="">{{ t('settings.fixedModelNoModel') }}</option>
+                  <option v-for="model in modelsForProvider(routeEditorNewProviderId)" :key="model.id" :value="model.model_id">{{ model.model_id }}</option>
+                </select>
+                <UiButton variant="outline" size="sm" :disabled="!routeEditorNewProviderId" @click="addRouteCandidate">
+                  <Check :size="14" />
+                </UiButton>
+                <UiButton variant="ghost" size="sm" @click="routeEditorAdding = false">{{ t('settings.cancel') }}</UiButton>
+              </div>
+              <div v-else class="route-candidate-actions">
+                <UiButton variant="outline" size="sm" :disabled="routeEditorBusy" @click="routeEditorAdding = true">
+                  <Plus :size="14" />
+                  <span>{{ t('settings.routeAddCandidate') }}</span>
+                </UiButton>
+                <UiButton
+                  variant="outline"
+                  size="sm"
+                  :disabled="routeEditorBusy || !routeEditorDirty"
+                  @click="saveRouteCandidates"
+                >
+                  <Save :size="14" />
+                  <span>{{ t('settings.saveRoute') }}</span>
+                </UiButton>
+              </div>
             </div>
           </section>
 
@@ -2378,7 +2624,7 @@ import '../settings/settings.css'
                   <div class="agent-card-icon"><Workflow :size="17" /></div>
                   <div class="agent-card-main">
                     <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentModeLabel(agent.mode) }} · {{ agent.id }}</span>
+                    <span>{{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }} · {{ agent.id }}</span>
                     <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
@@ -2406,7 +2652,7 @@ import '../settings/settings.css'
                   <div class="agent-card-icon execution"><Cpu :size="17" /></div>
                   <div class="agent-card-main">
                     <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentModeLabel(agent.mode) }} · {{ agent.id }}</span>
+                    <span>{{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }} · {{ agent.id }}</span>
                     <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
@@ -2469,7 +2715,7 @@ import '../settings/settings.css'
                 <div class="agent-identity-grid">
                   <div>
                     <span>{{ t('settings.agentSlugLabel') }}</span>
-                    <strong>{{ (configuringAgent as AgentProfileDto & { slug?: string }).slug ?? configuringAgent.id.slice(0, 8) }}</strong>
+                    <strong>{{ (configuringAgent as AgentViewDto & { slug?: string }).slug ?? configuringAgent.id.slice(0, 8) }}</strong>
                   </div>
                   <div>
                     <span>{{ t('settings.routePurpose') }}</span>
@@ -2490,34 +2736,42 @@ import '../settings/settings.css'
                 </div>
               </div>
 
-              <!-- 运行模式 — 统一走 PUT /agents -->
-              <div class="agent-config-section">
-                <div class="agent-config-section-title">{{ t('settings.agentModeTitle') }}</div>
-                <p v-if="configuringAgent.is_built_in" class="agent-config-hint">{{ t('settings.builtInCloneHint') }}</p>
-                <div class="agent-mode-grid">
-                  <button
-                    v-for="mode in agentModes"
-                    :key="mode.id"
-                    class="agent-mode-card"
-                    :class="{ active: configuringAgent.mode === mode.id, disabled: configuringAgent.is_built_in }"
-                    :disabled="configuringAgent.is_built_in"
-                    @click="updateAgentMode(configuringAgent, mode.id)"
-                  >
-                    <strong>{{ agentModeLabel(mode.id) }}</strong>
-                    <span>{{ agentModeSummary(mode) }}</span>
-                    <small>
-                      {{ t('settings.parallelExecutors') }} {{ mode.max_parallel_executors }}
-                      · {{ mode.worktree_isolation ? t('settings.worktreeOn') : t('settings.worktreeOff') }}
-                    </small>
-                  </button>
+              <!-- 目录证据 — 来源 / Mode 使用位置 / 有效预览 / 最近调用 -->
+              <div v-if="configuringDirectoryItem" class="agent-config-section">
+                <div class="agent-config-section-title">{{ t('settings.agentModeUsageSection') }}</div>
+                <div class="agent-detail-grid">
+                  <div>
+                    <span>{{ t('settings.agentSourceLabel') }}</span>
+                    <strong>
+                      {{ agentSourceKindLabel(configuringDirectoryItem.source_kind) }}
+                      <template v-if="configuringDirectoryItem.managed"> · {{ t('settings.agentSourceManaged') }}</template>
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{{ t('settings.agentStatus') }}</span>
+                    <strong>{{ configuringDirectoryItem.status }}</strong>
+                  </div>
                 </div>
-                <div v-if="configuredAgentMode" class="agent-policy-strip">
-                  <ShieldCheck :size="16" />
-                  <span>
-                    {{ configuredAgentMode.approval_required ? t('settings.approvalGateOn') : t('settings.approvalGateOff') }}
-                    · {{ agentPolicyLabel(configuredAgentMode.budget_policy) }}
+                <div v-if="(configuringDirectoryItem.mode_usages ?? []).length > 0" class="agent-mode-usage-list">
+                  <span v-for="usage in configuringDirectoryItem.mode_usages" :key="`${usage.mode_id}:${usage.node_key}`">
+                    {{ usage.mode_slug }} · {{ usage.node_key }}
                   </span>
                 </div>
+                <p v-else class="agent-config-hint">{{ t('settings.agentNoModeUsage') }}</p>
+
+                <div class="agent-config-section-title secondary">{{ t('settings.agentEffectivePreviewSection') }}</div>
+                <div v-if="Object.keys(configuringDirectoryItem.effective_previews ?? {}).length > 0" class="agent-mode-usage-list">
+                  <span v-for="(preview, key) in configuringDirectoryItem.effective_previews" :key="key" :title="key">
+                    {{ agentPreviewLine(String(key).split(':')[0], String(key).split(':')[1] ?? '', preview) }}
+                  </span>
+                </div>
+                <p v-else class="agent-config-hint">{{ t('settings.agentNoEffectivePreview') }}</p>
+
+                <div class="agent-config-section-title secondary">{{ t('settings.agentRecentInvocationSection') }}</div>
+                <p v-if="configuringDirectoryItem.recent_invocation" class="agent-config-hint">
+                  {{ agentInvocationLine(configuringDirectoryItem.recent_invocation) }}
+                </p>
+                <p v-else class="agent-config-hint">{{ t('settings.agentNoRecentInvocation') }}</p>
               </div>
 
               <!-- 运行来源 -->
@@ -2548,20 +2802,15 @@ import '../settings/settings.css'
                     <strong>{{ t('settings.runtimeInherit') }}</strong>
                     <span>{{ t('settings.runtimeInheritHint') }}</span>
                   </button>
+                  <button :class="{ active: agentRuntimeSelection === 'route' }" :aria-pressed="agentRuntimeSelection === 'route'" @click="agentRuntimeSelection = 'route'">
+                    <Route :size="16" />
+                    <strong>{{ t('settings.runtimeRoute') }}</strong>
+                    <span>{{ t('settings.runtimeRouteHint') }}</span>
+                  </button>
                   <button :class="{ active: agentRuntimeSelection === 'fixed_model' }" :aria-pressed="agentRuntimeSelection === 'fixed_model'" @click="agentRuntimeSelection = 'fixed_model'">
                     <Cpu :size="16" />
                     <strong>{{ t('settings.runtimeFixedModel') }}</strong>
                     <span>{{ t('settings.runtimeFixedModelHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'cli' }" :aria-pressed="agentRuntimeSelection === 'cli'" @click="agentRuntimeSelection = 'cli'">
-                    <Terminal :size="16" />
-                    <strong>CLI</strong>
-                    <span>{{ t('settings.runtimeCliHint') }}</span>
-                  </button>
-                  <button :class="{ active: agentRuntimeSelection === 'acp' }" :aria-pressed="agentRuntimeSelection === 'acp'" @click="agentRuntimeSelection = 'acp'">
-                    <Bot :size="16" />
-                    <strong>ACP</strong>
-                    <span>{{ t('settings.runtimeAcpHint') }}</span>
                   </button>
                 </div>
 
@@ -2569,7 +2818,17 @@ import '../settings/settings.css'
                   <ShieldCheck :size="16" />
                   <span>{{ t('settings.runtimeInheritedCurrent', { source: runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }) }}</span>
                 </div>
-                <div v-else-if="agentRuntimeSelection === 'fixed_model'" class="settings-field runtime-source-picker">
+                <div v-else-if="agentRuntimeSelection === 'route'" class="settings-field runtime-source-picker">
+                  <UiLabel>{{ t('settings.routePurpose') }}</UiLabel>
+                  <select v-model="agentRuntimeRoutePurpose" class="settings-select">
+                    <option value="" disabled>{{ t('settings.selectRoutePurpose') }}</option>
+                    <option v-for="route in routes" :key="route.id ?? route.purpose" :value="route.purpose">
+                      {{ route.purpose }}
+                    </option>
+                  </select>
+                  <p v-if="routes.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                </div>
+                <div v-else class="settings-field runtime-source-picker">
                   <UiLabel>{{ t('settings.runtimeFixedModel') }}</UiLabel>
                   <div class="runtime-source-search">
                     <Search :size="14" />
@@ -2580,36 +2839,14 @@ import '../settings/settings.css'
                     <option v-for="model in filteredRuntimeModels" :key="model.id" :value="modelOptionKey(model.provider_instance_id, model.model_id)">
                       {{ model.model_id }} · {{ model.provider_display_name ?? model.provider_instance_id }} · {{ statusLabel(model.status) }}
                     </option>
-                  </select>
-                  <p v-if="filteredRuntimeModels.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-                <div v-else-if="agentRuntimeSelection === 'cli'" class="settings-field runtime-source-picker">
-                  <UiLabel>CLI</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeCliQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'CLI' })" />
-                  </div>
-                  <select v-model="agentRuntimeCliId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectCliRuntime') }}</option>
-                    <option v-for="runtime in filteredRuntimeCliOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} · {{ statusLabel(runtime.status) }}
+                    <option v-for="runtime in filteredRuntimeCliOptions" :key="runtime.runtime_id" :value="runtime.provider_instance_id">
+                      {{ runtime.display_name }} · CLI · {{ statusLabel(runtime.status) }}
+                    </option>
+                    <option v-for="runtime in filteredRuntimeAcpOptions" :key="runtime.runtime_id" :value="runtime.provider_instance_id ?? runtime.runtime_id">
+                      {{ runtime.display_name }} · ACP · {{ statusLabel(runtime.status) }}
                     </option>
                   </select>
-                  <p v-if="filteredRuntimeCliOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
-                </div>
-                <div v-else class="settings-field runtime-source-picker">
-                  <UiLabel>ACP</UiLabel>
-                  <div class="runtime-source-search">
-                    <Search :size="14" />
-                    <UiInput v-model="agentRuntimeAcpQuery" :placeholder="t('settings.runtimeSearchPlaceholder', { kind: 'ACP' })" />
-                  </div>
-                  <select v-model="agentRuntimeAcpId" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectAcpRuntime') }}</option>
-                    <option v-for="runtime in filteredRuntimeAcpOptions" :key="runtime.runtime_id" :value="runtime.runtime_id">
-                      {{ runtime.display_name }} · {{ acpRuntimeSourceLabel(runtime.source) }} · {{ statusLabel(runtime.status) }}
-                    </option>
-                  </select>
-                  <p v-if="filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
+                  <p v-if="filteredRuntimeModels.length === 0 && filteredRuntimeCliOptions.length === 0 && filteredRuntimeAcpOptions.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>
                 </div>
 
                 <div class="runtime-binding-readonly">
@@ -2770,11 +3007,11 @@ import '../settings/settings.css'
 
               <!-- 保存按钮 — 克隆后编辑 -->
               <div class="agent-save-bar">
-                <UiButton v-if="configuringAgent.is_built_in" :disabled="agentCloneBusy" @click="cloneAgentProfile">
+                <UiButton v-if="configuringAgent.is_built_in" :disabled="agentCloneBusy" @click="cloneAgent">
                   <Plus :size="14" />
                   <span>{{ t('settings.cloneAgent') }}</span>
                 </UiButton>
-                <UiButton v-else :disabled="busy" @click="saveAgentProfile">
+                <UiButton v-else :disabled="busy" @click="saveAgent">
                   <Save :size="14" />
                   <span>{{ t('settings.saveAgent') }}</span>
                 </UiButton>

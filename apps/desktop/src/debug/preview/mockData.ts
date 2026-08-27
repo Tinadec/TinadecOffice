@@ -15,7 +15,9 @@ import type {
   ModelSettingsDto,
   ModelProviderInstanceDto,
   ModelRouteDto,
-  AgentProfileDto,
+  AgentDefinitionDto,
+  AgentDirectoryItemDto,
+  AgentViewDto,
   AgentModeDto,
   ToolDescriptorDto,
   HarnessManifestDto,
@@ -1195,9 +1197,9 @@ export function mockModelProviders(): ModelProviderInstanceDto[] {
 
 export function mockModelRoutes(): ModelRouteDto[] {
   return [
-    { purpose: 'planning.strong', provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022', updated_at: iso(-60 * 12) },
-    { purpose: 'execution.fast', provider_instance_id: 'mp-openai-001', model: 'gpt-4o-mini', updated_at: iso(-60 * 24) },
-    { purpose: 'execution.strong', provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022', updated_at: iso(-60 * 12) },
+    { id: 'route-planning-strong', purpose: 'planning.strong', version_id: 'route-version-1', version: 1, revision: 1, candidates: [{ position: 0, provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022' }], updated_at: iso(-60 * 12) },
+    { id: 'route-execution-fast', purpose: 'execution.fast', version_id: 'route-version-2', version: 1, revision: 1, candidates: [{ position: 0, provider_instance_id: 'mp-openai-001', model: 'gpt-4o-mini' }], updated_at: iso(-60 * 24) },
+    { id: 'route-execution-strong', purpose: 'execution.strong', version_id: 'route-version-3', version: 1, revision: 1, candidates: [{ position: 0, provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022' }], updated_at: iso(-60 * 12) },
   ]
 }
 
@@ -1205,8 +1207,8 @@ export function mockModelRoutes(): ModelRouteDto[] {
 // Agent 数据
 // ============================================================
 
-export function mockAgents(): AgentProfileDto[] {
-  const planning: AgentProfileDto[] = [
+export function mockAgents(): AgentViewDto[] {
+  const planning: AgentViewDto[] = [
     { id: 'agent-meeting', name: 'Meeting Agent', layer: 'planning', agent_type: 'meeting', mode: 'auto', description: '会议智能体：分析用户意图，拆解任务并调度其他智能体', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['intent.analysis', 'task.decomposition', 'agent.dispatch'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 10) },
     { id: 'agent-task-planner', name: 'Task Planner', layer: 'planning', agent_type: 'task_planner', mode: 'auto', description: '任务规划智能体：构建任务图，分配执行智能体', model_route_purpose: 'planning.strong', allowed_tools: ['read_file', 'grep_content'], capabilities: ['task.graph', 'agent.assignment'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 9) },
     { id: 'agent-context-compressor', name: 'Context Compressor', layer: 'planning', agent_type: 'context_compressor', mode: 'auto', description: '上下文压缩智能体：生成上下文包，控制 token 预算', model_route_purpose: 'planning.strong', allowed_tools: ['read_file'], capabilities: ['context.pack', 'token.budget'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 8) },
@@ -1215,7 +1217,7 @@ export function mockAgents(): AgentProfileDto[] {
     { id: 'agent-evolver', name: 'Evolver', layer: 'planning', agent_type: 'evolver', mode: 'auto', description: '进化智能体：根据运行反馈优化 agent 配置', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['agent.evolve', 'config.optimize'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 5) },
     { id: 'agent-skill-learner', name: 'Skill Learner', layer: 'planning', agent_type: 'skill_learner', mode: 'auto', description: '技能学习智能体：从历史会话中归纳可复用技能', model_route_purpose: 'planning.strong', allowed_tools: [], capabilities: ['skill.extract', 'knowledge.persist'], enabled: false, is_built_in: true, updated_at: iso(-60 * 24 * 4) },
   ]
-  const execution: AgentProfileDto[] = [
+  const execution: AgentViewDto[] = [
     { id: 'agent-code-explorer', name: 'Code Explorer', layer: 'execution', agent_type: 'code_explorer', mode: 'auto', description: '代码探查智能体：阅读代码、搜索符号、梳理调用路径', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'list_directory', 'grep_content', 'glob_search'], capabilities: ['code.read', 'code.search'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 3) },
     { id: 'agent-code-writer', name: 'Code Writer', layer: 'execution', agent_type: 'code_writer', mode: 'auto', description: '代码编写智能体：应用补丁、编辑文件、生成测试', model_route_purpose: 'execution.strong', allowed_tools: ['read_file', 'apply_patch', 'code_editor', 'grep_content'], capabilities: ['code.write', 'code.test'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
     { id: 'agent-search-specialist', name: 'Search Specialist', layer: 'execution', agent_type: 'search_specialist', mode: 'auto', description: '搜索专家：执行复杂的代码与文档检索', model_route_purpose: 'execution.fast', allowed_tools: ['grep_content', 'glob_search', 'read_file'], capabilities: ['search.advanced'], enabled: true, is_built_in: true, updated_at: iso(-60 * 24 * 2) },
@@ -1226,6 +1228,111 @@ export function mockAgents(): AgentProfileDto[] {
     { id: 'agent-doc-writer', name: 'Doc Writer', layer: 'execution', agent_type: 'doc_writer', mode: 'auto', description: '文档编写智能体：生成与更新技术文档', model_route_purpose: 'execution.fast', allowed_tools: ['read_file', 'apply_patch', 'code_editor'], capabilities: ['docs.write', 'docs.update'], enabled: false, is_built_in: false, updated_at: iso(-60 * 2) },
   ]
   return [...planning, ...execution]
+}
+
+/**
+ * Agent directory projection (GET /api/v1/agents).
+ * Mirrors Core's AgentDirectoryItemDto: source identity, mode usages,
+ * per-node effective previews, and the most recent invocation.
+ */
+export function mockAgentDirectory(): AgentDirectoryItemDto[] {
+  const base = mockAgents()
+  return base.map((agent, index) => {
+    const directory: AgentDirectoryItemDto = {
+      id: agent.id,
+      slug: agent.agent_type,
+      display_name: agent.name,
+      layer: agent.layer === 'planning' ? 'operation' : agent.layer,
+      role: agent.agent_type,
+      source_kind: agent.is_built_in ? 'bootstrap' : 'custom',
+      source_key: agent.agent_type,
+      managed: agent.is_built_in,
+      writable: !agent.is_built_in,
+      enabled: agent.enabled,
+      status: agent.is_built_in ? 'published' : 'draft',
+      revision: 1,
+      version: 1,
+      current_version_id: `${agent.id}-version-1`,
+      configured_strategy: { kind: 'inherit' },
+      mode_usages: [],
+      effective_previews: {},
+      recent_invocation: null,
+      updated_at: agent.updated_at ?? iso(-60 * 24),
+    }
+    // The meeting agent participates in every mock mode and has real evidence.
+    if (agent.agent_type === 'meeting') {
+      directory.mode_usages = [
+        { mode_id: 'mode-auto', mode_version_id: 'mode-auto-v1', mode_slug: 'conversation.auto', node_key: 'meeting' },
+        { mode_id: 'mode-plan', mode_version_id: 'mode-plan-v1', mode_slug: 'conversation.plan', node_key: 'meeting' },
+      ]
+      directory.effective_previews = {
+        'conversation.auto:meeting': {
+          strategy_source: 'agent_default',
+          chain: [{ source: 'agent_default', strategy: { kind: 'inherit' }, selected: true }],
+          candidates: [{ position: 0, provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022', available: true }],
+          expected_selection: { position: 0, provider_instance_id: 'mp-anthropic-002', model: 'claude-3-5-sonnet-20241022', available: true },
+        },
+      }
+      directory.recent_invocation = {
+        id: `inv-${index}`,
+        call_id: 'call-1',
+        attempt: 1,
+        session_id: 'sess-tinadec-1001',
+        run_id: 'run-1',
+        turn_id: 'turn-1',
+        agent_instance_id: null,
+        agent_definition_id: agent.id,
+        agent_version_id: `${agent.id}-version-1`,
+        mode_version_id: 'mode-auto-v1',
+        strategy_source: 'agent_default',
+        route_id: 'route-planning-strong',
+        route_version_id: 'route-version-1',
+        provider_instance_id: 'mp-anthropic-002',
+        provider_version_id: 'mp-anthropic-002-v1',
+        model: 'claude-3-5-sonnet-20241022',
+        protocol: 'anthropic-messages',
+        fallback_position: 0,
+        status: 'succeeded',
+        error_category: null,
+        safe_error_message: null,
+        input_tokens: 1200,
+        output_tokens: 340,
+        total_tokens: 1540,
+        started_at: iso(-60 * 2),
+        completed_at: iso(-60 * 2 + 30),
+      }
+    }
+    return directory
+  })
+}
+
+/**
+ * Full agent definitions (GET /api/v1/agents/{id}) merged with directory rows.
+ */
+export function mockAgentDefinitions(): AgentDefinitionDto[] {
+  return mockAgents().map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    slug: agent.agent_type,
+    display_name: agent.name,
+    layer: agent.layer === 'planning' ? 'operation' : agent.layer,
+    agent_type: agent.agent_type,
+    role: agent.agent_type,
+    model_route_purpose: agent.model_route_purpose,
+    model_strategy: { kind: 'inherit' },
+    allowed_tools: agent.allowed_tools,
+    tool_scope: agent.allowed_tools,
+    capabilities: agent.capabilities,
+    system_prompt: null,
+    description: agent.description,
+    enabled: agent.enabled,
+    is_built_in: agent.is_built_in,
+    status: agent.is_built_in ? 'published' : 'draft',
+    revision: 1,
+    version: 1,
+    created_at: agent.updated_at ?? null,
+    updated_at: agent.updated_at ?? null,
+  }))
 }
 
 export function mockAgentModes(): AgentModeDto[] {
@@ -1721,7 +1828,8 @@ export interface MockDataBundle {
   modelSettings: ModelSettingsDto | null
   modelProviders: ModelProviderInstanceDto[]
   modelRoutes: ModelRouteDto[]
-  agents: AgentProfileDto[]
+  agents: AgentDirectoryItemDto[]
+  agentDefinitions: AgentDefinitionDto[]
   agentModes: AgentModeDto[]
   tools: ToolDescriptorDto[]
   harnessManifest: HarnessManifestDto | null
@@ -1749,7 +1857,8 @@ export function buildMockDataBundle(sessionId: string = 'sess-tinadec-1001'): Mo
     modelSettings: mockModelSettings(),
     modelProviders: mockModelProviders(),
     modelRoutes: mockModelRoutes(),
-    agents: mockAgents(),
+    agents: mockAgentDirectory(),
+    agentDefinitions: mockAgentDefinitions(),
     agentModes: mockAgentModes(),
     tools: mockTools(),
     harnessManifest: mockHarnessManifest(),

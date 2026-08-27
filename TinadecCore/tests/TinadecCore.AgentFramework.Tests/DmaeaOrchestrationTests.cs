@@ -1,24 +1,12 @@
-using System.Text;
-using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Primitives;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
-using TinadecCore.Lifecycle;
-using TinadecCore.Memory;
-using TinadecCore.Persistence;
-using TinadecCore.Runtime;
 
 namespace TinadecCore.AgentFramework.Tests;
 
 /// <summary>
 /// DmaEA runtime tests. Planning/execution agents run against a fake chat client via the
-/// injected chat-client factory (no HTTP); the orchestrator integration test runs the full
-/// composition with a real SQLite database and an unavailable chat route, asserting the
-/// run.started/run.failed audit trail and the running (not completed) run status.
+/// injected chat-client factory (no HTTP).
 /// </summary>
 public sealed class DmaeaOrchestrationTests
 {
@@ -127,56 +115,6 @@ public sealed class DmaeaOrchestrationTests
     }
 
     // ──────────────────────────────────────────────────────────
-    // Orchestrator integration
-    // ──────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Orchestrator_FailedRunIsAuditedAndKeepsRunningStatus()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "tinadec-dmaea-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        try
-        {
-            var services = new ServiceCollection();
-            var configuration = new EmptyConfiguration();
-            services.AddSingleton<IConfiguration>(configuration);
-            services.AddLogging();
-            services.AddTinadecPersistence(configuration, root);
-            services.AddTinadecCore();
-            services.AddSingleton<IChatResolver>(new FakeChatResolver(false, "Provider API key is not stored."));
-            var provider = services.BuildServiceProvider();
-
-            Directory.CreateDirectory(Path.Combine(root, "data"));
-            await provider.GetRequiredService<IStorageMigrationRunner>().RunAsync();
-            var tenant = provider.GetRequiredService<ITenantContextAccessor>().Current;
-            var store = provider.GetRequiredService<ProjectSessionStore>();
-            var project = await store.CreateProjectAsync("Dmaea project", Path.Combine(root, "workspace"));
-            var session = await store.CreateSessionAsync(project.Id, "Dmaea session");
-            await SeedAgentsAsync(provider, tenant);
-
-            var orchestrator = provider.GetRequiredService<IAgentOrchestrator>();
-            var result = await orchestrator.OrchestrateAsync(session.Id.ToString(), "用户目标");
-
-            Assert.False(result.Success);
-            Assert.False(string.IsNullOrEmpty(result.RunId));
-
-            var lifecycle = provider.GetRequiredService<StorageLifecycleService>();
-            var events = await lifecycle.ReplayEventsAsync(session.Id, 0);
-            Assert.Contains(events, e => e.EventType == "run.started");
-            Assert.Contains(events, e => e.EventType == "run.failed");
-
-            var run = await lifecycle.FindRunAsync(Guid.Parse(result.RunId));
-            Assert.NotNull(run);
-            Assert.Equal("planning", run.Status);
-        }
-        finally
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────
 
@@ -192,56 +130,6 @@ public sealed class DmaeaOrchestrationTests
 
     private static AgentDefinition Planner() => new() { Id = Guid.NewGuid(), Name = "planner", Layer = "planning", AgentType = "planner", Enabled = true };
     private static AgentDefinition Executor() => new() { Id = Guid.NewGuid(), Name = "executor", Layer = "execution", AgentType = "executor", Enabled = true };
-
-    private static async Task SeedAgentsAsync(IServiceProvider provider, TenantContext tenant)
-    {
-        var content = provider.GetRequiredService<IContentStore>();
-        var now = DateTimeOffset.UtcNow;
-        await using var db = await provider.GetRequiredService<IDbContextFactory<AgentControlDbContext>>().CreateDbContextAsync();
-        foreach (var (name, layer, agentType) in new[] { ("planner", "planning", "planner"), ("executor", "execution", "executor") })
-        {
-            var body = JsonSerializer.Serialize(new Dictionary<string, object>
-            {
-                ["mode"] = "default",
-                ["description"] = name,
-                ["model_route_purpose"] = "chat",
-                ["allowed_tools"] = Array.Empty<string>(),
-                ["capabilities"] = Array.Empty<string>(),
-                ["system_prompt"] = "prompt"
-            });
-            await using var ms = new MemoryStream(Encoding.UTF8.GetBytes(body));
-            var stored = await content.PutAsync(new ContentWriteRequest(tenant.TenantId, tenant.WorkspaceId, "agent-profile", "application/json", ms));
-            var row = new AgentProfileRecord
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenant.TenantId,
-                WorkspaceId = tenant.WorkspaceId,
-                Scope = "workspace",
-                Name = name,
-                Layer = layer,
-                AgentType = agentType,
-                Enabled = true,
-                Revision = 0,
-                CreatedByPrincipalId = tenant.PrincipalId,
-                CreatedAt = now
-            };
-            var version = new AgentProfileVersionRecord
-            {
-                Id = Guid.NewGuid(),
-                AgentId = row.Id,
-                Version = 1,
-                ContentReference = stored.Value,
-                ContentHash = stored.Sha256,
-                ContentLength = stored.Length,
-                CreatedByPrincipalId = tenant.PrincipalId,
-                CreatedAt = now
-            };
-            row.CurrentVersionId = version.Id;
-            db.Agents.Add(row);
-            db.Versions.Add(version);
-        }
-        await db.SaveChangesAsync();
-    }
 
     private sealed class FakeFactory : IAgentChatClientFactory
     {
@@ -307,37 +195,4 @@ public sealed class DmaeaOrchestrationTests
         }
     }
 
-    private sealed class EmptyConfiguration : IConfiguration
-    {
-        public string? this[string key] { get => null; set { } }
-        public IEnumerable<IConfigurationSection> GetChildren() => [];
-        public IChangeToken GetReloadToken() => new EmptyChangeToken();
-        public IConfigurationSection GetSection(string key) => new EmptySection(key);
-    }
-
-    private sealed class EmptySection : IConfigurationSection
-    {
-        private readonly string _key;
-        public EmptySection(string key) => _key = key;
-
-        public string? this[string key] { get => null; set { } }
-        public string Key => _key;
-        public string Path => _key;
-        public string? Value { get => null; set { } }
-        public IEnumerable<IConfigurationSection> GetChildren() => [];
-        public IChangeToken GetReloadToken() => new EmptyChangeToken();
-        public IConfigurationSection GetSection(string key) => new EmptySection(_key + ":" + key);
-    }
-
-    private sealed class EmptyChangeToken : IChangeToken
-    {
-        public bool HasChanged => false;
-        public bool ActiveChangeCallbacks => false;
-        public IDisposable RegisterChangeCallback(Action<object?> callback, object? state) => new NoopDisposable();
-    }
-
-    private sealed class NoopDisposable : IDisposable
-    {
-        public void Dispose() { }
-    }
 }

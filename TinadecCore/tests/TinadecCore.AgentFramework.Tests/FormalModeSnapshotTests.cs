@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
@@ -95,6 +96,7 @@ public sealed class FormalModeSnapshotTests
             services.AddLogging();
             services.AddTinadecPersistence(configuration, root);
             services.AddTinadecCore();
+            services.AddSingleton<IAgentModelResolver, FrozenPlanOnlyModelResolver>();
             var provider = services.BuildServiceProvider();
 
             try
@@ -103,7 +105,6 @@ public sealed class FormalModeSnapshotTests
                 var scope = provider.GetRequiredService<ITenantContextAccessor>().Current;
                 var sessions = provider.GetRequiredService<ProjectSessionStore>();
                 var project = await sessions.CreateProjectAsync("Formal mode project", Path.Combine(root, "workspace"));
-                var session = await sessions.CreateSessionAsync(project.Id, "Formal mode session");
                 var now = DateTimeOffset.UtcNow;
 
                 var meetingDefinitionId = Guid.NewGuid();
@@ -219,7 +220,7 @@ public sealed class FormalModeSnapshotTests
                     });
                     await db.SaveChangesAsync();
                 }
-                await sessions.UpdateSessionModeAsync(session.Id, modeVersionId, null, null);
+                var session = await sessions.CreateSessionAsync(project.Id, "Formal mode session", modeVersionId);
                 return new FormalModeFixture(root, provider, session.Id, modeVersionId, meetingVersionV1, promptVersionV1);
             }
             catch
@@ -257,6 +258,8 @@ public sealed class FormalModeSnapshotTests
             CapabilitiesJson = "[]",
             ModelStrategyJson = "{\"kind\":\"inherit\"}",
             ToolScopeJson = "[]",
+            SourceKind = "custom",
+            SourceKey = slug,
             Status = "published",
             Revision = version,
             Version = version,
@@ -340,5 +343,23 @@ public sealed class FormalModeSnapshotTests
 
         private static string Hash(string body) =>
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
+
+        private sealed class FrozenPlanOnlyModelResolver : IAgentModelResolver
+        {
+            public Task<FrozenModelPlan> FreezeAsync(AgentModelFreezeRequest request, CancellationToken cancellationToken = default) =>
+                Task.FromResult(new FrozenModelPlan("inherit", request.StrategySource, []));
+
+            public Task<ModelResolutionPreviewDto> PreviewAsync(ModelResolutionPreviewRequestDto request, CancellationToken cancellationToken = default) =>
+                throw new NotSupportedException();
+
+            public Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default) =>
+                throw new NotSupportedException();
+
+            public Task<Guid> StartInvocationAsync(ModelInvocationStart request, CancellationToken cancellationToken = default) =>
+                throw new NotSupportedException();
+
+            public Task CompleteInvocationAsync(Guid invocationId, string status, ModelUsage? usage = null, string? errorCategory = null, string? safeErrorMessage = null, CancellationToken cancellationToken = default) =>
+                throw new NotSupportedException();
+        }
     }
 }

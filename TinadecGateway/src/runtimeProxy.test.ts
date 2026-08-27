@@ -23,7 +23,6 @@ test('full-duplex runtime routes preserve Core paths, query names, and command b
   }) as typeof fetch;
 
   const calls = [
-    new Request('http://gateway.local/api/v1/application-modes'),
     new Request('http://gateway.local/api/v1/agent-modes?application_mode=space'),
     new Request('http://gateway.local/api/v1/runs/run-1/orchestration'),
     new Request('http://gateway.local/api/v1/runs/run-1/agent-lineage'),
@@ -55,7 +54,6 @@ test('full-duplex runtime routes preserve Core paths, query names, and command b
   }
 
   assert.deepEqual(requests.map((request) => [request.method, request.url]), [
-    ['GET', 'http://127.0.0.1:48731/api/v1/application-modes'],
     ['GET', 'http://127.0.0.1:48731/api/v1/agent-modes?application_mode=space'],
     ['GET', 'http://127.0.0.1:48731/api/v1/runs/run-1/orchestration'],
     ['GET', 'http://127.0.0.1:48731/api/v1/runs/run-1/agent-lineage'],
@@ -66,9 +64,9 @@ test('full-duplex runtime routes preserve Core paths, query names, and command b
     ['POST', 'http://127.0.0.1:48731/api/v1/memory-candidates/memory-1/promote'],
     ['POST', 'http://127.0.0.1:48731/api/v1/agent-candidates/agent-1/reject']
   ]);
-  assert.deepEqual(JSON.parse(requests[7]!.body ?? ''), { command: 'pause', expected_context_revision: 7 });
-  assert.deepEqual(JSON.parse(requests[8]!.body ?? ''), { reason: 'confirmed by reviewer' });
-  assert.deepEqual(JSON.parse(requests[9]!.body ?? ''), { reason: 'insufficient evidence' });
+  assert.deepEqual(JSON.parse(requests[6]!.body ?? ''), { command: 'pause', expected_context_revision: 7 });
+  assert.deepEqual(JSON.parse(requests[7]!.body ?? ''), { reason: 'confirmed by reviewer' });
+  assert.deepEqual(JSON.parse(requests[8]!.body ?? ''), { reason: 'insufficient evidence' });
 });
 
 test('workspace governance routes stay stateless Core proxies and preserve If-Match/ETag', { concurrency: false }, async () => {

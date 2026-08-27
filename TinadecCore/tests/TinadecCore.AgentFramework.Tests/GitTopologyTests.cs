@@ -3,44 +3,50 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Tools;
+using Tomlyn;
+using Tomlyn.Model;
 
 namespace TinadecCore.AgentFramework.Tests;
 
 public sealed class GitTopologyTests
 {
     [Fact]
-    public void DefaultFullDuplexProfileIncludesGitGovernanceAndWorkerRoles()
+    public void BootstrapDirectoryIncludesGitGovernanceAndWorkerRoles()
     {
-        var snapshot = LoadDefaultSnapshot();
+        var (agents, modes) = LoadBootstrapDirectory();
 
-        var steward = Assert.IsType<RuntimeAgentDefinition>(snapshot.Agents["git_steward"]);
-        Assert.Equal("operation", steward.Layer);
-        Assert.Equal("git_steward", steward.Role);
-        Assert.Empty(steward.AllowedTools);
-        Assert.Contains("git.review", steward.Capabilities);
-        Assert.Contains("git.commit_plan", steward.Capabilities);
-        Assert.Contains("approval.request", steward.Capabilities);
+        var steward = agents["git_steward"];
+        Assert.Equal("operation", (string)steward["layer"]);
+        Assert.Equal("git_steward", (string)steward["role"]);
+        Assert.Empty((TomlArray)steward["tools"]);
+        var stewardCapabilities = ((TomlArray)steward["capabilities"]).Cast<string>().ToArray();
+        Assert.Contains("git.review", stewardCapabilities);
+        Assert.Contains("git.commit_plan", stewardCapabilities);
+        Assert.Contains("approval.request", stewardCapabilities);
 
-        var worker = Assert.IsType<RuntimeAgentDefinition>(snapshot.Agents["worker.git"]);
-        Assert.Equal("execution", worker.Layer);
-        Assert.Equal("git_specialist", worker.Role);
-        Assert.Contains("git_commit", worker.AllowedTools);
-        Assert.Contains("git_push", worker.AllowedTools);
-        Assert.Contains("git_worktree_create", worker.AllowedTools);
-        Assert.Contains("git_conflict_resolve", worker.AllowedTools);
+        var worker = agents["worker.git"];
+        Assert.Equal("execution", (string)worker["layer"]);
+        Assert.Equal("git_specialist", (string)worker["role"]);
+        var workerTools = ((TomlArray)worker["tools"]).Cast<string>().ToArray();
+        Assert.Contains("git_commit", workerTools);
+        Assert.Contains("git_push", workerTools);
+        Assert.Contains("git_worktree_create", workerTools);
+        Assert.Contains("git_conflict_resolve", workerTools);
 
-        var profile = snapshot.Profiles["space.full_duplex"];
-        Assert.Contains("git_steward", profile.OperationAgents);
-        Assert.Contains("worker.git", profile.ExecutionAgents);
+        var defaultMode = modes.Single(mode => (string)mode["key"] == "default-mode");
+        var roster = ((TomlArray)defaultMode["agents"]).Cast<string>().ToArray();
+        Assert.Contains("git_steward", roster);
+        Assert.Contains("worker.git", roster);
     }
 
     [Fact]
     public void GitWorkerManifestIntersectionDoesNotGrantUnlistedTools()
     {
-        var worker = LoadDefaultSnapshot().Agents["worker.git"];
+        var (agents, _) = LoadBootstrapDirectory();
+        var workerTools = ((TomlArray)agents["worker.git"]["tools"]).Cast<string>().ToArray();
         var manifest = new[] { "git_status", "git_diff", "git_commit", "git_push", "read_file" };
 
-        var effective = worker.AllowedTools
+        var effective = workerTools
             .Intersect(manifest, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -89,11 +95,19 @@ public sealed class GitTopologyTests
         }
     }
 
-    private static AgentRuntimeConfigurationSnapshot LoadDefaultSnapshot()
+    private static (Dictionary<string, TomlTable> Agents, List<TomlTable> Modes) LoadBootstrapDirectory()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "Configuration", "default-agent-runtime.toml");
-        Assert.True(File.Exists(path), $"The runtime baseline was not copied to '{path}'.");
-        return AgentRuntimeConfigurationStore.LoadSnapshot(path, 1);
+        var path = Path.Combine(AppContext.BaseDirectory, "Configuration", "bootstrap-agent-directory.toml");
+        Assert.True(File.Exists(path), $"The bootstrap agent directory was not copied to '{path}'.");
+        var model = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path));
+        var agents = new Dictionary<string, TomlTable>(StringComparer.Ordinal);
+        if (model.TryGetValue("agents", out var agentsValue) && agentsValue is TomlTableArray agentRows)
+            foreach (var table in agentRows.Cast<TomlTable>())
+                agents[(string)table["key"]] = table;
+        var modes = new List<TomlTable>();
+        if (model.TryGetValue("modes", out var modesValue) && modesValue is TomlTableArray modeRows)
+            modes.AddRange(modeRows.Cast<TomlTable>());
+        return (agents, modes);
     }
 
     private sealed class StubSessionLocator(SessionReference session, ProjectReference project) : ISessionLocator

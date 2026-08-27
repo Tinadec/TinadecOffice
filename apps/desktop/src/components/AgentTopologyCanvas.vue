@@ -2,10 +2,10 @@
 import { ArrowDown, Cpu, GitBranch, Workflow } from '@lucide/vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { AgentCandidateDto, AgentProfileDto, AgentRuntimeBindingDto, ModelProviderInstanceDto, ModelRouteDto } from '../api'
+import type { AgentCandidateDto, AgentViewDto, AgentRuntimeBindingDto, ModelProviderInstanceDto, ModelRouteDto } from '../api'
 
 const props = defineProps<{
-  agents: readonly AgentProfileDto[]
+  agents: readonly AgentViewDto[]
   candidates: readonly AgentCandidateDto[]
   providers: readonly ModelProviderInstanceDto[]
   routes: readonly ModelRouteDto[]
@@ -29,7 +29,7 @@ function normalizeAgentLayer(layer: unknown): 'operation' | 'execution' {
 const planningAgents = computed(() => props.agents.filter((agent) => normalizeAgentLayer(agent.layer) === 'operation'))
 const executionAgents = computed(() => props.agents.filter((agent) => normalizeAgentLayer(agent.layer) === 'execution'))
 
-function runtimeParts(agent: AgentProfileDto) {
+function runtimeParts(agent: AgentViewDto) {
   const binding = props.runtimeBindings[agent.id]
   if (binding) {
     if (binding.runtime_kind === 'unresolved') {
@@ -42,10 +42,11 @@ function runtimeParts(agent: AgentProfileDto) {
   }
 
   const route = props.routes.find((item) => item.purpose === agent.model_route_purpose)
-  const provider = props.providers.find((item) => item.id === route?.provider_instance_id)
+  const candidate = route?.candidates?.[0]
+  const provider = props.providers.find((item) => item.id === candidate?.provider_instance_id)
   return {
     provider: provider?.display_name ?? '',
-    model: route?.model ?? provider?.model ?? agent.model_route_purpose
+    model: candidate?.model ?? provider?.model ?? agent.model_route_purpose
   }
 }
 </script>

@@ -5,6 +5,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
+using TinadecCore.Lifecycle;
 
 namespace TinadecCore.Api.Endpoints;
 
@@ -49,12 +50,7 @@ public static class AgentConfigurationEndpoints
         app.MapPost("/api/v1/workspace-defaults/publish", PublishWorkspaceDefaults);
         app.MapPost("/api/v1/workspace-defaults/archive", ArchiveWorkspaceDefaults);
 
-        // Candidates & instances are durable DmaEA projections.  Keep these
-        // compatibility routes wired to the runtime service; they must not
-        // return a fabricated empty collection.
-        app.MapGet("/api/v1/agent-candidates", ListCandidates);
-        app.MapPost("/api/v1/agent-candidates/{id:guid}/promote", PromoteCandidate);
-        app.MapPost("/api/v1/agent-candidates/{id:guid}/reject", RejectCandidate);
+        // Candidate review is mapped only by MemoryReviewEndpoints.
         app.MapGet("/api/v1/agent-runtime-instances", ListInstances);
 
         return app;
@@ -205,14 +201,92 @@ public static class AgentConfigurationEndpoints
     };
 
     // ── agents ──
-    static async Task<IResult> ListAgents(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, HttpRequest req, CancellationToken ct)
+    static async Task<IResult> ListAgents(
+        IDbContextFactory<AgentConfigurationDbContext> f,
+        IDbContextFactory<LifecycleDbContext> lifecycleFactory,
+        IAgentModelResolver modelResolver,
+        ITenantContextAccessor a,
+        HttpRequest req,
+        CancellationToken ct)
     {
         var (t, w, _) = Ctx(a);
-        var q = req.Query["status"].ToString();
+        var status = req.Query["status"].ToString();
+        var sourceKind = req.Query["source_kind"].ToString();
+        var layer = req.Query["layer"].ToString();
         await using var db = await f.CreateDbContextAsync(ct);
-        // SQLite cannot translate DateTimeOffset ORDER BY to SQL; order in memory after materializing.
-        var list = await db.AgentDefinitions.Where(x => x.TenantId == t && x.WorkspaceId == w && (string.IsNullOrEmpty(q) || x.Status == q)).ToListAsync(ct);
-        return Results.Ok(list.OrderByDescending(x => x.UpdatedAt).Select(ToAgentDto));
+        var definitions = await db.AgentDefinitions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct);
+        var modes = await db.AgentModes.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToDictionaryAsync(x => x.Id, ct);
+        var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct);
+        var latestModeVersions = (await db.ModeVersions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published").ToListAsync(ct))
+            .GroupBy(x => x.AgentModeId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First());
+        var latestAgentVersions = (await db.AgentVersions.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "published").ToListAsync(ct))
+            .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First());
+        await using var lifecycle = await lifecycleFactory.CreateDbContextAsync(ct);
+        var recentInvocations = (await lifecycle.ModelInvocations.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "succeeded").ToListAsync(ct))
+            .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.CompletedAt).First());
+
+        var result = new List<AgentDirectoryItemDto>();
+        foreach (var definition in definitions)
+        {
+            if (!string.IsNullOrWhiteSpace(status) && !string.Equals(definition.Status, status, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.IsNullOrWhiteSpace(sourceKind) && !string.Equals(definition.SourceKind, sourceKind, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.IsNullOrWhiteSpace(layer) && !string.Equals(definition.Layer, layer, StringComparison.OrdinalIgnoreCase)) continue;
+            latestAgentVersions.TryGetValue(definition.Id, out var agentVersion);
+            recentInvocations.TryGetValue(definition.Id, out var invocation);
+            var usages = nodes.Where(x => x.AgentDefinitionId == definition.Id).Select(node =>
+            {
+                modes.TryGetValue(node.ModeId, out var mode);
+                latestModeVersions.TryGetValue(node.ModeId, out var modeVersion);
+                return new AgentModeUsageDto
+                {
+                    ModeId = node.ModeId, ModeVersionId = modeVersion?.Id, ModeSlug = mode?.Slug ?? "missing-mode",
+                    NodeKey = node.NodeKey,
+                    ModelStrategyOverride = string.IsNullOrWhiteSpace(node.ModelStrategyOverrideJson) ? null : ModelStrategyJson.Parse(node.ModelStrategyOverrideJson)
+                };
+            }).ToArray();
+            var previews = new Dictionary<string, ModelResolutionPreviewDto>(StringComparer.Ordinal);
+            foreach (var usage in usages.Where(x => x.ModeVersionId is not null))
+            {
+                try
+                {
+                    previews[$"{usage.ModeSlug}:{usage.NodeKey}"] = await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto
+                    {
+                        AgentDefinitionId = definition.Id, AgentVersionId = agentVersion?.Id,
+                        ModeVersionId = usage.ModeVersionId, NodeKey = usage.NodeKey
+                    }, ct).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidDataException or KeyNotFoundException)
+                {
+                    previews[$"{usage.ModeSlug}:{usage.NodeKey}"] = UnavailablePreview(exception.Message);
+                }
+            }
+            ModelStrategyDto configuredStrategy;
+            try { configuredStrategy = ModelStrategyJson.Parse(definition.ModelStrategyJson); }
+            catch { configuredStrategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Inherit }; }
+            result.Add(new AgentDirectoryItemDto
+            {
+                Id = definition.Id, Slug = definition.Slug, DisplayName = definition.DisplayName,
+                Layer = definition.Layer, Role = definition.Role, SourceKind = definition.SourceKind,
+                SourceKey = definition.SourceKey, Managed = definition.Managed, Writable = !definition.Managed && definition.Status != "archived",
+                Enabled = definition.Enabled, Status = definition.Status, Revision = definition.Revision, Version = definition.Version,
+                CurrentVersionId = agentVersion?.Id, ConfiguredStrategy = configuredStrategy,
+                ModeUsages = usages, EffectivePreviews = previews,
+                RecentInvocation = invocation is null ? null : ToInvocationDto(invocation), UpdatedAt = definition.UpdatedAt
+            });
+        }
+
+        var known = definitions.Select(x => x.Id).ToHashSet();
+        foreach (var missing in nodes.Where(x => !known.Contains(x.AgentDefinitionId)).GroupBy(x => x.AgentDefinitionId))
+        {
+            result.Add(new AgentDirectoryItemDto
+            {
+                Id = missing.Key, Slug = $"missing-{missing.Key:N}", DisplayName = "Missing Agent reference",
+                SourceKind = "missing_reference", SourceKey = missing.Key.ToString(), Managed = true, Writable = false,
+                Enabled = false, Status = "missing", ConfiguredStrategy = new ModelStrategyDto(),
+                ModeUsages = missing.Select(node => new AgentModeUsageDto { ModeId = node.ModeId, ModeSlug = modes.GetValueOrDefault(node.ModeId)?.Slug ?? "missing-mode", NodeKey = node.NodeKey }).ToArray()
+            });
+        }
+        return Results.Ok(result.OrderBy(x => x.Status == "missing" ? 0 : 1).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase));
     }
     static async Task<IResult> CreateAgent(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
     {
@@ -239,6 +313,7 @@ public static class AgentConfigurationEndpoints
             ToolScopeJson = el.TryGetProperty("tool_scope", out var ts) ? ts.GetRawText() : el.TryGetProperty("allowed_tools", out var at) ? at.GetRawText() : "[]",
             SystemPrompt = el.TryGetProperty("system_prompt", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null,
             Description = el.TryGetProperty("description", out var de) && de.ValueKind == JsonValueKind.String ? de.GetString() : null,
+            SourceKind = "custom", SourceKey = Slug(slug, name!), Managed = false,
             Enabled = !el.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.False,
             Status = "draft", Revision = 1, Version = 0, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow, CreatedByPrincipalId = p, UpdatedByPrincipalId = p
         };
@@ -339,46 +414,25 @@ public static class AgentConfigurationEndpoints
     }
 
     // ── modes ──
-    static async Task<IResult> ListModes(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, HttpRequest req, TinadecCore.DmaEA.IAgentRuntimeConfiguration toml, CancellationToken ct)
+    static async Task<IResult> ListModes(IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, HttpRequest req, CancellationToken ct)
     {
-        // TOML compatibility: if application_mode query present, return TOML-driven modes (old FullDuplex test expects this)
-        if (req.Query.ContainsKey("application_mode") || req.Query.ContainsKey("applicationMode"))
-        {
-            var appMode = req.Query["application_mode"].ToString();
-            if (string.IsNullOrWhiteSpace(appMode)) appMode = req.Query["applicationMode"].ToString();
-            var snapshot = toml.Current;
-            var appId = TinadecCore.DmaEA.AgentRuntimeConfigurationSnapshot.NormalizeApplicationMode(appMode);
-            if (!snapshot.ApplicationModes.TryGetValue(appId, out var mode))
-                return Results.BadRequest(new { code = "UNKNOWN_APPLICATION_MODE", message = $"Application mode '{appId}' is not configured." });
-            return Results.Ok(mode.AllowedAgentModes.Select(id => new
-            {
-                id,
-                display_name = id switch { "plan" => "Plan", "spec" => "Spec", "ask" => "Ask", "vibe" => "Vibe", "auto" => "Auto", "agent" => "Agent", _ => id },
-                summary = $"Agent mode '{id}' in application mode '{appId}'",
-                application_mode = appId,
-                is_default = string.Equals(id, mode.DefaultAgentMode, StringComparison.OrdinalIgnoreCase),
-                max_parallel_executors = snapshot.Spawn.MaxParallelWorkers,
-                worktree_isolation = false,
-                approval_required = true,
-                budget_policy = "bounded",
-                runtime_profile_id = mode.Bindings.TryGetValue(id, out var profileId) ? profileId : null,
-                operation_agents = mode.Bindings.TryGetValue(id, out var pid) && snapshot.Profiles.TryGetValue(pid, out var profile) ? profile.OperationAgents : (IReadOnlyList<string>)Array.Empty<string>(),
-                execution_agents = mode.Bindings.TryGetValue(id, out var pid2) && snapshot.Profiles.TryGetValue(pid2, out var profile2) ? profile2.ExecutionAgents : (IReadOnlyList<string>)Array.Empty<string>(),
-                activation_policy = mode.Bindings.TryGetValue(id, out var pid3) && snapshot.Profiles.TryGetValue(pid3, out var profile3) ? profile3.ActivationPolicy : null
-            }));
-        }
-        var (t,w,_) = Ctx(a); var q=req.Query["status"].ToString();
+        var (t,w,_) = Ctx(a);
+        var status = req.Query["status"].ToString();
+        var hasApplicationFilter = req.Query.ContainsKey("application_mode") || req.Query.ContainsKey("applicationMode");
+        var applicationMode = req.Query["application_mode"].ToString();
+        if (string.IsNullOrWhiteSpace(applicationMode)) applicationMode = req.Query["applicationMode"].ToString();
+        applicationMode = AgentRuntimeConfigurationSnapshot.NormalizeApplicationMode(applicationMode);
+        if (hasApplicationFilter && applicationMode is not ("conversation" or "space"))
+            return Results.BadRequest(new { code = "UNKNOWN_APPLICATION_MODE", message = $"Application mode '{applicationMode}' is not configured." });
+
         await using var db = await f.CreateDbContextAsync(ct);
-        var list = await db.AgentModes.Where(x=>x.TenantId==t && x.WorkspaceId==w && (string.IsNullOrEmpty(q)||x.Status==q)).ToListAsync(ct);
-        list = list.OrderByDescending(x=>x.UpdatedAt).ToList();
-        // If DB empty, fall back to TOML for backward compat (so old tests see TOML modes)
-        if (list.Count == 0 && string.IsNullOrEmpty(q))
-        {
-            var snapshot = toml.Current;
-            var appId = TinadecCore.DmaEA.AgentRuntimeConfigurationSnapshot.NormalizeApplicationMode(null);
-            if (snapshot.ApplicationModes.TryGetValue(appId, out var mode))
-                return Results.Ok(mode.AllowedAgentModes.Select(id => new { id, display_name = id, summary = $"Agent mode '{id}'", application_mode = appId, is_default = string.Equals(id, mode.DefaultAgentMode, StringComparison.OrdinalIgnoreCase), max_parallel_executors = snapshot.Spawn.MaxParallelWorkers, worktree_isolation = false, approval_required = true, budget_policy = "bounded" }));
-        }
+        var query = db.AgentModes.Where(x => x.TenantId == t && x.WorkspaceId == w
+            && (string.IsNullOrEmpty(status) || x.Status == status));
+        if (hasApplicationFilter)
+            query = applicationMode == "conversation"
+                ? query.Where(x => x.Slug.StartsWith("conversation."))
+                : query.Where(x => !x.Slug.StartsWith("conversation."));
+        var list = (await query.ToListAsync(ct)).OrderByDescending(x => x.UpdatedAt).ToList();
         return Results.Ok(list.Select(ToModeDto));
     }
     static async Task<IResult> CreateMode(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
@@ -410,8 +464,21 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         var edges=await db.ModeEdges.Where(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus).ToListAsync(ct);
         var layout=await db.CanvasLayouts.FirstOrDefaultAsync(x=>x.ModeId==id && x.TenantId==t && x.WorkspaceId==w && x.Status==nodeStatus, ct);
         var managed = await packs.FindManagedResourceAsync("mode", id, ct) is not null;
-        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
+        return Results.Ok(new{ id=rec.Id, slug=rec.Slug, display_name=rec.DisplayName, description=rec.Description, status=rec.Status, revision=rec.Revision, version=rec.Version, managed, nodes=nodes.Select(n=>new{ id=n.Id, node_key=n.NodeKey, agent_definition_id=n.AgentDefinitionId, layer=n.Layer, label=n.Label, position= n.PositionJson!=null? JsonSerializer.Deserialize<JsonElement>(n.PositionJson): (JsonElement?)null, config= n.ConfigJson!=null? JsonSerializer.Deserialize<JsonElement>(n.ConfigJson): (JsonElement?)null, model_strategy_override = n.ModelStrategyOverrideJson!=null ? JsonSerializer.Deserialize<JsonElement>(n.ModelStrategyOverrideJson) : (JsonElement?)null}), edges=edges.Select(e=>new{ id=e.Id, edge_key=e.EdgeKey, source_node_key=e.SourceNodeKey, target_node_key=e.TargetNodeKey}), canvas_layout= layout!=null? JsonSerializer.Deserialize<JsonElement>(layout.LayoutJson): (JsonElement?)null, created_at=rec.CreatedAt, updated_at=rec.UpdatedAt});
     }
+
+    static ModelResolutionPreviewDto UnavailablePreview(string reason) => new()
+    {
+        StrategySource = "unavailable",
+        Candidates =
+        [
+            new ModelResolutionCandidatePreviewDto
+            {
+                Available = false,
+                UnavailableReason = reason
+            }
+        ]
+    };
     static async Task<IResult> UpdateModeDraft(Guid id, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, IAgentPackService packs, CancellationToken ct)
     {
         var el=await JsonSerializer.DeserializeAsync<JsonElement>(req.Body,cancellationToken:ct);
@@ -441,13 +508,16 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
                 if(layer!="operation" && layer!="execution") throw new ArgumentException("Mode node layer must be operation or execution");
                 var existing=await db.ModeNodes.FirstOrDefaultAsync(x=>x.ModeId==mode.Id && x.NodeKey==key && x.TenantId==t && x.WorkspaceId==w, ct);
                 if(existing is null){
-                    db.ModeNodes.Add(new ModeNodeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, NodeKey=key!, AgentDefinitionId=agentId, Layer=layer, Label=n.TryGetProperty("label",out var lab)?lab.GetString():null, PositionJson=n.TryGetProperty("position",out var pos)?pos.GetRawText(): n.TryGetProperty("position_json",out var pj)?pj.GetRawText():null, ConfigJson=n.TryGetProperty("config",out var cfg)?cfg.GetRawText():null, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
+                    var modelOverride = n.TryGetProperty("model_strategy_override", out var overrideValue) ? overrideValue.GetRawText() : null;
+                    if (modelOverride is not null && ValidateModelStrategy(modelOverride) is { } error) throw new ArgumentException(error);
+                    db.ModeNodes.Add(new ModeNodeRecord{ Id=Guid.NewGuid(), TenantId=t, WorkspaceId=w, ModeId=mode.Id, NodeKey=key!, AgentDefinitionId=agentId, Layer=layer, Label=n.TryGetProperty("label",out var lab)?lab.GetString():null, PositionJson=n.TryGetProperty("position",out var pos)?pos.GetRawText(): n.TryGetProperty("position_json",out var pj)?pj.GetRawText():null, ConfigJson=n.TryGetProperty("config",out var cfg)?cfg.GetRawText():null, ModelStrategyOverrideJson=modelOverride, Status="draft", Revision=1, CreatedAt=DateTimeOffset.UtcNow, UpdatedAt=DateTimeOffset.UtcNow});
                 } else {
                     if(n.TryGetProperty("agent_definition_id",out var aid3) && Guid.TryParse(aid3.GetString(),out var g3)) existing.AgentDefinitionId=g3;
                     if(n.TryGetProperty("layer",out var l2)) existing.Layer=l2.GetString()??existing.Layer;
                     if(n.TryGetProperty("label",out var lab2)) existing.Label=lab2.GetString();
                     if(n.TryGetProperty("position",out var pos2)) existing.PositionJson=pos2.GetRawText();
                     if(n.TryGetProperty("config",out var cfg2)) existing.ConfigJson=cfg2.GetRawText();
+                    if(n.TryGetProperty("model_strategy_override",out var overrideValue)) { var error=ValidateModelStrategy(overrideValue.GetRawText()); if(error is not null) throw new ArgumentException(error); existing.ModelStrategyOverrideJson=overrideValue.ValueKind==JsonValueKind.Null?null:overrideValue.GetRawText(); }
                     existing.UpdatedAt=DateTimeOffset.UtcNow; existing.Revision++;
                 }
             }
@@ -515,6 +585,13 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             JsonElement config;
             try { config = JsonSerializer.Deserialize<JsonElement>(string.IsNullOrWhiteSpace(node.ConfigJson) ? "{}" : node.ConfigJson); }
             catch { return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey} config is invalid JSON."}); }
+            JsonElement? modelStrategyOverride = null;
+            if (!string.IsNullOrWhiteSpace(node.ModelStrategyOverrideJson))
+            {
+                var strategyError = ValidateModelStrategy(node.ModelStrategyOverrideJson);
+                if (strategyError is not null) return Results.BadRequest(new{code="invalid_request",message=$"Node {node.NodeKey}: {strategyError}"});
+                modelStrategyOverride = JsonSerializer.Deserialize<JsonElement>(node.ModelStrategyOverrideJson);
+            }
             frozenNodes.Add(new
             {
                 node_key = node.NodeKey,
@@ -524,6 +601,8 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
                 layer = node.Layer,
                 label = node.Label,
                 config,
+                model_strategy_override = modelStrategyOverride,
+                model_strategy_source = modelStrategyOverride is null ? "agent_version" : "mode_node_override",
                 effective_tools = effective.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
                 prompt_pipeline_id = agentDef.BasePromptPipelineId,
                 prompt_version_id = promptVersion?.Id,
@@ -720,13 +799,97 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         }
     }
 
-    static async Task<IResult> ListInstances(HttpRequest req, IAgentInstanceService instances, CancellationToken ct)
+    static async Task<IResult> ListInstances(
+        HttpRequest req,
+        IAgentInstanceService instances,
+        IDbContextFactory<AgentConfigurationDbContext> agentFactory,
+        IDbContextFactory<LifecycleDbContext> lifecycleFactory,
+        ITenantContextAccessor tenant,
+        CancellationToken ct)
     {
-        if (!Guid.TryParse(req.Query["run_id"].ToString(), out var runId) || runId == Guid.Empty)
-            return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "run_id is required and must be a valid Guid." });
+        Guid? runId = null;
+        var runText = req.Query["run_id"].ToString();
+        if (!string.IsNullOrWhiteSpace(runText))
+        {
+            if (!Guid.TryParse(runText, out var parsedRunId) || parsedRunId == Guid.Empty)
+                return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "run_id must be a valid Guid." });
+            runId = parsedRunId;
+        }
 
-        var instancesForRun = await instances.ListByRunAsync(runId, ct).ConfigureAwait(false);
-        return Results.Ok(instancesForRun.Select(ToInstanceDto));
+        var instancesForRun = runId is { } selectedRun
+            ? await instances.ListByRunAsync(selectedRun, ct).ConfigureAwait(false)
+            : await instances.ListByRunAsync(Guid.Empty, ct).ConfigureAwait(false);
+        if (runId is null)
+        {
+            // The service's run-scoped method intentionally remains the single
+            // lifecycle access point. For the directory view, query all visible
+            // instance rows through the service's implementation helper below.
+            instancesForRun = await instances.ListAllAsync(ct).ConfigureAwait(false);
+        }
+        var definitionIds = instancesForRun.Select(x => x.AgentDefinitionId).Distinct().ToArray();
+        var scope = tenant.Current;
+        await using var agents = await agentFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var definitions = await agents.AgentDefinitions.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && definitionIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, ct).ConfigureAwait(false);
+        await using var lifecycle = await lifecycleFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var invocationsQuery = lifecycle.ModelInvocations.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
+        if (runId is { } selectedRunForInvocations)
+            invocationsQuery = invocationsQuery.Where(x => x.RunId == selectedRunForInvocations);
+        var invocations = (await invocationsQuery.ToListAsync(ct).ConfigureAwait(false))
+            .OrderByDescending(x => x.StartedAt).ThenByDescending(x => x.Id).ToList();
+        return Results.Ok(instancesForRun.Select(instance =>
+        {
+            definitions.TryGetValue(instance.AgentDefinitionId, out var definition);
+            var latest = invocations.FirstOrDefault(x => x.AgentInstanceId == instance.Id && x.Status == "succeeded");
+            var attempts = latest is null
+                ? Array.Empty<ModelInvocationRecord>()
+                : invocations.Where(x => x.CallId == latest.CallId).OrderBy(x => x.Attempt).ToArray();
+            return new
+            {
+                id = instance.Id,
+                run_id = instance.RunId,
+                parent_instance_id = instance.ParentInstanceId,
+                task_id = instance.TaskId,
+                layer = instance.Layer,
+                role = instance.Role,
+                generation_depth = instance.GenerationDepth,
+                generated = instance.Generated,
+                status = instance.Status,
+                capabilities = instance.Capabilities,
+                allowed_tools = instance.AllowedTools,
+                allowed_resources = instance.AllowedResources,
+                budget_tokens = instance.BudgetTokens,
+                source_definition = definition is null ? null : new
+                {
+                    id = definition.Id, slug = definition.Slug, display_name = definition.DisplayName,
+                    source_kind = definition.SourceKind, source_key = definition.SourceKey, managed = definition.Managed
+                },
+                frozen_version = new { agent_version_id = instance.AgentVersionId, content_hash = instance.AgentVersionContentHash },
+                recent_actual_model = latest is null ? null : new
+                {
+                    invocation_id = latest.Id, provider_instance_id = latest.ProviderInstanceId,
+                    provider_version_id = latest.ProviderVersionId, model = latest.Model, protocol = latest.Protocol,
+                    route_id = latest.RouteId, route_version_id = latest.RouteVersionId,
+                    mode_version_id = latest.ModeVersionId, strategy_source = latest.StrategySource,
+                    fallback_position = latest.FallbackPosition, completed_at = latest.CompletedAt
+                },
+                fallback_summary = latest is null ? null : new
+                {
+                    call_id = latest.CallId, attempts = attempts.Length,
+                    failed_attempts = attempts.Count(x => x.Status == "failed"),
+                    used_fallback = latest.FallbackPosition > 0 || attempts.Length > 1
+                },
+                links = new
+                {
+                    agent_definition_id = instance.AgentDefinitionId,
+                    mode_version_id = latest?.ModeVersionId
+                },
+                created_at = instance.CreatedAt,
+                updated_at = instance.UpdatedAt
+            };
+        }));
     }
 
     static object ToCandidateDto(AgentCandidateRecord candidate) => new
@@ -772,30 +935,13 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
     {
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            string? kind = null;
-            if (root.TryGetProperty("kind", out var k)) kind = k.GetString()?.Trim().ToLowerInvariant();
-            else if (root.TryGetProperty("selection_kind", out var sk)) kind = sk.GetString()?.Trim().ToLowerInvariant();
-            if (kind is not ("inherit" or "fixed" or "parent_select" or "cli" or "acp"))
-                return "model_strategy.kind must be inherit|fixed|parent_select|cli|acp";
-            if (kind == "fixed")
-            {
-                if (!root.TryGetProperty("provider_instance_id", out var pid) || string.IsNullOrWhiteSpace(pid.GetString()))
-                    return "fixed model_strategy requires provider_instance_id";
-                if (!root.TryGetProperty("model", out var m) && !root.TryGetProperty("model_id", out m) || string.IsNullOrWhiteSpace(m.GetString()))
-                    return "fixed model_strategy requires model";
-            }
-            if (kind is "cli" or "acp")
-            {
-                var hasRuntime = (root.TryGetProperty("runtime_id", out var rid) && !string.IsNullOrWhiteSpace(rid.GetString()))
-                    || (root.TryGetProperty("provider_instance_id", out var cpid) && !string.IsNullOrWhiteSpace(cpid.GetString()));
-                if (!hasRuntime)
-                    return $"{kind} model_strategy requires runtime_id";
-            }
+            _ = ModelStrategyJson.Parse(json);
             return null;
         }
-        catch { return "model_strategy must be valid JSON"; }
+        catch (Exception exception) when (exception is JsonException or ArgumentException)
+        {
+            return exception.Message;
+        }
     }
 
     static HashSet<string> ParseTools(string? json)
@@ -877,7 +1023,19 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         catch (Exception ex) { return "graph invalid: " + ex.Message; }
     }
 
-    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, layer=r.Layer, role=r.Role, capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+    static object ToAgentDto(AgentDefinitionRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, layer=r.Layer, role=r.Role, source_kind=r.SourceKind, source_key=r.SourceKey, managed=r.Managed, writable=!r.Managed && r.Status!="archived", capabilities= r.CapabilitiesJson!=null? JsonSerializer.Deserialize<JsonElement>(r.CapabilitiesJson): (JsonElement?)null, model_strategy= r.ModelStrategyJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ModelStrategyJson): (JsonElement?)null, tool_scope= r.ToolScopeJson!=null? JsonSerializer.Deserialize<JsonElement>(r.ToolScopeJson): (JsonElement?)null, system_prompt=r.SystemPrompt, description=r.Description, enabled=r.Enabled, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+
+    static ModelInvocationDto ToInvocationDto(ModelInvocationRecord value) => new()
+    {
+        Id=value.Id, CallId=value.CallId, Attempt=value.Attempt, SessionId=value.SessionId, RunId=value.RunId,
+        TurnId=value.TurnId, AgentInstanceId=value.AgentInstanceId, AgentDefinitionId=value.AgentDefinitionId,
+        AgentVersionId=value.AgentVersionId, ModeVersionId=value.ModeVersionId, StrategySource=value.StrategySource,
+        RouteId=value.RouteId, RouteVersionId=value.RouteVersionId, ProviderInstanceId=value.ProviderInstanceId,
+        ProviderVersionId=value.ProviderVersionId, Model=value.Model, Protocol=value.Protocol,
+        FallbackPosition=value.FallbackPosition, Status=value.Status, ErrorCategory=value.ErrorCategory,
+        SafeErrorMessage=value.SafeErrorMessage, InputTokens=value.InputTokens, OutputTokens=value.OutputTokens,
+        TotalTokens=value.TotalTokens, StartedAt=value.StartedAt, CompletedAt=value.CompletedAt
+    };
     static object ToModeDto(AgentModeRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, description=r.Description, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
 
     static IResult ManagedReadOnly(AgentPackManagedResource managed) => throw new AgentPackDomainException(

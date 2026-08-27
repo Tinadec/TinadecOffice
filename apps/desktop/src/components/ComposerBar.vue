@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { UiButton } from '@/components/ui'
 import PermissionSelector from './PermissionSelector.vue'
 import type { PermissionLevel } from '@/types/mode'
+import type { MeetingModelOverrideDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 
@@ -20,13 +21,13 @@ const props = defineProps<{
   sessionId?: string | null
   runs?: Array<{ id: string; status: string }>
   modeVersionId?: string | null
-  meetingModel?: string | null
+  meetingModelOverride?: MeetingModelOverrideDto | null
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:permission': [value: PermissionLevel]
-  'submit': [payload: { dispatch_mode: 'parallel' | 'queued' | 'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
+  'submit': [payload: { dispatch_mode: 'parallel' | 'queued' | 'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }]
   'add-image': []
   'add-file': []
 }>()
@@ -102,7 +103,7 @@ function submit(pref?: DispatchPref) {
     dispatch_mode: p,
     target_run_id: null,
     mode_version_id: props.modeVersionId ?? null,
-    meeting_model: props.meetingModel?.trim() ? props.meetingModel.trim() : null,
+    meeting_model_override: props.meetingModelOverride ?? null,
   })
 }
 

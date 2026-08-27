@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Contracts.Events;
@@ -36,36 +37,46 @@ public static class StorageEndpoints
             return Results.Ok(enriched);
         });
 
-        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
+        app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IAgentModelResolver modelResolver, ITenantContextAccessor tenant, CancellationToken ct) =>
         {
             if (!Guid.TryParse(request.ProjectId, out var projectId)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
             try
             {
-                var session = await store.CreateSessionAsync(projectId, request.Title, ct).ConfigureAwait(false);
-                if (request.ModeVersionId.HasValue || !string.IsNullOrWhiteSpace(request.MeetingModel))
+                Guid? modeVersionId = request.ModeVersionId;
+                await using (var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false))
                 {
-                    session = await store.UpdateSessionModeAsync(session.Id, request.ModeVersionId, request.MeetingModel, request.MeetingProviderId, ct).ConfigureAwait(false) ?? session;
-                }
-                else
-                {
-                    // default to workspace default mode if any
-                    try
+                    if (modeVersionId is null)
                     {
-                        await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-                        var wsDefault = await cfg.WorkspaceDefaults.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false);
-                        if (wsDefault?.DefaultModeVersionId is { } defaultModeVersionId)
-                        {
-                            session = await store.UpdateSessionModeAsync(session.Id, defaultModeVersionId, null, null, ct).ConfigureAwait(false) ?? session;
-                        }
+                        modeVersionId = await cfg.WorkspaceDefaults.AsNoTracking()
+                            .Where(x => x.TenantId == tenant.Current.TenantId
+                                && x.WorkspaceId == tenant.Current.WorkspaceId
+                                && x.Status == "active" && x.ArchivedAt == null)
+                            .Select(x => x.DefaultModeVersionId)
+                            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
                     }
-                    catch { }
+                    if (modeVersionId is null)
+                        return Results.Conflict(new { code = "agent_mode_not_configured", message = "A published default Agent Mode must be configured before creating a session." });
+                    var published = await cfg.ModeVersions.AsNoTracking().AnyAsync(x => x.Id == modeVersionId
+                        && x.TenantId == tenant.Current.TenantId && x.WorkspaceId == tenant.Current.WorkspaceId
+                        && x.Status == "published", ct).ConfigureAwait(false);
+                    if (!published) return Results.BadRequest(new { code = "invalid_mode_version", message = "mode_version_id must reference a published Agent Mode version." });
                 }
+                SessionModelOverride? modelOverride = null;
+                if (request.MeetingModelOverride is { } requestedOverride)
+                {
+                    if (requestedOverride.ProviderInstanceId == Guid.Empty)
+                        return Results.BadRequest(new { code = "invalid_model_override", message = "meeting_model_override.provider_instance_id is required." });
+                    await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto { MeetingModelOverride = requestedOverride }, ct).ConfigureAwait(false);
+                    modelOverride = new SessionModelOverride(requestedOverride.ProviderInstanceId, requestedOverride.Model);
+                }
+                var session = await store.CreateSessionAsync(projectId, request.Title, modeVersionId.Value, modelOverride, ct).ConfigureAwait(false);
                 return Results.Created($"/api/v1/sessions/{session.Id}", await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "PROJECT_NOT_FOUND" }); }
+            catch (InvalidDataException ex) { return Results.BadRequest(new { code = "invalid_model_override", message = ex.Message }); }
         });
 
-        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
+        app.MapPatch("/api/v1/sessions/{sessionId}", async (string sessionId, UpdateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IAgentModelResolver modelResolver, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             try
@@ -73,9 +84,28 @@ public static class StorageEndpoints
                 SessionRecord? session = null;
                 if (!string.IsNullOrWhiteSpace(request.Title))
                     session = await store.UpdateTitleAsync(id, request.Title!, ct).ConfigureAwait(false);
-                if (request.ModeVersionId.HasValue || request.MeetingModel is not null || request.MeetingProviderId is not null)
+                if (request.ModeVersionId.HasValue || request.MeetingModelOverride is not null)
                 {
-                    session = await store.UpdateSessionModeAsync(id, request.ModeVersionId, request.MeetingModel, request.MeetingProviderId, ct).ConfigureAwait(false) ?? session;
+                    session ??= await store.GetSessionAsync(id, ct).ConfigureAwait(false);
+                    if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
+                    if (request.ModeVersionId is { } requestedModeVersionId)
+                    {
+                        await using var cfg = await cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+                        var published = await cfg.ModeVersions.AsNoTracking().AnyAsync(x => x.Id == requestedModeVersionId
+                            && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId
+                            && x.Status == "published", ct).ConfigureAwait(false);
+                        if (!published) return Results.BadRequest(new { code = "invalid_mode_version", message = "mode_version_id must reference a published Agent Mode version in this workspace." });
+                    }
+                    if (request.MeetingModelOverride is { } requestedOverride)
+                    {
+                        if (requestedOverride.ProviderInstanceId == Guid.Empty)
+                            return Results.BadRequest(new { code = "invalid_model_override", message = "meeting_model_override.provider_instance_id is required." });
+                        await modelResolver.PreviewAsync(new ModelResolutionPreviewRequestDto { MeetingModelOverride = requestedOverride }, ct).ConfigureAwait(false);
+                    }
+                    var modelOverride = request.MeetingModelOverride is null
+                        ? null
+                        : new SessionModelOverride(request.MeetingModelOverride.ProviderInstanceId, request.MeetingModelOverride.Model);
+                    session = await store.UpdateSessionModeAsync(id, request.ModeVersionId, modelOverride, ct).ConfigureAwait(false) ?? session;
                     if (session is null) return Results.NotFound(new { code = "SESSION_NOT_FOUND" });
                 }
                 else if (session is null)
@@ -87,6 +117,7 @@ public static class StorageEndpoints
                 return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SESSION", message = ex.Message }); }
+            catch (InvalidDataException ex) { return Results.BadRequest(new { code = "invalid_model_override", message = ex.Message }); }
         });
 
         app.MapGet("/api/v1/sessions/{sessionId}/messages", async (string sessionId, ProjectSessionStore store, CancellationToken ct) =>
@@ -194,7 +225,13 @@ public static class StorageEndpoints
     }
 
     private static object ToProject(ProjectRecord project) => new { id = project.Id, name = project.Name, path = project.RootPath, kind = project.Kind, created_at = project.CreatedAt, updated_at = project.UpdatedAt, archived = project.Archived };
-    private static object ToSession(SessionRecord session) => new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, mode_version_id = session.ModeVersionId, meeting_model = session.MeetingModel, meeting_provider_id = session.MeetingProviderId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
+    private static object ToSession(SessionRecord session) => new
+    {
+        id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status,
+        mode = session.Mode, mode_version_id = session.ModeVersionId,
+        meeting_model_override = ToMeetingModelOverride(session), summary = session.Summary,
+        history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived
+    };
 
     private static async Task<object> ToSessionEnrichedAsync(SessionRecord session, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct)
     {
@@ -214,8 +251,13 @@ public static class StorageEndpoints
             }
         }
         catch { }
-        return new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, mode_version_id = session.ModeVersionId, meeting_model = session.MeetingModel, meeting_provider_id = session.MeetingProviderId, has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
+        return new { id = session.Id, project_id = session.ProjectId, title = session.Title, status = session.Status, mode = session.Mode, mode_version_id = session.ModeVersionId, meeting_model_override = ToMeetingModelOverride(session), has_update = hasUpdate, latest_mode_version_id = latestModeVersionId, summary = session.Summary, history_revision = session.HistoryRevision, created_at = session.CreatedAt, updated_at = session.UpdatedAt, archived = session.Archived };
     }
+
+    private static object? ToMeetingModelOverride(SessionRecord session) =>
+        session.MeetingModelOverrideProviderInstanceId is { } providerInstanceId
+            ? new { provider_instance_id = providerInstanceId, model = session.MeetingModelOverrideModel }
+            : null;
     private static object ToMessage(StoredMessage message) => new { id = message.Id, session_id = message.SessionId, run_id = message.RunId, role = message.Role, content = message.Content, created_at = message.CreatedAt };
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 

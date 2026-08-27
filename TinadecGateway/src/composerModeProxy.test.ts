@@ -33,8 +33,7 @@ test('session mapper preserves mode binding fields Core owns', () => {
     status: 'ready',
     mode: 'auto',
     mode_version_id: '0d3f6a2e-0000-4000-8000-000000000001',
-    meeting_model: 'gpt-test',
-    meeting_provider_id: 'prov-1',
+    meeting_model_override: { provider_instance_id: 'prov-1', model: 'gpt-test' },
     summary: null,
     history_revision: 3,
     created_at: '2026-08-26T00:00:00Z',
@@ -43,11 +42,10 @@ test('session mapper preserves mode binding fields Core owns', () => {
   });
   assert.ok(mapped);
   assert.equal(mapped.mode_version_id, '0d3f6a2e-0000-4000-8000-000000000001');
-  assert.equal(mapped.meeting_model, 'gpt-test');
-  assert.equal(mapped.meeting_provider_id, 'prov-1');
+  assert.deepEqual(mapped.meeting_model_override, { provider_instance_id: 'prov-1', model: 'gpt-test' });
 
   const legacy = mapSession({ id: 's-2' });
   assert.ok(legacy);
   assert.equal(legacy.mode_version_id, null);
-  assert.equal(legacy.meeting_model, null);
+  assert.equal(legacy.meeting_model_override, null);
 });

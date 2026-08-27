@@ -1,0 +1,164 @@
+schema_version = 1
+default_agent = "meeting"
+default_mode = "default-mode"
+
+[[agents]]
+key = "meeting"
+display_name = "Meeting Agent"
+layer = "operation"
+role = "session_coordinator"
+capabilities = ["user.respond", "task.dispatch", "agent.create_temporary", "agent.create_persistent", "agent.create_profile"]
+tools = ["*"]
+system_prompt = "Act as the only user-facing coordinator. Understand intent, delegate work through the two-layer topology, and report concise conclusions backed by evidence."
+
+[[agents]]
+key = "context_compressor"
+display_name = "Context Compressor"
+layer = "operation"
+role = "context_maintenance"
+capabilities = ["context.read", "context.patch"]
+tools = ["*"]
+system_prompt = "Compress long context while preserving goals, confirmed facts, approvals, tool outcomes, and unfinished work."
+
+[[agents]]
+key = "skill_recommender"
+display_name = "Skill Recommender"
+layer = "operation"
+role = "capability_advisor"
+capabilities = ["tool.search", "agent.propose"]
+tools = ["*"]
+system_prompt = "Recommend the smallest sufficient set of skills and tools for the task, including reasons and material risks."
+
+[[agents]]
+key = "supervisor"
+display_name = "Supervisor"
+layer = "operation"
+role = "quality_controller"
+capabilities = ["supervision.review"]
+tools = ["*"]
+system_prompt = "Review plans and results for correctness, evidence, safety, and scope. Return pass, revise, or escalate without exceeding delegated authority."
+
+[[agents]]
+key = "evolution"
+display_name = "Evolution Agent"
+layer = "operation"
+role = "experience_curator"
+capabilities = ["memory.candidate", "agent.candidate", "agent.create_persistent"]
+tools = ["*"]
+system_prompt = "Identify repeated patterns and capability gaps, then propose auditable Agent definitions for explicit user review."
+
+[[agents]]
+key = "git_steward"
+display_name = "Git Steward"
+layer = "operation"
+role = "git_steward"
+capabilities = ["git.review", "git.commit_plan", "approval.request"]
+tools = []
+system_prompt = "Review repository state and change boundaries, then produce an auditable commit plan without bypassing approval."
+
+[[agents]]
+key = "task_planner"
+display_name = "Task Planner"
+layer = "execution"
+role = "execution_coordinator"
+capabilities = ["task.plan", "task.replan", "agent.create_temporary"]
+tools = ["*"]
+system_prompt = "Turn the delegated goal into a dependency-aware task graph with explicit success criteria and assign each task to a suitable worker."
+
+[[agents]]
+key = "worker.code"
+display_name = "Code Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["tool.code", "tool.file"]
+tools = ["write_file", "read_file", "shell.execute", "mcp_invoke"]
+system_prompt = "Implement scoped code changes, verify behavior, and report exact evidence and remaining risk."
+
+[[agents]]
+key = "worker.document"
+display_name = "Document Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["tool.document"]
+tools = ["write_file", "read_file"]
+system_prompt = "Create and revise structured documents while preserving factual accuracy and the requested format."
+
+[[agents]]
+key = "worker.data"
+display_name = "Data Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["tool.data"]
+tools = ["read_file", "shell.execute"]
+system_prompt = "Inspect and transform data reproducibly, validate assumptions, and summarize quality issues."
+
+[[agents]]
+key = "worker.browser"
+display_name = "Browser Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["tool.search", "tool.browser"]
+tools = ["browser.search", "browser.fetch", "mcp_search", "mcp_invoke"]
+system_prompt = "Research current information, distinguish sources from inference, and return traceable evidence."
+
+[[agents]]
+key = "worker.file"
+display_name = "File Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["tool.file"]
+tools = ["write_file", "read_file"]
+system_prompt = "Perform precise file operations within scope and verify the resulting filesystem state."
+
+[[agents]]
+key = "worker.general"
+display_name = "General Worker"
+layer = "execution"
+role = "task_executor"
+capabilities = ["task.execute"]
+tools = ["*"]
+system_prompt = "Execute general delegated tasks within the stated constraints and return a concise, verifiable result."
+
+[[agents]]
+key = "worker.git"
+display_name = "Git Worker"
+layer = "execution"
+role = "git_specialist"
+capabilities = ["tool.git"]
+tools = ["git_status", "git_diff", "git_stage", "git_unstage", "git_commit", "git_push", "git_push_readiness", "git_fetch", "git_pull", "git_branch_list", "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_worktree_list", "git_worktree_create", "git_worktree_remove", "git_merge", "git_rebase", "git_conflict_preview", "git_conflict_resolve"]
+system_prompt = "Execute approved Git operations exactly, preserve unrelated work, and report repository state after each mutation."
+
+[[modes]]
+key = "conversation.ask"
+display_name = "Ask"
+agents = ["meeting", "task_planner", "worker.browser"]
+
+[[modes]]
+key = "conversation.vibe"
+display_name = "Vibe"
+agents = ["meeting", "task_planner", "worker.browser", "worker.general"]
+
+[[modes]]
+key = "conversation.plan"
+display_name = "Plan"
+agents = ["meeting", "context_compressor", "supervisor", "task_planner", "worker.browser", "worker.document"]
+
+[[modes]]
+key = "conversation.spec"
+display_name = "Spec"
+agents = ["meeting", "context_compressor", "supervisor", "task_planner", "worker.browser", "worker.document"]
+
+[[modes]]
+key = "conversation.auto"
+display_name = "Auto"
+agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "task_planner", "worker.browser", "worker.document", "worker.file", "worker.general"]
+
+[[modes]]
+key = "conversation.agent"
+display_name = "Agent"
+agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution", "task_planner", "worker.code", "worker.document", "worker.data", "worker.browser", "worker.file", "worker.general", "worker.git"]
+
+[[modes]]
+key = "default-mode"
+display_name = "Default Mode"
+agents = ["meeting", "context_compressor", "skill_recommender", "supervisor", "evolution", "git_steward", "task_planner", "worker.code", "worker.document", "worker.data", "worker.browser", "worker.file", "worker.general", "worker.git"]

@@ -187,7 +187,7 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
         var now = DateTimeOffset.UtcNow;
         var row = new MemoryCandidateRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = proposal.ProjectId, AgentProfileId = proposal.AgentProfileId,
+            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = proposal.ProjectId, AgentId = proposal.AgentId,
             SourceRunId = proposal.SourceRunId, GeneratedByInstanceId = proposal.GeneratedByInstanceId, Scope = proposal.Scope, Kind = proposal.Kind,
             Status = "proposed", Confidence = Math.Clamp(proposal.Confidence, 0, 1), ContentReference = stored.Value, ContentHash = stored.Sha256,
             ContentLength = stored.Length, CreatedByPrincipalId = scope.PrincipalId, CreatedAt = now, UpdatedAt = now
@@ -228,7 +228,7 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
         {
             var item = new MemoryItemRecord
             {
-                Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = candidate.ProjectId, AgentProfileId = candidate.AgentProfileId,
+                Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = candidate.ProjectId, AgentId = candidate.AgentId,
                 PrincipalId = candidate.Scope == "principal" ? scope.PrincipalId : null,
                 Scope = candidate.Scope, Kind = candidate.Kind, Status = "active", CurrentVersion = 1, CreatedByPrincipalId = scope.PrincipalId,
                 CreatedAt = candidate.UpdatedAt, UpdatedAt = candidate.UpdatedAt

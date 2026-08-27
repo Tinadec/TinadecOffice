@@ -110,7 +110,7 @@ function handleReject(approvalId: string) {
             :permission="permission"
             :session-id="currentSession?.id ?? null"
             :mode-version-id="currentSession?.mode_version_id ?? null"
-            :meeting-model="currentSession?.meeting_model ?? null"
+            :meeting-model-override="currentSession?.meeting_model_override ?? null"
             :runs="runsForComposer"
             @update:model-value="emit('update:draft', $event)"
             @update:permission="emit('update:permission', $event)"

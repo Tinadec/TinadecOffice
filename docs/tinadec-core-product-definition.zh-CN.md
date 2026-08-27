@@ -534,15 +534,14 @@ spec:
 
 ### 9.5 模型策略
 
-现有 `inherit`、`fixed`、`parent_select` 保留，并演进为：
+模型策略统一为三种（2026-08-27 控制面重构后不再保留其他种类）：
 
-- `fixed`：合规或可复现任务固定到指定 route/model。
-- `inherit`：继承父实例的已解析模型，但仍重新检查能力和可用性。
-- `parent_select`：父协调者在允许候选中选择，选择过程有最大尝试次数并审计。
-- `cli` / `acp`：绑定到 CLI/ACP provider 实例（`runtime_id` 即 provider instance id），运行期经其 `server_url` 以 ACP/opencode-serve 协议会话；无 API key 参与解析。
-- `capability_select`：目标态由确定性路由器按能力、评测、上下文、价格、延迟、数据驻留和健康度排序。
+- `inherit`：继承解析链上层的已解析模型（workspace 默认 → route），重新检查可用性。
+- `route`：绑定有序 candidate 链（`model_route_candidates` 按 `position` 排序，每项为 provider_instance_id + 可选 model），失败按序 fallback 并审计。
+- `fixed`：直接固定到指定 provider instance + model；CLI/ACP provider 实例允许 model 为空，运行期经其 `server_url` 以 ACP/opencode-serve 协议会话，无 API key 参与解析。
+- `capability_select`（目标态）：由确定性路由器按能力、评测、上下文、价格、延迟、数据驻留和健康度排序，属后续演进，当前未实现。
 
-模型不可用时只能按已发布 fallback 链切换；不得静默换到数据边界不兼容的 provider。
+模型不可用时只能按已发布 fallback 链切换；不得静默换到数据边界不兼容的 provider。每次实际调用以 `model_invocations` 行归因（strategy_source、route/provider 版本、fallback_position、状态与 token 用量）。
 
 模型获取职责链路（TinadecApp ↔ TinadecCore ↔ TinadecGateway）：TinadecApp 负责触发发现与用户确认——发现请求由 TinadecCore 持 SecretStore 密钥代理外部 `GET {base_url}/models`（API key 不出 Core，App/Gateway 均不见明文）；用户确认后由 App 将发现的模型合并进 provider 配置并持久化到 Core；此后 Gateway 只薄代理读取 Core 已写入的 provider/route/agent 状态。App 与 Gateway 都不得自行拉取外部厂商 API 或形成第二配置真相源。
 
@@ -781,7 +780,7 @@ stateDiagram-v2
 | 持久化全双工 run | 已实现 | task planning、动态 worker、meeting 汇总、监督、暂停/恢复/取消、checkpoint 恢复 | 队列超限项尚未持久化 |
 | 正式智能体配置 | 部分实现 | 11 张表、draft/revision、不可变版本、mode/prompt 发布 API | `AgentConfigurationService` 仍是桩；验证逻辑集中于 endpoint |
 | Bundled Agent Pack | 已实现首版 | App-owned manifest 经预览和用户确认安装；Core 持有 workspace-scoped 版本、来源、托管绑定和默认值采用状态 | 数字签名、市场分发、rollback/uninstall 和跨组织信任库 |
-| 每智能体模型策略 | 已实现主要部分 | `inherit`、`fixed`、`parent_select`，选择事件可审计 | 能力/评测驱动选择与完整 fallback policy |
+| 每智能体模型策略 | 已实现 | `inherit`、`route`（有序 candidate 链）、`fixed`；`model_invocations` 全量归因（策略来源、fallback 位次、用量） | 能力/评测驱动选择与完整 fallback policy |
 | 工具治理 | 已实现主要部分 | manifest v2 冻结、agent/mode/manifest 交集、PDP/租约/委托、单次审批、恢复和拒绝 fail-closed | 通用远程 provider transport、ACP 权限桥 |
 | 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence | `context_compressor` 尚未作为事件驱动角色进入热路径 |
 | 监督 | 部分实现 | `pass/revise/escalate` 质量门 | 不是委托审批代理；尚无 ApprovalDelegation |

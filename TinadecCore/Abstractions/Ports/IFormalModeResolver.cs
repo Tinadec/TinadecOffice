@@ -13,25 +13,6 @@ public interface IFormalModeResolver
     Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Resolves a formal ChatResolution for the given layer (operation/execution) along the topology.
-    /// Handles inherit/fixed/parent_select (up to 2 retries) and audits to EventIndex/RunStream/control_event_index.
-    /// Returns null for inherit or when no formal mode, meaning caller should fallback to default resolver.
-    /// </summary>
-    Task<ChatResolution?> TryResolveFormalChatAsync(
-        FrozenAgentChatRequest request,
-        CancellationToken cancellationToken = default) =>
-        TryResolveFormalChatAsync(request.SessionId, request.Layer, request.RunId, request.TurnId, cancellationToken);
-
-    /// <summary>Compatibility shim for callers that have not yet supplied a frozen per-agent strategy.</summary>
-    Task<ChatResolution?> TryResolveFormalChatAsync(
-        Guid sessionId,
-        string layer,
-        Guid runId,
-        Guid turnId,
-        CancellationToken cancellationToken = default) =>
-        TryResolveFormalChatAsync(new FrozenAgentChatRequest(sessionId, layer, layer, "{\"kind\":\"inherit\"}", runId, turnId), cancellationToken);
-
-    /// <summary>
     /// Resolves the runnable agent roster for the session's published relational mode version.
     /// Returns null when the session has no mode_version_id or the mode cannot be resolved, in which case
     /// the caller should fall back to the TOML baseline roster.
@@ -56,18 +37,6 @@ public sealed record FormalModeRoster(
 }
 
 /// <summary>
-/// The model strategy already captured for one agent in the run configuration.
-/// Formal model resolution must not reload a mutable mode node or agent definition.
-/// </summary>
-public sealed record FrozenAgentChatRequest(
-    Guid SessionId,
-    string AgentId,
-    string Layer,
-    string? ModelStrategyJson,
-    Guid RunId,
-    Guid TurnId);
-
-/// <summary>
 /// One runnable agent entry resolved from a relational <c>AgentDefinitionRecord</c> referenced by a mode node.
 /// <c>Id</c> is the agent slug so the runtime can look it up by the string it already uses.
 /// </summary>
@@ -87,6 +56,7 @@ public sealed record RuntimeAgentRosterEntry(
 {
     public string SystemPrompt { get; init; } = string.Empty;
     public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
+    public string ModelStrategySource { get; init; } = "agent_version";
     public bool Enabled { get; init; } = true;
     public int RosterOrder { get; init; }
     public Guid? PromptPipelineId { get; init; }

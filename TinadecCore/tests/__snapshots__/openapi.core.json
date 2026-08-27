@@ -1020,16 +1020,14 @@
       },
       "CreateSessionRequest": {
         "properties": {
-          "meeting_model": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "meeting_provider_id": {
-            "type": [
-              "null",
-              "string"
+          "meeting_model_override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeetingModelOverrideDto"
+              }
             ]
           },
           "mode_version_id": {
@@ -1159,6 +1157,16 @@
               "string"
             ]
           },
+          "meeting_model_override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeetingModelOverrideDto"
+              }
+            ]
+          },
           "permission_mode": {
             "type": [
               "null",
@@ -1176,6 +1184,141 @@
         "type": "object"
       },
       "JsonElement": {},
+      "MeetingModelOverrideDto": {
+        "properties": {
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ModelResolutionPreviewRequestDto": {
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "agent_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "meeting_model_override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeetingModelOverrideDto"
+              }
+            ]
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parent_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ModelStrategyDto"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ModelRouteCandidateDto": {
+        "properties": {
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "position": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ModelRouteWriteRequestDto": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRouteCandidateDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ModelStrategyDto": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider_instance_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "route_purpose": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "PermissionDecisionRequestDto": {
         "properties": {
           "approval_delegation_id": {
@@ -1341,16 +1484,14 @@
       },
       "UpdateSessionRequest": {
         "properties": {
-          "meeting_model": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "meeting_provider_id": {
-            "type": [
-              "null",
-              "string"
+          "meeting_model_override": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeetingModelOverrideDto"
+              }
             ]
           },
           "mode_version_id": {
@@ -1802,68 +1943,6 @@
         },
         "tags": [
           "TinadecCore.Api"
-        ]
-      }
-    },
-    "/api/v1/agent-candidates/{id}/promote": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "AgentConfigurationEndpoints"
-        ]
-      }
-    },
-    "/api/v1/agent-candidates/{id}/reject": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/ReviewDecisionRequest"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "AgentConfigurationEndpoints"
         ]
       }
     },
@@ -2447,18 +2526,6 @@
         ]
       }
     },
-    "/api/v1/agents/catalog": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
-        ]
-      }
-    },
     "/api/v1/agents/{id}": {
       "get": {
         "parameters": [
@@ -2603,18 +2670,6 @@
         },
         "tags": [
           "AgentConfigurationEndpoints"
-        ]
-      }
-    },
-    "/api/v1/application-modes": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
         ]
       }
     },
@@ -3705,6 +3760,18 @@
         ]
       }
     },
+    "/api/v1/model-invocations": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "ModelAgentControlEndpoints"
+        ]
+      }
+    },
     "/api/v1/model-provider-templates": {
       "get": {
         "responses": {
@@ -3842,6 +3909,40 @@
         ]
       }
     },
+    "/api/v1/model-references": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "ModelAgentControlEndpoints"
+        ]
+      }
+    },
+    "/api/v1/model-resolution/preview": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelResolutionPreviewRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "ModelAgentControlEndpoints"
+        ]
+      }
+    },
     "/api/v1/model-routes": {
       "get": {
         "responses": {
@@ -3866,6 +3967,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelRouteWriteRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "OK"
@@ -5484,6 +5595,9 @@
     },
     {
       "name": "AgentConfigurationEndpoints"
+    },
+    {
+      "name": "ModelAgentControlEndpoints"
     },
     {
       "name": "AgentPacks"

@@ -16,6 +16,7 @@ public interface IAgentInstanceService
     Task<RuntimeAgentInstance> CreateRootAsync(RuntimeAgentSeed seed, CancellationToken cancellationToken = default);
     Task<RuntimeAgentInstance> SpawnAsync(AgentSpawnRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<RuntimeAgentInstance>> ListByRunAsync(Guid runId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RuntimeAgentInstance>> ListAllAsync(CancellationToken cancellationToken = default);
     Task ReleaseRunInstancesAsync(Guid runId, CancellationToken cancellationToken = default);
     Task<AgentCandidateRecord> CreateCandidateAsync(AgentCandidateProposal proposal, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AgentCandidateRecord>> ListCandidatesAsync(string? status = null, CancellationToken cancellationToken = default);
@@ -114,9 +115,9 @@ public sealed class AgentCandidatePipelineRequiredException : InvalidOperationEx
 }
 
 /// <summary>Wire-compatible spawn intent that is deliberately fail-closed.</summary>
-public sealed class AgentProfilePromotionDisabledException : InvalidOperationException
+public sealed class AgentPromotionDisabledException : InvalidOperationException
 {
-    public AgentProfilePromotionDisabledException()
+    public AgentPromotionDisabledException()
         : base("Persistent profile promotion is disabled; generated agents must pass candidate sanitization, evaluation, review, publish, canary, and activation.")
     {
     }
@@ -198,7 +199,7 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var parentDefinition = await ReadDefinitionAsync(parent, cancellationToken).ConfigureAwait(false);
         var intent = request.Intent;
         if (intent == AgentCreationIntent.PersistentProfile)
-            throw new AgentProfilePromotionDisabledException();
+            throw new AgentPromotionDisabledException();
         if (request.Template is not null && intent != AgentCreationIntent.Temporary)
             throw new InvalidOperationException("Frozen agent templates may only create temporary run instances.");
         var requiredCapability = intent switch
@@ -311,6 +312,22 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         return result;
     }
 
+    public async Task<IReadOnlyList<RuntimeAgentInstance>> ListAllAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.Instances.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        rows.Sort((a, b) => a.CreatedAt != b.CreatedAt
+            ? a.CreatedAt.CompareTo(b.CreatedAt)
+            : a.Id.CompareTo(b.Id));
+        var result = new List<RuntimeAgentInstance>(rows.Count);
+        foreach (var row in rows)
+            result.Add(ToRuntime(row, await ReadDefinitionAsync(row, cancellationToken).ConfigureAwait(false)));
+        return result;
+    }
+
     public async Task<AgentToolAuthorization?> AuthorizeAsync(
         Guid runId,
         Guid taskId,
@@ -411,44 +428,6 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
             ?? throw new KeyNotFoundException("Agent candidate was not found.");
         if (candidate.Status != "proposed") throw new InvalidOperationException("Candidate has already been decided.");
         candidate.Status = decision; candidate.DecisionReason = reason; candidate.DecidedByPrincipalId = scope.PrincipalId; candidate.UpdatedAt = DateTimeOffset.UtcNow;
-        if (decision == "promoted")
-        {
-            var profileBody = await ReadCandidateProfileAsync(candidate, cancellationToken).ConfigureAwait(false);
-            var stored = await PutJsonAsync(scope.TenantId, scope.WorkspaceId, "agent-profile", profileBody, cancellationToken).ConfigureAwait(false);
-            var profile = new AgentProfileRecord
-            {
-                Id = Guid.NewGuid(),
-                TenantId = scope.TenantId,
-                WorkspaceId = scope.WorkspaceId,
-                ProjectId = candidate.ProjectId,
-                Scope = candidate.ProjectId is null ? "workspace" : "project",
-                Name = candidate.Name,
-                Layer = candidate.Layer,
-                AgentType = candidate.AgentType,
-                Enabled = true,
-                IsBuiltIn = false,
-                Revision = 1,
-                CreatedByPrincipalId = scope.PrincipalId,
-                UpdatedByPrincipalId = scope.PrincipalId,
-                CreatedAt = candidate.UpdatedAt,
-                UpdatedAt = candidate.UpdatedAt
-            };
-            var version = new AgentProfileVersionRecord
-            {
-                Id = Guid.NewGuid(),
-                AgentId = profile.Id,
-                Version = 1,
-                ContentReference = stored.Value,
-                ContentHash = stored.Sha256,
-                ContentLength = stored.Length,
-                CreatedByPrincipalId = scope.PrincipalId,
-                CreatedAt = candidate.UpdatedAt
-            };
-            profile.CurrentVersionId = version.Id;
-            candidate.PromotedAgentId = profile.Id;
-            db.Agents.Add(profile);
-            db.Versions.Add(version);
-        }
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return candidate;
     }

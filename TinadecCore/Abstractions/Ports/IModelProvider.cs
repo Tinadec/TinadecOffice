@@ -81,6 +81,12 @@ public sealed class ChatResolution
     public string? LaunchArgs { get; init; }
     public string? HomePath { get; init; }
     public string? Error { get; init; }
+    public Guid? ProviderInstanceId { get; init; }
+    public Guid? ProviderVersionId { get; init; }
+    public Guid? RouteId { get; init; }
+    public Guid? RouteVersionId { get; init; }
+    public int CandidatePosition { get; init; }
+    public string? StrategySource { get; init; }
 }
 
 /// <summary>

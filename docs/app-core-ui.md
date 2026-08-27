@@ -67,7 +67,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - Desktop：Home、Workbench、Code、Agent Center、Settings、Market、Debug Studio、Detached Panel、Pet 和 Library 路由已存在；Git/文件写操作正在迁移到 UserToolAction，四个在途文件不得被接手 Agent 覆盖。
 - Desktop 全量测试目前可能包含既有 Vue/happy-dom Transition 环境失败；治理交互测试必须单独运行并单独报告。
 - Core OpenAPI 快照当前有 147 个 path、165 个 operation，但响应 schema 基本缺失：只有 UserToolAction 的 6 个 operation（9 个 response content）声明了 schema，3 个真实 SSE 也没有声明 `text/event-stream`。它目前只能用于路由发现，不能单独作为生成 Desktop 类型的完整事实源。
-- Core 仍存在同方法同模板的活动重复路由：`GET /agents` 对应正式 `AgentDefinition` 与旧 `AgentProfile` 两套事实，`/agent-candidates` 的查询、promote、reject 也由两组 endpoint 重复注册。在 Core 收口前，Desktop 不应接入这些歧义入口。
+- `GET /api/v1/agents` 已收口为 AgentConfiguration 唯一事实源，返回 `AgentDirectoryItem` 目录投影（`source_kind` = bootstrap|pack|custom|missing_reference、`managed`、mode 使用位置、有效策略预览与最近实际调用）；旧 profile 第二套事实已删除（2026-08-27 重构），`/agent-candidates` 的查询、promote、reject 单组注册。
 
 ## 3. Desktop 信息架构
 
@@ -358,7 +358,7 @@ POST /api/v1/agent-evolution/proposals/{id}/promote
 
 模型获取职责链路：TinadecApp 负责触发发现与确认持久化——用户在 Settings 触发 `POST /api/v1/model-providers/{id}/models/refresh` 后，由 TinadecCore 持 SecretStore 密钥代理外部 `GET {base_url}/models`（API key 永不出 Core）；前端将发现的模型合并进 provider 配置并经 `PUT /api/v1/model-providers/{id}` 持久化；此后 Gateway 只从 Core 读取已写入的 provider/route/agent 状态（薄代理），不聚合、不发明第二真相源。
 
-智能体模型策略已版本化：Desktop 通过 `PUT /api/v1/agents/{id}/draft` + `POST /api/v1/agents/{id}/publish`（If-Match revision）保存 `model_strategy`，支持 `inherit`、`fixed`（provider_instance_id+model）、`cli`/`acp`（runtime_id 指向 CLI/ACP provider 实例）；`parent_select` 是运行期父协调者行为，不由 Desktop 静态配置。
+智能体模型策略已版本化：Desktop 通过 `PUT /api/v1/agents/{id}/draft` + `POST /api/v1/agents/{id}/publish`（If-Match revision）保存 `model_strategy`，统一支持 `inherit`、`route`（有序 candidates，`PUT /api/v1/model-routes/{purpose}` 携带 `{candidates:[{provider_instance_id, model, position}]}`）、`fixed`（provider_instance_id + model；CLI/ACP provider 实例的 model 可为空）；Mode 编辑器节点级 `model_strategy_override` 同契约，保存前可 `POST /api/v1/model-resolution/preview` 预览生效链。
 
 历史遗留入口 `GET /model-center/overview`、`GET /agent-center/overview`、`PUT /agents/{id}/runtime-binding` 与别名 `POST /model-center/provider-instances/{id}/models/refresh` 已全部删除（无路由即 404），Desktop/Gateway 客户端与 UI 分支均已清理。
 
@@ -639,7 +639,7 @@ create action
 - [ ] Home interaction queue、insert steering、parallel assignment 和 model selection 展示。
 - [ ] Workbench 双泳道、lineage、task evidence、context revisions、supervision review 展示。
 - [ ] Agent Center Agent/Mode/Prompt 的 draft/ETag/publish/archive/version timeline。
-- [ ] Agent Center tool intersection、model strategy（inherit/fixed/parent_select）和 workspace defaults。
+- [ ] Agent Center tool intersection、model strategy（inherit/route/fixed）和 workspace defaults。
 - [ ] Tool Catalog 展示实时 manifest hash、provider、schema、risk、approval metadata。
 - [ ] Workspace Snapshot list/detail/restore；只展示 Core 公开字段。
 - [ ] Settings model provider、CLI connect、route binding、readiness 和 secret 状态。

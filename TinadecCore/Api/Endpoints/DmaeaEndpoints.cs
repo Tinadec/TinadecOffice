@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
@@ -37,7 +39,10 @@ public static class DmaeaEndpoints
 
             try
             {
-                var admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionGuid, request.Content, request.ClientMessageId, request.ApplicationMode, request.AgentMode, request.PermissionMode, request.TargetRunId, request.ExpectedContextRevision), ct);
+                var invocationOverride = request.MeetingModelOverride is null
+                    ? null
+                    : new SessionModelOverride(request.MeetingModelOverride.ProviderInstanceId, request.MeetingModelOverride.Model);
+                var admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionGuid, request.Content, request.ClientMessageId, request.ApplicationMode, request.AgentMode, request.PermissionMode, request.TargetRunId, request.ExpectedContextRevision, invocationOverride), ct);
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = "text/event-stream";
                 context.Response.Headers.CacheControl = "no-cache";
@@ -353,7 +358,6 @@ public static class DmaeaEndpoints
                     agent_mode = run.AgentMode,
                     runtime_profile_id = run.RuntimeProfileId,
                     mode_id = parsedFrozen?.ApplicationMode ?? run.ApplicationMode,
-                    agent_profile_id = parsedFrozen?.RuntimeProfileId ?? run.RuntimeProfileId,
                     config_version = run.ConfigurationVersion,
                     config_hash = run.FrozenConfigurationHash ?? run.ConfigurationHash,
                     context_revision = run.ContextRevision,
@@ -370,7 +374,6 @@ public static class DmaeaEndpoints
                     agent_mode = parsedFrozen.AgentMode,
                     runtime_profile_id = parsedFrozen.RuntimeProfileId,
                     mode_id = parsedFrozen.ApplicationMode,
-                    agent_profile_id = parsedFrozen.RuntimeProfileId,
                     permission_mode = parsedFrozen.PermissionMode,
                     config_version = parsedFrozen.BaselineVersion,
                     config_hash = parsedFrozen.ContentHash,
@@ -449,41 +452,6 @@ public static class DmaeaEndpoints
             }));
         });
 
-        app.MapGet("/api/v1/application-modes", (IAgentRuntimeConfiguration configuration) =>
-            Results.Ok(configuration.Current.ApplicationModes.Values.Select(m => new
-            {
-                id = m.Id,
-                default_agent_mode = m.DefaultAgentMode,
-                allowed_agent_modes = m.AllowedAgentModes
-            })));
-
-        // Agent-modes TOML catalog is now owned by AgentConfigurationEndpoints (which also handles formal modes).
-        // Keep a thin alias for application_mode filtered view to avoid breaking existing Desktop callers.
-        // This handler is no longer registered to avoid ambiguous match; logic moved to AgentConfigurationEndpoints.ListModes.
-
-        // Read-only catalog of built-in runtime agents (dual-layer composition). Remains thin: policy stays in Core.
-        app.MapGet("/api/v1/agents/catalog", (IAgentRuntimeConfiguration configuration) =>
-        {
-            var snapshot = configuration.Current;
-            return Results.Ok(snapshot.Agents.Values.Select(a => new
-            {
-                id = a.Id,
-                layer = a.Layer,
-                role = a.Role,
-                lifecycle = a.Lifecycle,
-                prompt_profile = a.PromptProfile,
-                capabilities = a.Capabilities,
-                allowed_tools = a.AllowedTools,
-                context_access = a.ContextAccess,
-                direct_user_output = a.DirectUserOutput,
-                triggers = a.Triggers,
-                accepts = a.Accepts,
-                emits = a.Emits,
-                decisions = a.Decisions,
-                memory_write_policy = a.MemoryWritePolicy
-            }));
-        });
-
         app.MapPost("/api/v1/runs/{runId}/agents/spawn", async (string runId, HttpRequest request, IAgentInstanceService instances, ILifecycleManager lifecycle, IAgentRuntimeConfiguration configuration, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
@@ -510,7 +478,7 @@ public static class DmaeaEndpoints
                 var created = await instances.SpawnAsync(new AgentSpawnRequest(parentId, goal.GetString()!, success, selectors, modelPurpose, tools, resources, budget, null, role, limits, intent), ct);
                 return Results.Created($"/api/v1/runs/{runId}/agent-lineage/{created.Id}", new { id = created.Id, run_id = created.RunId, intent = intentRaw, layer = created.Layer, role = created.Role, generated = created.Generated, status = created.Status });
             }
-            catch (AgentProfilePromotionDisabledException ex) { return Results.Conflict(new { code = "candidate_pipeline_required", message = ex.Message }); }
+            catch (AgentPromotionDisabledException ex) { return Results.Conflict(new { code = "candidate_pipeline_required", message = ex.Message }); }
             catch (UnauthorizedAccessException ex) { return Results.Json(new { code = "FORBIDDEN_SPAWN", message = ex.Message }, statusCode: 403); }
             catch (InvalidOperationException ex) { return Results.Json(new { code = "SPAWN_LIMIT", message = ex.Message }, statusCode: 409); }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { code = "NOT_FOUND", message = ex.Message }); }

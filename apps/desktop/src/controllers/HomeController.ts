@@ -19,7 +19,7 @@ import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
-import type { DispatchMode } from '@/api'
+import type { DispatchMode, MeetingModelOverrideDto } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 import { createRunStream, type RunStreamHandle } from '@/composables/useRunStream'
 
@@ -254,7 +254,7 @@ const invokeError = ref<string | null>(null)
 const lastCursor = ref<number | null>(null)
 
 
-async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null; agent_mode?: AgentMode; permission_mode?: PermissionLevel }) {
+async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; agent_mode?: AgentMode; permission_mode?: PermissionLevel }) {
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
     if (!sessionId && selectedProjectId.value) {
@@ -274,7 +274,7 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     const dispatchMode: DispatchMode = (opts?.dispatch_mode as DispatchMode) ?? getDispatchPref()
     const modeVersionId = opts?.mode_version_id ?? null
     const targetRunId = opts?.target_run_id ?? null
-    const meetingModel = opts?.meeting_model ?? null
+    const meetingModelOverride = opts?.meeting_model_override ?? null
     const requestedMode = opts?.agent_mode ?? currentMode.value
     const requestedPermission = opts?.permission_mode ?? currentPermission.value
     if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
@@ -289,7 +289,7 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         permission_mode: requestedPermission,
         dispatch_mode: dispatchMode,
         target_run_id: targetRunId,
-        meeting_model: meetingModel,
+        meeting_model_override: meetingModelOverride,
       })
       if (resp.run_id) {
         attachRun(resp.run_id)
@@ -353,7 +353,6 @@ async function steerQueued(id: string, targetRunId: string) {
       mode_version_id: null,
       dispatch_mode: 'insert',
       target_run_id: targetRunId,
-      meeting_model: null,
     })
     sent = true
   })
@@ -373,7 +372,6 @@ async function promoteQueued(id: string) {
       agent_mode: currentMode.value,
       dispatch_mode: 'parallel',
       target_run_id: null,
-      meeting_model: null,
     })
     sent = true
   })
@@ -507,7 +505,7 @@ export const homeController = {
   editQueued,
   steerQueued,
   promoteQueued,
-  sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) => {
+  sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) => {
     const content = draft.value.trim()
     if (!content) return
     await handleSend(content, opts)

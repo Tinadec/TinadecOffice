@@ -16,7 +16,9 @@ import type {
   ModelSettingsDto,
   ModelProviderInstanceDto,
   ModelRouteDto,
-  AgentProfileDto,
+  ModelRouteWriteRequestDto,
+  AgentDefinitionDto,
+  AgentDirectoryItemDto,
   AgentModeDto,
   ToolDescriptorDto,
   HarnessManifestDto,
@@ -259,12 +261,16 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
     deleteModelProvider: (_providerId: string) => emptyDelay(undefined as unknown as void, scenario.value),
 
     listModelRoutes: () => delay(data().modelRoutes as ModelRouteDto[], scenario.value),
-    saveModelRoute: (purpose: string, providerInstanceId: string, model?: string | null) =>
+    saveModelRoute: (purpose: string, candidates: ModelRouteWriteRequestDto | string, model?: string | null) =>
       delay(
         {
           purpose,
-          provider_instance_id: providerInstanceId,
-          model: model ?? null,
+          version_id: `route-version-${Date.now()}`,
+          version: 1,
+          revision: 1,
+          candidates: typeof candidates === 'string'
+            ? [{ provider_instance_id: candidates, model: model ?? null, position: 0 }]
+            : candidates.candidates.map((candidate, index) => ({ provider_instance_id: candidate.provider_instance_id, model: candidate.model ?? null, position: index })),
           updated_at: new Date().toISOString(),
         } as ModelRouteDto,
         scenario.value,
@@ -364,7 +370,15 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       delay({ ...data().acpAdapters[0], id: adapterId, status: 'active', status_message: '探测成功' } as AcpAdapterDto, scenario.value),
 
     listAgentModes: () => delay(data().agentModes as AgentModeDto[], scenario.value),
-    listAgents: () => delay(data().agents as AgentProfileDto[], scenario.value),
+    listAgents: () => delay(data().agents as AgentDirectoryItemDto[], scenario.value),
+    getAgent: (agentId: string) =>
+      delay(
+        data().agentDefinitions.find((definition) => definition.id === agentId)
+          ?? data().agentDefinitions[0]
+          ?? null as unknown as AgentDefinitionDto,
+        scenario.value,
+      ),
+    listAgentDefinitions: () => delay(data().agentDefinitions as AgentDefinitionDto[], scenario.value),
     listTools: () => delay(data().tools as ToolDescriptorDto[], scenario.value),
     searchTools: (params: { query?: string; domain?: string; source?: string; risk?: string; limit?: number } = {}) =>
       delay(
@@ -596,17 +610,6 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
     gitLog: (cwd: string, limit?: number, ref?: string) =>
       api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
 
-    saveAgent: (agentId: string, agent: {
-      name: string; layer: string; agent_type: string; mode: string; description: string;
-      model_route_purpose: string; allowed_tools?: string[]; capabilities?: string[];
-      system_prompt?: string | null; enabled: boolean;
-    }) =>
-      delay(
-        { ...data().agents[0], id: agentId, ...agent, updated_at: new Date().toISOString() } as AgentProfileDto,
-        scenario.value,
-      ),
-    updateAgentMode: (agentId: string, mode: string) =>
-      delay({ ...data().agents[0], id: agentId, mode, updated_at: new Date().toISOString() } as AgentProfileDto, scenario.value),
     listAgentCandidates: () =>
       delay(
         [
