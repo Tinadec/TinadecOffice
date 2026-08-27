@@ -6,8 +6,11 @@ export interface CoreProjectDto {
   kind?: string;
   created_at?: string;
   updated_at?: string;
-  archived?: boolean;
+  lifecycle_status?: string;
+  trashed_at?: string | null;
 }
+
+export type ProjectLifecycleStatus = 'active' | 'archived' | 'trashed';
 
 export interface ExternalProjectDto {
   id: string;
@@ -16,10 +19,15 @@ export interface ExternalProjectDto {
   kind: string | null;
   created_at: string | null;
   updated_at: string | null;
-  archived: boolean;
+  lifecycle_status: ProjectLifecycleStatus;
+  trashed_at: string | null;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
+function toLifecycleStatus(v: unknown): ProjectLifecycleStatus {
+  return v === 'archived' || v === 'trashed' ? v : 'active';
+}
 
 export function mapProject(core: unknown): ExternalProjectDto | null {
   if (!isRecord(core)) return null;
@@ -32,7 +40,8 @@ export function mapProject(core: unknown): ExternalProjectDto | null {
     kind: (core.kind as string) ?? null,
     created_at: (core.created_at as string) ?? (core.createdAt as string) ?? null,
     updated_at: (core.updated_at as string) ?? (core.updatedAt as string) ?? null,
-    archived: Boolean(core.archived),
+    lifecycle_status: toLifecycleStatus(core.lifecycle_status ?? core.lifecycleStatus),
+    trashed_at: (core.trashed_at as string) ?? (core.trashedAt as string) ?? null,
   };
 }
 

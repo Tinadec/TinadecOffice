@@ -3053,6 +3053,139 @@
         ]
       }
     },
+    "/api/v1/projects/{projectId}": {
+      "delete": {
+        "operationId": "deleteApiV1ProjectsByProjectId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Permanently delete trashed project",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1ProjectsByProjectId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Rename project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/archive": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/restore": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdRestore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Restore project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/projects/{projectId}/snapshots": {
       "get": {
         "operationId": "getApiV1ProjectsByProjectIdSnapshots",
@@ -3164,6 +3297,28 @@
           "200": {}
         },
         "summary": "Create workspace snapshot",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/trash": {
+      "post": {
+        "operationId": "postApiV1ProjectsByProjectIdTrash",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Move project to trash",
         "tags": [
           "Projects"
         ]
@@ -3922,6 +4077,26 @@
       }
     },
     "/api/v1/sessions/{sessionId}": {
+      "delete": {
+        "operationId": "deleteApiV1SessionsBySessionId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Permanently delete trashed session",
+        "tags": [
+          "Sessions"
+        ]
+      },
       "patch": {
         "operationId": "patchApiV1SessionsBySessionId",
         "parameters": [
@@ -3938,6 +4113,28 @@
           "200": {}
         },
         "summary": "Update session title",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/archive": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Archive session",
         "tags": [
           "Sessions"
         ]
@@ -4275,6 +4472,28 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/restore": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdRestore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Restore session",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/runs": {
       "get": {
         "operationId": "getApiV1SessionsBySessionIdRuns",
@@ -4360,6 +4579,28 @@
         "summary": "Session tool executions",
         "tags": [
           "Runs"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/trash": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdTrash",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Move session to trash",
+        "tags": [
+          "Sessions"
         ]
       }
     },

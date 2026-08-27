@@ -240,9 +240,12 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapReadiness(result.data);
   }, { detail: { summary: 'Tool layer readiness', tags: ['Health'] } })
-  .get('/api/v1/projects', async ({ set, request }) => {
+  .get('/api/v1/projects', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyJson('/api/v1/projects', { headers });
+    const params = new URLSearchParams();
+    if ((query as Record<string,unknown>).lifecycle_status) params.set('lifecycle_status', String((query as Record<string,unknown>).lifecycle_status));
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const result = await proxyJson(`/api/v1/projects${suffix}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/projects'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
@@ -257,6 +260,48 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped[0] ?? result.data;
   }, { detail: { summary: 'Create project', tags: ['Projects'] }, body: t.Object({ name: t.String(), path: t.String() }, { additionalProperties: true }) })
+  .patch('/api/v1/projects/:projectId', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}`;
+    const result = await proxyJson(path, { method: 'PATCH', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    const mapped = mapProjects([result.data]);
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return mapped[0] ?? result.data;
+  }, { detail: { summary: 'Rename project', tags: ['Projects'] }, body: t.Object({ name: t.String() }, { additionalProperties: true }) })
+  .post('/api/v1/projects/:projectId/archive', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/archive`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Archive project', tags: ['Projects'] } })
+  .post('/api/v1/projects/:projectId/trash', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/trash`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Move project to trash', tags: ['Projects'] } })
+  .post('/api/v1/projects/:projectId/restore', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/restore`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Restore project', tags: ['Projects'] } })
+  .delete('/api/v1/projects/:projectId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}`;
+    const result = await proxyJson(path, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Permanently delete trashed project', tags: ['Projects'] } })
   .post('/api/v1/projects/:projectId/snapshots', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/snapshots`;
@@ -388,6 +433,7 @@ const app = new Elysia()
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
     if ((query as Record<string,unknown>).project_id) params.set('projectId', String((query as Record<string,unknown>).project_id));
+    if ((query as Record<string,unknown>).lifecycle_status) params.set('lifecycle_status', String((query as Record<string,unknown>).lifecycle_status));
     const result = await proxyJson(`/api/v1/sessions?${params.toString()}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/sessions'); }
@@ -411,6 +457,38 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Update session title', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/archive', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/archive`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Archive session', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/trash', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/trash`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Move session to trash', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/restore', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/restore`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Restore session', tags: ['Sessions'] } })
+  .delete('/api/v1/sessions/:sessionId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}`;
+    const result = await proxyJson(path, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+  }, { detail: { summary: 'Permanently delete trashed session', tags: ['Sessions'] } })
   .get('/api/v1/sessions/:sessionId/messages', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/messages`, { headers });

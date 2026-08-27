@@ -3,6 +3,16 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Memory;
 
+/// <summary>Three-state lifecycle shared by projects and sessions: visible, archived, and trash (recoverable before purge).</summary>
+public static class LifecycleStatuses
+{
+    public const string Active = "active";
+    public const string Archived = "archived";
+    public const string Trashed = "trashed";
+
+    public static bool IsKnown(string? status) => status is Active or Archived or Trashed;
+}
+
 public sealed class MemoryDbContext : DbContext
 {
     public MemoryDbContext(DbContextOptions<MemoryDbContext> options) : base(options) { }
@@ -32,14 +42,16 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.Kind).HasColumnName("kind");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
-            entity.Property(x => x.Archived).HasColumnName("archived");
+            entity.Property(x => x.LifecycleStatus).HasColumnName("lifecycle_status");
+            entity.Property(x => x.TrashedAt).HasColumnName("trashed_at");
             entity.Property(x => x.Name).HasMaxLength(256).IsRequired();
             entity.Property(x => x.RootPath).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.NormalizedRootPath).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.Kind).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.LifecycleStatus).HasMaxLength(16).IsRequired();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.NormalizedRootPath }).IsUnique();
-            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.Archived, x.UpdatedAt });
-            entity.HasIndex(x => new { x.Archived, x.UpdatedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.LifecycleStatus, x.UpdatedAt });
+            entity.HasIndex(x => new { x.LifecycleStatus, x.UpdatedAt });
         });
 
         modelBuilder.Entity<SessionRecord>(entity =>
@@ -60,13 +72,15 @@ public sealed class MemoryDbContext : DbContext
             entity.Property(x => x.MeetingModelOverrideModel).HasColumnName("meeting_model_override_model");
             entity.Property(x => x.CreatedAt).HasColumnName("created_at");
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
-            entity.Property(x => x.Archived).HasColumnName("archived");
+            entity.Property(x => x.LifecycleStatus).HasColumnName("lifecycle_status");
+            entity.Property(x => x.TrashedAt).HasColumnName("trashed_at");
             entity.Property(x => x.Title).HasMaxLength(512).IsRequired();
             entity.Property(x => x.Status).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Mode).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096);
             entity.Property(x => x.MeetingModelOverrideModel).HasMaxLength(512);
-            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProjectId, x.Archived, x.UpdatedAt });
+            entity.Property(x => x.LifecycleStatus).HasMaxLength(16).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProjectId, x.LifecycleStatus, x.UpdatedAt });
         });
 
         modelBuilder.Entity<MessageRecord>(entity =>
@@ -136,7 +150,8 @@ public sealed class ProjectRecord
     public string Kind { get; set; } = "workspace";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
-    public bool Archived { get; set; }
+    public string LifecycleStatus { get; set; } = LifecycleStatuses.Active;
+    public DateTimeOffset? TrashedAt { get; set; }
 }
 
 public sealed class SessionRecord
@@ -155,7 +170,8 @@ public sealed class SessionRecord
     public string? MeetingModelOverrideModel { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
-    public bool Archived { get; set; }
+    public string LifecycleStatus { get; set; } = LifecycleStatuses.Active;
+    public DateTimeOffset? TrashedAt { get; set; }
 }
 
 public sealed class MessageRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public Guid? TurnId { get; set; } public string? ClientMessageId { get; set; } public long Sequence { get; set; } public string Role { get; set; } = "user"; public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } }

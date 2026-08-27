@@ -7,6 +7,11 @@ public sealed class CreateProjectRequest
     public string Path { get; set; } = string.Empty;
 }
 
+public sealed class UpdateProjectRequest
+{
+    public string? Name { get; set; }
+}
+
 public sealed class CreateSessionRequest
 {
     public string ProjectId { get; set; } = string.Empty;

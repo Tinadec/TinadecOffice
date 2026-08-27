@@ -5,6 +5,8 @@ export interface ProjectDto {
   name: string;
   path: string;
   created_at: string;
+  lifecycle_status?: 'active' | 'archived' | 'trashed';
+  trashed_at?: string | null;
 }
 
 export interface SessionDto {
@@ -16,6 +18,8 @@ export interface SessionDto {
   meeting_model_override?: MeetingModelOverrideDto | null;
   created_at: string;
   updated_at: string;
+  lifecycle_status?: 'active' | 'archived' | 'trashed';
+  trashed_at?: string | null;
 }
 
 export interface MessageDto {

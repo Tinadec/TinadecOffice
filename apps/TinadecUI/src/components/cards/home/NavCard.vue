@@ -38,5 +38,11 @@ function toggleCollapse() {
     @go-market="router.push('/market')"
     @go-settings="router.push('/settings')"
     @toggle-collapse="toggleCollapse"
+    @rename-project="(id, name) => c.renameProject(id, name)"
+    @rename-session="(id, title) => c.renameSession(id, title)"
+    @archive-project="c.archiveProject($event)"
+    @archive-session="c.archiveSession($event)"
+    @trash-project="c.trashProject($event)"
+    @trash-session="c.trashSession($event)"
   />
 </template>

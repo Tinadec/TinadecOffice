@@ -22,6 +22,7 @@ import type { AgentMode, PermissionLevel } from '@/types/mode'
 import type { DispatchMode, MeetingModelOverrideDto } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 import { createRunStream, type RunStreamHandle } from '@/composables/useRunStream'
+import { generatedApi } from '@/generated/client'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -244,6 +245,70 @@ async function createSession(projectId: string) {
     selectedSessionId.value = session.id
     selectedProjectId.value = projectId
     pendingSessionId.value = session.id
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Project/session lifecycle management (rename / archive / trash)
+// ---------------------------------------------------------------------------
+
+async function refreshProjectsAndSessions() {
+  const projectList = await api.listProjects()
+  projects.value = projectList
+  const allSessions = await Promise.all(projectList.map((p) => api.listSessions(p.id)))
+  sessions.value = allSessions.flat()
+  if (selectedProjectId.value && !projectList.some((p) => p.id === selectedProjectId.value)) {
+    selectedProjectId.value = projectList[0]?.id ?? null
+  }
+  const projectSessions = sessions.value.filter((s) => s.project_id === selectedProjectId.value)
+  if (selectedSessionId.value && !projectSessions.some((s) => s.id === selectedSessionId.value)) {
+    selectedSessionId.value = projectSessions[0]?.id ?? null
+  }
+}
+
+async function renameProject(projectId: string, name: string) {
+  const trimmed = name.trim()
+  if (!trimmed) return
+  await run('rename project', async () => {
+    const updated = await generatedApi.renameProject(projectId, trimmed)
+    projects.value = projects.value.map((p) => (p.id === projectId ? { ...p, name: updated.name } : p))
+  })
+}
+
+async function renameSession(sessionId: string, title: string) {
+  const trimmed = title.trim()
+  if (!trimmed) return
+  await run('rename session', async () => {
+    await api.updateSessionTitle(sessionId, trimmed)
+    sessions.value = sessions.value.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s))
+  })
+}
+
+async function archiveProject(projectId: string) {
+  await run('archive project', async () => {
+    await generatedApi.archiveProject(projectId)
+    await refreshProjectsAndSessions()
+  })
+}
+
+async function trashProject(projectId: string) {
+  await run('move project to trash', async () => {
+    await generatedApi.trashProject(projectId)
+    await refreshProjectsAndSessions()
+  })
+}
+
+async function archiveSession(sessionId: string) {
+  await run('archive session', async () => {
+    await generatedApi.archiveSession(sessionId)
+    await refreshProjectsAndSessions()
+  })
+}
+
+async function trashSession(sessionId: string) {
+  await run('move session to trash', async () => {
+    await generatedApi.trashSession(sessionId)
+    await refreshProjectsAndSessions()
   })
 }
 
@@ -498,6 +563,12 @@ export const homeController = {
   start,
   openProject,
   createSession,
+  renameProject,
+  renameSession,
+  archiveProject,
+  trashProject,
+  archiveSession,
+  trashSession,
   runs,
   queuedMessages,
   activeRuns,

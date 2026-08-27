@@ -61,11 +61,11 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         return project;
     }
 
-    public async Task<IReadOnlyList<ProjectRecord>> ListProjectsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ProjectRecord>> ListProjectsAsync(string lifecycleStatus = LifecycleStatuses.Active, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        var projects = await db.Projects.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var projects = await db.Projects.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == lifecycleStatus).ToListAsync(cancellationToken).ConfigureAwait(false);
         return projects.OrderByDescending(x => x.UpdatedAt).ToList();
     }
 
@@ -78,7 +78,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        if (!await db.Projects.AnyAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false))
+        if (!await db.Projects.AnyAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false))
         {
             throw new KeyNotFoundException("Project was not found.");
         }
@@ -99,11 +99,11 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         return session;
     }
 
-    public async Task<IReadOnlyList<SessionRecord>> ListSessionsAsync(Guid? projectId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SessionRecord>> ListSessionsAsync(Guid? projectId, string lifecycleStatus = LifecycleStatuses.Active, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        var query = db.Sessions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived);
+        var query = db.Sessions.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == lifecycleStatus);
         if (projectId is { } id) query = query.Where(x => x.ProjectId == id);
         var sessions = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         return sessions.OrderByDescending(x => x.UpdatedAt).ToList();
@@ -113,7 +113,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        return await db.Sessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
+        return await db.Sessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<SessionRecord?> UpdateTitleAsync(Guid sessionId, string title, CancellationToken cancellationToken = default)
@@ -121,7 +121,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("Session title is required.");
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
         if (session is null) return null;
         session.Title = title.Trim();
         session.UpdatedAt = DateTimeOffset.UtcNow;
@@ -137,7 +137,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived, cancellationToken).ConfigureAwait(false);
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
         if (session is null) return null;
         if (modeVersionId.HasValue) session.ModeVersionId = modeVersionId;
         if (meetingModelOverride is not null)
@@ -148,6 +148,110 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return session;
+    }
+
+    public async Task<ProjectRecord?> RenameProjectAsync(Guid projectId, string name, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Project name is required.");
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var project = await db.Projects.SingleOrDefaultAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
+        if (project is null) return null;
+        project.Name = name.Trim();
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return project;
+    }
+
+    public async Task<ProjectRecord?> GetProjectAnyStatusAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Projects.SingleOrDefaultAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<SessionRecord?> GetSessionAnyStatusAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<SessionRecord>> ListAllSessionsForProjectAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Sessions.AsNoTracking().Where(x => x.ProjectId == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ProjectRecord> SetProjectLifecycleAsync(Guid projectId, string target, CancellationToken cancellationToken = default)
+    {
+        if (!LifecycleStatuses.IsKnown(target)) throw new ArgumentException($"Unknown lifecycle status '{target}'.", nameof(target));
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var project = await db.Projects.SingleOrDefaultAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Project was not found.");
+        ValidateLifecycleTransition(project.LifecycleStatus, target);
+        var now = DateTimeOffset.UtcNow;
+        project.LifecycleStatus = target;
+        project.TrashedAt = target == LifecycleStatuses.Trashed ? now : null;
+        project.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return project;
+    }
+
+    public async Task<SessionRecord> SetSessionLifecycleAsync(Guid sessionId, string target, CancellationToken cancellationToken = default)
+    {
+        if (!LifecycleStatuses.IsKnown(target)) throw new ArgumentException($"Unknown lifecycle status '{target}'.", nameof(target));
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Session was not found.");
+        ValidateLifecycleTransition(session.LifecycleStatus, target);
+        var now = DateTimeOffset.UtcNow;
+        session.LifecycleStatus = target;
+        session.TrashedAt = target == LifecycleStatuses.Trashed ? now : null;
+        session.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return session;
+    }
+
+    private static void ValidateLifecycleTransition(string from, string target)
+    {
+        var allowed = from switch
+        {
+            LifecycleStatuses.Active => target is LifecycleStatuses.Archived or LifecycleStatuses.Trashed,
+            LifecycleStatuses.Archived => target is LifecycleStatuses.Active or LifecycleStatuses.Trashed,
+            LifecycleStatuses.Trashed => target is LifecycleStatuses.Active,
+            _ => false
+        };
+        if (!allowed) throw new InvalidOperationException($"Cannot transition lifecycle from '{from}' to '{target}'.");
+    }
+
+    /// <summary>Deletes all Memory-owned rows plus the legacy history file for a session. Callers must enforce lifecycle and active-run guards first.</summary>
+    public async Task DeleteSessionDataAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Session was not found.");
+        await db.Messages.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        await db.Turns.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        await db.ContextSnapshots.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        await db.ContextPatches.Where(x => x.SessionId == sessionId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        db.Sessions.Remove(session);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        try { File.Delete(_paths.SessionHistory(sessionId)); } catch { /* best-effort file cleanup */ }
+    }
+
+    public async Task DeleteProjectRowAsync(Guid projectId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var project = await db.Projects.SingleOrDefaultAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Project was not found.");
+        db.Projects.Remove(project);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<StoredMessage>> ListMessagesAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -260,7 +364,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        return await db.Sessions.Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived)
+        return await db.Sessions.Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active)
             .Select(x => (long?)x.HistoryRevision).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
     }
@@ -343,7 +447,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
             var session = await db.Sessions.SingleOrDefaultAsync(item => item.Id == request.SessionId
                 && item.TenantId == scope.TenantId
                 && item.WorkspaceId == scope.WorkspaceId
-                && !item.Archived, cancellationToken).ConfigureAwait(false)
+                && item.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException("Session was not found.");
             var now = DateTimeOffset.UtcNow;
             var patch = new ContextPatchRecord
@@ -492,7 +596,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        return await db.Sessions.AsNoTracking().Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived)
+        return await db.Sessions.AsNoTracking().Where(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active)
             .Select(x => new SessionReference(
                 x.Id, x.ProjectId, x.TenantId, x.WorkspaceId, x.ModeVersionId,
                 x.MeetingModelOverrideProviderInstanceId == null
@@ -506,7 +610,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
         return await db.Projects.AsNoTracking()
-            .Where(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Archived)
+            .Where(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active)
             .Select(x => new ProjectReference(x.Id, x.TenantId, x.WorkspaceId, x.RootPath))
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }

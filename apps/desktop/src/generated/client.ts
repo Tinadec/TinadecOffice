@@ -47,8 +47,10 @@ export interface InvokeStreamRequest {
   expected_context_revision?: number | null
 }
 
-export interface ProjectDto { id: string; name: string; path: string; created_at: string }
-export interface SessionDto { id: string; project_id: string; title: string; status: string; mode_version_id?: string | null; meeting_model_override?: { provider_instance_id: string; model?: string | null } | null; created_at: string; updated_at: string }
+export type LifecycleStatus = 'active' | 'archived' | 'trashed'
+
+export interface ProjectDto { id: string; name: string; path: string; created_at: string; lifecycle_status?: LifecycleStatus; trashed_at?: string | null }
+export interface SessionDto { id: string; project_id: string; title: string; status: string; mode_version_id?: string | null; meeting_model_override?: { provider_instance_id: string; model?: string | null } | null; created_at: string; updated_at: string; lifecycle_status?: LifecycleStatus; trashed_at?: string | null }
 export interface MessageDto { id: string; session_id: string; role: string; content: string; created_at: string }
 export interface RunDto { id: string; session_id: string; trigger_message_id: string | null; status: RunStatus | string; summary: string | null; task_revision?: number | null; created_at: string | null; updated_at: string | null }
 export interface TaskNodeDto { id: string; graph_id: string | null; run_id: string; session_id: string; title: string; description: string; status: string; priority: number; risk: string; success_criteria: string[]; dependencies: string[]; required_capabilities: string[]; created_at: string | null; updated_at: string | null }
@@ -196,10 +198,25 @@ async function reqWithEtag<T extends { etag?: string | null }>(path: string, ini
 
 export const generatedApi = {
   gatewayUrl,
-  listProjects: () => req<ProjectDto[]>('/api/v1/projects'),
+  listProjects: (lifecycleStatus?: LifecycleStatus) => req<ProjectDto[]>(`/api/v1/projects${lifecycleStatus ? `?lifecycle_status=${encodeURIComponent(lifecycleStatus)}` : ''}`),
   createProject: (name: string, path: string) => req<ProjectDto>('/api/v1/projects', { method: 'POST', body: JSON.stringify({ name, path }) }),
-  listSessions: (projectId?: string) => req<SessionDto[]>(`/api/v1/sessions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  renameProject: (projectId: string, name: string) => req<ProjectDto>(`/api/v1/projects/${encodeURIComponent(projectId)}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  archiveProject: (projectId: string) => req<void>(`/api/v1/projects/${encodeURIComponent(projectId)}/archive`, { method: 'POST' }),
+  trashProject: (projectId: string) => req<void>(`/api/v1/projects/${encodeURIComponent(projectId)}/trash`, { method: 'POST' }),
+  restoreProject: (projectId: string) => req<void>(`/api/v1/projects/${encodeURIComponent(projectId)}/restore`, { method: 'POST' }),
+  purgeProject: (projectId: string) => req<void>(`/api/v1/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
+  listSessions: (projectId?: string, lifecycleStatus?: LifecycleStatus) => {
+    const params = new URLSearchParams()
+    if (projectId) params.set('project_id', projectId)
+    if (lifecycleStatus) params.set('lifecycle_status', lifecycleStatus)
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    return req<SessionDto[]>(`/api/v1/sessions${suffix}`)
+  },
   createSession: (projectId: string, title?: string) => req<SessionDto>('/api/v1/sessions', { method: 'POST', body: JSON.stringify({ project_id: projectId, title }) }),
+  archiveSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST' }),
+  trashSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/trash`, { method: 'POST' }),
+  restoreSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/restore`, { method: 'POST' }),
+  purgeSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
   listMessages: (sessionId: string) => req<MessageDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`),
   listRuns: (sessionId: string) => req<RunDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/runs`),
   getOrchestration: (sessionId: string) => req<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`),

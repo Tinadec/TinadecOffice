@@ -14,7 +14,34 @@
     "generate:client": "npx openapi-typescript http://127.0.0.1:48730/docs/json -o src/generated/schema.d.ts",
     "check:drift": "npm run generate:client && git diff --exit-code -- src/generated/",
     "rebuild:native": "electron-rebuild -f -w node-pty",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "package:portable": "npm run build && electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.tinadec.office",
+    "productName": "TinadecOffice",
+    "electronVersion": "43.3.0",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "package.json",
+      "electron/**/*",
+      "dist/**/*",
+      "!node_modules/**/*",
+      "node_modules/node-pty/**/*"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "public/tinadec-large.ico"
+    },
+    "portable": {
+      "artifactName": "TinadecOffice-${version}-portable.${ext}"
+    }
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -61,6 +88,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
     "happy-dom": "^20.10.2",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",

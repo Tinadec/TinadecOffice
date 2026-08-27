@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Archive,
   ArrowLeft,
   ExternalLink,
   Bot,
@@ -49,6 +50,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AboutSection from '@/settings/sections/AboutSection.vue'
+import ArchiveTrashSection from '@/settings/sections/ArchiveTrashSection.vue'
 import GeneralSection from '@/settings/sections/GeneralSection.vue'
 import LanguageSection from '@/settings/sections/LanguageSection.vue'
 import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
@@ -141,7 +143,7 @@ import {
   officeAgentPackManifest,
 } from '@/agentPacks/OfficeAgentPack'
 
-type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'archive' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
 type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 
@@ -357,6 +359,7 @@ const navItems = computed(() => [
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
   { key: 'agentCenter' as const, icon: Workflow, label: t('settings.agentCenter') },
   { key: 'tools' as const, icon: Terminal, label: t('settings.toolLayer') },
+  { key: 'archive' as const, icon: Archive, label: t('settings.archiveTrash') },
   { key: 'appearance' as const, icon: Palette, label: t('settings.appearance') },
   { key: 'pets' as const, icon: PawPrint, label: t('settings.pets') },
   { key: 'language' as const, icon: Globe, label: t('settings.language') },
@@ -3060,6 +3063,10 @@ import '../settings/settings.css'
 
         <template v-if="activeSection === 'tools'">
           <ToolCenterSection />
+        </template>
+
+        <template v-if="activeSection === 'archive'">
+          <ArchiveTrashSection />
         </template>
 
         <template v-if="activeSection === 'appearance'">

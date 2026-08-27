@@ -20,6 +20,9 @@ const CODE_MAP: Record<string, string> = {
   TOOL_EXECUTION_NOT_FOUND: 'run_not_found',
   FORBIDDEN: 'forbidden',
   ACTIVE_RUN_LIMIT: 'conflict',
+  ACTIVE_RUN_CONFLICT: 'conflict',
+  INVALID_LIFECYCLE_TRANSITION: 'conflict',
+  INVALID_LIFECYCLE_STATUS: 'invalid_request',
   IDEMPOTENCY_KEY_REUSE: 'conflict',
   RUN_NOT_ACTIVE: 'conflict',
 };

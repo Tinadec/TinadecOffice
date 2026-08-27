@@ -38,11 +38,14 @@ test('session mapper preserves mode binding fields Core owns', () => {
     history_revision: 3,
     created_at: '2026-08-26T00:00:00Z',
     updated_at: '2026-08-26T00:00:01Z',
-    archived: false,
+    lifecycle_status: 'active',
+    trashed_at: null,
   });
   assert.ok(mapped);
   assert.equal(mapped.mode_version_id, '0d3f6a2e-0000-4000-8000-000000000001');
   assert.deepEqual(mapped.meeting_model_override, { provider_instance_id: 'prov-1', model: 'gpt-test' });
+  assert.equal(mapped.lifecycle_status, 'active');
+  assert.equal(mapped.trashed_at, null);
 
   const legacy = mapSession({ id: 's-2' });
   assert.ok(legacy);
