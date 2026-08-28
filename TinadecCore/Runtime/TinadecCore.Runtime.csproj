@@ -39,7 +39,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
+    <None Include="..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
     <None Include="Configuration\bootstrap-agent-directory.toml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
