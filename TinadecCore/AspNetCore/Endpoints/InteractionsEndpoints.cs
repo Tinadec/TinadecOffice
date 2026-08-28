@@ -9,11 +9,11 @@ using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class InteractionsEndpoints
 {
-    public static WebApplication MapInteractionsEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapInteractionsEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions", CreateInteraction);
         app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions/{interactionId:guid}/reassign", ReassignInteraction);

@@ -9,16 +9,18 @@
 - `TinadecCore.Contracts`：HTTP DTO、事件 envelope 和 provider-neutral 数据类型；不引用 MAF、ASP.NET 或 F#。
 - `TinadecCore.Abstractions`：Core 端口和模块注册抽象；不暴露 MAF 类型。
 - `TinadecCore.Runtime`：完整 Core 组合入口，MAF 1.18 仅通过 DmaEA 适配层接入。
+- `TinadecCore.AspNetCore`：可挂载 ASP.NET Core HTTP 层（`AddTinadecCoreHttp()`、`UseTinadecCoreExceptionHandler()`、`MapTinadecCore()`），供任意宿主以 `FrameworkReference Microsoft.AspNetCore.App` 方式嵌入 Core 路由面，无需自建 `TinadecCore.Api`。
 
-三个项目显式启用 `IsPackable=true`，是唯一面向宿主承诺的包面。`TinadecCore` 全部模块（含 Contracts/Abstractions/Runtime 及内部实现包）均以 `MIT` 开源（`TinadecCore/LICENSE`，`Copyright (c) 2026 Lincube`，`PackageLicenseExpression=MIT` 集中于 `TinadecCore/Directory.Build.props`）。Runtime 依赖的 Core 内部模块也启用实现包，以便 NuGet 正确还原；这些包不属于稳定业务 API，应与 Runtime 一起从同一 feed 发布。测试项目和 API 项目继续不可打包。包版本沿用 `TinadecCore/Directory.Build.props` 的 `PackageVersion`，发布前应由 CI 注入正式 SemVer。
+四个项目显式启用 `IsPackable=true`，是唯一面向宿主承诺的包面。`TinadecCore` 全部模块（含 Contracts/Abstractions/Runtime/AspNetCore 及内部实现包）均以 `MIT` 开源（`TinadecCore/LICENSE`，`Copyright (c) 2026 Lincube`，`PackageLicenseExpression=MIT` 集中于 `TinadecCore/Directory.Build.props`）。Runtime 依赖的 Core 内部模块也启用实现包，以便 NuGet 正确还原；这些包不属于稳定业务 API，应与 Runtime 一起从同一 feed 发布。测试项目和 API 项目继续不可打包。包版本沿用 `TinadecCore/Directory.Build.props` 的 `PackageVersion`，发布前应由 CI 注入正式 SemVer。
 
 ```powershell
 dotnet pack TinadecCore/Contracts/TinadecCore.Contracts.csproj -c Release --no-restore
 dotnet pack TinadecCore/Abstractions/TinadecCore.Abstractions.csproj -c Release --no-restore
 dotnet pack TinadecCore/Runtime/TinadecCore.Runtime.csproj -c Release --no-restore
+dotnet pack TinadecCore/AspNetCore/TinadecCore.AspNetCore.csproj -c Release --no-restore
 ```
 
-发布 Runtime 前需要先将 `TinadecCore.slnx` 中的实现包一起推送到同一内部源；只推送三个公开包会留下不可还原的内部 ProjectReference。CI 应使用统一版本执行整套解决方案的 `dotnet pack`，再选择性推送公开包和实现包。
+发布 Runtime 前需要先将 `TinadecCore.slnx` 中的实现包一起推送到同一内部源；只推送四个公开包会留下不可还原的内部 ProjectReference。CI 应使用统一版本执行整套解决方案的 `dotnet pack`，再选择性推送公开包和实现包。
 
 `TinadecCore.Runtime` 的依赖包由 NuGet 根据项目引用生成；MAF 包只能作为运行适配依赖，不能进入 Contracts、事件或稳定 HTTP DTO。
 

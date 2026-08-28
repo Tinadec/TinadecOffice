@@ -9,7 +9,7 @@ using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Runtime;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
 /// DmaEA runtime endpoints: full-duplex SSE invoke-stream, run control, run-scoped
@@ -20,7 +20,7 @@ namespace TinadecCore.Api.Endpoints;
 /// </summary>
 public static class DmaeaEndpoints
 {
-    public static WebApplication MapDmaeaEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapDmaeaEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/sessions/{sessionId}/invoke-stream", async (HttpContext context, string sessionId, InvokeStreamRequest request, IFullDuplexRunCoordinator coordinator, CancellationToken ct) =>
         {

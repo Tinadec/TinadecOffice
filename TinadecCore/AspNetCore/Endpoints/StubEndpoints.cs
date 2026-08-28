@@ -5,7 +5,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
 /// Extension methods that register all stub Core endpoints
@@ -15,7 +15,7 @@ namespace TinadecCore.Api.Endpoints;
 /// </summary>
 public static class StubEndpoints
 {
-    public static WebApplication MapStubEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapStubEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapReadinessStubs();
         app.MapProjectSessionStubs();
@@ -29,7 +29,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Readiness / Doctor
     // ──────────────────────────────────────────────────────────
-    private static void MapReadinessStubs(this WebApplication app)
+    private static void MapReadinessStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/doctor", () => Results.Ok(new
         {
@@ -139,7 +139,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Projects / Sessions
     // ──────────────────────────────────────────────────────────
-    private static void MapProjectSessionStubs(this WebApplication app)
+    private static void MapProjectSessionStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/sessions/{sessionId}/context-packs", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/sessions/{sessionId}/supervision-findings", () => Results.Ok(Array.Empty<object>()));
@@ -149,7 +149,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Tools
     // ──────────────────────────────────────────────────────────
-    private static void MapToolStubs(this WebApplication app)
+    private static void MapToolStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/tools", async (IToolRegistry registry, CancellationToken ct) =>
         {
@@ -211,7 +211,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Approvals
     // ──────────────────────────────────────────────────────────
-    private static void MapApprovalStubs(this WebApplication app)
+    private static void MapApprovalStubs(this IEndpointRouteBuilder app)
     {
         // Approval routes are mapped by ControlPlaneEndpoints.
     }
@@ -219,7 +219,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Model Center (required by Gateway BFF composition)
     // ──────────────────────────────────────────────────────────
-    private static void MapModelStubs(this WebApplication app)
+    private static void MapModelStubs(this IEndpointRouteBuilder app)
     {
         // These three are REQUIRED by the Gateway modelAgentCenter BFF.
         app.MapGet("/api/v1/model-provider-templates", () => Results.Ok(Array.Empty<object>()));
@@ -230,7 +230,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Prompt Fragments
     // ──────────────────────────────────────────────────────────
-    private static void MapPromptStubs(this WebApplication app)
+    private static void MapPromptStubs(this IEndpointRouteBuilder app)
     {
         // Prompt fragment routes are mapped by ControlPlaneEndpoints.
     }
@@ -238,7 +238,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Agents
     // ──────────────────────────────────────────────────────────
-    private static void MapAgentStubs(this WebApplication app)
+    private static void MapAgentStubs(this IEndpointRouteBuilder app)
     {
         // Required by Gateway agent-center BFF
         // Agent routes are mapped by ControlPlaneEndpoints.
@@ -248,7 +248,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Market / Extensions
     // ──────────────────────────────────────────────────────────
-    private static void MapMarketExtensionStubs(this WebApplication app)
+    private static void MapMarketExtensionStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/market/sources", () => Results.Ok(Array.Empty<object>()));
         app.MapPost("/api/v1/market/sources", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
@@ -268,7 +268,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // MCP / ACP
     // ──────────────────────────────────────────────────────────
-    private static void MapMcpAcpStubs(this WebApplication app)
+    private static void MapMcpAcpStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/mcp/servers", () => Results.Ok(Array.Empty<object>()));
         app.MapGet("/api/v1/mcp/servers/{serverId}/tools", () => Results.Ok(Array.Empty<object>()));
@@ -281,7 +281,7 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     // Debug Studio
     // ──────────────────────────────────────────────────────────
-    private static void MapDebugStubs(this WebApplication app)
+    private static void MapDebugStubs(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/debug/traces", () => Results.Ok(new { items = Array.Empty<object>(), total = 0, limit = 50, offset = 0 }));
         app.MapGet("/api/v1/debug/traces/{traceId}", () => Results.NotFound(new { code = "NOT_FOUND" }));

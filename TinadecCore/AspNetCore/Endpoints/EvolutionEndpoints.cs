@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
 /// Agent evolution surface: a durable alias of the agent-candidate review flow.
@@ -16,7 +16,7 @@ namespace TinadecCore.Api.Endpoints;
 /// </summary>
 public static class EvolutionEndpoints
 {
-    public static WebApplication MapEvolutionEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapEvolutionEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/agent-evolution/proposals", async (string? status, IAgentInstanceService instances, CancellationToken ct) =>
         {

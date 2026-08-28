@@ -2,11 +2,11 @@ using System.Text.Json;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Runtime;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class ControlPlaneEndpoints
 {
-    public static WebApplication MapControlPlaneEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapControlPlaneEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/model-providers", (ControlPlaneService service, CancellationToken ct) => service.ListProviders(ct));
         app.MapPost("/api/v1/model-providers", async (HttpRequest request, ControlPlaneService service, CancellationToken ct) => await service.SaveProvider(await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: ct), null, request.Headers.IfMatch.FirstOrDefault(), ct));

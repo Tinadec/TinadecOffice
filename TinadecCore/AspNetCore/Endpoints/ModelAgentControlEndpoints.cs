@@ -7,11 +7,11 @@ using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Models;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class ModelAgentControlEndpoints
 {
-    public static WebApplication MapModelAgentControlEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapModelAgentControlEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/model-resolution/preview", Preview);
         app.MapGet("/api/v1/model-references", References);

@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\Lifecycle\TinadecCore.Lifecycle.csproj" />
     <ProjectReference Include="..\..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\..\Runtime\TinadecCore.Runtime.csproj" />
+    <ProjectReference Include="..\..\AspNetCore\TinadecCore.AspNetCore.csproj" />
     <ProjectReference Include="..\..\Api\TinadecCore.Api.csproj" />
   </ItemGroup>
 

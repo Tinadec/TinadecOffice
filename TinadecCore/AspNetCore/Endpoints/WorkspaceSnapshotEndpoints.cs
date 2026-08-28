@@ -3,11 +3,11 @@ using Microsoft.AspNetCore.Http;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class WorkspaceSnapshotEndpoints
 {
-    public static WebApplication MapWorkspaceSnapshotEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapWorkspaceSnapshotEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/projects/{projectId:guid}/snapshots", async (
             Guid projectId,

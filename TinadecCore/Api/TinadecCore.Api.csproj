@@ -7,8 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Runtime\ControlPlaneService.cs" Link="ControlPlaneService.cs" />
-    <ProjectReference Include="..\Runtime\TinadecCore.Runtime.csproj" />
+    <ProjectReference Include="..\AspNetCore\TinadecCore.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

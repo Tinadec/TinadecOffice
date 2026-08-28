@@ -20,6 +20,7 @@ public sealed class ArchitectureTests
     private static readonly Assembly LifecycleAssembly = typeof(Lifecycle.LifecycleModuleRegistrar).Assembly;
     private static readonly Assembly GovernanceAssembly = typeof(Governance.GovernanceModuleRegistrar).Assembly;
     private static readonly Assembly RuntimeAssembly = typeof(Runtime.TinadecCoreBuilder).Assembly;
+    private static readonly Assembly AspNetCoreAssembly = typeof(TinadecCore.AspNetCore.TinadecCoreHttpExtensions).Assembly;
     private static readonly Assembly ApiAssembly = typeof(Program).Assembly;
 
     private static readonly Assembly[] AllModuleAssemblies =
@@ -27,9 +28,11 @@ public sealed class ArchitectureTests
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
         DmaEAAssembly, ModelsAssembly, ContextAssembly, PromptsAssembly,
         MemoryAssembly, SkillsAssembly, LoopGuardAssembly, LifecycleAssembly, GovernanceAssembly,
-        RuntimeAssembly, ApiAssembly
+        RuntimeAssembly, AspNetCoreAssembly, ApiAssembly
     ];
 
+    // TinadecCore.AspNetCore is intentionally excluded: it is the second
+    // ASP.NET-allowed host assembly alongside Api.
     private static readonly Assembly[] NonApiModuleAssemblies =
     [
         ContractsAssembly, AbstractionsAssembly, PersistenceAssembly, VectorStoreAssembly, StrategiesAssembly,
@@ -51,7 +54,7 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
-    public void OnlyApiProjectUsesWebSdk()
+    public void OnlyHostProjectsUseAspNetCore()
     {
         // The API project should reference ASP.NET Core.
         var apiResult = Types.InAssembly(ApiAssembly)
@@ -61,7 +64,9 @@ public sealed class ArchitectureTests
 
         Assert.True(apiResult.IsSuccessful, FormatFailures(apiResult));
 
-        // No non-API module should reference Microsoft.AspNetCore.
+        // No non-host module should reference Microsoft.AspNetCore.
+        // (AspNetCoreAssembly is the other allowed host assembly and is
+        // deliberately not part of NonApiModuleAssemblies.)
         foreach (var asm in NonApiModuleAssemblies)
         {
             var result = Types.InAssembly(asm)
@@ -168,6 +173,7 @@ public sealed class ArchitectureTests
             "TinadecCore.Lifecycle",
             "TinadecCore.Governance",
             "TinadecCore.Runtime",
+            "TinadecCore.AspNetCore",
             "TinadecCore.Api",
             "TinadecGateway",
             "TinadecTools"
@@ -188,7 +194,7 @@ public sealed class ArchitectureTests
     {
         var forbidden = new[]
         {
-            "TinadecCore.Models", "TinadecCore.Context", "TinadecCore.Memory", "TinadecCore.Runtime", "TinadecCore.Api"
+            "TinadecCore.Models", "TinadecCore.Context", "TinadecCore.Memory", "TinadecCore.Runtime", "TinadecCore.AspNetCore", "TinadecCore.Api"
         };
 
         foreach (var dep in forbidden)

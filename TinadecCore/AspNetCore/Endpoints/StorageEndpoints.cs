@@ -7,11 +7,11 @@ using TinadecCore.Contracts.Events;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class StorageEndpoints
 {
-    public static WebApplication MapStorageEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapStorageEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/projects", async (string? lifecycle_status, string? lifecycleStatus, ProjectSessionStore store, CancellationToken ct) =>
         {
@@ -280,7 +280,7 @@ public static class StorageEndpoints
     }
 
     private static void MapProjectLifecycleEndpoints(
-        WebApplication app,
+        IEndpointRouteBuilder app,
         string action,
         Func<TinadecCore.Runtime.ProjectSessionLifecycleService, Func<Guid, CancellationToken, Task<TinadecCore.Memory.ProjectRecord>>> selector)
     {
@@ -299,7 +299,7 @@ public static class StorageEndpoints
     }
 
     private static void MapSessionLifecycleEndpoints(
-        WebApplication app,
+        IEndpointRouteBuilder app,
         string action,
         Func<TinadecCore.Runtime.ProjectSessionLifecycleService, Func<Guid, CancellationToken, Task<TinadecCore.Memory.SessionRecord>>> selector)
     {

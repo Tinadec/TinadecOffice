@@ -7,11 +7,11 @@ using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class AgentConfigurationEndpoints
 {
-    public static WebApplication MapAgentConfigurationEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapAgentConfigurationEndpoints(this IEndpointRouteBuilder app)
     {
         // Agents
         app.MapGet("/api/v1/agents", ListAgents);

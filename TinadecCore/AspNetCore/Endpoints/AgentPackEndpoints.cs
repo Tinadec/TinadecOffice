@@ -4,11 +4,11 @@ using Microsoft.OpenApi;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class AgentPackEndpoints
 {
-    public static WebApplication MapAgentPackEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapAgentPackEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/agent-packs", async (IAgentPackService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(cancellationToken).ConfigureAwait(false)))

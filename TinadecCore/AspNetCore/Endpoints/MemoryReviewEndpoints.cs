@@ -4,7 +4,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
 /// Human review endpoints for Core-owned memory and agent candidates. Memory
@@ -15,7 +15,7 @@ namespace TinadecCore.Api.Endpoints;
 /// </summary>
 public static class MemoryReviewEndpoints
 {
-    public static WebApplication MapMemoryReviewEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapMemoryReviewEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/memory-candidates", async (string? status, ILongTermMemoryService memory, CancellationToken ct) =>
         {

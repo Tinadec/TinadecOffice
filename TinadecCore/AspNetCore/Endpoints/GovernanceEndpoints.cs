@@ -5,7 +5,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 /// <summary>
 /// Northbound governance control-plane endpoints. The handlers are deliberately
@@ -14,7 +14,7 @@ namespace TinadecCore.Api.Endpoints;
 /// </summary>
 public static class GovernanceEndpoints
 {
-    public static WebApplication MapGovernanceEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapGovernanceEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/governance/permission-requests", async (
             string? status,

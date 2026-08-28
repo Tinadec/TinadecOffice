@@ -24,6 +24,7 @@
   </Folder>
   <Folder Name="/src/host/">
     <Project Path="Runtime/TinadecCore.Runtime.csproj" />
+    <Project Path="AspNetCore/TinadecCore.AspNetCore.csproj" />
     <Project Path="Api/TinadecCore.Api.csproj" />
   </Folder>
   <Folder Name="/tests/">

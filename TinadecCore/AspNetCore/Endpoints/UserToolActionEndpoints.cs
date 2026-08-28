@@ -2,13 +2,13 @@ using System.Text.Json;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
-namespace TinadecCore.Api.Endpoints;
+namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class UserToolActionEndpoints
 {
-    public static WebApplication MapUserToolActionEndpoints(this WebApplication app)
+    public static IEndpointRouteBuilder MapUserToolActionEndpoints(this IEndpointRouteBuilder app)
     {
-        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(UserToolActionEndpoints));
+        var logger = app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(UserToolActionEndpoints));
         app.MapGet("/api/v1/user/tool-actions", async (string? status, IUserToolActionService actions, CancellationToken ct) =>
         {
             var results = await actions.ListAsync(status, ct).ConfigureAwait(false);

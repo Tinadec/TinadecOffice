@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TinadecCore.AspNetCore</RootNamespace>
+    <Description>TinadecCore mountable ASP.NET Core layer: AddTinadecCoreHttp() and MapTinadecCore() for embeddable HTTP hosting.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>TinadecCore.AspNetCore</PackageId>
+    <PackageTags>tinadec;agent;aspnetcore;http;dmaea;maf</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>tinadec-core-packaging.zh-CN.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Runtime\TinadecCore.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Mirror the ASP.NET Core Web SDK implicit usings so the endpoint
+         files compile without per-file using changes. -->
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\docs\tinadec-core-packaging.zh-CN.md" Pack="true" PackagePath="tinadec-core-packaging.zh-CN.md" />
+  </ItemGroup>
+
+</Project>
