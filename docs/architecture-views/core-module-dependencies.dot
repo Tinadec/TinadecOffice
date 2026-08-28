@@ -1,0 +1,124 @@
+// TinadecCore 项目依赖图（当前态，真实 ProjectReference 边）
+// 来源：TinadecCore/**/{*.csproj,*.fsproj} 的 <ProjectReference>，以及 TinadecCore/TinadecCore.slnx 的分层目录。
+// 读法：TB 自上而下即分层顺序。蓝=组合根引用，灰虚线=迁移/测试引用，实线黑=模块→基础能力。
+// 关键事实：10 个业务模块之间没有任何一条直接引用边——它们只经 Abstractions 端口协作（ArchitectureTests.cs:75 强制）。
+// 重新生成：见 tinadecoffice.architecture-understanding.md 的“再生成方式”。
+digraph TinadecCoreModules {
+  rankdir=TB;
+  compound=true;
+  nodesep=0.35; ranksep=0.75;
+  fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica";
+  node [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica", fontsize=11, fillcolor="#f2f5f9", color="#4a5568"];
+  edge [fontname="Helvetica", fontsize=9, color="#4a5568"];
+
+  # ---------- 交付与规模注记 ----------
+  labelloc="t";
+  label="TinadecCore — 21 源项目 + 4 测试项目 / 9 个 DbContext / 23 个端口 / 170 条 Core 路由（StubEndpoints 44 条含 19 处结构化 501）\n业务模块彼此零直接引用：唯一耦合点是 Abstractions 端口 + Persistence 基础设施";
+
+  subgraph cluster_layer_host {
+    label="host（组合根与进程入口）"; fontsize=12; style="rounded,dashed"; color="#1f6fb4";
+    Runtime  [label="Runtime\nAddTinadecCore()\nControlPlaneService\nUserToolActionService\nAgentModelResolver\nFormalModeResolver", fillcolor="#cfe3f7"];
+    Api      [label="Api（:48731）\nProgram.cs + 13 个端点组\n唯一 Microsoft.NET.Sdk.Web", fillcolor="#cfe3f7"];
+  }
+
+  subgraph cluster_layer_modules {
+    label="modules（10 个业务模块，彼此不互相引用）"; fontsize=12; style="rounded,dashed"; color="#2f6f4f";
+    DmaEA     [label="DmaEA\nFullDuplexRunEngine 1889L\n唯一允许引用 MAF 的模块", fillcolor="#dff0e2"];
+    Models    [label="Models\nModelProvider\nEmbeddingProvider", fillcolor="#dff0e2"];
+    Tools     [label="Tools\nToolDispatcher 719L\nTinadecToolsProcessManager", fillcolor="#dff0e2"];
+    Governance[label="Governance\nGovernanceService 1651L\nPDP/grant/delegation/lease", fillcolor="#dff0e2"];
+    Lifecycle [label="Lifecycle\nStorageLifecycleService 1123L\nToolApprovalCoordinator 924L\n快照与恢复", fillcolor="#dff0e2"];
+    AgentCfg  [label="AgentConfiguration\nAgentPackService 1668L\n版本化 Agent/Mode/Prompt", fillcolor="#dff0e2"];
+    Memory    [label="Memory\nProjectSessionStore 777L\nLongTermMemoryService", fillcolor="#dff0e2"];
+    Context   [label="Context\nContextProvider\n（单文件薄模块）", fillcolor="#eef6ef"];
+    Prompts   [label="Prompts\nPromptAssembler\n（单文件薄模块）", fillcolor="#eef6ef"];
+    Skills    [label="Skills\nSkillProvider\nIntegrationDbContext", fillcolor="#eef6ef"];
+    LoopGuard [label="LoopGuard\nLoopGuardEvaluator\n（单文件薄模块）", fillcolor="#eef6ef"];
+  }
+
+  subgraph cluster_layer_foundation {
+    label="foundation（共享基础能力，不含业务语义）"; fontsize=12; style="rounded,dashed"; color="#7a5c00";
+    Contracts    [label="Contracts\n纯 DTO + EventEnvelope\n无 MAF/ASP.NET/F# 依赖", fillcolor="#fff3cd"];
+    Abstractions [label="Abstractions\n23 个端口 + ITinadecCoreBuilder\nIModuleRegistrar / ModuleDescriptor", fillcolor="#fff3cd"];
+    Strategies   [label="Strategies (F#)\nStateTransition / LoopDetection\nContextBudget / PromptSelection / MemoryScoring", fillcolor="#fff3cd"];
+    Persistence  [label="Persistence\nUseTinadecDatabase\nIContentStore / ISecretStore\nIProjectVectorDatabase", fillcolor="#fff3cd"];
+    VectorStore  [label="VectorStore\nCoreVectorStore : IVectorStore", fillcolor="#fff3cd"];
+    Tenancy      [label="Tenancy\nTenancyDbContext\nDevelopmentTenantContextAccessor", fillcolor="#fff3cd"];
+    MigSqlite    [label="Storage.Migrations.Sqlite", fillcolor="#f5f0dd"];
+    MigPg        [label="Storage.Migrations.PostgreSql", fillcolor="#f5f0dd"];
+  }
+
+  subgraph cluster_external {
+    label="仓库外依赖（非本 solution 成员）"; fontsize=12; style="rounded,dotted"; color="#6b7280";
+    MAF      [label="Microsoft Agent Framework 1.18.0\nAbstractions / .AI / .Workflows / .OpenAI", shape=ellipse, fillcolor="#e5e7eb"];
+    ToolsExe [label="TinadecTools（独立 .NET 产品）\n子进程 + manifest v2", shape=ellipse, fillcolor="#e5e7eb"];
+    PgSrv    [label="PostgreSQL / pgvector", shape=cylinder, fillcolor="#e5e7eb"];
+    SqliteDb [label="SQLite data/tinadec.db", shape=cylinder, fillcolor="#e5e7eb"];
+  }
+
+  # ---------- host ----------
+  Api -> Runtime [color="#1f6fb4"];
+  Runtime -> Abstractions [color="#1f6fb4"];
+  Runtime -> Contracts [color="#1f6fb4"];
+  Runtime -> Persistence [color="#1f6fb4"];
+  Runtime -> VectorStore [color="#1f6fb4"];
+  Runtime -> Tenancy [color="#1f6fb4"];
+  Runtime -> AgentCfg [color="#1f6fb4"];
+  Runtime -> DmaEA [color="#1f6fb4"];
+  Runtime -> Models [color="#1f6fb4"];
+  Runtime -> Context [color="#1f6fb4"];
+  Runtime -> Prompts [color="#1f6fb4"];
+  Runtime -> Memory [color="#1f6fb4"];
+  Runtime -> Skills [color="#1f6fb4"];
+  Runtime -> LoopGuard [color="#1f6fb4"];
+  Runtime -> Lifecycle [color="#1f6fb4"];
+  Runtime -> Governance [color="#1f6fb4"];
+  Runtime -> Tools [color="#1f6fb4"];
+  Runtime -> MigSqlite [color="#1f6fb4"];
+  Runtime -> MigPg [color="#1f6fb4"];
+
+  # ---------- modules → foundation ----------
+  DmaEA -> Abstractions;      DmaEA -> Persistence;      DmaEA -> MAF [style=dashed, color="#8a5a00", label="仅适配器"];
+  Models -> Abstractions;     Models -> Persistence;
+  Tools -> Abstractions;
+  Governance -> Abstractions; Governance -> Persistence;
+  Lifecycle -> Abstractions;  Lifecycle -> Persistence;  Lifecycle -> Strategies;
+  AgentCfg -> Abstractions;   AgentCfg -> Persistence;
+  Memory -> Abstractions;     Memory -> Persistence;     Memory -> Strategies;
+  Context -> Abstractions;    Context -> Strategies;
+  Prompts -> Abstractions;    Prompts -> Persistence;    Prompts -> Strategies;
+  Skills -> Abstractions;     Skills -> Persistence;
+  LoopGuard -> Abstractions;  LoopGuard -> Strategies;
+  Tools -> ToolsExe [style=dashed, color="#6b7280", label="进程边界，非编译期引用"];
+
+  # ---------- foundation 内部 ----------
+  Abstractions -> Contracts;
+  Strategies -> Abstractions;
+  VectorStore -> Abstractions; VectorStore -> Persistence;
+  Tenancy -> Abstractions;    Tenancy -> Persistence;
+
+  # ---------- 迁移程序集（收集全部业务 DbContext 以便一次性生成两套迁移）----------
+  MigSqlite -> Memory [style=dotted]; MigSqlite -> Lifecycle [style=dotted]; MigSqlite -> Governance [style=dotted];
+  MigSqlite -> Tenancy [style=dotted]; MigSqlite -> AgentCfg [style=dotted]; MigSqlite -> Models [style=dotted];
+  MigSqlite -> Prompts [style=dotted]; MigSqlite -> DmaEA [style=dotted]; MigSqlite -> Skills [style=dotted];
+  MigPg -> Memory [style=dotted]; MigPg -> Lifecycle [style=dotted]; MigPg -> Governance [style=dotted];
+  MigPg -> Tenancy [style=dotted]; MigPg -> AgentCfg [style=dotted]; MigPg -> Models [style=dotted];
+  MigPg -> Prompts [style=dotted]; MigPg -> DmaEA [style=dotted]; MigPg -> Skills [style=dotted];
+  MigPg -> PgSrv [style=dotted, color="#6b7280"];
+  Persistence -> SqliteDb [style=dotted, color="#6b7280"];
+
+  # ---------- 测试（架构边界由 NetArchTest 式断言强制）----------
+  subgraph cluster_tests {
+    label="tests（4 个项目）"; fontsize=12; style="rounded,dotted"; color="#8b2e2e";
+    ArchTests [label="Architecture.Tests\n11 条边界断言", fillcolor="#fbe3e3"];
+    ApiTests  [label="Api.Tests\nWebApplicationFactory + 真实工具链 E2E", fillcolor="#fbe3e3"];
+    MafTests  [label="AgentFramework.Tests\nMAF smoke / F# interop / trimming", fillcolor="#fbe3e3"];
+    GovTests  [label="Governance.Tests", fillcolor="#fbe3e3"];
+  }
+  ApiTests -> Api [style=dotted, color="#8b2e2e"];
+  ApiTests -> ToolsExe [style=dotted, color="#8b2e2e", label="Exists() 条件引用"];
+  GovTests -> Governance [style=dotted, color="#8b2e2e"];
+  MafTests -> Runtime [style=dotted, color="#8b2e2e"];
+  MafTests -> DmaEA [style=dotted, color="#8b2e2e"];
+  ArchTests -> Api [style=dotted, color="#8b2e2e", label="另引用 Contracts/Persistence/Strategies\n及 10 个业务模块，共 15 项目"];
+}

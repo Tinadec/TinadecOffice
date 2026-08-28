@@ -148,12 +148,22 @@ declare global {
     remove: (slug: string) => Promise<boolean>;
   }
 
+  interface DiscoveredService {
+    url: string;
+    service: 'gateway' | 'core';
+    core_status: 'ready' | 'unreachable';
+    mode?: string;
+    version?: string;
+    current: boolean;
+  }
+
   interface Window {
     tinadec: {
       gatewayUrl: () => string;
       getAppConfig: () => Promise<{ gateway_url: string; source: 'default' | 'user' | 'environment'; managed: boolean }>;
       saveGatewayUrl: (gatewayUrl: string) => Promise<{ gateway_url: string; source: 'user'; managed: false }>;
       resetGatewayUrl: () => Promise<{ gateway_url: string; source: 'default' | 'environment'; managed: boolean }>;
+      discoverServices: () => Promise<DiscoveredService[]>;
       restartApp: () => Promise<void>;
       openProjectDialog: () => Promise<string | null>;
       minimizeWindow: () => void;

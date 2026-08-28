@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
+const { discoverServices } = require('./serviceDiscovery.cjs');
 const layoutStore = require('./layoutStore.cjs');
 const { createDebugStudioWindow, getDebugStudioWindow } = require('./debug-studio.cjs');
 const {
@@ -121,6 +122,9 @@ ipcMain.handle('tinadec:open-project', async () => {
 ipcMain.handle('tinadec:app-config', () => loadAppConfig(appConfigFile()));
 ipcMain.handle('tinadec:gateway-url-save', (_event, gatewayUrl) => saveGatewayUrl(appConfigFile(), gatewayUrl));
 ipcMain.handle('tinadec:gateway-url-reset', () => resetGatewayUrl(appConfigFile()));
+ipcMain.handle('tinadec:discover-services', () =>
+  discoverServices({ currentGatewayUrl: process.env.TINADEC_RESOLVED_GATEWAY_URL })
+);
 ipcMain.handle('tinadec:restart', () => {
   app.relaunch();
   app.exit(0);

@@ -188,15 +188,29 @@ const app = new Elysia()
   .get('/api/v1/health', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/health', { headers });
+    const rid = (headers as Record<string,string>)['x-request-id'];
+    const errorCode = (result.data && typeof result.data === 'object' ? (result.data as Record<string, unknown>).code : undefined);
+    if (result.status >= 400 && errorCode === 'CORE_UNREACHABLE') {
+      // Gateway 自身健康、上游 Core 网络不可达：降级为 503，保留可被服务发现识别的指纹
+      setStatus(set, 503);
+      set.headers['content-type'] = 'application/json';
+      setProxyResponseHeaders(set as never, rid);
+      return {
+        gateway: 'ok',
+        core_status: 'unreachable',
+        mode: config.mode,
+        core_url: coreUrl(),
+        tool_runtime_url: toolRuntimeUrl()
+      };
+    }
     setStatus(set, result.status);
     set.headers['content-type'] = result.status >= 400 ? 'application/problem+json' : 'application/json';
     if (result.status >= 400) {
-      const rid = (headers as Record<string,string>)['x-request-id'];
       setProxyResponseHeaders(set as never, rid);
       return mapCoreErrorToExternal(result.status, result.data, '/api/v1/health');
     }
     const core = (result.data && typeof result.data === 'object' ? result.data : {}) as Record<string, unknown>;
-    const mapped = mapHealth(core, { gateway: 'ok', mode: config.mode, core_url: coreUrl(), tool_runtime_url: toolRuntimeUrl() });
+    const mapped = mapHealth(core, { gateway: 'ok', core_status: 'ready', mode: config.mode, core_url: coreUrl(), tool_runtime_url: toolRuntimeUrl() });
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped;
   }, { detail: { summary: 'Health probe', tags: ['Health'] } })

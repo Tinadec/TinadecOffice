@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('tinadec', {
   getAppConfig: () => ipcRenderer.invoke('tinadec:app-config'),
   saveGatewayUrl: (gatewayUrl) => ipcRenderer.invoke('tinadec:gateway-url-save', gatewayUrl),
   resetGatewayUrl: () => ipcRenderer.invoke('tinadec:gateway-url-reset'),
+  discoverServices: () => ipcRenderer.invoke('tinadec:discover-services'),
   restartApp: () => ipcRenderer.invoke('tinadec:restart'),
   openProjectDialog: () => ipcRenderer.invoke('tinadec:open-project'),
   minimizeWindow: () => ipcRenderer.send('tinadec:minimize'),

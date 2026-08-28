@@ -1,0 +1,102 @@
+// TinadecOffice 运行进程 / 端口拓扑（当前态）
+// 回答：“一次开发态集成部署里，究竟有哪些进程、谁监听哪个端口、谁 spawn 谁、状态落在哪。”
+// 证据：package.json:11-15、apps/desktop/{vite.config.ts,scripts/dev.mjs,electron/preload.cjs}、
+//       TinadecGateway/src/config.ts:66-105、TinadecCore/Api/Properties/launchSettings.json、
+//       TinadecCore/Persistence/StoragePaths.cs:14-32、TinadecCore/Tools/TinadecToolsProcessManager.cs:25-83、
+//       TinadecCore/DmaEA/CliRuntime/CliProcessManager.cs:34。
+// 注：本文件是 system-modeler 的辅助视图；完整的发布/环境/扩缩容拓扑属 deployment-topology-analyzer 范围。
+digraph TinadecRuntimeTopology {
+  rankdir=TB;
+  nodesep=0.4; ranksep=0.9; splines=true;
+  fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica";
+  label="TinadecOffice 默认集成部署（Windows 开发态）：4 个产品进程 + 3 类被 Core 拉起的子进程 + 4 个本地存储根\n红虚线 = 已配置但仓库内无实现；灰虚线 = 可选/切换项";
+  node [fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica", fontsize=11, style="rounded,filled", fillcolor="#f2f5f9"];
+  edge [fontname="Helvetica", fontsize=9];
+
+  # ------------------------------------------------------------------ 开发者机器
+  subgraph cluster_dev {
+    label="开发者机器（Windows 10/11，单用户）"; fontsize=13; style=rounded; color="#334155";
+
+    subgraph cluster_electron {
+      label="TinadecApp：Electron 进程组"; fontsize=12; style=rounded; color="#1f6fb4";
+      mainp [label="Electron 主进程\nnodeIntegration=false / contextIsolation=true\nPTY、宠物窗口、面板窗口、配置与布局落盘", fillcolor="#cfe3f7"];
+      win_main [label="主窗口渲染进程\n127.0.0.1:5173（Vite dev）或 dist/index.html（loadFile）", fillcolor="#e8f2fb"];
+      win_panel [label="分离面板窗口 ×N\n/panel 路由，cursor 轮询实现拖出/回附", fillcolor="#e8f2fb"];
+      win_debug [label="Debug Studio 窗口\n/debug-studio，?splash=0", fillcolor="#e8f2fb"];
+      win_pet [label="宠物窗口 ×N\n透明、always-on-top、点击穿透", fillcolor="#e8f2fb"];
+      vite [label="Vite dev server\n127.0.0.1:5173 strictPort", shape=note, fillcolor="#fff3cd"];
+      cdp [label="CDP 9222\n--remote-debugging-port（dev 专用，供 UI 自动化 MCP）", shape=note, fillcolor="#fff3cd"];
+    }
+
+    subgraph cluster_webclient {
+      label="TinadecApp（Web 变体，二选一）"; fontsize=12; style=rounded; color="#1f6fb4";
+      brow [label="浏览器标签\n127.0.0.1:5174，同源 /api /docs /ws 代理到 48730", fillcolor="#e8f2fb"];
+    }
+
+    subgraph cluster_gateway {
+      label="TinadecGateway"; fontsize=12; style=rounded; color="#7a5c00";
+      gwy [label="Bun + Elysia 单进程\n监听 127.0.0.1:48730（local 模式）/ 0.0.0.0（cloud 模式）\n约 200 条 /api/v1 路由 + 3 条 .ws() 死桩", fillcolor="#fff3cd"];
+    }
+
+    subgraph cluster_core {
+      label="TinadecCore"; fontsize=12; style=rounded; color="#2f6f4f";
+      corep [label="dotnet TinadecCore.Api.exe\n--urls http://127.0.0.1:48731（端口来自 launchSettings / 命令行，非代码硬编码）\n后台循环：FullDuplexRunEngine(2s 租约扫描 + 100ms 队列)\nRunRecoveryHostedService / UserToolActionRecoveryHostedService", fillcolor="#dff0e2"];
+    }
+
+    subgraph cluster_children {
+      label="由 Core 拉起的子进程（Core 是父进程与生命周期 owner）"; fontsize=12; style="rounded,dashed"; color="#2f6f4f";
+      tools [label="TinadecTools 子进程 ×（每个 workspace 根 1 个）\n行分隔 JSON over stdio（BOM-free UTF-8）\nmanifest v2 / 46 个 [ToolFunction] 工具（43 字面量 id + 3 个 TOOL_ID 常量）", fillcolor="#eaf4ea"];
+      sandbox [label="TinadecSandbox 本地账户进程\ncommand_run 专用：临时 ACL 授予→执行→撤销\nJob Object 超时终止（上限 30 分钟）", fillcolor="#eaf4ea"];
+      cli [label="CLI 运行时服务（本机）\nclaude/codex/cursor：ACP --acp-port 随机空闲端口\nopencode：serve --port", fillcolor="#eaf4ea"];
+      mcp [label="MCP server 子进程\nmcp_servers.json 或 TINADEC_TOOLS_MCP_CONFIG", fillcolor="#eaf4ea"];
+    }
+
+    subgraph cluster_localstate {
+      label="本机状态根（谁写谁读）"; fontsize=12; style=rounded; color="#6b7280";
+      db [label="SQLite\nApi 内容根 data/tinadec.db（+ -wal/-shm）\n9 个 DbContext 共享同一实例", shape=cylinder, fillcolor="#dfe9f5"];
+      files [label="Core 文件仓库 data/\nsessions/ tasks/ events/*.events.jsonl\nartifacts/ content/tenants/{t}/{w}/{sha256}\nsecrets/{ref}.bin（DPAPI ProtectedFileSecretStore）\nvectors/tenants/{t}/{w}/{project}.db（sqlite-vec）", shape=cylinder, fillcolor="#dfe9f5"];
+      udata [label="Electron userData\nsettings.json（Gateway URL）\nworkbench-layout.json\npets/\n~/.tinadec-panel-layout.json", shape=cylinder, fillcolor="#eef2f7"];
+    }
+  }
+
+  # ------------------------------------------------------------------ 外部
+  llm [label="远端模型 API\nOpenAI 兼容 chat/responses · Anthropic Messages", shape=cloud, fillcolor="#e5e7eb"];
+  gitz [label="Git remote\n（fetch/push/pull，须已配置 remote 名称）", shape=cloud, fillcolor="#e5e7eb"];
+  wsroot [label="工作区目录\n（工具层唯一可操作对象；拒绝 symlink 与越界）", shape=folder, fillcolor="#e5e7eb"];
+  absent [label="Tool Runtime 服务 :48732\nconfig.ts:72 默认值 + runtimeProxy.test.ts 断言转发\n仓库内无任何 HTTP/WS 实现 → 该路径实际不可用", shape=cloud, style="rounded,dashed", color="#b91c1c", fontcolor="#b91c1c", fillcolor="#fde8e8"];
+
+  # ------------------------------------------------------------------ App 内部
+  vite -> win_main [label="dev 加载", style=dotted];
+  mainp -> win_main [label="创建/管理", color="#1f6fb4"];
+  mainp -> win_panel [label="detach/reattach", color="#1f6fb4"];
+  mainp -> win_debug [label="open-debug-studio", color="#1f6fb4"];
+  mainp -> win_pet [label="pet-create", color="#1f6fb4"];
+  mainp -> udata [label="读写本地体验偏好", color="#6b7280"];
+  mainp -> cdp [label="dev 启动参数", style=dotted];
+  win_main -> gwy [label="REST + SSE(EventSource/fetch-stream) + Debug WS\n基址：TINADEC_RESOLVED_GATEWAY_URL → TINADEC_GATEWAY_URL → userData → :48730", color="#1f6fb4"];
+  win_panel -> gwy [label="同一渲染层", color="#1f6fb4"];
+  win_debug -> gwy [label="REST + ws://…/api/v1/debug/ws", color="#1f6fb4"];
+  brow -> gwy [label="同源代理 /api /docs /ws → :48730", color="#1f6fb4"];
+
+  # ------------------------------------------------------------------ Gateway 出向
+  gwy -> corep [label="proxyJson（缓冲）/ proxySse（原样透传流）\n+x-request-id, x-tinadec-principal: dev@local（本地模式）", color="#7a5c00"];
+  gwy -> absent [label="POST /api/v1/code/tools/{id}/execute\nPOST /api/v1/tool-runtime/tools/{id}/execute（绕过 Core 的用户直连传输面）", color="#b91c1c", style=dashed];
+  gwy -> gwy [label="3 条 .ws() 路由：算出 targetUrl 后 void 丢弃；\ncreateWsProxyHandlers 无调用点", color="#b91c1c", style=dashed];
+
+  # ------------------------------------------------------------------ Core 出向
+  corep -> db [label="EF Core（默认提供者）\n启动即迁移 SQLite", color="#2f6f4f"];
+  corep -> files [label="事件 JSONL 追加 + 索引；\n会话历史原子替换；内容/密钥引用", color="#2f6f4f"];
+  corep -> tools [label="stdin/stdout 行协议\nEnsureStartedAsync / CallAsync / GetManifestAsync", color="#2f6f4f"];
+  corep -> cli [label="ACP / opencode-serve 作为 IChatClient 后端", color="#2f6f4f"];
+  corep -> llm [label="Models 代理调用（密钥只取 SecretStore 引用；无密钥则 run 干净失败）", color="#2f6f4f"];
+  tools -> sandbox [label="command_run（始终需审批）", color="#2f6f4f"];
+  tools -> wsroot [label="文件/Git/检索", color="#2f6f4f"];
+  tools -> mcp [label="mcp_list/search/invoke（invoke 需审批）", color="#2f6f4f"];
+  sandbox -> wsroot [label="临时 ACL 授予目录", style=dotted];
+  tools -> gitz [label="git_fetch/push/pull", color="#2f6f4f"];
+  corep -> wsroot [label="Lifecycle 快照 provider 读取 HEAD/index/worktree", color="#2f6f4f"];
+
+  # ------------------------------------------------------------------ 可选切换
+  pg [label="PostgreSQL :5432 + pgvector\nTinadecPersistence:Provider=PostgreSql\n迁移需显式 ApplyMigrationsOnStartup（防多实例竞态）", shape=cylinder, style="rounded,dashed", fillcolor="#eef2f7"];
+  corep -> pg [label="可选替代 SQLite（CI: pgvector/pgvector:pg16）", style=dotted, color="#6b7280"];
+}

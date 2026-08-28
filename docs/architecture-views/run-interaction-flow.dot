@@ -1,0 +1,94 @@
+// 关键路径：一次交互（run）如何穿过四层并回到用户
+// 回答：“用户在 Desktop 发送一句话，到看见流式回答，中间按什么顺序经过哪些类/端口，状态在哪里落盘。”
+// 全部节点均为当前态代码证据；序号即调用顺序。证据与行号见 tinadecoffice.evidence.md 的 flow:* 条目。
+// 重要事实：POST /interactions 返回 201 JSON 而非 SSE——事件流必须另开 GET /runs/{id}/stream（或走 invoke-stream）。
+digraph RunFlow {
+  rankdir=TB;
+  nodesep=0.3; ranksep=0.55;
+  fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica";
+  label="一次交互的端到端路径（14 步，含一次工具审批的暂停/唤醒分支）\nCore 是唯一状态权威：每一步的持久化都发生在 Core，Gateway 只搬运字节，Desktop 只按 run_id+seq 去重渲染";
+  node [fontname="Noto Sans CJK SC,Microsoft YaHei,Helvetica", fontsize=10, style="rounded,filled", fillcolor="#f2f5f9"];
+  edge [fontname="Helvetica", fontsize=9, color="#334155"];
+
+  # ------------------------------------------------------------- 用户与客户端
+  subgraph cluster_app {
+    label="TinadecApp（渲染层）"; fontsize=12; style=rounded; color="#1f6fb4";
+    u1 [label="① 用户输入\nHomePage 发送框 → HomeController.handleSend()\ncomposer 模式 plan/spec/ask/vibe/auto/agent", fillcolor="#cfe3f7"];
+    u2 [label="② api.createInteraction()\nPOST /sessions/{id}/interactions\nsnake_case；queued|insert|parallel", fillcolor="#cfe3f7"];
+    u3 [label="⑭ useRunStream / EventSource\n按 run_id + seq 去重、心跳、重连、Last-Event-ID", fillcolor="#cfe3f7"];
+  }
+
+  # ------------------------------------------------------------- 网关
+  subgraph cluster_gw {
+    label="TinadecGateway（无状态）"; fontsize=12; style=rounded; color="#7a5c00";
+    g1 [label="③ interactionsMapper 只做薄枚举校验\nbody 原样转发（index.ts:1606）", fillcolor="#fff3cd"];
+    g2 [label="⑦ 201 JSON 原样回传\n（不解释 application_mode/agent_mode/permission_mode）", fillcolor="#fff3cd"];
+    g3 [label="⑭ GET /runs/{id}/stream → proxySse\nLast-Event-ID → after_seq；响应流不被缓冲", fillcolor="#fff3cd"];
+  }
+
+  # ------------------------------------------------------------- Core 受理与冻结
+  subgraph cluster_core_admission {
+    label="TinadecCore — 受理与冻结（写库后才回包）"; fontsize=12; style=rounded; color="#2f6f4f";
+    c1 [label="④ InteractionsEndpoints\n校验 meeting_model_override（AgentModelResolver.PreviewAsync）\n解析 conversation.{agent_mode} 已发布 ModeVersion → 持久化到 session", fillcolor="#dff0e2"];
+    c2 [label="⑤ FullDuplexRunCoordinator.SubmitAsync\nclient message id 幂等 · context_revision 冲突=409 · 活跃 run 上限", fillcolor="#dff0e2"];
+    c3 [label="⑥ 冻结运行配置（此后 run 内不再变更）\nFrozenRunConfiguration.ResolveAsync\n= 策略快照(GovernanceService.CaptureAsync)\n+ 关系化 roster(FormalModeResolver)\n+ 逐 Agent 模型计划(AgentModelResolver.FreezeAsync)\n+ 工具 manifest 哈希(ToolManifestSnapshotResolver)", fillcolor="#bfe6c6"];
+  }
+
+  # ------------------------------------------------------------- Core 引擎阶段
+  subgraph cluster_engine {
+    label="FullDuplexRunEngine（后台服务；租约 + 检查点）"; fontsize=12; style=rounded; color="#2f6f4f";
+    e0 [label="⑧ EnqueueAsync → TryAcquireRunLeaseAsync（租约 30s）→ 写 run_checkpoints", fillcolor="#eaf4ea"];
+    e1 [label="⑨ operation 层：治理协调 + 任务规划\nContextProvider.BuildContextAsync → PromptAssembler → PlanningAgent.PlanAsync\ntask_graph.created 事件", fillcolor="#eaf4ea"];
+    e2 [label="⑩ execution 层：ExecuteReadyTasksAsync\nAgentInstanceService.SpawnAsync（深度/数量预算 + lineage）\nExecutionAgent.GetNextTurnAsync", fillcolor="#eaf4ea"];
+    e3 [label="⑪ 监督：SupervisionAgent.ReviewAsync\n需修订→replanning；需人→awaiting_user", fillcolor="#eaf4ea"];
+    e4 [label="⑫ meeting 定稿：FinalizeAsync → GenerateMeetingResponseAsync\n（经 Maf18RuntimeAdapter.CreateGovernanceAgent）\n只有 meeting 直接回答用户", fillcolor="#eaf4ea"];
+  }
+
+  # ------------------------------------------------------------- 模型与工具支路
+  subgraph cluster_model {
+    label="模型解析与归因（每个回合）"; fontsize=12; style=rounded; color="#5b3ea6";
+    m1 [label="IAgentModelResolver（唯一事实源）\n策略 inherit | route | fixed", fillcolor="#ece6f8"];
+    m2 [label="Models.ModelProvider.ResolveChatAsync\nroute→版本→有序候选→provider→不可变配置→协议\n密钥取 ISecretStore 引用（缺失即失败，不伪造成功）", fillcolor="#ece6f8"];
+    m3 [label="AgentChatClientFactory 按协议装配\nopenai-chat / openai-responses / anthropic-messages / ACP / opencode-serve", fillcolor="#ece6f8"];
+    m4 [label="持久化 model_invocations 归因行\ncall_id/attempt · strategy_source · fallback_position · token usage", shape=cylinder, fillcolor="#ece6f8"];
+    llm [label="远端模型 API / 本机 CLI 服务", shape=cloud, fillcolor="#e5e7eb"];
+  }
+
+  subgraph cluster_tool {
+    label="工具执行（写操作必经审批）"; fontsize=12; style=rounded; color="#8b2e2e";
+    t1 [label="ToolDispatcher.PrepareAsync\n先落 tool_executions → 快照 → PDP → lease → ActionApproval", fillcolor="#fbe3e3"];
+    t2 [label="Lifecycle.WorkspaceSnapshotService\n高危写前捕获文件系统/Git 快照，失败即阻塞", fillcolor="#fbe3e3"];
+    t3 [label="Governance.GovernanceService\nAuthorizeToolAsync / RequestPermissionAsync（PDP + 租约）", fillcolor="#fbe3e3"];
+    t4 [label="ToolApprovalCoordinator.EnsureApprovalAsync\n→ awaiting_user：引擎抛 RunAwaitingExternalDecisionException 并释放租约", fillcolor="#fbe3e3"];
+    t5 [label="用户批准\nPOST /approvals/{id}/decision 或 /governance/permission-requests/{id}/decision\n→ ControlPlaneService.DecideApproval → engine.EnqueueAsync(runId) 唤醒同一 run", fillcolor="#fbe3e3"];
+    t6 [label="ToolDispatcher.ResumeAsync → TinadecToolsProcessManager.CallAsync\n行分隔 JSON over stdio", fillcolor="#fbe3e3"];
+    t7 [label="TinadecTools 子进程\nTinadecSandbox 账户 + 临时 ACL + Job Object", fillcolor="#fbe3e3"];
+  }
+
+  # ------------------------------------------------------------- 事件与投影
+  subgraph cluster_durability {
+    label="持久化与回放（Core）"; fontsize=12; style=rounded; color="#0f766e";
+    d1 [label="⑬ StorageLifecycleService\nAppendEventAsync → events/{runId}.events.jsonl（不可变追加）\n+ event_index / control_event_index（字节偏移）", shape=cylinder, fillcolor="#d9f2ee"];
+    d2 [label="⑬ AppendRunStreamAsync → run_stream（ack/delta/done/error）\nrun_stream_cursors 支撑断线续传", shape=cylinder, fillcolor="#d9f2ee"];
+    d3 [label="FollowEventsAsync 2s 水位轮询 + 按 run 序号去重\n→ SSE 心跳与跟随", fillcolor="#d9f2ee"];
+  }
+
+  # ------------------------------------------------------------- 主路径
+  u1 -> u2 -> g1 -> c1 -> c2 -> c3;
+  c3 -> g2 [label="⑦ 201 Created"];
+  g2 -> u3 [label="客户端随后另开流", style=dashed];
+  c3 -> e0 -> e1 -> e2 -> e3 -> e4;
+  e1 -> d1 [label="事件"];
+  e2 -> m1;
+  m1 -> m2 -> m3 -> llm;
+  m3 -> m4;
+  e2 -> t1;
+  t1 -> t2 -> t3 -> t4;
+  t4 -> t5 [label="暂停后由外部决定唤醒"];
+  t5 -> e0 [label="同一 run 继续", style=dashed];
+  t5 -> t6 -> t7;
+  t7 -> t1 [label="结构化结果 + step.result.created", style=dashed];
+  e4 -> d2 [label="delta → done"];
+  d1 -> d3 -> g3 -> u3 [label="SSE"];
+  d2 -> g3 [label="replay-then-follow", style=dashed];
+}

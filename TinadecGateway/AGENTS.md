@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-27
-**Last Updated By:** Trae (GLM-5.3)
-**Last Verified Commit:** 9b3d42b
+**Last Updated:** 2026-08-28
+**Last Updated By:** Qoder
+**Last Verified Commit:** 214fa05
 **Branch:** main
 
 ## OVERVIEW
@@ -91,6 +91,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
 - `POST /api/v1/model-providers/:providerInstanceId/models/refresh` 为纯 Core 代理（模型发现，canonical 路径；Core 从 provider 配置读取 base_url/api_key 拉取远端 `/models`，OpenAI 兼容走 Bearer、Anthropic 走 x-api-key）。
+- `GET /api/v1/health` 降级契约（2026-08-28 服务自发现）：Core 网络不可达（`CORE_UNREACHABLE`）时返回 503 + `{ gateway: 'ok', core_status: 'unreachable', mode, core_url, tool_runtime_url }`（Gateway 自身健康、上游离线），Desktop 主进程据此把"可达但 Core 离线"的 Gateway 列入发现清单；Core 正常时返回 200 并携带 `core_status: 'ready'`，其余错误仍走 ProblemDetails 映射。
 - `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/:packId`、`POST /api/v1/agent-packs/install-preview`、`PUT /api/v1/agent-packs/:packId` 是纯 Core 代理。Gateway 不解析 manifest、不重算 hash、不保存 preview/receipt；PUT 必须透传 `If-Match` 与 `Idempotency-Key`，读/preview/apply 必须保留 ETag。
 - 记忆和智能体候选的读取、晋升与拒绝同样直接代理 Core：`/api/v1/memory-candidates` 与 `/api/v1/agent-candidates`。Gateway 不审核候选、不生成 profile，也不修改记忆状态。
 - `src/index.ts` 导出未监听的 `app` 供 `runtimeProxy.test.ts` 验证代理契约；仅直接作为 Bun 入口运行时才监听端口。

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-08-26T13:31:29.925Z",
+  "sessionId": "sess_10990cb8-77c6-4a0a-96f5-0d71ffc84276",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "C:\\git\\agent\\TinadecOffice\\TinadecCore\\Runtime\\ControlPlaneService.cs",
+  "outcome": "inconclusive",
+  "coverage": "partial",
+  "findingCount": 0,
+  "durationMs": 11,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

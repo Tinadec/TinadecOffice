@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, Save, ShieldCheck } from '@lucide/vue'
+import { Radar, RefreshCw, Save, ShieldCheck } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
 import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
@@ -129,6 +129,34 @@ function clearGatewayRestartBanner(): void {
   if (existing) dismissNotification(existing.id)
 }
 
+const discoveredServices = ref<DiscoveredService[]>([])
+const scanState = ref<'idle' | 'scanning' | 'scanned' | 'failed'>('idle')
+
+async function scanServices(): Promise<void> {
+  scanState.value = 'scanning'
+  try {
+    discoveredServices.value = await window.tinadec.discoverServices()
+    scanState.value = 'scanned'
+    if (discoveredServices.value.length === 0) {
+      notify.info({ message: t('settings.serviceDiscoveryEmpty'), source: 'gateway' })
+    }
+  } catch (error) {
+    scanState.value = 'failed'
+    discoveredServices.value = []
+    status.error({
+      key: 'gateway-config',
+      source: 'gateway',
+      message: error instanceof Error ? error.message : t('settings.serviceDiscoveryFailed'),
+    })
+  }
+}
+
+function selectDiscoveredService(service: DiscoveredService): void {
+  if (service.service !== 'gateway' || appConfig.value.managed) return
+  gatewayUrlDraft.value = service.url
+  notify.success({ message: t('settings.serviceDiscoverySelected'), source: 'gateway' })
+}
+
 function onEnterPrefChange(e: Event): void {
   const v = (e.target as HTMLSelectElement).value as DispatchPref
   enterPrefDraft.value = v
@@ -172,6 +200,60 @@ void dismissConfirm
                 ? t('settings.gatewayUnreachable')
                 : t('settings.gatewayNotTested') }}
         </UiBadge>
+      </div>
+
+      <div class="gateway-config-field service-discovery-field">
+        <div class="service-discovery-heading">
+          <div>
+            <UiLabel>{{ t('settings.serviceDiscovery') }}</UiLabel>
+            <div class="gateway-config-meta">
+              <span>{{ t('settings.serviceDiscoveryHint') }}</span>
+            </div>
+          </div>
+          <UiButton
+            variant="outline"
+            :disabled="scanState === 'scanning' || appConfig.managed"
+            @click="scanServices"
+          >
+            <Radar :size="14" :class="{ spinning: scanState === 'scanning' }" />
+            {{ scanState === 'scanning' ? t('settings.scanningServices') : t('settings.scanServices') }}
+          </UiButton>
+        </div>
+
+        <p v-if="appConfig.managed" class="gateway-config-managed">
+          <ShieldCheck :size="14" />
+          {{ t('settings.gatewayManaged') }}
+        </p>
+        <ul v-else-if="discoveredServices.length > 0" class="service-discovery-list">
+          <li v-for="service in discoveredServices" :key="service.url">
+            <button
+              v-if="service.service === 'gateway'"
+              type="button"
+              class="service-discovery-row"
+              :class="{ selected: gatewayUrlDraft.trim().replace(/\/$/, '') === service.url }"
+              @click="selectDiscoveredService(service)"
+            >
+              <UiBadge variant="secondary">{{ t('settings.serviceBadgeGateway') }}</UiBadge>
+              <span class="service-discovery-url">{{ service.url }}</span>
+              <UiBadge :variant="service.core_status === 'ready' ? 'outline' : 'destructive'">
+                {{ service.core_status === 'ready' ? t('settings.serviceCoreReady') : t('settings.serviceCoreUnreachable') }}
+              </UiBadge>
+              <UiBadge v-if="service.current" variant="outline">{{ t('settings.serviceCurrent') }}</UiBadge>
+              <span v-if="service.mode" class="service-discovery-meta">{{ service.mode }}</span>
+            </button>
+            <div v-else class="service-discovery-row service-discovery-row-core">
+              <UiBadge variant="outline">{{ t('settings.serviceBadgeCore') }}</UiBadge>
+              <span class="service-discovery-url">{{ service.url }}</span>
+              <span class="service-discovery-meta">{{ t('settings.serviceCoreDirectHint') }}</span>
+            </div>
+          </li>
+        </ul>
+        <div v-else-if="scanState === 'scanned'" class="gateway-config-meta">
+          <span>{{ t('settings.serviceDiscoveryEmpty') }}</span>
+        </div>
+        <div v-else-if="scanState !== 'scanning'" class="gateway-config-meta">
+          <span>{{ t('settings.serviceDiscoveryIdleHint') }}</span>
+        </div>
       </div>
 
       <div class="gateway-config-field">
