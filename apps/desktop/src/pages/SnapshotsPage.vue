@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { Camera, RotateCcw } from '@lucide/vue'
 import {
   api,
-  type ProjectDto,
   type SnapshotDto,
 } from '@/api'
 import { useProjectStore } from '@/stores/project'
@@ -34,7 +33,7 @@ type RestoreResult = {
 }
 const lastRestore = ref<{ snapshotId: string; result: RestoreResult } | null>(null)
 
-const projects = computed<ProjectDto[]>(() => projectStore.projects ?? [])
+const projects = computed(() => projectStore.projects ?? [])
 const sorted = computed(() =>
   [...snapshots.value].sort((a, b) => b.created_at.localeCompare(a.created_at)),
 )

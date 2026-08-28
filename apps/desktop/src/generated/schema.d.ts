@@ -946,6 +946,71 @@ export interface components {
       /** @description Pack-local prompt pipeline resource key. */
       prompt_pipeline_ref: string;
     };
+    Assignment: {
+      agent_id: string;
+      /** @enum {string} */
+      agent_layer: "operation" | "execution";
+      agent_name: string;
+      id: string;
+      run_id: string;
+      status: string;
+      task_node_id: string;
+      [key: string]: unknown;
+    };
+    ContextVersion: {
+      base_revision: number | null;
+      created_at: string | null;
+      id: string;
+      kind: string;
+      revision: number;
+      run_id: string | null;
+      session_id: string;
+      status: string;
+      [key: string]: unknown;
+    };
+    ContextVersionList: components["schemas"]["ContextVersion"][];
+    /** @description Gateway health fingerprint with forwarded Core health fields. */
+    Health: {
+      /** @enum {string} */
+      core_status: "ready" | "unreachable";
+      core_url: string;
+      /** @enum {string} */
+      gateway: "ok";
+      mode: string;
+      tool_runtime_url: string;
+      [key: string]: unknown;
+    };
+    MeetingModelOverride: {
+      model: string | null;
+      provider_instance_id: string;
+      [key: string]: unknown;
+    };
+    Message: {
+      content: string;
+      created_at: string | null;
+      id: string;
+      role: string;
+      run_id: string | null;
+      session_id: string;
+      [key: string]: unknown;
+    };
+    MessageList: components["schemas"]["Message"][];
+    OrchestrationSnapshot: {
+      agent_instances: unknown[];
+      assignments: components["schemas"]["Assignment"][];
+      context_packs: unknown[];
+      frozen: {
+        [key: string]: unknown;
+      } | null;
+      graph: {
+        [key: string]: unknown;
+      } | null;
+      nodes: unknown[];
+      run: components["schemas"]["Run"] | null;
+      step_results: unknown[];
+      supervision_findings: components["schemas"]["SupervisionFinding"][];
+      [key: string]: unknown;
+    };
     ProblemDetails: {
       /** @description Stable snake_case machine-readable error code. */
       code: string;
@@ -958,6 +1023,87 @@ export interface components {
       type: string;
       [key: string]: unknown;
     };
+    Project: {
+      created_at: string | null;
+      /** Format: uuid */
+      id: string;
+      kind: string | null;
+      /** @enum {string} */
+      lifecycle_status: "active" | "archived" | "trashed";
+      name: string;
+      path: string;
+      trashed_at: string | null;
+      updated_at: string | null;
+      [key: string]: unknown;
+    };
+    ProjectList: components["schemas"]["Project"][];
+    Run: {
+      completed_at: string | null;
+      created_at: string | null;
+      id: string;
+      latest_event_at: string | null;
+      latest_event_sequence: number | null;
+      session_id: string;
+      /** @description Ten-state durable run status (planning..cancelled). */
+      status: string;
+      summary: string | null;
+      task_revision: number | null;
+      trigger_message_id: string | null;
+      updated_at: string | null;
+      [key: string]: unknown;
+    };
+    RunList: components["schemas"]["Run"][];
+    Session: {
+      created_at: string | null;
+      history_revision: number | null;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      lifecycle_status: "active" | "archived" | "trashed";
+      meeting_model_override: components["schemas"]["MeetingModelOverride"] | null;
+      mode: string | null;
+      mode_version_id: string | null;
+      /** Format: uuid */
+      project_id: string;
+      status: string | null;
+      summary: string | null;
+      title: string | null;
+      trashed_at: string | null;
+      updated_at: string | null;
+      [key: string]: unknown;
+    };
+    SessionList: components["schemas"]["Session"][];
+    SupervisionFinding: {
+      category: string;
+      created_at: string | null;
+      id: string;
+      recommendation: string;
+      run_id: string;
+      session_id: string;
+      severity: string;
+      status: string;
+      summary: string;
+      [key: string]: unknown;
+    };
+    SupervisionFindingList: components["schemas"]["SupervisionFinding"][];
+    TaskNode: {
+      created_at: string | null;
+      dependencies: string[];
+      description: string;
+      graph_id: string | null;
+      id: string;
+      priority: number;
+      required_capabilities: string[];
+      risk: string;
+      run_id: string;
+      session_id: string;
+      status: string;
+      success_criteria: string[];
+      title: string;
+      updated_at: string | null;
+      [key: string]: unknown;
+    };
+    TaskNodeList: components["schemas"]["TaskNode"][];
   };
   responses: never;
   parameters: never;
@@ -1892,8 +2038,17 @@ export interface operations {
   /** Health probe */
   getApiV1Health: {
     responses: {
+      /** @description Gateway health fingerprint with forwarded Core health fields. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["Health"];
+        };
+      };
+      /** @description Gateway healthy but Core unreachable (service-discovery degraded fingerprint). */
+      503: {
+        content: {
+          "application/json": components["schemas"]["Health"];
+        };
       };
     };
   };
@@ -2240,8 +2395,11 @@ export interface operations {
   /** List projects */
   getApiV1Projects: {
     responses: {
+      /** @description Projects in the workspace. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["ProjectList"];
+        };
       };
     };
   };
@@ -2267,8 +2425,11 @@ export interface operations {
       };
     };
     responses: {
-      200: {
-        content: never;
+      /** @description Created project. */
+      201: {
+        content: {
+          "application/json": components["schemas"]["Project"];
+        };
       };
     };
   };
@@ -2309,8 +2470,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Renamed project. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["Project"];
+        };
       };
     };
   };
@@ -2747,8 +2911,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Replay-derived run orchestration projection. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["OrchestrationSnapshot"];
+        };
       };
     };
   };
@@ -2798,8 +2965,11 @@ export interface operations {
   /** List sessions */
   getApiV1Sessions: {
     responses: {
+      /** @description Sessions in the workspace. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["SessionList"];
+        };
       };
     };
   };
@@ -2825,8 +2995,11 @@ export interface operations {
       };
     };
     responses: {
-      200: {
-        content: never;
+      /** @description Created session. */
+      201: {
+        content: {
+          "application/json": components["schemas"]["Session"];
+        };
       };
     };
   };
@@ -2890,8 +3063,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Context revision/patch history for the session, optionally filtered by run. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["ContextVersionList"];
+        };
       };
     };
   };
@@ -3003,8 +3179,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Session messages. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["MessageList"];
+        };
       };
     };
   };
@@ -3042,8 +3221,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Replay-derived session orchestration projection. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["OrchestrationSnapshot"];
+        };
       };
     };
   };
@@ -3068,8 +3250,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Durable runs for the session. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["RunList"];
+        };
       };
     };
   };
@@ -3081,8 +3266,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Supervision findings for the session. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["SupervisionFindingList"];
+        };
       };
     };
   };
@@ -3094,8 +3282,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description Task nodes across the session runs. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["TaskNodeList"];
+        };
       };
     };
   };

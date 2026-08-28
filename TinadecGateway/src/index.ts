@@ -38,6 +38,7 @@ import {
   agentPackOpenApiSchemas,
   agentPackProblemResponse,
 } from './agentPackOpenApi.js';
+import { externalDtoSchemas, externalJsonResponse } from './externalDtoOpenApi.js';
 
 const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
@@ -126,7 +127,7 @@ const app = new Elysia()
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { schemas: agentPackOpenApiSchemas as never },
+      components: { schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -213,7 +214,16 @@ const app = new Elysia()
     const mapped = mapHealth(core, { gateway: 'ok', core_status: 'ready', mode: config.mode, core_url: coreUrl(), tool_runtime_url: toolRuntimeUrl() });
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped;
-  }, { detail: { summary: 'Health probe', tags: ['Health'] } })
+  }, {
+    detail: {
+      summary: 'Health probe',
+      tags: ['Health'],
+      responses: {
+        200: externalJsonResponse('Health', 'Gateway health fingerprint with forwarded Core health fields.'),
+        503: externalJsonResponse('Health', 'Gateway healthy but Core unreachable (service-discovery degraded fingerprint).'),
+      },
+    },
+  })
   .get('/api/v1/doctor', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/doctor', { headers });
@@ -264,7 +274,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/projects'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapProjects(result.data);
-  }, { detail: { summary: 'List projects', tags: ['Projects'] } })
+  }, { detail: { summary: 'List projects', tags: ['Projects'], responses: { 200: externalJsonResponse('ProjectList', 'Projects in the workspace.') } } })
   .post('/api/v1/projects', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/projects', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -273,7 +283,7 @@ const app = new Elysia()
     const mapped = mapProjects([result.data]);
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped[0] ?? result.data;
-  }, { detail: { summary: 'Create project', tags: ['Projects'] }, body: t.Object({ name: t.String(), path: t.String() }, { additionalProperties: true }) })
+  }, { detail: { summary: 'Create project', tags: ['Projects'], responses: { 201: externalJsonResponse('Project', 'Created project.') } }, body: t.Object({ name: t.String(), path: t.String() }, { additionalProperties: true }) })
   .patch('/api/v1/projects/:projectId', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}`;
@@ -283,7 +293,7 @@ const app = new Elysia()
     const mapped = mapProjects([result.data]);
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return mapped[0] ?? result.data;
-  }, { detail: { summary: 'Rename project', tags: ['Projects'] }, body: t.Object({ name: t.String() }, { additionalProperties: true }) })
+  }, { detail: { summary: 'Rename project', tags: ['Projects'], responses: { 200: externalJsonResponse('Project', 'Renamed project.') } }, body: t.Object({ name: t.String() }, { additionalProperties: true }) })
   .post('/api/v1/projects/:projectId/archive', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/archive`;
@@ -453,7 +463,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/sessions'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapSessions(result.data);
-  }, { detail: { summary: 'List sessions', tags: ['Sessions'] } })
+  }, { detail: { summary: 'List sessions', tags: ['Sessions'], responses: { 200: externalJsonResponse('SessionList', 'Sessions in the workspace.') } } })
   .post('/api/v1/sessions', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/sessions', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -462,7 +472,7 @@ const app = new Elysia()
     const mapped = mapSessions([result.data]);
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped[0] ?? result.data;
-  }, { detail: { summary: 'Create session', tags: ['Sessions'] }, body: t.Object({ project_id: t.String(), title: t.Optional(t.String()) }, { additionalProperties: true }) })
+  }, { detail: { summary: 'Create session', tags: ['Sessions'], responses: { 201: externalJsonResponse('Session', 'Created session.') } }, body: t.Object({ project_id: t.String(), title: t.Optional(t.String()) }, { additionalProperties: true }) })
   .patch('/api/v1/sessions/:sessionId', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}`, { method: 'PATCH', body: body as Record<string, unknown>, headers });
@@ -510,7 +520,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/messages`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapMessages(result.data);
-  }, { detail: { summary: 'List messages', tags: ['Messages'] } })
+  }, { detail: { summary: 'List messages', tags: ['Messages'], responses: { 200: externalJsonResponse('MessageList', 'Session messages.') } } })
   .post('/api/v1/sessions/:sessionId/messages', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/messages`, { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -558,7 +568,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/orchestration`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapOrchestration(result.data);
-  }, { detail: { summary: 'Session orchestration snapshot', tags: ['Runs'] } })
+  }, { detail: { summary: 'Session orchestration snapshot', tags: ['Runs'], responses: { 200: externalJsonResponse('OrchestrationSnapshot', 'Replay-derived session orchestration projection.') } } })
   .get('/api/v1/runs/:runId/orchestration', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/runs/${params.runId}/orchestration`, { headers });
@@ -566,7 +576,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/runs/${params.runId}/orchestration`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapOrchestration(result.data);
-  }, { detail: { summary: 'Run orchestration', tags: ['Runs'] } })
+  }, { detail: { summary: 'Run orchestration', tags: ['Runs'], responses: { 200: externalJsonResponse('OrchestrationSnapshot', 'Replay-derived run orchestration projection.') } } })
   .get('/api/v1/runs/:runId/agent-lineage', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/runs/${params.runId}/agent-lineage`, { headers });
@@ -695,7 +705,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/runs`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapRuns(result.data);
-  }, { detail: { summary: 'List session runs', tags: ['Runs'] } })
+  }, { detail: { summary: 'List session runs', tags: ['Runs'], responses: { 200: externalJsonResponse('RunList', 'Durable runs for the session.') } } })
   .get('/api/v1/sessions/:sessionId/task-nodes', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/task-nodes`, { headers });
@@ -703,7 +713,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/task-nodes`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapTaskNodes(result.data);
-  }, { detail: { summary: 'Session task nodes', tags: ['Runs'] } })
+  }, { detail: { summary: 'Session task nodes', tags: ['Runs'], responses: { 200: externalJsonResponse('TaskNodeList', 'Task nodes across the session runs.') } } })
   .get('/api/v1/sessions/:sessionId/context-packs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/context-packs`, { headers });
@@ -723,7 +733,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/context-versions`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapContextVersions(result.data);
-  }, { detail: { summary: 'Session context versions', tags: ['Runs'] } })
+  }, { detail: { summary: 'Session context versions', tags: ['Runs'], responses: { 200: externalJsonResponse('ContextVersionList', 'Context revision/patch history for the session, optionally filtered by run.') } } })
   .get('/api/v1/sessions/:sessionId/supervision-findings', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/supervision-findings`, { headers });
@@ -731,7 +741,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/sessions/${params.sessionId}/supervision-findings`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Supervision findings', tags: ['Runs'] } })
+  }, { detail: { summary: 'Supervision findings', tags: ['Runs'], responses: { 200: externalJsonResponse('SupervisionFindingList', 'Supervision findings for the session.') } } })
   .get('/api/v1/events', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();

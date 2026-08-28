@@ -46,7 +46,7 @@ export const useRunStore = defineStore('run', () => {
     if (c.kind === 'ack') {
       status.value = 'understanding'
       if (c.run_id && !runs.value.find(r => r.id === c.run_id)) {
-        runs.value = [{ id: c.run_id, session_id: '', trigger_message_id: c.message_id, status: 'understanding', summary: null, created_at: c.occurred_at, updated_at: c.occurred_at }, ...runs.value]
+        runs.value = [{ id: c.run_id, session_id: '', trigger_message_id: c.message_id, status: 'understanding', summary: null, task_revision: null, latest_event_sequence: null, latest_event_at: null, created_at: c.occurred_at, updated_at: c.occurred_at, completed_at: null }, ...runs.value]
         selectedRunId.value = c.run_id
       }
       // optimistic placeholder

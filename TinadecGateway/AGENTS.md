@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-28
+**Last Updated:** 2026-08-29
 **Last Updated By:** Qoder
-**Last Verified Commit:** 214fa05
+**Last Verified Commit:** 5c9dbd4
 **Branch:** main
 
 ## OVERVIEW
@@ -112,6 +112,10 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 ### User Tool Actions and Governance
 - `/api/v1/user/tool-actions`（list/create/detail/resume/snapshot-override）是 Core-owned durable action state 的无状态北向代理；Gateway 不生成 nonce、参数哈希、审批决定、租约或 PDP 结果。
 - `/api/v1/governance/permission-requests` 及其 detail/decision、grant/delegation/lease 控制路由全部直接代理 Core；Gateway 不持有治理状态或内部 nonce。
+
+### 外部 DTO 文档面 (2026-08-29)
+- `src/externalDtoOpenApi.ts` 为 generated client 消费面（health/projects/sessions/messages/runs/orchestration/task-nodes/supervision-findings/context-versions）提供响应 schema：以 `detail.responses` + swagger `components.schemas` 注册，**不装** Elysia `response:` 运行时校验——Gateway 保持透传，runtimeProxy 测试的 proxied mock 依赖这一点。给新路由补响应 schema 时沿用同一模式，不要用会触发运行时校验的 `response:` 键。
+- `apps/desktop/src/generated/client.ts` 的响应 DTO 是这些组件的 type 别名（`Schemas['Project']` 等）；`AgentPackEnvelopeDto` 保持请求侧宽松手写（App 用打包 manifest 字面量构造）。改外部 DTO 形状时：先改 mapper → 补/改 `externalDtoOpenApi.ts` → `bun test` 重写快照 → `npm run generate:client` → 同一提交入库。
 
 ### Model/Agent Center
 - 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview`、`PUT /api/v1/agents/:id/runtime-binding` 与 model-center refresh alias 已删除并返回 404；模型发现的 canonical 转发路由是 `POST /api/v1/model-providers/:providerInstanceId/models/refresh`（Desktop `api.refreshProviderModels` 调用，快照 `tests/__snapshots__/openapi.external.json` 由 `bun test` 再生成）。

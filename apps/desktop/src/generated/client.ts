@@ -1,14 +1,15 @@
 /**
- * Minimal typed fetch wrapper aligned to Gateway external DTO (snake_case).
- * Placeholder for openapi-typescript + openapi-fetch generation.
- * When Gateway is live, replace with:
- *   npx openapi-typescript http://127.0.0.1:48730/docs/json -o src/generated/schema.d.ts
- * and an openapi-fetch client over that schema. This file keeps the checked-in
- * src/generated/ contract and avoids adding a build-time network dependency.
- * drift: npm run generate:client && git diff --exit-code
+ * Typed fetch wrapper aligned to the Gateway external contract (snake_case).
+ * DTOs are type aliases into src/generated/schema.d.ts, which is generated from
+ * the Gateway external OpenAPI snapshot (TinadecGateway/tests/__snapshots__/openapi.external.json).
+ * Regenerate both with: npm run generate:client (drift gate: npm run check:drift).
+ * SSE transport types (SseChunk/InvokeStreamRequest) stay local: SSE frames are
+ * not part of the JSON OpenAPI surface.
  */
-// ponytail: hand-written minimal wrapper; swap to openapi-fetch when external OpenAPI is live
-// drift: npm run generate:client && git diff --exit-code
+import type { components } from './schema'
+
+type Schemas = components['schemas']
+
 export type RunStatus =
   | 'planning'
   | 'understanding'
@@ -47,26 +48,20 @@ export interface InvokeStreamRequest {
   expected_context_revision?: number | null
 }
 
-export type LifecycleStatus = 'active' | 'archived' | 'trashed'
+export type ProjectDto = Schemas['Project']
+export type SessionDto = Schemas['Session']
+export type MessageDto = Schemas['Message']
+export type RunDto = Schemas['Run']
+export type TaskNodeDto = Schemas['TaskNode']
+export type SupervisionFindingDto = Schemas['SupervisionFinding']
+export type ContextVersionDto = Schemas['ContextVersion']
+export type OrchestrationSnapshotDto = Schemas['OrchestrationSnapshot']
 
-export interface ProjectDto { id: string; name: string; path: string; created_at: string; lifecycle_status?: LifecycleStatus; trashed_at?: string | null }
-export interface SessionDto { id: string; project_id: string; title: string; status: string; mode_version_id?: string | null; meeting_model_override?: { provider_instance_id: string; model?: string | null } | null; created_at: string; updated_at: string; lifecycle_status?: LifecycleStatus; trashed_at?: string | null }
-export interface MessageDto { id: string; session_id: string; role: string; content: string; created_at: string }
-export interface RunDto { id: string; session_id: string; trigger_message_id: string | null; status: RunStatus | string; summary: string | null; task_revision?: number | null; created_at: string | null; updated_at: string | null }
-export interface TaskNodeDto { id: string; graph_id: string | null; run_id: string; session_id: string; title: string; description: string; status: string; priority: number; risk: string; success_criteria: string[]; dependencies: string[]; required_capabilities: string[]; created_at: string | null; updated_at: string | null }
-export interface SupervisionFindingDto { id: string; run_id: string; session_id: string; severity: string; category: string; summary: string; recommendation: string; status: string; created_at: string }
-export interface ContextVersionDto { id: string; session_id: string; run_id: string | null; revision: number; kind: string; status: string; base_revision: number | null; created_at: string | null }
-export interface OrchestrationSnapshotDto {
-  run: RunDto | null
-  graph: { id: string; title: string } | null
-  nodes: TaskNodeDto[]
-  assignments: Array<{ id: string; run_id: string; task_node_id: string; agent_id: string; agent_name: string; agent_layer: string; status: string }>
-  step_results: unknown[]
-  context_packs: unknown[]
-  supervision_findings: SupervisionFindingDto[]
-  agent_instances?: unknown[]
-}
+export type LifecycleStatus = ProjectDto['lifecycle_status']
 
+// Request-side envelope stays structurally loose: the App builds it from its
+// bundled manifest literal, so a strict generated component type would fight
+// the local JSON shape. Responses use the schema aliases below.
 export interface AgentPackEnvelopeDto {
   manifest: unknown
   integrity: {
@@ -75,81 +70,13 @@ export interface AgentPackEnvelopeDto {
   }
 }
 
-export type AgentPackPreviewAction = 'install' | 'upgrade' | 'up_to_date' | 'newer_installed' | 'conflict' | string
-
-export interface AgentPackResourceCountsDto {
-  agents: number
-  prompt_pipelines: number
-  modes: number
-  created?: number
-  adopted?: number
-  reused?: number
-  updated?: number
-}
-
-export interface AgentPackResourceBindingDto {
-  kind: 'agent' | 'prompt_pipeline' | 'mode' | string
-  resource_key: string
-  logical_entity_id: string | null
-  version_id: string | null
-  content_hash: string | null
-  disposition: 'created' | 'adopted' | 'reused' | 'updated' | 'conflict' | string
-}
-
-export interface AgentPackDto {
-  pack_id: string
-  owner: string
-  product_id?: string | null
-  name?: string | null
-  status: string
-  active_version: string | null
-  integrity_digest: string | null
-  revision: number
-  installed_at: string
-  updated_at: string
-  etag?: string | null
-}
-
-export interface AgentPackDetailDto extends AgentPackDto {
-  versions: Array<Record<string, unknown>>
-  resources: AgentPackResourceBindingDto[]
-}
-
-export interface AgentPackInstallPreviewDto {
-  preview_id: string | null
-  pack_id: string
-  owner: string
-  action: AgentPackPreviewAction
-  bundled_version: string
-  installed_version: string | null
-  integrity_digest: string
-  revision: number
-  etag?: string | null
-  expires_at: string | null
-  counts: AgentPackResourceCountsDto
-  resources?: AgentPackResourceBindingDto[]
-  defaults_will_adopt?: boolean
-  required_core_version: string | null
-  current_core_version: string
-  differences?: string[]
-  warnings: string[]
-}
-
-export interface AgentPackInstallResultDto {
-  status: 'installed' | 'updated' | 'up_to_date' | 'newer_installed' | string
-  pack_id: string
-  owner: string
-  active_version: string
-  integrity_digest: string
-  revision: number
-  counts: AgentPackResourceCountsDto
-  resources?: AgentPackResourceBindingDto[]
-  defaults_adopted?: boolean
-  warnings?: string[]
-  installed_at: string
-  updated_at: string
-  etag?: string | null
-}
+export type AgentPackPreviewAction = AgentPackInstallPreviewDto['action']
+export type AgentPackResourceCountsDto = Schemas['AgentPackCounts']
+export type AgentPackResourceBindingDto = Schemas['AgentPackResourceBinding']
+export type AgentPackDto = Schemas['AgentPackInstallation']
+export type AgentPackDetailDto = Schemas['AgentPackInstallationDetail']
+export type AgentPackInstallPreviewDto = Schemas['AgentPackInstallPreview']
+export type AgentPackInstallResultDto = Schemas['AgentPackApplyResult']
 
 function gatewayUrl(): string {
   const w = window as unknown as { tinadec?: { gatewayUrl?: () => string } }
@@ -175,7 +102,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T
 }
 
-async function reqWithEtag<T extends { etag?: string | null }>(path: string, init?: RequestInit): Promise<T> {
+async function reqWithEtag<T>(path: string, init?: RequestInit): Promise<T & { etag: string | null }> {
   const url = `${gatewayUrl()}${path}`
   let res: Response
   try {
@@ -192,8 +119,10 @@ async function reqWithEtag<T extends { etag?: string | null }>(path: string, ini
     throw new Error(typeof msg === 'string' && msg ? msg : String(msg ?? res.statusText))
   }
   const result = data as T
+  // The ETag travels in the response header, not the JSON body, so it is merged
+  // into the returned value instead of being a schema component.
   const etag = res.headers.get('etag')
-  return etag ? { ...result, etag } : result
+  return (etag ? { ...result, etag } : result) as T & { etag: string | null }
 }
 
 export const generatedApi = {

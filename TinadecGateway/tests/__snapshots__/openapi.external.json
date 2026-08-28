@@ -821,6 +821,260 @@
         ],
         "type": "object"
       },
+      "Assignment": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "agent_layer": {
+            "enum": [
+              "operation",
+              "execution"
+            ],
+            "type": "string"
+          },
+          "agent_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "task_node_id",
+          "agent_id",
+          "agent_name",
+          "agent_layer",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ContextVersion": {
+        "additionalProperties": true,
+        "properties": {
+          "base_revision": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "run_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "run_id",
+          "revision",
+          "kind",
+          "status",
+          "base_revision",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ContextVersionList": {
+        "items": {
+          "$ref": "#/components/schemas/ContextVersion"
+        },
+        "type": "array"
+      },
+      "Health": {
+        "additionalProperties": true,
+        "description": "Gateway health fingerprint with forwarded Core health fields.",
+        "properties": {
+          "core_status": {
+            "enum": [
+              "ready",
+              "unreachable"
+            ],
+            "type": "string"
+          },
+          "core_url": {
+            "type": "string"
+          },
+          "gateway": {
+            "enum": [
+              "ok"
+            ],
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "tool_runtime_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gateway",
+          "core_status",
+          "mode",
+          "core_url",
+          "tool_runtime_url"
+        ],
+        "type": "object"
+      },
+      "MeetingModelOverride": {
+        "additionalProperties": true,
+        "properties": {
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "provider_instance_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_instance_id",
+          "model"
+        ],
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": true,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "run_id",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "MessageList": {
+        "items": {
+          "$ref": "#/components/schemas/Message"
+        },
+        "type": "array"
+      },
+      "OrchestrationSnapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_instances": {
+            "items": {},
+            "type": "array"
+          },
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/Assignment"
+            },
+            "type": "array"
+          },
+          "context_packs": {
+            "items": {},
+            "type": "array"
+          },
+          "frozen": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "graph": {
+            "additionalProperties": true,
+            "nullable": true,
+            "type": "object"
+          },
+          "nodes": {
+            "items": {},
+            "type": "array"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step_results": {
+            "items": {},
+            "type": "array"
+          },
+          "supervision_findings": {
+            "items": {
+              "$ref": "#/components/schemas/SupervisionFinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "graph",
+          "nodes",
+          "assignments",
+          "step_results",
+          "context_packs",
+          "supervision_findings",
+          "agent_instances",
+          "frozen"
+        ],
+        "type": "object"
+      },
       "ProblemDetails": {
         "additionalProperties": true,
         "properties": {
@@ -857,6 +1111,351 @@
           "code"
         ],
         "type": "object"
+      },
+      "Project": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lifecycle_status": {
+            "enum": [
+              "active",
+              "archived",
+              "trashed"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "trashed_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path",
+          "kind",
+          "created_at",
+          "updated_at",
+          "lifecycle_status",
+          "trashed_at"
+        ],
+        "type": "object"
+      },
+      "ProjectList": {
+        "items": {
+          "$ref": "#/components/schemas/Project"
+        },
+        "type": "array"
+      },
+      "Run": {
+        "additionalProperties": true,
+        "properties": {
+          "completed_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "latest_event_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "latest_event_sequence": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "description": "Ten-state durable run status (planning..cancelled).",
+            "type": "string"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "task_revision": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "trigger_message_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "trigger_message_id",
+          "status",
+          "summary",
+          "task_revision",
+          "latest_event_sequence",
+          "latest_event_at",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
+        "type": "object"
+      },
+      "RunList": {
+        "items": {
+          "$ref": "#/components/schemas/Run"
+        },
+        "type": "array"
+      },
+      "Session": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "history_revision": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lifecycle_status": {
+            "enum": [
+              "active",
+              "archived",
+              "trashed"
+            ],
+            "type": "string"
+          },
+          "meeting_model_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeetingModelOverride"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "mode_version_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "summary": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "trashed_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "title",
+          "status",
+          "mode",
+          "mode_version_id",
+          "meeting_model_override",
+          "summary",
+          "history_revision",
+          "created_at",
+          "updated_at",
+          "lifecycle_status",
+          "trashed_at"
+        ],
+        "type": "object"
+      },
+      "SessionList": {
+        "items": {
+          "$ref": "#/components/schemas/Session"
+        },
+        "type": "array"
+      },
+      "SupervisionFinding": {
+        "additionalProperties": true,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "session_id",
+          "severity",
+          "category",
+          "summary",
+          "recommendation",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "SupervisionFindingList": {
+        "items": {
+          "$ref": "#/components/schemas/SupervisionFinding"
+        },
+        "type": "array"
+      },
+      "TaskNode": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "graph_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "risk": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "success_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "graph_id",
+          "run_id",
+          "session_id",
+          "title",
+          "description",
+          "status",
+          "priority",
+          "risk",
+          "success_criteria",
+          "dependencies",
+          "required_capabilities",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TaskNodeList": {
+        "items": {
+          "$ref": "#/components/schemas/TaskNode"
+        },
+        "type": "array"
       }
     }
   },
@@ -2395,7 +2994,26 @@
       "get": {
         "operationId": "getApiV1Health",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Gateway health fingerprint with forwarded Core health fields."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Gateway healthy but Core unreachable (service-discovery degraded fingerprint)."
+          }
         },
         "summary": "Health probe",
         "tags": [
@@ -2975,7 +3593,16 @@
       "get": {
         "operationId": "getApiV1Projects",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectList"
+                }
+              }
+            },
+            "description": "Projects in the workspace."
+          }
         },
         "summary": "List projects",
         "tags": [
@@ -3045,7 +3672,16 @@
           "required": true
         },
         "responses": {
-          "200": {}
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Created project."
+          }
         },
         "summary": "Create project",
         "tags": [
@@ -3134,7 +3770,16 @@
           "required": true
         },
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Renamed project."
+          }
         },
         "summary": "Rename project",
         "tags": [
@@ -3914,7 +4559,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchestrationSnapshot"
+                }
+              }
+            },
+            "description": "Replay-derived run orchestration projection."
+          }
         },
         "summary": "Run orchestration",
         "tags": [
@@ -4001,7 +4655,16 @@
       "get": {
         "operationId": "getApiV1Sessions",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            },
+            "description": "Sessions in the workspace."
+          }
         },
         "summary": "List sessions",
         "tags": [
@@ -4068,7 +4731,16 @@
           "required": true
         },
         "responses": {
-          "200": {}
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            },
+            "description": "Created session."
+          }
         },
         "summary": "Create session",
         "tags": [
@@ -4176,7 +4848,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextVersionList"
+                }
+              }
+            },
+            "description": "Context revision/patch history for the session, optionally filtered by run."
+          }
         },
         "summary": "Session context versions",
         "tags": [
@@ -4378,7 +5059,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageList"
+                }
+              }
+            },
+            "description": "Session messages."
+          }
         },
         "summary": "List messages",
         "tags": [
@@ -4464,7 +5154,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchestrationSnapshot"
+                }
+              }
+            },
+            "description": "Replay-derived session orchestration projection."
+          }
         },
         "summary": "Session orchestration snapshot",
         "tags": [
@@ -4508,7 +5207,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            },
+            "description": "Durable runs for the session."
+          }
         },
         "summary": "List session runs",
         "tags": [
@@ -4530,7 +5238,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupervisionFindingList"
+                }
+              }
+            },
+            "description": "Supervision findings for the session."
+          }
         },
         "summary": "Supervision findings",
         "tags": [
@@ -4552,7 +5269,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskNodeList"
+                }
+              }
+            },
+            "description": "Task nodes across the session runs."
+          }
         },
         "summary": "Session task nodes",
         "tags": [

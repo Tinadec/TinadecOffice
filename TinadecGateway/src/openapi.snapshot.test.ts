@@ -56,9 +56,39 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
     'AgentPackInstallPreview',
     'AgentPackApplyResult',
     'ProblemDetails',
+    // Generated-frontend client DTO surface (src/externalDtoOpenApi.ts)
+    'Health',
+    'Project',
+    'ProjectList',
+    'Session',
+    'SessionList',
+    'Message',
+    'MessageList',
+    'Run',
+    'RunList',
+    'TaskNode',
+    'TaskNodeList',
+    'SupervisionFinding',
+    'SupervisionFindingList',
+    'ContextVersion',
+    'ContextVersionList',
+    'OrchestrationSnapshot',
   ];
   const schemas = objectAt(doc, 'components', 'schemas');
   for (const name of requiredPackSchemas) assert.ok(name in schemas, `Missing OpenAPI component schema ${name}`);
+
+  assert.equal(
+    valueAt(doc, 'paths', '/api/v1/projects', 'get', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),
+    '#/components/schemas/ProjectList',
+  );
+  assert.equal(
+    valueAt(doc, 'paths', '/api/v1/sessions/{sessionId}/orchestration', 'get', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),
+    '#/components/schemas/OrchestrationSnapshot',
+  );
+  assert.equal(
+    valueAt(doc, 'paths', '/api/v1/projects/{projectId}', 'patch', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),
+    '#/components/schemas/Project',
+  );
 
   assert.equal(
     valueAt(doc, 'paths', '/api/v1/agent-packs', 'get', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),
