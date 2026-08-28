@@ -11,7 +11,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run && node --test electron/appConfig.test.cjs electron/layoutStore.test.cjs electron/serviceDiscovery.test.cjs",
-    "generate:client": "npx openapi-typescript http://127.0.0.1:48730/docs/json -o src/generated/schema.d.ts",
+    "generate:client": "npx -y openapi-typescript@6 ../../TinadecGateway/tests/__snapshots__/openapi.external.json -o src/generated/schema.d.ts",
     "check:drift": "npm run generate:client && git diff --exit-code -- src/generated/",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "typecheck": "vue-tsc --noEmit",
