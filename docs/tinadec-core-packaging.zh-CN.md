@@ -35,6 +35,15 @@ dotnet artifacts/tinadec-core-api/TinadecCore.Api.dll --urls http://127.0.0.1:48
 
 SQLite 适合本地部署；自托管云部署通过配置 PostgreSQL、ContentStore 和外部身份适配器完成。当前仓库尚未承诺容器镜像、NuGet feed、OIDC 适配器或生成的 TypeScript/.NET Client SDK，这些仍属于 Phase 1 后续交付。
 
+## 发布
+
+`.github/workflows/core-pack.yml` 在 `TinadecCore/**` 变更时执行 restore → build → 全量测试 → 解决方案级 `dotnet pack`，并把所有 nupkg 上传为 `tinadec-core-nuget` artifact。推送到 `v*` tag 时追加 `publish` job。真实接入只需两步仓库设置：
+
+1. 在仓库 Secrets 配置 `NUGET_API_KEY`（目标 feed 的推送密钥），可选配置仓库变量 `NUGET_SOURCE` 覆盖默认的 nuget.org 源（内部 feed 场景）。
+2. 从 main 打 tag 并推送：`git tag v0.2.0 && git push origin v0.2.0`。tag 构建通过 `-p:PackageVersion=${GITHUB_REF_NAME#v}` 注入正式 SemVer；非 tag 构建沿用 `Directory.Build.props` 的 `0.1.0`。
+
+`NUGET_API_KEY` 未配置时 publish job 明确跳过推送并提示，artifact 照常产出。实现包与四个公开包从同一解决方案打包、同一 feed 推送（`--skip-duplicate`），保证 Runtime 的内部 ProjectReference 可还原。
+
 ## 边界约束
 
 - `TinadecTools.Generators` 继续是 TinadecTool 的 Analyzer/Source Generator，不参与 Core 打包，也不成为运行时依赖。

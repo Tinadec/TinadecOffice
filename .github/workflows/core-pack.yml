@@ -1,0 +1,83 @@
+name: Core pack
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'TinadecCore/**'
+      - '.github/workflows/core-pack.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'TinadecCore/**'
+      - '.github/workflows/core-pack.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: core-pack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-pack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Restore
+        run: dotnet restore TinadecCore/TinadecCore.slnx
+
+      - name: Build
+        run: dotnet build TinadecCore/TinadecCore.slnx --no-restore
+
+      - name: Test
+        run: dotnet test TinadecCore/TinadecCore.slnx --no-build
+
+      - name: Pack (release version from tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: dotnet pack TinadecCore/TinadecCore.slnx -c Release -o artifacts/nuget -p:PackageVersion=$($env:GITHUB_REF_NAME -replace '^v','')
+
+      - name: Pack (development version)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: dotnet pack TinadecCore/TinadecCore.slnx -c Release -o artifacts/nuget
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinadec-core-nuget
+          path: artifacts/nuget/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    # Tag builds only; the push itself stays skipped until NUGET_API_KEY is configured.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-test-pack
+    runs-on: ubuntu-latest
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tinadec-core-nuget
+          path: artifacts/nuget
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Push packages
+        if: env.NUGET_API_KEY != ''
+        run: >
+          dotnet nuget push "artifacts/nuget/*.nupkg"
+          --api-key "$NUGET_API_KEY"
+          --source "${{ vars.NUGET_SOURCE || 'https://api.nuget.org/v3/index.json' }}"
+          --skip-duplicate
+
+      - name: Publish skipped (NUGET_API_KEY not configured)
+        if: env.NUGET_API_KEY == ''
+        run: echo "NUGET_API_KEY is not configured; packages remain in the artifact only."
