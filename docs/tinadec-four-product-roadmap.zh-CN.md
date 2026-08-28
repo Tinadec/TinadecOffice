@@ -144,3 +144,36 @@ Phase 3（扩展）
 - **AGENTS.md 回写**：本决定的"Desktop 不直连 Core"与既有"Gateway 可选"表述冲突，落地时需在同一变更中更新相关 `AGENTS.md` 元数据。
 - **MAF 锁定**：`Microsoft.Agents.AI` 1.18.0 版本锁定，MAF 类型保持隔离在 `DmaEA` 适配器后，任何推进不得破坏该边界。
 - **范围边界**：本路线图为规划文档，未包含任何代码改动；逐阶段实施需各自立项并遵循各仓库既有门禁（Core 的 `dotnet test`、Gateway/Apps 的快照与单测）。
+
+---
+
+## 九、2026-08-29 全面推进落账
+
+本轮按「边开发边提交」完成，权威源保持 `TinadecOffice/TinadecCore`。A0 已拍板：独立镜像定位为**权威源的受控同步快照**（不再独立演进），自动化同步由 `scripts/sync-tinadec-core.mjs` 承担（幂等、文件级暂存、SYNC.md 记账）。
+
+| 项 | 状态 | 落地 |
+|---|---|---|
+| A0 | ✅ | 镜像=受控快照；`scripts/sync-tinadec-core.mjs` 实跑（镜像已同步到 `554822d`，`dotnet pack Contracts` 独立布局通过） |
+| A1 | ✅ | `Contracts/Abstractions/Runtime`（+AspNetCore）readme 改 `..\docs\`；文档副本入 `TinadecCore/docs/`；嵌套与镜像双布局 pack 均通 |
+| A2 | ✅（待密钥） | `.github/workflows/core-pack.yml`：restore→build→全量测试→解决方案级 pack→artifact；`v*` tag 触发 publish job（等 `NUGET_API_KEY` 配置，tag 注入 `-p:PackageVersion`） |
+| A3 | ✅ | 可打包 `TinadecCore.AspNetCore`（plain SDK + `FrameworkReference`）：`AddTinadecCoreHttp()` / `UseTinadecCoreExceptionHandler()` / `MapTinadecCore()`；13 端点组 + health/manifest/readiness 从 Api 物理移入；Api 瘦身为组合宿主；OpenAPI 快照零漂移、198→199 测试全绿 |
+| A4 | ✅（切片） | `TinadecCore/Api/Dockerfile`（sdk:10.0→aspnet:10.0，`/data` 卷，48731）+ core-pack.yml `docker-image` job（只构建不推送）；OIDC 适配器/多租户调度延后 |
+| B2 | ✅ | `generate:client`（openapi-typescript@6，离线、字节确定）+ `check:drift`；`schema.d.ts` 入库 |
+| B2.5 | ✅（首段） | Gateway 外部快照 23→41 命名 schema（`src/externalDtoOpenApi.ts`，`detail.responses` 文档级、不装运行时校验）；`generated/client.ts` 响应 DTO 全部改为 `components['schemas']` 别名（`AgentPackEnvelopeDto` 保持请求侧宽松）；`api.ts` 2200 行镜像的后续批次按同一模式进行 |
+| B3 | ✅ | `.github/workflows/contracts-drift.yml`：Gateway 快照重写 diff 门 + Desktop `check:drift` 双 job |
+| C1/C2 | ✅ | 通用端口 `IToolProvider` 已在 `Abstractions/Ports/IToolDispatcher.cs`，TinadecTools 是其适配器；新增进程内假 Provider E2E（替换 DI 注册后 审批→resume→dispatch 全闭环、零子进程、工作区无落盘）钉死契约解耦 |
+| C3 | ⏳ | 端口已泛化；第二个真实 Provider 选型延后 |
+
+### 延后清单（需外部资源或另行立项）
+- **真实 NuGet feed 接入**：仓库 Secrets 配置 `NUGET_API_KEY`（可选变量 `NUGET_SOURCE` 指内部 feed），从 main 打 `v*` tag 即发布
+- **容器 registry 推送**：待选定镜像仓库；工作流已备 build-only job
+- **`api.ts` 2200 行全量迁移与 `openapi-fetch` 收敛**（B2.5 后续批次，模式已由 client.ts 建立）
+- **B4**：从 Core HttpApi 直生成客户端，收敛 Gateway 手写 mapper 层
+- **A4 延伸**：OIDC 外部身份适配器、云端多租户调度
+- **C3**：第二个真实 Tool Provider（MCP server / 其它工具宿主）接入
+
+### 验证基线（2026-08-29 总闸）
+- Core：`TinadecCore.slnx` 199/199 全绿（Governance 12 + AgentFramework 55 + Architecture 11 + Api.Tests 121，含假 Provider E2E；Cli 探测/活跃运行上限两用例在全量并行下偶发抖动，隔离与复跑均绿）
+- Gateway：`bun test` 44/44；外部快照 41 schema、166 路径
+- Desktop：vitest 312 过 / 0 败（14 个 NotificationIslandHost 用例按既有环境问题跳过）；typecheck 仅余 6 个与契约面无关的既有 Monaco/vi.fn 错误
+- `generate:client` 重跑字节级一致（sha256 相同）；`dotnet list package --vulnerable --include-transitive` 26 项目零暴露
