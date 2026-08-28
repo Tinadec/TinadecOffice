@@ -81,3 +81,12 @@ jobs:
       - name: Publish skipped (NUGET_API_KEY not configured)
         if: env.NUGET_API_KEY == ''
         run: echo "NUGET_API_KEY is not configured; packages remain in the artifact only."
+
+  docker-image:
+    # A4 slice: keep the container image buildable; no registry push yet.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Core API image (no push)
+        run: docker build -f TinadecCore/Api/Dockerfile -t tinadec-core-api:${{ github.sha }} .

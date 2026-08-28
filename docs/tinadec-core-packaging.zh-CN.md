@@ -33,7 +33,9 @@ dotnet publish TinadecCore/Api/TinadecCore.Api.csproj -c Release --no-restore -o
 dotnet artifacts/tinadec-core-api/TinadecCore.Api.dll --urls http://127.0.0.1:48731
 ```
 
-SQLite 适合本地部署；自托管云部署通过配置 PostgreSQL、ContentStore 和外部身份适配器完成。当前仓库尚未承诺容器镜像、NuGet feed、OIDC 适配器或生成的 TypeScript/.NET Client SDK，这些仍属于 Phase 1 后续交付。
+SQLite 适合本地部署；自托管云部署通过配置 PostgreSQL、ContentStore 和外部身份适配器完成。
+
+容器切片（A4）：`TinadecCore/Api/Dockerfile` 以 sdk:10.0 构建、aspnet:10.0 运行，`/data` 卷统一承载 SQLite 数据库与 Core 文件存储（sessions/tasks/events/artifacts/vectors），监听 48731。`core-pack.yml` 的 `docker-image` job 只构建不推送——真实 registry 推送待容器仓库选定后接入。NuGet 发布管线已备好（`publish` job + `NUGET_API_KEY`）；OIDC 外部身份适配器与云端多租户调度仍属延后项。
 
 ## 发布
 

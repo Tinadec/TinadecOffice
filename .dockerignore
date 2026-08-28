@@ -1,0 +1,18 @@
+# Keep the Core API image build context small: only TinadecCore/ sources are
+# needed by TinadecCore/Api/Dockerfile.
+.git
+**/bin
+**/obj
+**/data
+**/artifacts
+**/node_modules
+apps
+tests
+TinadecGateway
+TinadecTools
+TinadecTools.Generators
+docs
+scripts
+.codegraph
+.claude
+.agents
