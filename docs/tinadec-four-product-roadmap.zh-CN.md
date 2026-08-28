@@ -153,7 +153,7 @@ Phase 3（扩展）
 
 | 项 | 状态 | 落地 |
 |---|---|---|
-| A0 | ✅ | 镜像=受控快照；`scripts/sync-tinadec-core.mjs` 实跑（镜像已同步到 `554822d`，`dotnet pack Contracts` 独立布局通过） |
+| A0 | ✅ | 镜像=受控快照；`scripts/sync-tinadec-core.mjs` 实跑（镜像已同步到 `07ec3b0`，`dotnet pack Contracts` 独立布局通过） |
 | A1 | ✅ | `Contracts/Abstractions/Runtime`（+AspNetCore）readme 改 `..\docs\`；文档副本入 `TinadecCore/docs/`；嵌套与镜像双布局 pack 均通 |
 | A2 | ✅（待密钥） | `.github/workflows/core-pack.yml`：restore→build→全量测试→解决方案级 pack→artifact；`v*` tag 触发 publish job（等 `NUGET_API_KEY` 配置，tag 注入 `-p:PackageVersion`） |
 | A3 | ✅ | 可打包 `TinadecCore.AspNetCore`（plain SDK + `FrameworkReference`）：`AddTinadecCoreHttp()` / `UseTinadecCoreExceptionHandler()` / `MapTinadecCore()`；13 端点组 + health/manifest/readiness 从 Api 物理移入；Api 瘦身为组合宿主；OpenAPI 快照零漂移、198→199 测试全绿 |
