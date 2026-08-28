@@ -7,8 +7,10 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Persistence;
 
@@ -118,6 +120,110 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         && versionId.ValueKind == JsonValueKind.String
         && versionId.TryGetGuid(out var actualVersionId)
         && actualVersionId == expectedVersionId;
+
+    /// <summary>
+    /// The generic <see cref="IToolProvider"/> contract must be decoupled from the
+    /// TinadecTools child process: with the provider replaced in DI, the full
+    /// approval -> resume -> dispatch loop completes and Core never touches the
+    /// real process (the fake writes nothing to the workspace).
+    /// </summary>
+    [Fact]
+    public async Task WorkerWriteFile_ThroughInProcessFakeProvider_DispatchLoopCompletesWithoutTinadecTools()
+    {
+        var workspace = Path.Combine(_root, "workspace");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"write-probe\",\"title\":\"写探针文件\",\"description\":\"创建 probe.txt\",\"success_criteria\":[\"文件存在\"],\"dependencies\":[],\"required_capabilities\":[\"tool.file\"],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("文件已写入。");
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+        await InstallOfficeAgentPackAsync(client);
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Fake provider project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Fake provider session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一个文件", client_message_id = "fake-provider-c-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var runId = ack.GetProperty("run_id").GetGuid();
+
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
+        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
+        Assert.Equal(runId, done.GetProperty("run_id").GetGuid());
+
+        Assert.Equal(1, provider.CallCount);
+        Assert.Equal("write_file", Assert.Single(provider.ReceivedToolIds));
+        Assert.True(provider.ReceivedApproved);
+        Assert.False(File.Exists(Path.Combine(workspace, "probe.txt")));
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration").ConfigureAwait(false);
+        Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
+    }
+
+    private sealed class FakeToolProvider : IToolProvider
+    {
+        private readonly object _lock = new();
+
+        public int CallCount { get; private set; }
+        public List<string> ReceivedToolIds { get; } = [];
+        public bool ReceivedApproved { get; private set; }
+
+        public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateManifest());
+
+        public Task<ToolWireResponseDto> CallAsync(
+            string workspaceRoot,
+            ToolWireRequestDto request,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
+        {
+            lock (_lock)
+            {
+                CallCount++;
+                ReceivedToolIds.Add(request.ToolId);
+                ReceivedApproved |= request.Approved;
+            }
+            return Task.FromResult(new ToolWireResponseDto
+            {
+                CallId = request.ToolCallId,
+                IsSuccess = true,
+                Result = JsonSerializer.SerializeToElement(new { ok = true, tool = request.ToolId })
+            });
+        }
+
+        public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateManifest());
+
+        public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        private static ToolManifestDto CreateManifest()
+        {
+            var tools = new List<ToolManifestEntryDto>
+            {
+                new()
+                {
+                    Id = "write_file",
+                    Description = "In-process fake write probe",
+                    RequiresApproval = true,
+                    Risk = "medium",
+                    MutatesWorkspace = true
+                }
+            };
+            return new ToolManifestDto
+            {
+                ProtocolVersion = 2,
+                ManifestHash = ToolManifestHasher.Compute(tools),
+                Tools = tools
+            };
+        }
+    }
 
     private static async Task<JsonElement> InstallOfficeAgentPackAsync(HttpClient client)
     {
@@ -313,11 +419,13 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     {
         private readonly string _root;
         private readonly ToolScriptedClient _client;
+        private readonly IToolProvider? _providerOverride;
 
-        public ToolChainFactory(string root, ToolScriptedClient client)
+        public ToolChainFactory(string root, ToolScriptedClient client, IToolProvider? providerOverride = null)
         {
             _root = root;
             _client = client;
+            _providerOverride = providerOverride;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -333,6 +441,10 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             {
                 services.AddSingleton<IAgentChatClientFactory>(new ToolScriptedFactory(_client));
                 services.AddSingleton<ISecretStore>(new TestModelSecretStore());
+                if (_providerOverride is not null)
+                {
+                    services.Replace(ServiceDescriptor.Singleton<IToolProvider>(_providerOverride));
+                }
             });
         }
     }
