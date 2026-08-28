@@ -1,0 +1,52 @@
+name: Contract drift gates
+
+on:
+  pull_request:
+    paths:
+      - 'TinadecGateway/src/**'
+      - 'TinadecGateway/tests/__snapshots__/**'
+      - 'TinadecGateway/package.json'
+      - 'TinadecGateway/bun.lock*'
+      - 'apps/desktop/src/generated/**'
+      - 'apps/desktop/package.json'
+      - '.github/workflows/contracts-drift.yml'
+  push:
+    paths:
+      - 'TinadecGateway/src/**'
+      - 'TinadecGateway/tests/__snapshots__/**'
+      - 'TinadecGateway/package.json'
+      - 'TinadecGateway/bun.lock*'
+      - 'apps/desktop/src/generated/**'
+      - 'apps/desktop/package.json'
+      - '.github/workflows/contracts-drift.yml'
+
+jobs:
+  gateway-openapi-snapshot:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TinadecGateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # openapi.snapshot.test.ts rewrites tests/__snapshots__/openapi.external.json;
+      # the gate is a clean git diff afterwards.
+      - run: bun test src
+      - run: git diff --exit-code -- tests/__snapshots__/
+
+  desktop-generated-client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # check:drift regenerates src/generated/schema.d.ts from the Gateway
+      # OpenAPI snapshot via npx (no node_modules needed) and fails on diff.
+      - run: npm run check:drift
