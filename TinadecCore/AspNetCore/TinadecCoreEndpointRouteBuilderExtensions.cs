@@ -22,6 +22,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapGovernanceEndpoints();
         endpoints.MapMemoryReviewEndpoints();
         endpoints.MapEvolutionEndpoints();
+        endpoints.MapRunReplayEndpoints();
         endpoints.MapWorkspaceSnapshotEndpoints();
         endpoints.MapUserToolActionEndpoints();
         endpoints.MapStubEndpoints();

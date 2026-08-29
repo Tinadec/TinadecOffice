@@ -167,6 +167,65 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
     }
 
+    /// <summary>
+    /// The git steward operational role must fire only for runs that touched
+    /// git tools: this test drives a real git_status call through the approval
+    /// gate and waits for the post-run steward bypass call.
+    /// </summary>
+    [RequiresTinadecToolsFact]
+    public async Task GitSteward_ReviewsRunsThatTouchGitTools()
+    {
+        var workspace = Path.Combine(_root, "workspace");
+        Directory.CreateDirectory(workspace);
+        RunGit(workspace, "init");
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"git-status-check\",\"title\":\"查看 Git 状态\",\"description\":\"\",\"success_criteria\":[\"输出状态\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"git_status\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorkerTool("git_status")
+            .WhenWorkerFollowUp("git 状态已检查。")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("Git 状态检查完成。");
+
+        _factory = new ToolChainFactory(_root, script);
+        var client = _factory.CreateClient();
+        await InstallOfficeAgentPackAsync(client);
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Git steward project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Git steward session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "查看 git 状态", client_message_id = "git-steward-c-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var runId = ack.GetProperty("run_id").GetGuid();
+
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
+        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+        var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+
+        // The steward bypass runs after the terminal done chunk is durable.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (script.StewardCalls == 0 && DateTimeOffset.UtcNow < deadline) await Task.Delay(200);
+        Assert.True(script.StewardCalls >= 1, "The git steward should review runs that touched git tools.");
+    }
+
+    private static void RunGit(string workingDirectory, params string[] arguments)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo("git", arguments)
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        using var process = System.Diagnostics.Process.Start(info)
+            ?? throw new InvalidOperationException("Could not start git.");
+        if (!process.WaitForExit(30000)) throw new InvalidOperationException($"git {string.Join(' ', arguments)} timed out.");
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git {string.Join(' ', arguments)} failed: {process.StandardError.ReadToEnd()}");
+    }
+
     private sealed class FakeToolProvider : IToolProvider
     {
         private readonly object _lock = new();
@@ -371,11 +430,20 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         private readonly Queue<string> _supervisorVerdicts = new();
         private string? _planner;
         private string? _meeting;
+        private (string ToolId, Dictionary<string, object?> Arguments)? _firstWorkerTool;
+        private string? _workerFollowUp;
         public int WorkerCalls;
+        public int StewardCalls;
 
         public ToolScriptedClient WhenPlanner(string script) { _planner = script; return this; }
         public ToolScriptedClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ToolScriptedClient WhenMeeting(string script) { _meeting = script; return this; }
+        public ToolScriptedClient WhenWorkerTool(string toolId, Dictionary<string, object?>? arguments = null)
+        {
+            _firstWorkerTool = (toolId, arguments ?? new Dictionary<string, object?>());
+            return this;
+        }
+        public ToolScriptedClient WhenWorkerFollowUp(string text) { _workerFollowUp = text; return this; }
 
         public void Dispose() { }
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
@@ -388,9 +456,13 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             // branch: that branch consumes the scripted first-turn tool call.
             if (instructions?.Contains("You are the capability advisor", StringComparison.Ordinal) == true)
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"recommendations\":[]}")));
+            if (instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true)
+            {
+                Interlocked.Increment(ref StewardCalls);
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Change scope: scripted review. Commit boundary: single review commit.")));
+            }
             if (instructions?.Contains("You are the context compression agent", StringComparison.Ordinal) == true
-                || instructions?.Contains("You are the experience curator", StringComparison.Ordinal) == true
-                || instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true)
+                || instructions?.Contains("You are the experience curator", StringComparison.Ordinal) == true)
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{}")));
             if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
@@ -403,8 +475,11 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _meeting ?? "完成")));
             var isFirstWorkerTurn = Interlocked.Increment(ref WorkerCalls) == 1;
             var contents = isFirstWorkerTurn
-                ? new AIContent[] { new FunctionCallContent("call-1", "write_file", new Dictionary<string, object?> { ["filepath"] = "probe.txt", ["content"] = "hello" }) }
-                : new AIContent[] { new TextContent("已写入 probe.txt") };
+                ? new AIContent[] { new FunctionCallContent(
+                    "call-1",
+                    _firstWorkerTool?.ToolId ?? "write_file",
+                    _firstWorkerTool?.Arguments ?? new Dictionary<string, object?> { ["filepath"] = "probe.txt", ["content"] = "hello" }) }
+                : new AIContent[] { new TextContent(_workerFollowUp ?? "已写入 probe.txt") };
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, contents)));
         }
 

@@ -1990,6 +1990,29 @@
         ]
       }
     },
+    "/api/v1/agent-evolution/proposals/{candidateId}/evaluation": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidateId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/agent-evolution/proposals/{candidateId}/promote": {
       "post": {
         "parameters": [
@@ -4710,6 +4733,28 @@
       }
     },
     "/api/v1/runs/{runId}/orchestration": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/runs/{runId}/replay": {
       "get": {
         "parameters": [
           {

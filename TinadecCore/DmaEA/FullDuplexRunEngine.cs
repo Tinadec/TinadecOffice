@@ -26,6 +26,15 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Lets a worker propose a durable context fact without touching shared state
+    /// directly. The engine extracts the marker line and applies it as a
+    /// CAS-checked patch against the task's input context revision.
+    /// </summary>
+    private const string WorkerPatchProtocol =
+        "\n\nIf this task produced a durable fact, decision, or constraint that later tasks must respect, append exactly one final line in this format: CONTEXT_PATCH: <one-line summary> || <full detail>. Otherwise output no CONTEXT_PATCH line.";
+    private const string ContextPatchMarker = "CONTEXT_PATCH:";
+
     private readonly ILifecycleManager _lifecycle;
     private readonly IConversationStore _conversations;
     private readonly IAgentInstanceService _instances;
@@ -358,6 +367,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
         }
 
+        var sessionRevision = await _conversations.GetContextRevisionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         var initial = new FullDuplexCheckpointV1
         {
             RunId = runId,
@@ -367,7 +377,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             UserGoal = trigger.Content,
             Phase = "planning",
             InteractionKind = "new_task",
-            ContextRevision = run.ContextRevision,
+            // The trigger message is already appended; take the live session
+            // revision so task input revisions observe real context state.
+            ContextRevision = Math.Max(sessionRevision, run.ContextRevision),
             PlanRevision = 0
         };
         return await SaveCheckpointAsync(initial, run.CheckpointRevision, "admitted", cancellationToken).ConfigureAwait(false);
@@ -603,7 +615,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
             var result = string.IsNullOrWhiteSpace(model.Text)
                 ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [] }
-                : new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "completed", Summary = model.Text, Evidence = [model.Text] };
+                : BuildCompletedStepResult(task.TaskId, worker.Id, model.Text);
             return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result, model.Usage);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -740,17 +752,18 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             if (model.Calls.Count == 0)
             {
                 var status = string.IsNullOrWhiteSpace(model.Text) ? "failed" : "completed";
-                var summary = string.IsNullOrWhiteSpace(model.Text) ? "Execution returned no output." : model.Text;
+                var stepResult = string.IsNullOrWhiteSpace(model.Text)
+                    ? new StepResult
+                    {
+                        TaskNodeId = task.TaskId,
+                        AgentId = worker.Id.ToString("N"),
+                        Status = status,
+                        Summary = "Execution returned no output.",
+                        Evidence = []
+                    }
+                    : BuildCompletedStepResult(task.TaskId, worker.Id, model.Text);
                 return new ToolTaskExecutionResult(checkpoint, Waiting: false,
-                    new TaskExecutionResult(task.TaskId, worker.Id, status,
-                        new StepResult
-                        {
-                            TaskNodeId = task.TaskId,
-                            AgentId = worker.Id.ToString("N"),
-                            Status = status,
-                            Summary = summary,
-                            Evidence = string.IsNullOrWhiteSpace(model.Text) ? [] : [model.Text]
-                        }));
+                    new TaskExecutionResult(task.TaskId, worker.Id, stepResult.Status, stepResult));
             }
 
             task.ToolRounds++;
@@ -952,7 +965,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             ToPlannedTask(task),
             task.ToolTurns,
             tools,
-            assembly.Instructions,
+            assembly.Instructions + WorkerPatchProtocol,
             configuration.Context.RecentMessageLimit,
             cancellationToken).ConfigureAwait(false);
     }
@@ -1173,6 +1186,38 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             summary = execution.Result.Summary,
             evidence = execution.Result.Evidence
         }, cancellationToken, task.TaskId).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(execution.Result.ProposedPatchContent))
+        {
+            // Arbitration per the full-duplex contract: the patch is accepted only
+            // while the session context is still at the revision the task observed.
+            // A stale result loses the race and the patch stays audit-only.
+            var patchOutcome = await _conversations.ApplyContextPatchAsync(new ContextPatchRequest(
+                Guid.Parse(run.SessionId),
+                task.InputContextRevision,
+                execution.Result.ProposedPatchContent,
+                string.IsNullOrWhiteSpace(execution.Result.ProposedPatchSummary)
+                    ? $"Worker patch for task '{task.TaskKey}'."
+                    : execution.Result.ProposedPatchSummary,
+                checkpoint.RunId,
+                execution.WorkerAgentId,
+                Kind: "supplement"), cancellationToken).ConfigureAwait(false);
+            var patchApplied = string.Equals(patchOutcome.Status, "applied", StringComparison.OrdinalIgnoreCase);
+            await AppendEventAsync(runId, patchApplied ? "context.patch.accepted" : "context.patch.stale",
+                patchApplied
+                    ? $"Worker patch for task '{task.TaskKey}' applied."
+                    : $"Worker patch for task '{task.TaskKey}' was based on stale context and kept for audit.", new
+                {
+                    task_id = task.TaskId,
+                    task_key = task.TaskKey,
+                    source = "worker",
+                    agent_instance_id = execution.WorkerAgentId,
+                    patch_id = patchOutcome.PatchId,
+                    base_context_revision = task.InputContextRevision,
+                    context_revision = patchApplied ? patchOutcome.AppliedRevision : null
+                }, cancellationToken, task.TaskId).ConfigureAwait(false);
+        }
+
         if (execution.Status == "completed")
         {
             await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskCompleted, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
@@ -1937,8 +1982,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             "context_compressor" => DispatchContextCompressionAsync(match, run, configuration, checkpoint, cancellationToken),
             "skill_recommender" => DispatchSkillRecommendationAsync(match, run, configuration, checkpoint, cancellationToken),
             "evolution" => DispatchEvolutionAsync(match, run, configuration, checkpoint, cancellationToken),
-            // Remaining role handlers are wired milestone by milestone (git
-            // stewardship).
+            "git_steward" => DispatchGitStewardAsync(match, run, configuration, checkpoint, cancellationToken),
             _ => Task.CompletedTask
         };
 
@@ -2279,6 +2323,55 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         return curator;
     }
 
+    private async Task DispatchGitStewardAsync(
+        OperationalTriggerMatch match,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        // Fire only for runs that actually touched git capabilities; other runs
+        // keep the journal quiet.
+        var touchedGit = checkpoint.Tasks.Any(task =>
+            task.RequiredTools.Any(tool => tool.StartsWith("git_", StringComparison.OrdinalIgnoreCase))
+            || task.ToolTurns.Any(turn => turn.ToolId.StartsWith("git_", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(task.WorkerAgentSlug, "worker.git", StringComparison.Ordinal));
+        if (!touchedGit) return;
+
+        var runId = Guid.Parse(run.RunId);
+        var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        var assembly = await AssemblePromptAsync(match.Agent, context, cancellationToken).ConfigureAwait(false);
+        var gitTasks = checkpoint.Tasks
+            .Where(task => task.RequiredTools.Any(tool => tool.StartsWith("git_", StringComparison.OrdinalIgnoreCase))
+                || task.ToolTurns.Any(turn => turn.ToolId.StartsWith("git_", StringComparison.OrdinalIgnoreCase)))
+            .Select(task => $"- [{task.ResultStatus ?? task.Status}] {task.TaskKey}: tools=[{string.Join(", ", task.RequiredTools.Concat(task.ToolTurns.Select(turn => turn.ToolId)).Distinct(StringComparer.OrdinalIgnoreCase))}]")
+            .ToList();
+        var instructions = assembly.Instructions
+            + "\n\nYou are the git steward. Review the change scope and commit boundaries this run touched. Respond with a short suggestion covering: change scope, suggested commit boundary, and review risks. Advise only; never execute git operations or bypass approvals.";
+        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nGit-touching tasks:\n{string.Join("\n", gitTasks)}";
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            $"operation.{match.Agent.Id}",
+            match.Agent.Id,
+            "Reviews git change scope and commit boundaries without executing git.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+        var suggestion = string.IsNullOrWhiteSpace(response.Text) ? "No git steward suggestion produced." : response.Text.Trim();
+        await AppendEventAsync(runId, "git.steward.reviewed", "Git steward reviewed the run's change scope.", new
+        {
+            run_id = run.RunId,
+            agent_slug = match.Agent.Id,
+            trigger_point = match.Point.ToString(),
+            suggestion
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     private static (List<(string Scope, string Kind, string Content, double Confidence, string? Applicability, string? ExpiryCondition)> MemoryCandidates,
         List<(string Name, string Layer, string AgentType, double Confidence, JsonElement Proposal)> AgentCandidates) ParseCurationOutput(string? text)
     {
@@ -2348,6 +2441,53 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         ex is InvalidOperationException or InvalidDataException or WorkerUnavailableException
             ? ex.Message
             : "Unexpected runtime failure.";
+
+    private static StepResult BuildCompletedStepResult(Guid taskId, Guid workerId, string text)
+    {
+        var summary = ExtractContextPatch(text, out var patchSummary, out var patchContent);
+        return new StepResult
+        {
+            TaskNodeId = taskId,
+            AgentId = workerId.ToString("N"),
+            Status = "completed",
+            Summary = summary,
+            Evidence = [summary],
+            ProposedPatchSummary = patchSummary,
+            ProposedPatchContent = patchContent
+        };
+    }
+
+    /// <summary>
+    /// Extracts the optional worker-proposed patch line. Returns the text with
+    /// the marker line removed; patch fields stay null when absent or malformed.
+    /// </summary>
+    private static string ExtractContextPatch(string text, out string? patchSummary, out string? patchContent)
+    {
+        patchSummary = null;
+        patchContent = null;
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var kept = new List<string>(lines.Length);
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (patchContent is null && trimmed.StartsWith(ContextPatchMarker, StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = trimmed[ContextPatchMarker.Length..].Trim();
+                var separator = payload.IndexOf("||", StringComparison.Ordinal);
+                if (separator <= 0 || separator >= payload.Length - 2) continue;
+                var summary = payload[..separator].Trim();
+                var content = payload[(separator + 2)..].Trim();
+                if (summary.Length == 0 || content.Length == 0) continue;
+                patchSummary = summary;
+                patchContent = content;
+                continue;
+            }
+            kept.Add(line);
+        }
+        while (kept.Count > 0 && string.IsNullOrWhiteSpace(kept[^1])) kept.RemoveAt(kept.Count - 1);
+        var cleaned = string.Join("\n", kept).Trim();
+        return cleaned.Length == 0 ? text.Trim() : cleaned;
+    }
 
     private static string NormalizeTaskKey(string? candidate, string title)
     {

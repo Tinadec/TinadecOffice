@@ -977,6 +977,134 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MemoryClosedLoop_PromotedMemoryIsInjectedIntoLaterRuns()
+    {
+        const string MemoryContent = "probe-pattern: dispatch workers after planning";
+        var curatorJson = $"{{\"memory_candidates\":[{{\"scope\":\"workspace\",\"kind\":\"fact\",\"content\":\"{MemoryContent}\",\"confidence\":0.9,\"applicability\":\"probe pattern runs\"}}],\"agent_candidates\":[]}}";
+        var script = CuratedRunScript(curatorJson);
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var firstRun = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "memory-loop-run-1" });
+        Assert.Equal("completed", firstRun.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        // The curator runs after the done chunk; poll until its candidate lands.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        JsonElement[] memoryCandidates = [];
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            memoryCandidates = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/memory-candidates?status=proposed");
+            if (memoryCandidates!.Length > 0) break;
+            await Task.Delay(100);
+        }
+        var memoryCandidateId = Assert.Single(memoryCandidates).GetProperty("id").GetGuid();
+
+        var promoteResponse = await client.PostAsJsonAsync($"/api/v1/memory-candidates/{memoryCandidateId}/promote", new { reason = "verified pattern" });
+        Assert.Equal(HttpStatusCode.OK, promoteResponse.StatusCode);
+
+        // Second run in the same session: keyword retrieval must surface the
+        // promoted memory inside the assembled worker/planner instructions.
+        var secondRun = await StreamInvokeAsync(client, sessionId, new { content = "probe pattern notes", client_message_id = "memory-loop-run-2" });
+        Assert.Equal("completed", secondRun.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+        Assert.Contains(script.Instructions, instructions => instructions.Contains("probe-pattern", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunReplay_ReconstructsTimelineForCompletedRun()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "run-replay" });
+        var runId = RunIdOf(chunks[0]);
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay");
+        Assert.Equal("completed", replay.GetProperty("status").GetString());
+        var task = Assert.Single(replay.GetProperty("tasks").EnumerateArray());
+        Assert.Equal("completed", task.GetProperty("status").GetString());
+        var round = Assert.Single(replay.GetProperty("supervision_rounds").EnumerateArray());
+        Assert.Equal("pass", round.GetProperty("decision").GetString());
+        var milestones = replay.GetProperty("milestones").EnumerateArray()
+            .Select(milestone => milestone.GetProperty("event_type").GetString()).ToArray();
+        Assert.Contains("task_graph.created", milestones);
+        Assert.Contains("user.response", milestones);
+    }
+
+    [Fact]
+    public async Task AgentCandidateEvaluation_ReturnsProposalAndSourceRunReplay()
+    {
+        var script = CuratedRunScript(CuratorCandidatesJson);
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "candidate-evaluation" });
+        var runId = RunIdOf(chunks[0]);
+        var candidates = await PollAgentCandidatesAsync(client, TimeSpan.FromSeconds(15));
+        var candidateId = Assert.Single(candidates).GetProperty("id").GetGuid();
+
+        var evaluation = await client.GetFromJsonAsync<JsonElement>($"/api/v1/agent-evolution/proposals/{candidateId}/evaluation");
+        Assert.Equal("日志巡检执行体", evaluation.GetProperty("name").GetString());
+        Assert.True(evaluation.GetProperty("proposal").TryGetProperty("system_prompt", out _));
+        var replay = evaluation.GetProperty("source_run_replay");
+        Assert.Equal(runId.ToString(), replay.GetProperty("run_id").GetString());
+        Assert.NotEmpty(replay.GetProperty("tasks").EnumerateArray().ToArray());
+        Assert.Equal("pass", Assert.Single(replay.GetProperty("supervision_rounds").EnumerateArray()).GetProperty("decision").GetString());
+    }
+
+    [Fact]
+    public async Task WorkerContextPatch_AppliedAgainstInputRevision()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("探针完成。\nCONTEXT_PATCH: probe-pattern 已建立 || 后续任务应复用 probe-pattern 模式")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "worker-patch-applied" });
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions");
+        var patch = Assert.Single(contextVersions!, version =>
+            version.GetProperty("kind").GetString() == "supplement"
+            && version.GetProperty("status").GetString() == "applied");
+        Assert.True(patch.GetProperty("revision").GetInt64() > patch.GetProperty("base_revision").GetInt64());
+    }
+
+    [Fact]
+    public async Task WorkerContextPatch_SiblingRaceMarksSecondPatchStale()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("结果。\nCONTEXT_PATCH: 并行结论 || 两个任务基于同一上下文版本各自产出结论")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "worker-patch-race" });
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions");
+        var supplements = contextVersions!.Where(version => version.GetProperty("kind").GetString() == "supplement").ToArray();
+        Assert.Equal(2, supplements.Length);
+        Assert.Single(supplements, version => version.GetProperty("status").GetString() == "applied");
+        Assert.Single(supplements, version => version.GetProperty("status").GetString() == "stale");
+    }
+
+    [Fact]
     public async Task InvokeStream_ActiveRunLimit_Returns409ForThirdRun()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

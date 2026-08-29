@@ -47,6 +47,14 @@ public sealed class StepResult
     public string Status { get; init; } = "completed";
     public string Summary { get; init; } = string.Empty;
     public IReadOnlyList<string> Evidence { get; init; } = [];
+
+    /// <summary>
+    /// Optional context patch proposed by the worker. The engine applies it
+    /// against the task's input context revision, so a result computed on stale
+    /// context loses the CAS race and stays audit-only.
+    /// </summary>
+    public string? ProposedPatchSummary { get; init; }
+    public string? ProposedPatchContent { get; init; }
 }
 
 /// <summary>Tenant/session/goal context shared across one orchestration run.</summary>

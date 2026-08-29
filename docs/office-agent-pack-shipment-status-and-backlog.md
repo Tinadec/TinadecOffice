@@ -33,7 +33,7 @@
 - "随安装" = App 连接后用户确认安装到当前认证工作区，非 OS 安装器复制文件或直写 Core 库。
 - App 卸载不删除 Core 中的 Pack；v1 不提供卸载 / 回滚 / 市场分发。
 - 内容 hash 只证完整性，不提供发布者密码学身份证明。
-- 四个运营辅助角色（`context_compressor` / `skill_recommender` / `evolution` / `git_steward`）仅安装并进入 frozen roster，不实例化、不产生参与事件（已验证 `FullDuplexRunEngine` 不触达它们）。
+- 四个运营辅助角色（`context_compressor` / `skill_recommender` / `evolution` / `git_steward`）安装后进入 frozen roster；2026-08-29 起经运营层触发链按需旁路激活（见 §2.2 状态更新）。
 
 ---
 
@@ -46,11 +46,12 @@
 - [ ] **卸载 / 回滚** — 目前 Pack 只装不卸；需要 workspace-scoped uninstall 与回滚到前一个已安装 version 的能力（含 managed 资源回收 / 默认值回退策略）。
 - [ ] **市场分发** — 目前 Pack 由 App 构建期静态携带；市场分发需引入远程获取、内容信任链与版本分发端点。
 
-### 2.2 运行时深化（本阶段"仅安装冻结"角色的后续触发链）
-- [ ] **`context_compressor` 事件触发链** — 目前仅冻结。需接入 run 内的上下文压缩触发（满足 token 阈值时），按快照精确 PromptVersion 装配并写 context patch。
-- [ ] **`skill_recommender` 事件触发链** — 目前仅冻结。需在规划阶段按任务能力缺口调用，向 planner 投递技能/工具建议。
-- [ ] **`evolution` 运行内评测闭环** — 目前候选生成入口存在（`agent-evolution/*` 已实现 generate/promote/reject），但 run 内由 `experience_curator` 主动提议与 canary 评测未接通。
-- [ ] **`git_steward` 事件触发链** — 目前仅冻结。需在 run 涉及 Git 变更时按快照参与变更范围审查与提交计划形成。
+### 2.2 运行时深化（"仅安装冻结"角色的后续触发链）
+> **状态更新（2026-08-29）**：四条触发链已随运营层触发链落地（`[triggers]` 策略 + `DmaEA/Operations/OperationalTriggers.cs` 四锚点旁路分派；详见根 `AGENTS.md` 同日条目与 `withdocs/双层智能体架构现状与差异分析.md`）。剩余子项如下。
+- [x] **`context_compressor` 事件触发链** — 已实现：`task_closed`/run 收尾触发，token 阈值门 + ToolCallAware 守卫，`kind=compaction` CAS 补丁与 `context.compacted` 事件。剩余：压缩与监督轮次的联动策略仍为基础形态。
+- [x] **`skill_recommender` 事件触发链** — 已实现：`task_graph_created`/`capability_missing` 触发，推荐写 `checkpoint.RecommendedCapabilities` 并注入重规划指令。剩余：`capability_missing` 尚不自动触发重规划（仅建议）。
+- [~] **`evolution` 运行内评测闭环** — 部分实现：run 收尾由 `experience_curator` 主动策展记忆/智能体候选（受 `[memory]` 白名单约束）；`promote` 已解锁为消毒→发布不可变版本→回填；新增 `GET .../proposals/{id}/evaluation`（源 run 回放评测证据）。剩余：canary/灰度与激活阶段未实现。
+- [~] **`git_steward` 事件触发链** — 部分实现：仅对触碰 `git_*` 工具的 run 发 `git.steward.reviewed` 建议事件（不执行 git）。剩余：与快照联动的变更范围审查与提交计划形成。
 
 ### 2.3 部署与多租户
 - [ ] **Cloud 多租户恢复调度器** — Core 目前恢复扫描仅覆盖 `ITenantContextAccessor.Current`（单工作区）；云端多租户恢复仍需 tenant scheduler + 分布式 claim。Pack 安装的并发收敛目前依赖 Core 单点 revision / 唯一索引 / 幂等 receipt。
