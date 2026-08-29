@@ -27,6 +27,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<AgentInstanceService>();
         builder.Services.AddSingleton<IAgentInstanceService>(sp => sp.GetRequiredService<AgentInstanceService>());
         builder.Services.AddSingleton<IAgentToolAuthorization>(sp => sp.GetRequiredService<AgentInstanceService>());
+        builder.Services.AddSingleton<IOperationalTriggerEvaluator, OperationalTriggerEvaluator>();
         builder.Services.AddSingleton<FullDuplexRunEngine>();
         builder.Services.AddSingleton<IFullDuplexRunEngine>(sp => sp.GetRequiredService<FullDuplexRunEngine>());
         builder.Services.AddHostedService(sp => sp.GetRequiredService<FullDuplexRunEngine>());
@@ -36,7 +37,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "persistence", "lifecycle", "models", "memory", "context", "prompts", "loop_guard", "tools"],
-            Capabilities = ["dual_layer_orchestration", "task_dispatch", "collaboration", "scheduling", "result_aggregation"],
+            Capabilities = ["dual_layer_orchestration", "task_dispatch", "collaboration", "scheduling", "result_aggregation", "operational_trigger_chain"],
             Language = "C#",
             MafPrimitives = ["agent", "workflow"],
             RegistrationStatus = ModuleRegistrationStatus.Registered

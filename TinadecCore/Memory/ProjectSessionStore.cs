@@ -399,10 +399,20 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         patchRows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
         if (patchRows.Count > bounded) patchRows.RemoveRange(bounded, patchRows.Count - bounded);
 
+        // Patch kind lives in the immutable content body; resolve it so the
+        // metadata projection distinguishes supplements, goal adjustments, and
+        // operational compactions without exposing the body itself.
+        var patchVersions = new List<ConversationContextVersion>(patchRows.Count);
+        foreach (var row in patchRows)
+        {
+            var patch = await ReadContextPatchAsync(row, cancellationToken).ConfigureAwait(false);
+            patchVersions.Add(new ConversationContextVersion(
+                row.Id, row.SessionId, row.RunId, row.AppliedRevision ?? row.BaseRevision, patch.Kind, row.Status, row.BaseRevision, row.CreatedAt));
+        }
+
         return snapshotRows.Select(item => new ConversationContextVersion(
                 item.Id, item.SessionId, item.RunId, item.Revision, "snapshot", "applied", null, item.CreatedAt))
-            .Concat(patchRows.Select(item => new ConversationContextVersion(
-                item.Id, item.SessionId, item.RunId, item.AppliedRevision ?? item.BaseRevision, "patch", item.Status, item.BaseRevision, item.CreatedAt)))
+            .Concat(patchVersions)
             .OrderByDescending(item => item.Revision)
             .ThenByDescending(item => item.CreatedAt)
             .Take(Math.Clamp(limit, 1, 200))
@@ -418,9 +428,9 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
             throw new ArgumentException("Context patch content is required.", nameof(request));
         }
         var patchKind = request.Kind?.Trim().ToLowerInvariant();
-        if (patchKind is not ("supplement" or "goal_adjustment"))
+        if (patchKind is not ("supplement" or "goal_adjustment" or "compaction"))
         {
-            throw new ArgumentException("Context patch kind must be supplement or goal_adjustment.", nameof(request));
+            throw new ArgumentException("Context patch kind must be supplement, goal_adjustment, or compaction.", nameof(request));
         }
 
         var sessionRef = await FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false)

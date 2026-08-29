@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
@@ -9,9 +10,10 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// <summary>
 /// Human review endpoints for Core-owned memory and agent candidates. Memory
 /// candidates can be promoted to immutable memory versions; generated agent
-/// candidates are proposals only and remain fail-closed until the staged evolution
-/// pipeline exists. Memory review and tool approvals are deliberately separate state
-/// machines (never share decision tokens).
+/// candidates are promoted through the sanitization/publish orchestrator, which
+/// produces an immutable agent version bound later by an explicit mode edit.
+/// Memory review and tool approvals are deliberately separate state machines
+/// (never share decision tokens).
 /// </summary>
 public static class MemoryReviewEndpoints
 {
@@ -75,8 +77,8 @@ public static class MemoryReviewEndpoints
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message }); }
         });
 
-        app.MapPost("/api/v1/agent-candidates/{candidateId}/promote", async (Guid candidateId, ReviewDecisionRequest? request, IAgentInstanceService instances, CancellationToken ct) =>
-            await DecideAgentAsync(instances, candidateId, "promoted", request, ct));
+        app.MapPost("/api/v1/agent-candidates/{candidateId}/promote", async (Guid candidateId, ReviewDecisionRequest? request, IAgentInstanceService instances, IAgentConfigurationService configurations, CancellationToken ct) =>
+            await AgentCandidatePromotion.PromoteAsync(instances, configurations, candidateId, request?.Reason, ct));
 
         app.MapPost("/api/v1/agent-candidates/{candidateId}/reject", async (Guid candidateId, ReviewDecisionRequest? request, IAgentInstanceService instances, CancellationToken ct) =>
             await DecideAgentAsync(instances, candidateId, "rejected", request, ct));
@@ -103,11 +105,9 @@ public static class MemoryReviewEndpoints
             var candidate = await instances.DecideCandidateAsync(candidateId, decision, request?.Reason, ct);
             return Results.Ok(ToAgentCandidate(candidate));
         }
-        catch (AgentCandidatePipelineRequiredException ex) { return Results.Conflict(new { code = "candidate_pipeline_required", candidate_id = ex.CandidateId, message = ex.Message }); }
         catch (KeyNotFoundException) { return Results.NotFound(new { code = "NOT_FOUND", message = "Agent candidate was not found." }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_DECISION", message = ex.Message }); }
         catch (InvalidOperationException ex) { return Results.Conflict(new { code = "ALREADY_DECIDED", message = ex.Message }); }
-        catch (UnauthorizedAccessException ex) { return Results.Json(new { code = "FORBIDDEN_PROMOTION", message = ex.Message }, statusCode: 403); }
     }
 
     private static object ToMemoryCandidate(TinadecCore.Abstractions.Ports.MemoryCandidate candidate) => new

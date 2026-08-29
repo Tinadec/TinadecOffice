@@ -757,48 +757,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         return v is null? Results.NotFound(new{code="not_found"}): Results.Ok(new{ id=v.Id, prompt_pipeline_id=v.PromptPipelineId, version=v.Version, graph=JsonSerializer.Deserialize<JsonElement>(v.GraphJson), content_hash=v.ContentHash, created_at=v.CreatedAt});
     }
 
-    // ── candidates & instances ──
-    static async Task<IResult> ListCandidates(string? status, IAgentInstanceService instances, CancellationToken ct)
-    {
-        try
-        {
-            var candidates = await instances.ListCandidatesAsync(status, ct).ConfigureAwait(false);
-            return Results.Ok(candidates.Select(ToCandidateDto));
-        }
-        catch (ArgumentException ex)
-        {
-            return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message });
-        }
-    }
-    static IResult PromoteCandidate(Guid id)
-    {
-        // A generated candidate is never allowed to become a profile in one
-        // request. It must first pass the evolution pipeline (redaction,
-        // evaluation, review, publish, canary and activation).
-        return Results.Conflict(new
-        {
-            code = "candidate_pipeline_required",
-            candidate_id = id,
-            message = "Candidate promotion is disabled until sanitization, evaluation, review, publish, canary, and activation complete."
-        });
-    }
-    static async Task<IResult> RejectCandidate(Guid id, ReviewDecisionRequest? request, IAgentInstanceService instances, CancellationToken ct)
-    {
-        try
-        {
-            var candidate = await instances.DecideCandidateAsync(id, "rejected", request?.Reason, ct).ConfigureAwait(false);
-            return Results.Ok(ToCandidateDto(candidate));
-        }
-        catch (KeyNotFoundException)
-        {
-            return Results.NotFound(new { code = "NOT_FOUND", message = "Agent candidate was not found." });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Results.Conflict(new { code = "ALREADY_DECIDED", message = ex.Message });
-        }
-    }
-
+    // ── instances ──
     static async Task<IResult> ListInstances(
         HttpRequest req,
         IAgentInstanceService instances,
@@ -891,23 +850,6 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
             };
         }));
     }
-
-    static object ToCandidateDto(AgentCandidateRecord candidate) => new
-    {
-        id = candidate.Id,
-        source_run_id = candidate.SourceRunId,
-        source_instance_id = candidate.SourceInstanceId,
-        generated_by_instance_id = candidate.GeneratedByInstanceId,
-        name = candidate.Name,
-        layer = candidate.Layer,
-        agent_type = candidate.AgentType,
-        status = candidate.Status,
-        confidence = candidate.ConfidenceScore,
-        promoted_agent_id = candidate.PromotedAgentId,
-        decision_reason = candidate.DecisionReason,
-        created_at = candidate.CreatedAt,
-        updated_at = candidate.UpdatedAt
-    };
 
     static object ToInstanceDto(RuntimeAgentInstance instance) => new
     {

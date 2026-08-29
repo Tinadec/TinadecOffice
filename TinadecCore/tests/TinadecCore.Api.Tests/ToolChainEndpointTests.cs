@@ -384,6 +384,14 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         {
             var prompt = string.Join('\n', messages.Select(m => m.Text));
             var instructions = options?.Instructions;
+            // Operational bypass roles must never fall through into the worker
+            // branch: that branch consumes the scripted first-turn tool call.
+            if (instructions?.Contains("You are the capability advisor", StringComparison.Ordinal) == true)
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"recommendations\":[]}")));
+            if (instructions?.Contains("You are the context compression agent", StringComparison.Ordinal) == true
+                || instructions?.Contains("You are the experience curator", StringComparison.Ordinal) == true
+                || instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true)
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{}")));
             if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))

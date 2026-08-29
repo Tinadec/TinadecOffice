@@ -33,6 +33,31 @@ public sealed record ToolRuntimePolicy(string Provider, bool MutationRequiresApp
     }
 }
 
+/// <summary>
+/// Gates the operational-role trigger chain (context compression, skill
+/// recommendation, experience curation, git stewardship). Budgets and switches
+/// live in the TOML baseline; per-role event bindings ride the frozen roster.
+/// </summary>
+public sealed record TriggersPolicy(
+    bool Enabled,
+    int ContextTokenThreshold,
+    bool CompressOnTaskClosed,
+    bool RecommendOnTaskCreated,
+    bool CurateOnRunClosed,
+    bool GitStewardOnRunClosed)
+{
+    public static TriggersPolicy Disabled => new(false, 0, false, false, false, false);
+
+    public static void Validate(TriggersPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.ContextTokenThreshold < 0)
+        {
+            throw new InvalidDataException("context_token_threshold must not be negative.");
+        }
+    }
+}
+
 public sealed record ApplicationModeDefinition(
     string Id,
     string DefaultAgentMode,
@@ -130,6 +155,9 @@ public sealed record AgentRuntimeConfigurationSnapshot(
     IReadOnlyDictionary<string, RuntimeProfileDefinition> Profiles,
     IReadOnlyDictionary<string, RuntimeAgentDefinition> Agents)
 {
+    /// <summary>Operational-role trigger gates; absent TOML keeps the chain disabled.</summary>
+    public TriggersPolicy Triggers { get; init; } = TriggersPolicy.Disabled;
+
     public (string ApplicationMode, string AgentMode, RuntimeProfileDefinition Profile) Resolve(string? applicationMode, string? agentMode)
     {
         var appId = NormalizeApplicationMode(applicationMode);
@@ -275,6 +303,19 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
         var toolPolicy = new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4));
         ToolRuntimePolicy.Validate(toolPolicy);
+        // The trigger chain is opt-in: a baseline without a [triggers] table keeps
+        // operational roles dormant, matching pre-trigger deployments.
+        var triggers = OptionalTable(root, "triggers");
+        var triggersPolicy = triggers is null
+            ? TriggersPolicy.Disabled
+            : new TriggersPolicy(
+                Boolean(triggers, "enabled"),
+                Integer(triggers, "context_token_threshold", 6000),
+                Boolean(triggers, "compress_on_task_closed"),
+                Boolean(triggers, "recommend_on_task_created"),
+                Boolean(triggers, "curate_on_run_closed"),
+                Boolean(triggers, "git_steward_on_run_closed"));
+        TriggersPolicy.Validate(triggersPolicy);
         return new AgentRuntimeConfigurationSnapshot(
             version,
             hash,
@@ -287,12 +328,16 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             toolPolicy,
             new Dictionary<string, ApplicationModeDefinition>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, RuntimeProfileDefinition>(StringComparer.OrdinalIgnoreCase),
-            new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase));
+            new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase))
+        {
+            Triggers = triggersPolicy
+        };
     }
 
     public static string NormalizeLayer(string? layer) => string.Equals(layer, "planning", StringComparison.OrdinalIgnoreCase) ? "operation" : layer?.Trim().ToLowerInvariant() ?? string.Empty;
 
     private static TomlTable Table(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : throw new InvalidDataException($"Missing TOML table '{key}'.");
+    private static TomlTable? OptionalTable(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : null;
     private static string Text(TomlTable table, string key, string fallback = "") => table.TryGetValue(key, out var value) ? value?.ToString() ?? fallback : fallback;
     private static int Integer(TomlTable table, string key, int fallback) => table.TryGetValue(key, out var value) ? Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture) : fallback;
     private static bool Boolean(TomlTable table, string key) => table.TryGetValue(key, out var value) && Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);

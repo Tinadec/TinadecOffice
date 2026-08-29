@@ -44,10 +44,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     private FullDuplexFactory CreateFactory(
         ScriptedChatClient? client = null,
         bool available = true,
-        IPromptAssembler? promptAssembler = null)
+        IPromptAssembler? promptAssembler = null,
+        string? runtimeToml = null)
     {
         _factory?.Dispose();
-        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available, promptAssembler);
+        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available, promptAssembler, runtimeToml);
         return _factory;
     }
 
@@ -423,7 +424,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvokeStream_InjectsFrozenPromptIntoEveryRunnableRoleWithoutStartingDormantRoles()
+    public async Task InvokeStream_InjectsFrozenPromptIntoEveryRunnableRoleWithoutStartingDormantRolesWhenTriggersDisabled()
     {
         var script = new ScriptedChatClient()
             .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
@@ -431,7 +432,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
             .WhenMeeting("全部完成。");
         var prompts = new RecordingPromptAssembler();
-        var factory = CreateFactory(script, promptAssembler: prompts);
+        var factory = CreateFactory(script, promptAssembler: prompts, runtimeToml: RuntimeTomlWith("enabled = false\n"));
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
@@ -475,6 +476,37 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         AssertVersionBinding(Assert.Single(instances, instance => instance.Role == "quality_controller"), expectedBySlug["supervisor"]);
     }
 
+    [Fact]
+    public async Task OperationalTriggers_ActivateBypassRolesWithoutCreatingLineageInstances()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。")
+            .WhenRecommender("{\"recommendations\":[{\"skill\":\"worker.general\",\"reason\":\"通用执行即可覆盖\",\"confidence\":\"high\"}]}");
+        var prompts = new RecordingPromptAssembler();
+        // Default trigger policy ships enabled; the capability advisor should fire
+        // after planning while compression stays below threshold.
+        var factory = CreateFactory(script, promptAssembler: prompts);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行任务", client_message_id = "bypass-roles" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.True(script.RecommenderCalls >= 1, "The capability advisor should be triggered after the task graph is created.");
+        Assert.Contains("skill_recommender", prompts.AgentIds);
+
+        var runId = RunIdOf(chunks[0]);
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage");
+        // Bypass operational calls never enter the task graph or lineage.
+        Assert.DoesNotContain(lineage!, instance => instance.GetProperty("role").GetString() is
+            "context_maintenance" or "capability_advisor" or "experience_curator" or "git_steward");
+        var deltas = string.Concat(chunks.Where(chunk => KindOf(chunk) == "delta").Select(chunk => chunk.GetProperty("delta").GetString()));
+        Assert.Equal("全部完成。", deltas);
+    }
+
     private static void AssertVersionBinding(RuntimeAgentInstance instance, AgentVersionRecord expected)
     {
         Assert.Equal(expected.AgentDefinitionId, instance.AgentDefinitionId);
@@ -498,10 +530,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var done = chunks.Last(chunk => KindOf(chunk) == "done");
         var usage = done.GetProperty("usage");
-        // planner + worker + supervisor + meeting
-        Assert.Equal(4, usage.GetProperty("input_tokens").GetInt64());
-        Assert.Equal(8, usage.GetProperty("output_tokens").GetInt64());
-        Assert.Equal(12, usage.GetProperty("total_tokens").GetInt64());
+        // planner + capability advisor + worker + supervisor + meeting. The experience
+        // curator runs after the terminal done chunk (post-run bypass), so its usage
+        // is attributed in model_invocations, not in this aggregate.
+        Assert.Equal(5, usage.GetProperty("input_tokens").GetInt64());
+        Assert.Equal(10, usage.GetProperty("output_tokens").GetInt64());
+        Assert.Equal(15, usage.GetProperty("total_tokens").GetInt64());
     }
 
     [Fact]
@@ -594,7 +628,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(2, script.WorkerCalls);
 
         var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions?run_id={runId}");
-        var appliedPatch = Assert.Single(contextVersions!, version => version.GetProperty("kind").GetString() == "patch"
+        var appliedPatch = Assert.Single(contextVersions!, version => version.GetProperty("kind").GetString() == "supplement"
             && version.GetProperty("status").GetString() == "applied");
         Assert.True(appliedPatch.GetProperty("revision").GetInt64() > baseContextRevision);
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
@@ -646,7 +680,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(2, script.WorkerCalls);
 
         var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions?run_id={runId}");
-        var appliedPatch = Assert.Single(contextVersions!, version => version.GetProperty("kind").GetString() == "patch"
+        var appliedPatch = Assert.Single(contextVersions!, version => version.GetProperty("kind").GetString() == "goal_adjustment"
             && version.GetProperty("status").GetString() == "applied");
         Assert.True(appliedPatch.GetProperty("revision").GetInt64() > baseContextRevision);
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
@@ -693,6 +727,256 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MeetingClarification_UsesMeetingModelResponseInsteadOfFixedText()
+    {
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("好的，我会继续跟进这个约束。");
+        script.BeforeWorker = workerGate.Task;
+        script.WorkerStarted = workerStarted;
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var target = StartStreamingInvoke(client, sessionId, new { content = "执行目标", client_message_id = "meeting-clarify-target" });
+        var acknowledgement = await target.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var targetRunId = RunIdOf(acknowledgement);
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        List<JsonElement>? targetChunks = null;
+        try
+        {
+            var clarification = await StreamInvokeAsync(client, sessionId, new
+            {
+                content = "你觉得这个方案可靠吗？",
+                client_message_id = "meeting-clarify-turn",
+                target_run_id = targetRunId
+            });
+            var clarificationRunId = RunIdOf(clarification[0]);
+            Assert.NotEqual(targetRunId, clarificationRunId);
+            var deltas = string.Concat(clarification.Where(chunk => KindOf(chunk) == "delta").Select(chunk => chunk.GetProperty("delta").GetString()));
+            Assert.Contains("我会继续跟进这个约束", deltas, StringComparison.Ordinal);
+            Assert.Equal("completed", clarification.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+            var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+            Assert.Contains(messages!, message => message.GetProperty("role").GetString() == "assistant"
+                && message.GetProperty("content").GetString()!.Contains("我会继续跟进这个约束", StringComparison.Ordinal));
+        }
+        finally
+        {
+            workerGate.TrySetResult();
+            targetChunks = await target.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        Assert.Equal("completed", targetChunks!.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+    }
+
+    [Fact]
+    public async Task OperationalCompression_BelowThreshold_SkipsModelCall()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。")
+            .WhenCompressor("不应被调用。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "compression-below" });
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        // The shipped baseline threshold (6000 tokens) is far above this short
+        // session, so the compressor must stay dormant.
+        Assert.Equal(0, script.CompressorCalls);
+        var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions");
+        Assert.DoesNotContain(contextVersions!, version => version.GetProperty("kind").GetString() == "compaction");
+    }
+
+    /// <summary>
+    /// Builds a complete runtime baseline TOML with a custom [triggers] section.
+    /// All other policy sections mirror the shipped default-agent-runtime.toml.
+    /// </summary>
+    private static string RuntimeTomlWith(string triggersSection) =>
+        "schema_version = 1\n\n"
+        + "[spawn]\nmax_depth = 2\nmax_agents_per_run = 8\nmax_parallel_workers = 4\n\n"
+        + "[scheduling]\nmax_active_runs_per_session = 2\nworker_retry_limit = 2\npreserve_partial_results = true\n\n"
+        + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n\n"
+        + "[context]\ndefault_token_budget = 8192\nrecent_message_limit = 24\noptimistic_revision = true\n\n"
+        + "[memory]\ncandidate_only = true\nretrieval_limit = 8\n"
+        + "allowed_scopes = [\"principal\", \"workspace\", \"project\", \"agent\"]\n"
+        + "allowed_kinds = [\"fact\", \"preference\", \"decision\", \"success_pattern\", \"failure_pattern\", \"task_template\", \"supervision_rule\"]\n\n"
+        + "[tools]\nprovider = \"tinadec-tools-process\"\nmutation_requires_approval = true\nserialize_workspace_writes = true\ndefault_timeout_seconds = 120\nmax_tool_rounds = 4\n\n"
+        + "[triggers]\n" + triggersSection;
+
+    [Fact]
+    public async Task OperationalCompression_AboveThreshold_AppliesCompactionPatch()
+    {
+        var runtimeToml = RuntimeTomlWith(
+            "enabled = true\ncontext_token_threshold = 1\ncompress_on_task_closed = true\nrecommend_on_task_created = false\ncurate_on_run_closed = false\ngit_steward_on_run_closed = false\n");
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。")
+            .WhenCompressor("当前目标：执行目标。\n关键约束：无。\n已完成事项：任务A。");
+        var factory = CreateFactory(script, runtimeToml: runtimeToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "compression-above" });
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        Assert.True(script.CompressorCalls >= 1, "The compressor should run at task close and/or run finalization.");
+        var contextVersions = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/context-versions");
+        var compactions = contextVersions!.Where(version => version.GetProperty("kind").GetString() == "compaction").ToArray();
+        Assert.NotEmpty(compactions);
+        Assert.All(compactions, compaction => Assert.Equal("applied", compaction.GetProperty("status").GetString()));
+        Assert.All(compactions, compaction => Assert.True(compaction.GetProperty("revision").GetInt64() > 0));
+    }
+
+    [Fact]
+    public async Task OperationalSkillRecommendation_FeedsRecommendationsIntoReplanning()
+    {
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("结果")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已完成。")
+            .WhenRecommender("{\"recommendations\":[{\"skill\":\"worker.browser\",\"reason\":\"目标涉及网页信息\",\"confidence\":\"high\"}]}");
+        script.BeforeWorker = workerGate.Task;
+        script.WorkerStarted = workerStarted;
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var initial = StartStreamingInvoke(client, sessionId, new { content = "调研并汇总资料", client_message_id = "skill-recommendation-target" });
+        var acknowledgement = await initial.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var runId = RunIdOf(acknowledgement);
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var baseContextRevision = await GetCurrentContextRevisionAsync(client, sessionId);
+
+        List<JsonElement>? initialChunks = null;
+        try
+        {
+            var adjustment = await StreamInvokeAsync(client, sessionId, new
+            {
+                content = "调整目标：改为汇总网页资料",
+                client_message_id = "skill-recommendation-adjust",
+                target_run_id = runId,
+                expected_context_revision = baseContextRevision
+            });
+            Assert.Equal("context_applied", adjustment.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+        }
+        finally
+        {
+            workerGate.TrySetResult();
+            initialChunks = await initial.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        Assert.Equal("completed", initialChunks!.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+        Assert.True(script.RecommenderCalls >= 1, "The capability advisor should run after the task graph is created.");
+        Assert.Equal(2, script.PlannerCalls);
+        // The goal adjustment forces a replanning round, which must carry the
+        // advisory recommendations captured after the first planning round.
+        Assert.Contains(script.Instructions, instructions =>
+            instructions.Contains("Capability recommendations from the operation layer", StringComparison.Ordinal)
+            && instructions.Contains("worker.browser", StringComparison.Ordinal));
+    }
+
+    private const string CuratorCandidatesJson = """
+        {"memory_candidates":[{"scope":"workspace","kind":"success_pattern","content":"先规划再分派执行体可稳定完成写入任务","confidence":0.9,"applicability":"写入类任务"}],"agent_candidates":[{"name":"日志巡检执行体","layer":"execution","agent_type":"task_executor","confidence":0.8,"proposal":{"slug":"worker.log-review","display_name":"日志巡检执行体","layer":"execution","role":"task_executor","system_prompt":"你负责读取并归纳日志输出。","description":"从成功运行沉淀"}}]}
+        """;
+
+    private static ScriptedChatClient CuratedRunScript(string curatorJson) => new ScriptedChatClient()
+        .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+        .WhenWorker("完成")
+        .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+        .WhenMeeting("完成。")
+        .WhenCurator(curatorJson);
+
+    /// <summary>
+    /// The curator runs after the terminal done chunk is durable, so post-run
+    /// candidate assertions poll instead of racing the bypass dispatch.
+    /// </summary>
+    private static async Task<JsonElement[]> PollAgentCandidatesAsync(HttpClient client, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        JsonElement[] candidates = [];
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            candidates = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agent-candidates?status=proposed");
+            if (candidates!.Length > 0) return candidates;
+            await Task.Delay(100);
+        }
+        return candidates;
+    }
+
+    [Fact]
+    public async Task OperationalEvolution_CuratesMemoryAndAgentCandidatesOnRunClose()
+    {
+        var script = CuratedRunScript(CuratorCandidatesJson);
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "evolution-curate" });
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+        Assert.True(script.CuratorCalls >= 1, "The experience curator should run at close.");
+
+        var agentCandidates = await PollAgentCandidatesAsync(client, TimeSpan.FromSeconds(15));
+        var candidate = Assert.Single(agentCandidates);
+        Assert.Equal("日志巡检执行体", candidate.GetProperty("name").GetString());
+        Assert.Equal("execution", candidate.GetProperty("layer").GetString());
+
+        var memoryCandidates = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/memory-candidates?status=proposed");
+        var memory = Assert.Single(memoryCandidates!);
+        Assert.Equal("success_pattern", memory.GetProperty("kind").GetString());
+        Assert.Equal("workspace", memory.GetProperty("scope").GetString());
+        Assert.Equal(candidate.GetProperty("source_run_id").GetString(), memory.GetProperty("source_run_id").GetString());
+
+        var runId = RunIdOf(chunks[0]);
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage");
+        Assert.Contains(lineage!, instance => instance.GetProperty("role").GetString() == "experience_curator");
+    }
+
+    [Fact]
+    public async Task AgentCandidatePromotion_PublishesImmutableVersion()
+    {
+        var script = CuratedRunScript(CuratorCandidatesJson);
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "evolution-promote" });
+        var candidates = await PollAgentCandidatesAsync(client, TimeSpan.FromSeconds(15));
+        var candidateId = Assert.Single(candidates).GetProperty("id").GetGuid();
+
+        var promoteResponse = await client.PostAsJsonAsync($"/api/v1/agent-evolution/proposals/{candidateId}/promote", new { reason = "评测说明：模式稳定，人工批准" });
+        Assert.Equal(HttpStatusCode.OK, promoteResponse.StatusCode);
+        var promoted = await promoteResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("promoted", promoted.GetProperty("status").GetString());
+        Assert.Equal("评测说明：模式稳定，人工批准", promoted.GetProperty("decision_reason").GetString());
+        var published = promoted.GetProperty("published_agent");
+        Assert.Equal(1, published.GetProperty("version").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(published.GetProperty("content_hash").GetString()));
+        Assert.Equal(published.GetProperty("id").GetGuid(), promoted.GetProperty("promoted_agent_id").GetGuid());
+
+        var directory = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+        Assert.Contains(directory!, agent => agent.GetProperty("display_name").GetString() == "日志巡检执行体");
+
+        var repeat = await client.PostAsJsonAsync($"/api/v1/agent-evolution/proposals/{candidateId}/promote", new { reason = "duplicate" });
+        Assert.Equal(HttpStatusCode.Conflict, repeat.StatusCode);
+        Assert.Equal("ALREADY_DECIDED", (await repeat.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task InvokeStream_ActiveRunLimit_Returns409ForThirdRun()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -701,7 +985,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             .WhenWorker("完成")
             .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
             .WhenMeeting("好了。");
-        script.BeforeMeeting = gate.Task;
+        script.BeforeWorker = gate.Task;
         var factory = CreateFactory(script);
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
@@ -711,6 +995,15 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var ackA = await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var ackB = await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotEqual(RunIdOf(ackA), RunIdOf(ackB));
+
+        // Wait until both runs are deterministically parked inside their worker
+        // gate; their run states stay active regardless of meeting timing.
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (script.WorkerGateEntries < 2 && DateTimeOffset.UtcNow < waitDeadline)
+        {
+            await Task.Delay(50);
+        }
+        Assert.True(script.WorkerGateEntries >= 2, "Both runs should reach the worker gate before the limit probe.");
 
         var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "任务C", client_message_id = "c" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -838,7 +1131,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AgentEvolution_PromoteRoute_IsFailClosedUntilPipelineExists()
+    public async Task AgentEvolution_PromoteRoute_RequiresAnExistingProposedCandidate()
     {
         var factory = CreateFactory();
         var client = factory.CreateClient();
@@ -846,15 +1139,15 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var response = await client.PostAsJsonAsync($"/api/v1/agent-evolution/proposals/{candidateId}/promote", new { reason = "reviewed" });
 
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("candidate_pipeline_required", body.GetProperty("code").GetString());
+        Assert.Equal("NOT_FOUND", body.GetProperty("code").GetString());
         Assert.Equal(candidateId, body.GetProperty("candidate_id").GetGuid());
 
         var legacy = await client.PostAsJsonAsync($"/api/v1/agent-candidates/{candidateId}/promote", new { reason = "reviewed" });
-        Assert.Equal(HttpStatusCode.Conflict, legacy.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, legacy.StatusCode);
         var legacyBody = await legacy.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("candidate_pipeline_required", legacyBody.GetProperty("code").GetString());
+        Assert.Equal("NOT_FOUND", legacyBody.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -928,24 +1221,33 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private readonly ScriptedChatClient _client;
         private readonly bool _available;
         private readonly IPromptAssembler? _promptAssembler;
+        private readonly string? _runtimeToml;
 
-        public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler)
+        public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler, string? runtimeToml = null)
         {
             _root = root;
             _client = client;
             _available = available;
             _promptAssembler = promptAssembler;
+            _runtimeToml = runtimeToml;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseSetting(WebHostDefaults.EnvironmentKey, "Testing");
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            var settings = new Dictionary<string, string?>
             {
                 ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),
                 ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
                 ["Logging:LogLevel:Default"] = "Warning"
-            }));
+            };
+            if (_runtimeToml is not null)
+            {
+                var tomlPath = Path.Combine(_root, "test-agent-runtime.toml");
+                File.WriteAllText(tomlPath, _runtimeToml, Encoding.UTF8);
+                settings["TinadecAgent:ProfileConfigPath"] = tomlPath;
+            }
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IAgentChatClientFactory>(new ScriptedFactory(_client, _available));
@@ -1023,12 +1325,21 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private string? _planner;
         private string? _worker;
         private string? _meeting;
+        private string? _compressor;
+        private string? _recommender;
+        private string? _curator;
+        private string? _steward;
         private UsageDetails? _usage;
         public int PlannerCalls;
         public int WorkerCalls;
+        public int CompressorCalls;
+        public int RecommenderCalls;
+        public int CuratorCalls;
+        public int StewardCalls;
         public Task? BeforeMeeting;
         public Task? BeforeWorker;
         public TaskCompletionSource? WorkerStarted;
+        public int WorkerGateEntries;
         private readonly object _instructionsGate = new();
         private readonly List<string> _instructions = [];
 
@@ -1042,6 +1353,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient ThenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient WhenMeeting(string script) { _meeting = script; return this; }
+        public ScriptedChatClient WhenCompressor(string script) { _compressor = script; return this; }
+        public ScriptedChatClient WhenRecommender(string script) { _recommender = script; return this; }
+        public ScriptedChatClient WhenCurator(string script) { _curator = script; return this; }
+        public ScriptedChatClient WhenSteward(string script) { _steward = script; return this; }
         public ScriptedChatClient WithUsage(long inputTokens, long outputTokens)
         {
             _usage = new UsageDetails
@@ -1071,18 +1386,36 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 || prompt.Contains("执行证据", StringComparison.Ordinal);
             var isMeeting = instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true
                 || prompt.Contains("Execution evidence", StringComparison.Ordinal);
-            if (!isPlanner && !isSupervisor && !isMeeting)
+            if (!isPlanner && !isSupervisor && !isMeeting && !IsOperational(instructions))
             {
                 WorkerStarted?.TrySetResult();
-                if (BeforeWorker is not null) await BeforeWorker.WaitAsync(cancellationToken);
+                if (BeforeWorker is not null)
+                {
+                    Interlocked.Increment(ref WorkerGateEntries);
+                    await BeforeWorker.WaitAsync(cancellationToken);
+                }
             }
             var text = RouteByPrompt(prompt, instructions);
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, text)) { Usage = CloneUsage() };
         }
 
+        private static bool IsOperational(string? instructions) =>
+            instructions?.Contains("You are the context compression agent", StringComparison.Ordinal) == true
+            || instructions?.Contains("You are the capability advisor", StringComparison.Ordinal) == true
+            || instructions?.Contains("You are the experience curator", StringComparison.Ordinal) == true
+            || instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true;
+
         /// <summary>Routes by prompt shape: the runtime's fixed Chinese scaffolding identifies the caller.</summary>
         private string RouteByPrompt(string prompt, string? instructions)
         {
+            if (instructions?.Contains("You are the context compression agent", StringComparison.Ordinal) == true)
+                return RecordOperational(ref CompressorCalls, _compressor ?? "当前目标：完成用户任务。\n关键约束：无。\n已完成事项：无。");
+            if (instructions?.Contains("You are the capability advisor", StringComparison.Ordinal) == true)
+                return RecordOperational(ref RecommenderCalls, _recommender ?? "{\"recommendations\":[]}");
+            if (instructions?.Contains("You are the experience curator", StringComparison.Ordinal) == true)
+                return RecordOperational(ref CuratorCalls, _curator ?? "{\"memory_candidates\":[],\"agent_candidates\":[]}");
+            if (instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true)
+                return RecordOperational(ref StewardCalls, _steward ?? "No git changes to review.");
             if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
@@ -1103,6 +1436,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private string RecordPlanner(string text)
         {
             Interlocked.Increment(ref PlannerCalls);
+            return text;
+        }
+
+        private static string RecordOperational(ref int counter, string text)
+        {
+            Interlocked.Increment(ref counter);
             return text;
         }
 

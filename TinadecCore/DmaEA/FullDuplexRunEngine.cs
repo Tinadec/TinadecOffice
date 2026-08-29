@@ -34,6 +34,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private readonly IAgentChatClientFactory _chatClients;
     private readonly IServiceProvider _services;
     private readonly IAgentModelResolver? _modelResolver;
+    private readonly IOperationalTriggerEvaluator? _triggerEvaluator;
+    private readonly ILongTermMemoryService? _longTermMemory;
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
     {
@@ -57,7 +59,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IAgentChatClientFactory chatClients,
         IServiceProvider services,
         ILogger<FullDuplexRunEngine> logger,
-        IAgentModelResolver? modelResolver = null)
+        IAgentModelResolver? modelResolver = null,
+        IOperationalTriggerEvaluator? triggerEvaluator = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -67,6 +70,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _chatClients = chatClients;
         _services = services;
         _modelResolver = modelResolver ?? services.GetService(typeof(IAgentModelResolver)) as IAgentModelResolver;
+        _triggerEvaluator = triggerEvaluator ?? services.GetService(typeof(IOperationalTriggerEvaluator)) as IOperationalTriggerEvaluator;
+        _longTermMemory = services.GetService(typeof(ILongTermMemoryService)) as ILongTermMemoryService;
         _logger = logger;
     }
 
@@ -253,7 +258,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                         checkpoint = await ReviewAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
                         break;
                     case "responding":
-                        checkpoint = await RespondToInteractionAsync(run, checkpoint, stoppingToken).ConfigureAwait(false);
+                        checkpoint = await RespondToInteractionAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
                         break;
                     case "awaiting_user":
                         // A resumed escalation is an explicit user choice to
@@ -404,7 +409,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
-                    assembly.Instructions,
+                    PlannerInstructions(checkpoint, assembly.Instructions),
                     cancellationToken).ConfigureAwait(false);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 var materialized = ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
@@ -436,6 +441,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             task_count = checkpoint.Tasks.Count,
             task_keys = checkpoint.Tasks.Select(item => item.TaskKey).ToArray()
         }, cancellationToken).ConfigureAwait(false);
+        await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskGraphCreated, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         return checkpoint;
     }
 
@@ -461,7 +467,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
             if (resumed.Result is not null)
             {
-                await ApplyTaskResultAsync(runId, checkpoint, resumed.Result, cancellationToken).ConfigureAwait(false);
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, resumed.Result, cancellationToken).ConfigureAwait(false);
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-resumed", cancellationToken).ConfigureAwait(false);
             }
         }
@@ -516,7 +522,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, result.Usage);
             if (!contextChanged)
             {
-                await ApplyTaskResultAsync(runId, checkpoint, result, cancellationToken).ConfigureAwait(false);
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -564,7 +570,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
             if (result.Result is not null)
             {
-                await ApplyTaskResultAsync(runId, checkpoint, result.Result, cancellationToken).ConfigureAwait(false);
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result.Result, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -817,7 +823,16 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
-        var selected = ResolveOrSelectWorker(configuration, task);
+        WorkerSelection selected;
+        try
+        {
+            selected = ResolveOrSelectWorker(configuration, task);
+        }
+        catch (WorkerUnavailableException)
+        {
+            await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.CapabilityMissing, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
         if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
         {
             task.WorkerAgentSlug = selected.Agent.Id;
@@ -1113,6 +1128,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     }
 
     private async Task ApplyTaskResultAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
         Guid runId,
         FullDuplexCheckpointV1 checkpoint,
         TaskExecutionResult execution,
@@ -1156,6 +1173,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             summary = execution.Result.Summary,
             evidence = execution.Result.Evidence
         }, cancellationToken, task.TaskId).ConfigureAwait(false);
+        if (execution.Status == "completed")
+        {
+            await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskCompleted, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static ToolTaskExecutionResult FailedToolTask(
@@ -1280,6 +1301,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private async Task<FullDuplexCheckpointV1> RespondToInteractionAsync(
         RunState run,
+        FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
@@ -1287,17 +1309,56 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.MeetingResponse = checkpoint.InteractionKind switch
         {
             "status_query" => await BuildStatusResponseAsync(checkpoint, cancellationToken).ConfigureAwait(false),
-            _ => "I need a clearer instruction before changing the active task. Please state whether you want a status update, additional constraints, or a new goal."
+            _ => await GenerateInteractionResponseAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false)
         };
         checkpoint.SupervisionDecision = "pass";
         checkpoint.Phase = "finalizing";
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "interaction-response", cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(Guid.Parse(run.RunId), "meeting.interaction.responded", "A non-execution meeting interaction was completed.", new
         {
             interaction_kind = checkpoint.InteractionKind,
             target_run_id = checkpoint.TargetRunId,
             context_revision = checkpoint.ContextRevision
         }, cancellationToken).ConfigureAwait(false);
-        return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "interaction-response", cancellationToken).ConfigureAwait(false);
+        return checkpoint;
+    }
+
+    private async Task<string> GenerateInteractionResponseAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
+        var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var factory = CreateModelFactory(configuration, checkpoint, meetingDefinition, checkpoint.MeetingAgentId, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        var assembly = await AssemblePromptAsync(meetingDefinition, context, cancellationToken).ConfigureAwait(false);
+
+        var targetSummary = "No active target run.";
+        if (checkpoint.TargetRunId is { } targetRunId)
+        {
+            var target = await _lifecycle.GetRunStateAsync(targetRunId.ToString(), cancellationToken).ConfigureAwait(false);
+            targetSummary = $"Target run {target.RunId} is {target.Status.ToString().ToLowerInvariant()} at context revision {target.ContextRevision}.";
+        }
+        var instructions = assembly.Instructions
+            + "\n\nYou are the meeting agent, the only user-facing agent. The user sent a follow-up message (interaction kind: "
+            + checkpoint.InteractionKind
+            + ") while another run may be active. Respond directly and honestly in the user's language: acknowledge the message, state its impact on the active task, and keep it short. Do not claim tools ran.";
+        var prompt = $"Interaction kind: {checkpoint.InteractionKind}\nUser message:\n{checkpoint.UserGoal}\n\n{targetSummary}";
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            "operation.meeting",
+            "meeting",
+            "Produces the only formal user-facing response from governed evidence.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+        if (string.IsNullOrWhiteSpace(response.Text)) throw new InvalidOperationException("Meeting agent returned no output.");
+        return response.Text;
     }
 
     private async Task<string> BuildStatusResponseAsync(FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken)
@@ -1386,9 +1447,26 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         if (string.IsNullOrWhiteSpace(checkpoint.MeetingResponse))
         {
+            // A cancellation can land while the run is executing or parked before
+            // finalization. Re-check before producing the user-facing response and
+            // again after it (the meeting call itself can be slow) so a cancelled
+            // run never streams a completed result.
+            var stateBeforeMeeting = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+            if (stateBeforeMeeting.Status == RunStatus.Cancelled)
+            {
+                await FinalizeCancellationAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                return;
+            }
             var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
             var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
             checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(configuration, checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
+            var stateAfterMeeting = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+            if (stateAfterMeeting.Status == RunStatus.Cancelled)
+            {
+                checkpoint.MeetingResponse = null;
+                await FinalizeCancellationAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                return;
+            }
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "meeting-response", cancellationToken).ConfigureAwait(false);
         }
 
@@ -1423,6 +1501,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             FinishReason: "completed",
             IdempotencyKey: $"run:{run.RunId}:turn:{checkpoint.TurnId}:done"), cancellationToken).ConfigureAwait(false);
         await _lifecycle.CompleteRunAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+        await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.RunFinalized, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1645,6 +1724,16 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         return response.Text;
     }
 
+    private static string PlannerInstructions(FullDuplexCheckpointV1 checkpoint, string baseInstructions)
+    {
+        if (checkpoint.RecommendedCapabilities.Count == 0) return baseInstructions;
+        var lines = string.Join("\n", checkpoint.RecommendedCapabilities.Select(item =>
+            $"- {item.Skill} (confidence: {item.Confidence}): {item.Reason}"));
+        return baseInstructions
+            + "\n\nCapability recommendations from the operation layer (advisory; accept or reject as you see fit):\n"
+            + lines;
+    }
+
     private static List<DurableTaskNode> ValidateAndMaterializeGraph(PlannedTask[] tasks, int maxTasks)
     {
         if (tasks.Length == 0) throw new InvalidTaskGraphException("The planner returned no tasks.");
@@ -1783,6 +1872,474 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
     }
 
+    private async Task EvaluateAndDispatchOperationsAsync(
+        OperationalTriggerPoint point,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        if (_triggerEvaluator is null || !configuration.Triggers.Enabled) return;
+        IReadOnlyList<OperationalTriggerMatch> matches;
+        try
+        {
+            matches = _triggerEvaluator.Evaluate(point, configuration);
+        }
+        catch (Exception ex)
+        {
+            TryLogWarning(ex, "Operational trigger evaluation failed for run {RunId}.", run.RunId);
+            return;
+        }
+        if (matches.Count == 0) return;
+
+        foreach (var match in matches)
+        {
+            try
+            {
+                await DispatchOperationalRoleAsync(match, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Operational roles are advisory bypass calls. A failure records
+                // evidence and continues; it must never fail the run.
+                TryLogWarning(ex, "Operational role '{Agent}' dispatch failed for run {RunId}.", match.Agent.Id, run.RunId);
+                try
+                {
+                    await AppendEventAsync(Guid.Parse(run.RunId), "operation.dispatch.failed",
+                        $"Operational role '{match.Agent.Id}' failed: {SafeError(ex)}", new
+                        {
+                            run_id = run.RunId,
+                            agent_slug = match.Agent.Id,
+                            trigger_point = point.ToString(),
+                            trigger_name = match.TriggerName
+                        }, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception eventEx)
+                {
+                    TryLogDebug(eventEx, "Could not record operational dispatch failure for run {RunId}.", run.RunId);
+                }
+            }
+        }
+    }
+
+    private Task DispatchOperationalRoleAsync(
+        OperationalTriggerMatch match,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken) =>
+        OperationalRoleKey(match.Agent) switch
+        {
+            "context_compressor" => DispatchContextCompressionAsync(match, run, configuration, checkpoint, cancellationToken),
+            "skill_recommender" => DispatchSkillRecommendationAsync(match, run, configuration, checkpoint, cancellationToken),
+            "evolution" => DispatchEvolutionAsync(match, run, configuration, checkpoint, cancellationToken),
+            // Remaining role handlers are wired milestone by milestone (git
+            // stewardship).
+            _ => Task.CompletedTask
+        };
+
+    private static string OperationalRoleKey(RuntimeAgentDefinition agent) =>
+        (agent.Role?.Trim().ToLowerInvariant(), agent.Id?.Trim().ToLowerInvariant()) switch
+        {
+            ("context_maintenance", _) or (_, "context_compressor") => "context_compressor",
+            ("capability_advisor", _) or (_, "skill_recommender") => "skill_recommender",
+            ("experience_curator", _) or (_, "evolution") => "evolution",
+            ("git_steward", _) => "git_steward",
+            _ => string.Empty
+        };
+
+    private async Task DispatchContextCompressionAsync(
+        OperationalTriggerMatch match,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        // ToolCallAware guard: never compress while a worker turn or tool
+        // execution is in flight; the summary could split an unfinished
+        // call/result group.
+        if (checkpoint.Tasks.Any(task => task.Status == "running" || !string.IsNullOrWhiteSpace(task.PendingToolExecutionId)))
+        {
+            await AppendEventAsync(runId, "context.compaction.skipped", "Compression skipped: a task is still executing.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                trigger_point = match.Point.ToString(),
+                reason = "active_tasks"
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        if (context.EstimatedTokens < configuration.Triggers.ContextTokenThreshold)
+        {
+            await AppendEventAsync(runId, "context.compaction.skipped", "Compression skipped: context is below the token threshold.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                trigger_point = match.Point.ToString(),
+                reason = "below_threshold",
+                estimated_tokens = context.EstimatedTokens,
+                threshold = configuration.Triggers.ContextTokenThreshold
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        var assembly = await AssemblePromptAsync(match.Agent, context, cancellationToken).ConfigureAwait(false);
+        var evidence = string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"));
+        var instructions = assembly.Instructions
+            + "\n\nYou are the context compression agent. Compress the session context into a structured summary with these sections: 当前目标 / 关键约束 / 已完成事项 / 待处理事项 / 重要结论 / 风险点. Preserve the current goal and constraints exactly, keep approval conclusions, and never invent new facts.";
+        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nSession context evidence:\n{evidence}";
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            $"operation.{match.Agent.Id}",
+            match.Agent.Id,
+            "Compresses session context into a structured summary patch.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+        var summary = response.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(summary)) throw new InvalidOperationException("Context compressor returned no output.");
+
+        var baseRevision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
+        var result = await _conversations.ApplyContextPatchAsync(new ContextPatchRequest(
+            checkpoint.SessionId,
+            baseRevision,
+            summary,
+            $"Compressed session context at revision {baseRevision}.",
+            checkpoint.RunId,
+            Kind: "compaction"), cancellationToken).ConfigureAwait(false);
+        if (string.Equals(result.Status, "applied", StringComparison.OrdinalIgnoreCase))
+        {
+            await AppendEventAsync(runId, "context.compacted", "Context compression applied as a session patch.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                trigger_point = match.Point.ToString(),
+                patch_id = result.PatchId,
+                base_context_revision = baseRevision,
+                context_revision = result.AppliedRevision
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await AppendEventAsync(runId, "context.compacted.stale", "Context compression lost the revision race and was kept for audit.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                trigger_point = match.Point.ToString(),
+                patch_id = result.PatchId,
+                base_context_revision = baseRevision,
+                context_revision = result.CurrentRevision
+            }, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DispatchSkillRecommendationAsync(
+        OperationalTriggerMatch match,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        var assembly = await AssemblePromptAsync(match.Agent, context, cancellationToken).ConfigureAwait(false);
+        var taskSummary = checkpoint.Tasks.Count == 0
+            ? "(no task graph yet)"
+            : string.Join("\n", checkpoint.Tasks.Select(item =>
+                $"- {item.TaskKey}: capabilities=[{string.Join(", ", item.RequiredCapabilities)}] tools=[{string.Join(", ", item.RequiredTools)}]"));
+        var evidence = string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"));
+        var instructions = assembly.Instructions
+            + "\n\nYou are the capability advisor. Recommend execution capabilities for the current task graph. Respond with strict JSON only: {\"recommendations\":[{\"skill\":\"...\",\"reason\":\"...\",\"confidence\":\"high|medium|low\"}]}. Advise only; never execute, approve, or address the user.";
+        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nTask graph:\n{taskSummary}\n\nSession context evidence:\n{evidence}";
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            $"operation.{match.Agent.Id}",
+            match.Agent.Id,
+            "Advises the planner on capable execution specialists without deciding.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+
+        var recommendations = ParseRecommendations(response.Text);
+        if (recommendations.Count == 0)
+        {
+            await AppendEventAsync(runId, "capability.recommendation.empty", "Capability advisor produced no usable recommendations.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                trigger_point = match.Point.ToString()
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var added = 0;
+        foreach (var recommendation in recommendations)
+        {
+            if (checkpoint.RecommendedCapabilities.Count >= 10) break;
+            if (checkpoint.RecommendedCapabilities.Any(existing => string.Equals(existing.Skill, recommendation.Skill, StringComparison.OrdinalIgnoreCase))) continue;
+            checkpoint.RecommendedCapabilities.Add(recommendation);
+            added++;
+        }
+        if (added > 0)
+        {
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "capability-recommended", cancellationToken).ConfigureAwait(false);
+        }
+        await AppendEventAsync(runId, "capability.recommended", $"Capability advisor recommended {recommendations.Count} skill(s).", new
+        {
+            run_id = run.RunId,
+            agent_slug = match.Agent.Id,
+            trigger_point = match.Point.ToString(),
+            added,
+            recommendations = recommendations.Select(item => new { skill = item.Skill, reason = item.Reason, confidence = item.Confidence }).ToArray()
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<RecommendedCapability> ParseRecommendations(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        try
+        {
+            using var document = JsonDocument.Parse(text.Trim());
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("recommendations", out var array)
+                || array.ValueKind != JsonValueKind.Array) return [];
+            var result = new List<RecommendedCapability>();
+            foreach (var item in array.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var skill = item.TryGetProperty("skill", out var skillNode) && skillNode.ValueKind == JsonValueKind.String
+                    ? skillNode.GetString()?.Trim()
+                    : null;
+                if (string.IsNullOrWhiteSpace(skill)) continue;
+                var reason = item.TryGetProperty("reason", out var reasonNode) && reasonNode.ValueKind == JsonValueKind.String
+                    ? reasonNode.GetString() ?? string.Empty
+                    : string.Empty;
+                var confidence = item.TryGetProperty("confidence", out var confidenceNode) && confidenceNode.ValueKind == JsonValueKind.String
+                    ? confidenceNode.GetString() ?? "medium"
+                    : "medium";
+                result.Add(new RecommendedCapability(skill, reason, confidence));
+            }
+            return result;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private async Task DispatchEvolutionAsync(
+        OperationalTriggerMatch match,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        if (_longTermMemory is null)
+        {
+            _logger.LogDebug("Long-term memory service is not registered; skipping experience curation for run {RunId}.", run.RunId);
+            return;
+        }
+
+        var runId = Guid.Parse(run.RunId);
+        var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        var assembly = await AssemblePromptAsync(match.Agent, context, cancellationToken).ConfigureAwait(false);
+        var evidence = string.Join("\n", checkpoint.Tasks.Select(item =>
+            $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
+        var instructions = assembly.Instructions
+            + "\n\nYou are the experience curator. Review the finished run and extract reusable experience. Respond with strict JSON only: "
+            + "{\"memory_candidates\":[{\"scope\":\"workspace\",\"kind\":\"success_pattern|failure_pattern|fact|preference|decision|task_template|supervision_rule\",\"content\":\"...\",\"confidence\":0.8,\"applicability\":\"...\",\"expiry_condition\":\"...\"}],"
+            + "\"agent_candidates\":[{\"name\":\"...\",\"layer\":\"execution\",\"agent_type\":\"task_executor\",\"confidence\":0.7,\"proposal\":{\"slug\":\"...\",\"display_name\":\"...\",\"layer\":\"execution\",\"role\":\"task_executor\",\"system_prompt\":\"...\",\"description\":\"...\",\"capabilities\":[]}}]}. "
+            + "Only propose candidates backed by concrete evidence from this run; an empty object means nothing was worth keeping. Candidates are never applied without human review.";
+        var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}\n\nSupervision decision: {checkpoint.SupervisionDecision ?? "none"}\n\nSession context evidence:\n{string.Join("\n", context.Evidence.Select(item => $"[{item.Source}] {item.Content}"))}";
+        using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+            await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
+            $"operation.{match.Agent.Id}",
+            match.Agent.Id,
+            "Curates reusable experience from finished runs as reviewable candidates.",
+            new ChatOptions { Instructions = instructions });
+        var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
+            checkpoint.ModelUsage,
+            Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+
+        var (memoryCandidates, agentCandidates) = ParseCurationOutput(response.Text);
+        // Candidate scope/kind must stay inside the frozen [memory] policy; the
+        // curator cannot widen its own write surface.
+        memoryCandidates = memoryCandidates
+            .Where(item => configuration.Memory.AllowedScopes.Contains(item.Scope, StringComparer.OrdinalIgnoreCase)
+                && configuration.Memory.AllowedKinds.Contains(item.Kind, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (memoryCandidates.Count == 0 && agentCandidates.Count == 0) return;
+
+        // Attribution requires a durable curator identity; create it lazily so a
+        // run with nothing worth keeping keeps its lineage clean.
+        var curator = await EnsureEvolutionAgentAsync(run, configuration, match.Agent, cancellationToken).ConfigureAwait(false);
+
+        foreach (var (scope, kind, content, confidence, applicability, expiryCondition) in memoryCandidates)
+        {
+            var candidate = await _longTermMemory.CreateCandidateAsync(new MemoryCandidateProposal(
+                runId,
+                curator.Id,
+                scope,
+                kind,
+                content,
+                confidence,
+                Applicability: applicability,
+                ExpiryCondition: expiryCondition), cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "memory.candidate_created", "Experience curator proposed a memory candidate.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                candidate_id = candidate.Id,
+                scope = candidate.Scope,
+                kind = candidate.Kind,
+                confidence = candidate.Confidence
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var (name, layer, agentType, confidence, proposal) in agentCandidates)
+        {
+            var candidate = await _instances.CreateCandidateAsync(new AgentCandidateProposal(
+                runId,
+                curator.Id,
+                name,
+                layer,
+                agentType,
+                confidence,
+                proposal), cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "agent.candidate_proposed", "Experience curator proposed an agent candidate.", new
+            {
+                run_id = run.RunId,
+                agent_slug = match.Agent.Id,
+                candidate_id = candidate.Id,
+                name = candidate.Name,
+                layer = candidate.Layer,
+                agent_type = candidate.AgentType,
+                confidence = candidate.ConfidenceScore
+            }, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<RuntimeAgentInstance> EnsureEvolutionAgentAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        RuntimeAgentDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var all = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        var curator = all.FirstOrDefault(item => !item.Generated && item.AgentVersionId == definition.AgentVersionId);
+        if (curator is not null)
+        {
+            VerifyRootInstance(curator, definition, null, "experience curator");
+            return curator;
+        }
+
+        curator = await _instances.CreateRootAsync(new RuntimeAgentSeed(
+            Guid.Parse(run.SessionId),
+            runId,
+            definition.Id,
+            definition.Layer,
+            definition.Role,
+            "chat",
+            definition.Capabilities,
+            [],
+            ["workspace"],
+            configuration.Context.DefaultTokenBudget,
+            AgentDefinitionId: definition.AgentDefinitionId,
+            AgentVersionId: definition.AgentVersionId,
+            VersionContentHash: definition.VersionContentHash), cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "agent.created", "Experience curator created.", new
+        {
+            agent_instance_id = curator.Id,
+            agent_slug = definition.Id,
+            layer = curator.Layer,
+            role = curator.Role
+        }, cancellationToken).ConfigureAwait(false);
+        return curator;
+    }
+
+    private static (List<(string Scope, string Kind, string Content, double Confidence, string? Applicability, string? ExpiryCondition)> MemoryCandidates,
+        List<(string Name, string Layer, string AgentType, double Confidence, JsonElement Proposal)> AgentCandidates) ParseCurationOutput(string? text)
+    {
+        var memoryCandidates = new List<(string, string, string, double, string?, string?)>();
+        var agentCandidates = new List<(string, string, string, double, JsonElement)>();
+        if (string.IsNullOrWhiteSpace(text)) return (memoryCandidates, agentCandidates);
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(text.Trim());
+        }
+        catch (JsonException)
+        {
+            return (memoryCandidates, agentCandidates);
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return (memoryCandidates, agentCandidates);
+
+            if (root.TryGetProperty("memory_candidates", out var memoryNode) && memoryNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in memoryNode.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    var scope = StringProperty(item, "scope");
+                    var kind = StringProperty(item, "kind");
+                    var content = StringProperty(item, "content");
+                    if (scope is null || kind is null || content is null) continue;
+                    memoryCandidates.Add((scope, kind, content, ConfidenceProperty(item), StringProperty(item, "applicability"), StringProperty(item, "expiry_condition")));
+                }
+            }
+
+            if (root.TryGetProperty("agent_candidates", out var agentNode) && agentNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in agentNode.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    var name = StringProperty(item, "name");
+                    var layer = StringProperty(item, "layer");
+                    var agentType = StringProperty(item, "agent_type");
+                    if (name is null || layer is null || agentType is null) continue;
+                    if (!item.TryGetProperty("proposal", out var proposalNode) || proposalNode.ValueKind != JsonValueKind.Object) continue;
+                    agentCandidates.Add((name, layer, agentType, ConfidenceProperty(item), proposalNode.Clone()));
+                }
+            }
+        }
+        return (memoryCandidates, agentCandidates);
+    }
+
+    private static string? StringProperty(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()?.Trim()
+            : null;
+
+    private static double ConfidenceProperty(JsonElement element) =>
+        element.TryGetProperty("confidence", out var property) && property.TryGetDouble(out var value)
+            ? Math.Clamp(value, 0, 1)
+            : 0.5;
+
     private Task AppendEventAsync(Guid runId, string type, string summary, object payload, CancellationToken ct, Guid? taskId = null) =>
         _lifecycle.AppendEventAsync(runId, type, payload, summary, taskId: taskId, cancellationToken: ct);
 
@@ -1841,9 +2398,16 @@ internal sealed class FullDuplexCheckpointV1
     public string? SupervisionDecision { get; set; }
     public List<string> SupervisionReasons { get; set; } = [];
     public string? MeetingResponse { get; set; }
+    public List<RecommendedCapability> RecommendedCapabilities { get; set; } = [];
     public ModelUsage? ModelUsage { get; set; }
     public Guid? AssistantMessageId { get; set; }
 }
+
+/// <summary>
+/// A skill/capability recommendation produced by the operational capability
+/// advisor and injected into subsequent planning rounds.
+/// </summary>
+internal sealed record RecommendedCapability(string Skill, string Reason, string Confidence);
 
 internal sealed class DurableTaskNode
 {

@@ -20,7 +20,10 @@ public interface IAgentInstanceService
     Task ReleaseRunInstancesAsync(Guid runId, CancellationToken cancellationToken = default);
     Task<AgentCandidateRecord> CreateCandidateAsync(AgentCandidateProposal proposal, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AgentCandidateRecord>> ListCandidatesAsync(string? status = null, CancellationToken cancellationToken = default);
-    Task<AgentCandidateRecord> DecideCandidateAsync(Guid candidateId, string decision, string? reason, CancellationToken cancellationToken = default);
+    Task<AgentCandidateRecord> DecideCandidateAsync(Guid candidateId, string decision, string? reason, CancellationToken cancellationToken = default, Guid? promotedAgentId = null);
+
+    /// <summary>Loads a candidate together with its immutable proposal body for promotion review.</summary>
+    Task<(AgentCandidateRecord Candidate, System.Text.Json.JsonElement Proposal)> GetCandidateWithProposalAsync(Guid candidateId, CancellationToken cancellationToken = default);
 }
 
 public sealed record RuntimeAgentSeed(
@@ -99,20 +102,10 @@ public sealed record AgentCandidateProposal(
     Guid? ProjectId = null);
 
 /// <summary>
-/// A generated agent candidate is only a proposal.  Publishing a profile requires
-/// the separate sanitization, evaluation, review, publish, canary, and activation
-/// pipeline; there is intentionally no one-step promotion operation.
+/// A generated agent candidate is only a proposal. Promotion is review-driven:
+/// the endpoint layer sanitizes the immutable proposal, publishes an immutable
+/// AgentVersion through the AgentConfiguration boundary, and records the decision.
 /// </summary>
-public sealed class AgentCandidatePipelineRequiredException : InvalidOperationException
-{
-    public AgentCandidatePipelineRequiredException(Guid candidateId)
-        : base("Candidate promotion is disabled until the evolution pipeline completes.")
-    {
-        CandidateId = candidateId;
-    }
-
-    public Guid CandidateId { get; }
-}
 
 /// <summary>Wire-compatible spawn intent that is deliberately fail-closed.</summary>
 public sealed class AgentPromotionDisabledException : InvalidOperationException
@@ -415,21 +408,37 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         return rows;
     }
 
-    public async Task<AgentCandidateRecord> DecideCandidateAsync(Guid candidateId, string decision, string? reason, CancellationToken cancellationToken = default)
+    public async Task<AgentCandidateRecord> DecideCandidateAsync(Guid candidateId, string decision, string? reason, CancellationToken cancellationToken = default, Guid? promotedAgentId = null)
     {
-        if (string.Equals(decision, "promoted", StringComparison.OrdinalIgnoreCase))
-            throw new AgentCandidatePipelineRequiredException(candidateId);
-        if (!string.Equals(decision, "rejected", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Candidate decision must be rejected until the evolution pipeline is implemented.", nameof(decision));
-        decision = decision.Trim().ToLowerInvariant();
+        var normalized = decision?.Trim().ToLowerInvariant();
+        if (normalized is not ("promoted" or "rejected"))
+            throw new ArgumentException("Candidate decision must be promoted or rejected.", nameof(decision));
+        if (normalized == "promoted" && promotedAgentId is null)
+            throw new ArgumentException("Promoting a candidate requires the published agent definition id.", nameof(promotedAgentId));
         var scope = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var candidate = await db.Candidates.SingleOrDefaultAsync(x => x.Id == candidateId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Agent candidate was not found.");
         if (candidate.Status != "proposed") throw new InvalidOperationException("Candidate has already been decided.");
-        candidate.Status = decision; candidate.DecisionReason = reason; candidate.DecidedByPrincipalId = scope.PrincipalId; candidate.UpdatedAt = DateTimeOffset.UtcNow;
+        candidate.Status = normalized;
+        candidate.DecisionReason = reason;
+        candidate.DecidedByPrincipalId = scope.PrincipalId;
+        if (normalized == "promoted") candidate.PromotedAgentId = promotedAgentId;
+        candidate.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return candidate;
+    }
+
+    public async Task<(AgentCandidateRecord Candidate, JsonElement Proposal)> GetCandidateWithProposalAsync(Guid candidateId, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var candidate = await db.Candidates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidateId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Agent candidate was not found.");
+        await using var stream = await _content.OpenReadAsync(
+            new ContentReference(candidate.ProposalReference, candidate.ProposalHash, candidate.ProposalLength, "application/json"), cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return (candidate, document.RootElement.Clone());
     }
 
     private async Task<AgentInstanceRecord> FindInstanceAsync(Guid id, TenantContext scope, CancellationToken cancellationToken)

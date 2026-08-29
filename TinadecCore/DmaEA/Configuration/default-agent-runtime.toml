@@ -35,3 +35,14 @@ mutation_requires_approval = true
 serialize_workspace_writes = true
 default_timeout_seconds = 120
 max_tool_rounds = 4
+
+# Operational-role trigger chain (context compression, skill recommendation,
+# experience curation, git stewardship). Roles stay dormant when disabled or
+# when the frozen roster does not carry the role.
+[triggers]
+enabled = true
+context_token_threshold = 6000
+compress_on_task_closed = true
+recommend_on_task_created = true
+curate_on_run_closed = true
+git_steward_on_run_closed = true

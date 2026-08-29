@@ -73,6 +73,12 @@ public sealed record FrozenRunConfigurationV1(
     public string PolicySnapshotHash { get; init; } = "";
     public IReadOnlyList<FrozenPolicyBundle> PolicyBundles { get; init; } = [];
 
+    /// <summary>
+    /// Operational-role trigger gates frozen at admission. Runs admitted before
+    /// the trigger chain existed deserialize with the disabled default.
+    /// </summary>
+    public TriggersPolicy Triggers { get; init; } = TriggersPolicy.Disabled;
+
     public string ToCanonicalJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     [JsonIgnore]
@@ -198,7 +204,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             bindings)
         {
             PolicySnapshotHash = policySnapshot?.SnapshotHash ?? "",
-            PolicyBundles = policySnapshot?.Bundles ?? []
+            PolicyBundles = policySnapshot?.Bundles ?? [],
+            Triggers = snapshot.Triggers
         };
         return frozen;
     }
