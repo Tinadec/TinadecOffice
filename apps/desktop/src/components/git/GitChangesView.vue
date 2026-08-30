@@ -30,6 +30,7 @@ import { useAiCommitMessage } from '../../composables/useAiCommitMessage'
 import { useAiChangeAnalysis, type AiRiskLevel } from '../../composables/useAiChangeAnalysis'
 import CommitMessageEditor from './CommitMessageEditor.vue'
 import DiffViewer from './DiffViewer.vue'
+import { UiIslandCard } from '../ui'
 import { reconstructFromHunks, type DiffFileEntry } from './diffUtils'
 import { parseUnifiedDiff } from '../../gitDiffParser'
 import { buildGitIndexPatch, changeBlockLineIds } from '../../gitIndexPatch'
@@ -340,7 +341,7 @@ const sortedStatusFiles = computed(() => {
 <template>
   <div class="git-changes-view">
     <!-- File changes section -->
-    <div class="git-section">
+    <UiIslandCard padding="none">
       <button class="git-section-header" @click="filesExpanded = !filesExpanded">
         <component :is="filesExpanded ? ChevronDown : ChevronRight" :size="14" />
         <GitCommitHorizontal :size="14" />
@@ -507,55 +508,56 @@ const sortedStatusFiles = computed(() => {
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- Stage/Unstage actions -->
-    <div class="git-stage-actions">
-      <button
-        class="secondary-button git-action-btn"
-        :disabled="operationLoading || !canRequestIndexApproval"
-        @click="emit('request-stage')"
-      >
-        <Plus :size="13" />
-        <span>{{ t('context.gitStage') }}</span>
-      </button>
-      <button
-        class="secondary-button git-action-btn"
-        :disabled="operationLoading || !canRequestIndexApproval"
-        @click="emit('request-unstage')"
-      >
-        <span>{{ t('context.gitUnstage') }}</span>
-      </button>
-      <button
-        v-if="indexApproval?.status === 'approved'"
-        class="secondary-button git-action-btn git-execute-btn"
-        :disabled="operationLoading"
-        @click="emit('execute-index')"
-      >
-        <CheckCircle2 :size="13" />
-        <span>{{ t('context.gitExecuteIndexUpdate') }}</span>
-      </button>
-      <div v-if="canDecideIndexApproval" class="git-approval-decide">
-        <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', indexApproval!, 'approved')">
-          <CheckCircle2 :size="14" />
-        </button>
-        <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', indexApproval!, 'rejected')">
-          <ShieldX :size="14" />
-        </button>
-      </div>
-      <button
-        v-if="canDecideIndexApproval"
-        class="secondary-button git-action-btn git-execute-btn"
-        :disabled="operationLoading"
-        @click="emit('decide-approval', indexApproval!, 'approved'); $nextTick(() => emit('execute-index'))"
-      >
-        <CheckCircle2 :size="13" />
-        <span>{{ t('context.gitApproveAndExecute') }}</span>
-      </button>
-    </div>
+      <template #footer>
+        <!-- Stage/Unstage actions -->
+        <div class="git-stage-actions">
+          <button
+            class="secondary-button git-action-btn"
+            :disabled="operationLoading || !canRequestIndexApproval"
+            @click="emit('request-stage')"
+          >
+            <Plus :size="13" />
+            <span>{{ t('context.gitStage') }}</span>
+          </button>
+          <button
+            class="secondary-button git-action-btn"
+            :disabled="operationLoading || !canRequestIndexApproval"
+            @click="emit('request-unstage')"
+          >
+            <span>{{ t('context.gitUnstage') }}</span>
+          </button>
+          <button
+            v-if="indexApproval?.status === 'approved'"
+            class="secondary-button git-action-btn git-execute-btn"
+            :disabled="operationLoading"
+            @click="emit('execute-index')"
+          >
+            <CheckCircle2 :size="13" />
+            <span>{{ t('context.gitExecuteIndexUpdate') }}</span>
+          </button>
+          <div v-if="canDecideIndexApproval" class="git-approval-decide">
+            <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', indexApproval!, 'approved')">
+              <CheckCircle2 :size="14" />
+            </button>
+            <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', indexApproval!, 'rejected')">
+              <ShieldX :size="14" />
+            </button>
+          </div>
+          <button
+            v-if="canDecideIndexApproval"
+            class="secondary-button git-action-btn git-execute-btn"
+            :disabled="operationLoading"
+            @click="emit('decide-approval', indexApproval!, 'approved'); $nextTick(() => emit('execute-index'))"
+          >
+            <CheckCircle2 :size="13" />
+            <span>{{ t('context.gitApproveAndExecute') }}</span>
+          </button>
+        </div>
+      </template>
+    </UiIslandCard>
 
     <!-- AI change analysis section -->
-    <div class="git-section">
+    <UiIslandCard padding="none">
       <button class="git-section-header" @click="showAiAnalysis = !showAiAnalysis">
         <component :is="showAiAnalysis ? ChevronDown : ChevronRight" :size="14" />
         <Sparkles :size="14" />
@@ -609,10 +611,10 @@ const sortedStatusFiles = computed(() => {
           </div>
         </div>
       </div>
-    </div>
+    </UiIslandCard>
 
     <!-- Commit message section -->
-    <div class="git-section">
+    <UiIslandCard padding="none">
       <button class="git-section-header" @click="commitExpanded = !commitExpanded">
         <component :is="commitExpanded ? ChevronDown : ChevronRight" :size="14" />
         <GitCommitHorizontal :size="14" />
@@ -681,10 +683,10 @@ const sortedStatusFiles = computed(() => {
           <span>{{ t('context.gitApproveAndExecute') }}</span>
         </button>
       </div>
-    </div>
+    </UiIslandCard>
 
     <!-- Push/Pull section -->
-    <div class="git-section">
+    <UiIslandCard padding="none">
       <button class="git-section-header" @click="pushExpanded = !pushExpanded">
         <component :is="pushExpanded ? ChevronDown : ChevronRight" :size="14" />
         <Upload :size="14" />
@@ -757,7 +759,7 @@ const sortedStatusFiles = computed(() => {
           <span>{{ t('context.gitApproveAndExecute') }}</span>
         </button>
       </div>
-    </div>
+    </UiIslandCard>
 
   </div>
 </template>
@@ -769,10 +771,11 @@ const sortedStatusFiles = computed(() => {
   gap: 8px;
 }
 
-.git-section {
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  overflow: hidden;
+/* Section islands (UiIslandCard) */
+.git-changes-view :deep(.island-card) {
+  overflow: visible;
+  backdrop-filter: var(--material-filter-section, none);
+  -webkit-backdrop-filter: var(--material-filter-section, none);
 }
 
 .git-section-header {
@@ -780,25 +783,26 @@ const sortedStatusFiles = computed(() => {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 8px 10px;
-  background: var(--bg-secondary);
+  padding: 10px 12px;
+  background: transparent;
   border: 0;
+  border-radius: 12px;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s;
+  transition: background-color 0.12s ease;
 }
 
 .git-section-header:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-section-count {
   margin-left: auto;
   padding: 1px 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
@@ -827,10 +831,15 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-section-body {
-  padding: 6px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* pad-none islands: slots manage their own insets; restore the footer inset. */
+.git-changes-view :deep(.island-footer) {
+  padding: 10px 12px 12px;
 }
 
 .git-empty-state {
@@ -853,12 +862,12 @@ const sortedStatusFiles = computed(() => {
   flex-direction: column;
   gap: 4px;
   padding: 5px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: background 0.1s;
 }
 
 .git-file-row:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-file-row-main {
@@ -880,7 +889,7 @@ const sortedStatusFiles = computed(() => {
   font-size: 10px;
   font-weight: 600;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border: 1px solid var(--border-muted);
   border-radius: 4px;
   cursor: pointer;
@@ -889,8 +898,8 @@ const sortedStatusFiles = computed(() => {
 
 .git-conflict-btn:hover:not(:disabled) {
   color: var(--text-primary);
-  background: var(--bg-hover);
-  border-color: var(--bg-selected-outline);
+  background: var(--surface-button-hover);
+  border-color: var(--border-default);
 }
 
 .git-conflict-btn:disabled {
@@ -903,8 +912,8 @@ const sortedStatusFiles = computed(() => {
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
 }
 
@@ -923,7 +932,7 @@ const sortedStatusFiles = computed(() => {
   text-transform: uppercase;
   font-weight: 700;
   color: var(--text-muted);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 4px;
 }
 
@@ -960,33 +969,32 @@ const sortedStatusFiles = computed(() => {
   border-radius: 3px;
 }
 
-/* Status color variants */
-.status-added .git-file-icon { color: #3fb950; }
-.status-added .git-file-status-badge { color: #3fb950; background: rgba(63, 185, 80, 0.12); }
+/* Status color variants (semantic solids — never tinted by the palette) */
+.status-added .git-file-icon { color: var(--accent-success); }
+.status-added .git-file-status-badge { color: var(--accent-success); background: color-mix(in srgb, var(--accent-success) 12%, transparent); }
 
-.status-modified .git-file-icon { color: #d29922; }
-.status-modified .git-file-status-badge { color: #d29922; background: rgba(210, 153, 34, 0.12); }
+.status-modified .git-file-icon { color: var(--accent-warning); }
+.status-modified .git-file-status-badge { color: var(--accent-warning); background: color-mix(in srgb, var(--accent-warning) 12%, transparent); }
 
-.status-deleted .git-file-icon { color: #f85149; }
-.status-deleted .git-file-status-badge { color: #f85149; background: rgba(248, 81, 73, 0.12); }
+.status-deleted .git-file-icon { color: var(--accent-danger); }
+.status-deleted .git-file-status-badge { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 12%, transparent); }
 
-.status-renamed .git-file-icon { color: #58a6ff; }
-.status-renamed .git-file-status-badge { color: #58a6ff; background: rgba(88, 166, 255, 0.12); }
+.status-renamed .git-file-icon { color: var(--accent-info); }
+.status-renamed .git-file-status-badge { color: var(--accent-info); background: color-mix(in srgb, var(--accent-info) 12%, transparent); }
 
-.status-untracked .git-file-icon { color: #7d8590; }
-.status-untracked .git-file-status-badge { color: #7d8590; background: rgba(125, 133, 144, 0.12); }
+.status-untracked .git-file-icon { color: var(--text-muted); }
+.status-untracked .git-file-status-badge { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 12%, transparent); }
 
-.status-conflict .git-file-icon { color: #f85149; }
-.status-conflict .git-file-status-badge { color: #f85149; background: rgba(248, 81, 73, 0.2); }
+.status-conflict .git-file-icon { color: var(--accent-danger); }
+.status-conflict .git-file-status-badge { color: var(--accent-danger); background: color-mix(in srgb, var(--accent-danger) 20%, transparent); }
 
 .git-conflict-banner {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  color: var(--text-reject, #f85149);
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid rgba(248, 81, 73, 0.25);
+  color: var(--text-reject);
+  background: var(--bg-status-danger);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -1007,7 +1015,7 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-diff-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -1043,7 +1051,7 @@ const sortedStatusFiles = computed(() => {
 
 .git-execute-btn {
   background: var(--bg-primary-button);
-  color: #fff;
+  color: hsl(var(--primary-foreground));
   border-color: var(--bg-primary-button);
 }
 
@@ -1064,13 +1072,13 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-ai-btn {
-  background: linear-gradient(135deg, rgba(88, 166, 255, 0.12), rgba(163, 113, 247, 0.12));
-  border-color: rgba(88, 166, 255, 0.3);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-info) 12%, transparent), color-mix(in srgb, var(--accent-recovery) 12%, transparent));
+  border-color: color-mix(in srgb, var(--accent-info) 30%, transparent);
   color: var(--accent-primary);
 }
 
 .git-ai-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, rgba(88, 166, 255, 0.2), rgba(163, 113, 247, 0.2));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-info) 20%, transparent), color-mix(in srgb, var(--accent-recovery) 20%, transparent));
 }
 
 .git-convention-check {
@@ -1083,13 +1091,13 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-convention-check.valid {
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.08);
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 8%, transparent);
 }
 
 .git-convention-check.invalid {
-  color: var(--text-reject, #f85149);
-  background: rgba(248, 81, 73, 0.08);
+  color: var(--text-reject);
+  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
 }
 
 .git-commit-actions {
@@ -1106,13 +1114,13 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-push-status.ready {
-  background: rgba(63, 185, 80, 0.08);
-  color: #3fb950;
+  background: var(--bg-status-ok);
+  color: var(--accent-success);
 }
 
 .git-push-status.blocked {
-  background: rgba(210, 153, 34, 0.08);
-  color: #d29922;
+  background: var(--bg-status-warn);
+  color: var(--accent-warning);
 }
 
 .git-push-status strong {
@@ -1128,7 +1136,7 @@ const sortedStatusFiles = computed(() => {
 
 .git-blockers small {
   padding: 2px 6px;
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 4px;
   font-size: 10px;
   color: var(--text-muted);
@@ -1142,11 +1150,11 @@ const sortedStatusFiles = computed(() => {
 
 .git-behind-badge {
   padding: 1px 6px;
-  background: rgba(210, 153, 34, 0.15);
+  background: color-mix(in srgb, var(--accent-warning) 15%, transparent);
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  color: #d29922;
+  color: var(--accent-warning);
 }
 
 .spinning {
@@ -1163,8 +1171,8 @@ const sortedStatusFiles = computed(() => {
   flex-direction: column;
   gap: 10px;
   padding: 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
 }
 
@@ -1177,23 +1185,23 @@ const sortedStatusFiles = computed(() => {
 }
 
 .git-ai-analysis-header.risk-low {
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.1);
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 10%, transparent);
 }
 
 .git-ai-analysis-header.risk-medium {
-  color: #d29922;
-  background: rgba(210, 153, 34, 0.1);
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 10%, transparent);
 }
 
 .git-ai-analysis-header.risk-high {
-  color: #f85149;
-  background: rgba(248, 81, 73, 0.1);
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
 .git-ai-analysis-header.risk-critical {
-  color: #f85149;
-  background: rgba(248, 81, 73, 0.18);
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 18%, transparent);
 }
 
 .git-ai-analysis-title {
@@ -1220,7 +1228,7 @@ const sortedStatusFiles = computed(() => {
   align-items: center;
   gap: 1px;
   padding: 2px 8px;
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 6px;
 }
 
@@ -1258,7 +1266,7 @@ const sortedStatusFiles = computed(() => {
   padding: 2px 6px;
   font-size: 10px;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 4px;
 }
 
@@ -1275,11 +1283,11 @@ const sortedStatusFiles = computed(() => {
 
 .git-ai-list .severity-medium,
 .git-ai-list .severity-high {
-  color: #d29922;
+  color: var(--accent-warning);
 }
 
 .git-ai-list .severity-critical {
-  color: #f85149;
+  color: var(--accent-danger);
 }
 
 .git-line-shelf {
@@ -1287,9 +1295,9 @@ const sortedStatusFiles = computed(() => {
   gap: 8px;
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .git-line-shelf-head,
@@ -1322,7 +1330,7 @@ const sortedStatusFiles = computed(() => {
 
 .git-line-shelf-mode button.active {
   color: var(--text-primary);
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
 }
 
 .git-line-shelf-file {
@@ -1348,6 +1356,6 @@ const sortedStatusFiles = computed(() => {
   white-space: pre;
 }
 
-.git-line-shelf-line.is-add { color: #3fb950; }
-.git-line-shelf-line.is-delete { color: #f85149; }
+.git-line-shelf-line.is-add { color: var(--text-approve); }
+.git-line-shelf-line.is-delete { color: var(--text-reject); }
 </style>

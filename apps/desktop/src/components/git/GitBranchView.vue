@@ -18,7 +18,7 @@ import {
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '../../api'
-import { UiBadge, UiButton, UiInput, UiScrollArea } from '../ui'
+import { UiBadge, UiButton, UiInput, UiIslandCard, UiScrollArea } from '../ui'
 import CommitCompare from './CommitCompare.vue'
 import WorktreeManager from './WorktreeManager.vue'
 
@@ -199,6 +199,7 @@ defineExpose({ refresh: refreshBranches })
 
     <!-- Branches sub-view -->
     <div v-if="activeSubview === 'branches'" class="git-branch-list-view">
+      <UiIslandCard padding="sm" class="git-branch-island">
       <div class="git-branch-toolbar">
         <UiInput
           v-model="filterText"
@@ -548,6 +549,7 @@ defineExpose({ refresh: refreshBranches })
           <span>{{ t('context.gitExecuteRenameBranch') }}</span>
         </UiButton>
       </div>
+      </UiIslandCard>
     </div>
 
     <!-- Worktrees sub-view -->
@@ -595,34 +597,44 @@ defineExpose({ refresh: refreshBranches })
 
 .git-branch-subtabs {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card-subtle);
+  backdrop-filter: var(--material-filter-section, none);
+  -webkit-backdrop-filter: var(--material-filter-section, none);
+  flex-shrink: 0;
 }
 
 .git-branch-subtab {
+  flex: 1;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 5px 10px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .git-branch-subtab:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .git-branch-subtab.active {
-  color: var(--text-primary);
-  border-color: var(--bg-selected-outline);
-  background: var(--bg-selected);
+  color: var(--accent-primary);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-subtle);
 }
 
 .git-branch-list-view {
@@ -631,6 +643,18 @@ defineExpose({ refresh: refreshBranches })
   gap: 8px;
   min-height: 0;
   flex: 1;
+}
+
+.git-branch-island {
+  flex: 1;
+  min-height: 0;
+}
+
+.git-branch-island :deep(.island-body) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
 }
 
 .git-branch-toolbar {
@@ -644,9 +668,9 @@ defineExpose({ refresh: refreshBranches })
   flex-direction: column;
   gap: 6px;
   padding: 10px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .git-branch-create-actions {
@@ -703,11 +727,11 @@ defineExpose({ refresh: refreshBranches })
 
 .git-branch-row:hover,
 .git-branch-row.menu-open {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-branch-row.current {
-  background: var(--bg-selected);
+  background: var(--surface-selected);
 }
 
 .git-branch-row-main {
@@ -742,7 +766,7 @@ defineExpose({ refresh: refreshBranches })
 }
 
 .git-branch-menu-toggle:hover {
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   color: var(--text-primary);
 }
 
@@ -755,10 +779,10 @@ defineExpose({ refresh: refreshBranches })
   flex-direction: column;
   min-width: 150px;
   padding: 4px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-elevated);
 }
 
 .git-branch-menu-item {
@@ -777,15 +801,15 @@ defineExpose({ refresh: refreshBranches })
 }
 
 .git-branch-menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-branch-menu-item.danger {
-  color: var(--text-reject, #f85149);
+  color: var(--text-reject);
 }
 
 .git-branch-menu-item.danger:hover:not(:disabled) {
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
 }
 
 .git-branch-menu-item:disabled {
@@ -808,7 +832,7 @@ defineExpose({ refresh: refreshBranches })
   position: absolute;
   top: -4px;
   right: -4px;
-  color: #d29922;
+  color: var(--accent-warning);
 }
 
 .git-branch-row-body {
@@ -858,9 +882,9 @@ defineExpose({ refresh: refreshBranches })
   flex-direction: column;
   gap: 6px;
   padding: 10px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .git-branch-checkout-approval-info {

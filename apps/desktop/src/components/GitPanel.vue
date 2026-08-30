@@ -393,20 +393,26 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
 .git-manager-view {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
+  padding: 10px;
   height: 100%;
   overflow: hidden;
 }
 
-/* ---- Header ---- */
+/* ---- Header island ---- */
 .git-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-muted);
   background: var(--surface-section);
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-subtle);
+  backdrop-filter: var(--material-filter-section, none);
+  -webkit-backdrop-filter: var(--material-filter-section, none);
+  flex-shrink: 0;
 }
 
 .git-header-left {
@@ -442,6 +448,9 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   font-size: 10px;
   color: var(--text-muted);
   font-family: 'Geist Mono', ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-header-right {
@@ -465,8 +474,8 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  color: #3fb950;
-  background: rgba(63, 185, 80, 0.12);
+  color: var(--text-approve);
+  background: color-mix(in srgb, var(--text-approve) 12%, transparent);
 }
 
 .git-behind {
@@ -477,8 +486,8 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  color: #d29922;
-  background: rgba(210, 153, 34, 0.12);
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
 }
 
 .git-header-refresh {
@@ -502,29 +511,37 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   flex: 1;
 }
 
-/* ---- Tab navigation ---- */
+/* ---- Tab navigation (segmented island) ---- */
 .git-nav {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-primary);
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-section);
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card-subtle);
+  backdrop-filter: var(--material-filter-section, none);
+  -webkit-backdrop-filter: var(--material-filter-section, none);
   overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .git-nav-item {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 6px 10px;
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 8px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .git-nav-item:hover {
@@ -534,7 +551,8 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
 
 .git-nav-item.active {
   color: var(--accent-primary);
-  border-bottom-color: var(--accent-primary);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-subtle);
 }
 
 .git-nav-label {
@@ -550,33 +568,38 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   padding: 0 4px;
   font-size: 10px;
   font-weight: 700;
-  color: #fff;
+  color: hsl(var(--primary-foreground));
   background: var(--accent-primary);
   border-radius: 999px;
 }
 
-/* ---- Tab content ---- */
+/* ---- Tab content (subviews own their island spacing) ---- */
 .git-tab-content {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 0 0 8px;
 }
 
 /* ---- Disclaimer ---- */
 .git-disclaimer {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border-muted);
+  padding: 2px 12px 0;
   font-size: 10px;
   color: var(--text-muted);
-  background: var(--surface-section);
+  flex-shrink: 0;
 }
 
 /* ---- Compact mode ---- */
+.git-compact {
+  padding: 8px;
+  gap: 6px;
+}
+
 .git-compact .git-nav-item {
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
 .git-compact .git-nav-label {

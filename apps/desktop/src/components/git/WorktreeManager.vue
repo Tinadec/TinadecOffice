@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
-import { UiBadge, UiButton } from '@/components/ui'
+import { UiBadge, UiButton, UiIslandCard } from '@/components/ui'
 
 interface Worktree {
   path: string
@@ -128,7 +128,7 @@ watch(newBranch, (value) => {
 </script>
 
 <template>
-  <section class="worktree-manager">
+  <UiIslandCard padding="sm" class="worktree-manager">
     <div class="worktree-manager-head">
       <div class="worktree-manager-title">
         <FolderTree :size="14" />
@@ -234,11 +234,11 @@ watch(newBranch, (value) => {
     <div v-else-if="!loading" class="worktree-manager-empty">
       {{ t('context.gitWorktreeEmpty') }}
     </div>
-  </section>
+  </UiIslandCard>
 </template>
 
 <style scoped>
-.worktree-manager {
+.worktree-manager :deep(.island-body) {
   display: grid;
   gap: 10px;
 }
@@ -278,9 +278,9 @@ watch(newBranch, (value) => {
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .worktree-manager-form label {
@@ -295,8 +295,8 @@ watch(newBranch, (value) => {
   width: 100%;
   padding: 6px 8px;
   color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   font-size: 12px;
   font-family: 'Geist Mono', ui-monospace, monospace;
@@ -327,14 +327,14 @@ watch(newBranch, (value) => {
   display: grid;
   gap: 4px;
   padding: 10px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .worktree-row.current {
-  border-color: var(--bg-selected-outline);
-  background: var(--bg-selected);
+  border-color: var(--border-card-active);
+  background: var(--surface-selected);
 }
 
 .worktree-row-head {

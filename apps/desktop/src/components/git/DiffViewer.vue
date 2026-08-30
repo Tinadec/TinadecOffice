@@ -304,9 +304,8 @@ watch(sideBySide, () => {
   gap: 8px;
   flex-wrap: wrap;
   padding: 6px 8px;
-  border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
 }
 
 .diff-viewer-file {
@@ -323,8 +322,8 @@ watch(sideBySide, () => {
   width: 100%;
   padding: 5px 8px;
   color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
@@ -354,10 +353,10 @@ watch(sideBySide, () => {
   max-height: 240px;
   overflow: auto;
   padding: 4px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
-  background: var(--bg-popover, var(--bg-primary));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-elevated);
 }
 
 .diff-viewer-file-option {
@@ -379,7 +378,7 @@ watch(sideBySide, () => {
 .diff-viewer-file-option:hover,
 .diff-viewer-file-option.active {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .diff-viewer-file-option small {
@@ -396,11 +395,11 @@ watch(sideBySide, () => {
 }
 
 .diff-stat-add {
-  color: var(--text-approve, #3fb950);
+  color: var(--text-approve);
 }
 
 .diff-stat-del {
-  color: var(--text-reject, #f85149);
+  color: var(--text-reject);
 }
 
 .diff-stat-sep {
@@ -437,7 +436,6 @@ watch(sideBySide, () => {
   padding: 6px 10px;
   color: var(--text-secondary);
   background: var(--bg-status-warn);
-  border: 1px solid rgba(210, 153, 34, 0.25);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -457,10 +455,10 @@ watch(sideBySide, () => {
   width: 100%;
   min-height: 280px;
   height: 100%;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--bg-diff, var(--bg-primary));
+  background: var(--surface-chrome);
 }
 
 .diff-viewer-container.is-ready {

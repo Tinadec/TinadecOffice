@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type CodeToolExecuteResultDto } from '../../api'
 import { useNotifications } from '@/composables/useNotifications'
-import { UiBadge, UiButton, UiScrollArea } from '../ui'
+import { UiBadge, UiButton, UiIslandCard, UiScrollArea } from '../ui'
 import type { GitLogCommit } from '../../composables/useGitOperation'
 
 interface Props {
@@ -133,6 +133,7 @@ defineExpose({
 
     <div v-else class="git-history-split">
       <!-- Commit list -->
+      <UiIslandCard padding="sm" class="git-history-list-island">
       <UiScrollArea class="git-history-list-scroll">
         <div class="git-history-timeline">
           <div v-for="[date, dayCommits] in groupedCommits" :key="date" class="git-history-group">
@@ -162,9 +163,10 @@ defineExpose({
           </div>
         </div>
       </UiScrollArea>
+      </UiIslandCard>
 
       <!-- Commit detail -->
-      <div v-if="selectedCommit" class="git-history-detail">
+      <UiIslandCard v-if="selectedCommit" variant="raised" padding="md" class="git-history-detail">
         <div v-if="loadingDetail" class="git-history-detail-loading">
           <Loader2 :size="16" class="spinning" />
           <span>{{ t('context.loadingGitPlan') }}</span>
@@ -212,7 +214,7 @@ defineExpose({
             </div>
           </div>
         </template>
-      </div>
+      </UiIslandCard>
 
       <!-- Empty detail placeholder -->
       <div v-else class="git-history-detail-empty">
@@ -267,7 +269,29 @@ defineExpose({
   flex: 1;
 }
 
+/* Compact (right rail): stack list above detail. */
+.git-compact .git-history-split {
+  grid-template-columns: 1fr;
+  overflow-y: auto;
+}
+
+.git-compact .git-history-list-scroll {
+  max-height: 240px;
+}
+
+.git-history-list-island {
+  min-height: 0;
+  max-height: 100%;
+}
+
+.git-history-list-island :deep(.island-body) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .git-history-list-scroll {
+  flex: 1;
   min-height: 200px;
   max-height: 100%;
 }
@@ -327,11 +351,11 @@ defineExpose({
 }
 
 .git-history-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-history-item.active {
-  background: var(--bg-selected);
+  background: var(--surface-selected);
   box-shadow: inset 2px 0 0 var(--accent-primary);
 }
 
@@ -342,7 +366,7 @@ defineExpose({
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--bg-secondary);
+  background: var(--surface-section);
   border: 2px solid var(--text-muted);
   z-index: 1;
 }
@@ -394,13 +418,13 @@ defineExpose({
 }
 
 .git-history-detail {
+  min-height: 0;
+}
+
+.git-history-detail :deep(.island-body) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border-muted);
-  border-radius: 8px;
-  background: var(--bg-secondary);
   overflow-y: auto;
 }
 
@@ -447,7 +471,7 @@ defineExpose({
 
 .git-detail-body {
   padding: 8px;
-  background: var(--bg-tertiary);
+  background: var(--surface-button);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -491,7 +515,7 @@ defineExpose({
 }
 
 .git-detail-file:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .git-detail-file-path {
@@ -511,8 +535,8 @@ defineExpose({
   font-size: 10px;
 }
 
-.git-detail-file-stats .add { color: #3fb950; }
-.git-detail-file-stats .del { color: #f85149; }
+.git-detail-file-stats .add { color: var(--text-approve); }
+.git-detail-file-stats .del { color: var(--text-reject); }
 
 .spinning {
   animation: spin 1s linear infinite;

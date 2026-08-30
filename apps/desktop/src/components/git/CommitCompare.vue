@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
-import { UiBadge, UiButton, UiScrollArea } from '@/components/ui'
+import { UiBadge, UiButton, UiIslandCard, UiScrollArea } from '@/components/ui'
 import DiffViewer from './DiffViewer.vue'
 import { buildDiffEntries, type DiffFileEntry } from './diffUtils'
 
@@ -138,7 +138,7 @@ watch(
 </script>
 
 <template>
-  <section class="commit-compare">
+  <UiIslandCard padding="sm" class="commit-compare">
     <div class="commit-compare-head">
       <div class="commit-compare-title">
         <GitCompare :size="14" />
@@ -289,11 +289,11 @@ watch(
     <div v-else class="commit-compare-empty">
       {{ t('context.gitCompareHint') }}
     </div>
-  </section>
+  </UiIslandCard>
 </template>
 
 <style scoped>
-.commit-compare {
+.commit-compare :deep(.island-body) {
   display: grid;
   gap: 10px;
 }
@@ -338,10 +338,10 @@ watch(
 .commit-compare-ref-input {
   display: grid;
   grid-template-columns: 1fr 28px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--surface-input);
 }
 
 .commit-compare-ref-input input {
@@ -362,8 +362,8 @@ watch(
   align-items: center;
   justify-content: center;
   border: 0;
-  border-left: 1px solid var(--border-muted);
-  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-input);
+  background: var(--surface-button);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
@@ -383,10 +383,10 @@ watch(
   max-height: 240px;
   overflow: auto;
   padding: 4px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
-  background: var(--bg-popover, var(--bg-primary));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-elevated);
 }
 
 .commit-compare-ref-option {
@@ -405,7 +405,7 @@ watch(
 }
 
 .commit-compare-ref-option:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -419,7 +419,6 @@ watch(
   padding: 6px 10px;
   color: var(--text-secondary);
   background: var(--bg-status-warn);
-  border: 1px solid rgba(210, 153, 34, 0.25);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -428,9 +427,9 @@ watch(
   display: grid;
   gap: 6px;
   padding: 8px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--surface-raised);
 }
 
 .commit-compare-block-title {
@@ -480,8 +479,8 @@ watch(
 .commit-compare-file:hover,
 .commit-compare-file.active {
   color: var(--text-primary);
-  background: var(--bg-hover);
-  border-color: var(--bg-selected-outline);
+  background: var(--surface-hover);
+  border-color: var(--border-card-active);
 }
 
 .commit-compare-file small {

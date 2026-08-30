@@ -58,8 +58,14 @@
 - [ ] **scheduling 与 `tools/shell` 仍为 501 桩** — 与本方案无直接耦合，但后续 full-duplex 深化的调度 / shell 执行路径待实现。
 
 ### 2.4 既有遗留（当前阶段已知、非本方案引入）
-- **Desktop 14 个 skipped 测试** — `NotificationIslandHost` 为 Vue 3.6.0-rc.2 Transition + happy-dom 环境问题的既存失败；待根 `vue` / `@vue/compiler-sfc` 升到 ≥3.6 stable 后解掉（见 `apps/desktop/AGENTS.md` NOTES）。
+- **Desktop 14 个 skipped 测试** — `NotificationIslandHost` 为 Vue 3.6.0-rc.2 Transition + happy-dom 环境问题，当前已 `describe.skip`（非运行中失败）；待根 `vue` / `@vue/compiler-sfc` 升到 ≥3.6 stable 后解掉（见 `apps/desktop/AGENTS.md` NOTES）。
 - **`ToolChainEndpointTests.WorkerWriteFile_…` 偶发 flake** — real-process 写盘测试在整包并发下偶发 approval decision `Conflict`；单测 / 套件单独重跑均 114/114 全绿，属已知资源争用 flake（见 `AGENTS.md` 终端纪律与 Core AGENTS 说明），后续可考虑与 real-process 测试隔离或串行化。
+
+### 2.5 E2E 验证发现的后续事项（2026-08-29）
+> 来源：`docs/core-agent-e2e-verification-2026-08-29.md`（WorkBuddy 会话的真实 HTTP 端到端验证）。
+- [ ] **契约快照门禁缺口** — Gateway 契约快照落后 Core（`memory-items`×2、`approvals/{id}`、`recovery-decision` 未进快照），且 `check:drift` 只守 Gateway→Desktop 方向；建议补 Core→Gateway 快照门禁。
+- [ ] **状态机锐边** — run 已处于 `awaiting_user` 时，引擎再次尝试转 `awaiting_approval` 会被 `RunStatusMachine` 拒绝（`StorageLifecycleService.cs` 不允许 `awaiting_user→awaiting_approval`），run 以 runtime error 失败；仅在高并发互扰场景触发，需明确合法转移或排队语义。
+- **环境提示（非代码项）**：假模型 provider `bc12683f`（"Local Fake E2E"）仍指向已停止的本地假端点 `127.0.0.1:48799`，下次真实使用前需在模型中心重配；`data/tinadec.db` 留有验证 project/session 残留可在 UI 清理。
 
 ---
 

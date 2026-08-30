@@ -274,8 +274,8 @@ emitChange()
   width: 100%;
   padding: 6px 8px;
   color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   font-size: 12px;
   font-family: 'Geist Mono', ui-monospace, monospace;
@@ -304,8 +304,8 @@ emitChange()
   width: 100%;
   padding: 6px 8px;
   color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-muted);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   font-size: 12px;
   font-family: 'Geist Mono', ui-monospace, monospace;
@@ -326,10 +326,10 @@ emitChange()
   max-height: 220px;
   overflow: auto;
   padding: 4px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
-  background: var(--bg-popover, var(--bg-primary));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-elevated);
 }
 
 .commit-editor-type-option {
@@ -348,7 +348,7 @@ emitChange()
 
 .commit-editor-type-option:hover,
 .commit-editor-type-option.active {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -361,8 +361,8 @@ emitChange()
   margin: 0;
   padding: 8px;
   color: var(--text-primary);
-  background: var(--bg-tertiary, var(--bg-secondary));
-  border: 1px solid var(--border-muted);
+  background: var(--surface-button);
+  border: 1px solid var(--border-card);
   border-radius: 6px;
   font-family: 'Geist Mono', ui-monospace, monospace;
   font-size: 11px;
@@ -383,15 +383,15 @@ emitChange()
   display: block;
   width: 100%;
   padding: 5px 8px;
-  border: 1px solid var(--border-muted);
+  border: 1px solid var(--border-card);
   border-radius: 4px;
-  background: var(--bg-primary);
+  background: var(--surface-button);
   cursor: pointer;
   text-align: left;
 }
 
 .commit-editor-history-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-button-hover);
 }
 
 .commit-editor-history-item code {
