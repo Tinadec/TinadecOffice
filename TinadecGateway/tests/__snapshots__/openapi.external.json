@@ -2398,7 +2398,7 @@
     },
     "/api/v1/code/tools/{toolId}/execute": {
       "post": {
-        "description": "Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.",
+        "description": "Core resolves the registered workspace root and invokes the Tool Provider.",
         "operationId": "postApiV1CodeToolsByToolIdExecute",
         "parameters": [
           {
@@ -2413,7 +2413,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Execute user tool (direct transport)",
+        "summary": "Execute user tool (Core-owned)",
         "tags": [
           "Tools"
         ]
@@ -5380,7 +5380,7 @@
     },
     "/api/v1/tool-runtime/tools/{toolId}/execute": {
       "post": {
-        "description": "Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.",
+        "description": "Core resolves the registered workspace root and invokes the Tool Provider.",
         "operationId": "postApiV1Tool-runtimeToolsByToolIdExecute",
         "parameters": [
           {
@@ -5395,7 +5395,7 @@
         "responses": {
           "200": {}
         },
-        "summary": "Execute user tool (direct transport)",
+        "summary": "Execute user tool (Core-owned)",
         "tags": [
           "Tools"
         ]

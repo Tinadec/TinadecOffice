@@ -1444,6 +1444,27 @@
         },
         "type": "object"
       },
+      "ToolDirectExecuteRequestDto": {
+        "properties": {
+          "arguments": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "cwd": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ToolDispatchRequestDto": {
         "properties": {
           "agent_instance_id": {
@@ -5483,6 +5504,44 @@
     },
     "/api/v1/tools/shell": {
       "post": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/tools/{toolId}/execute": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "toolId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToolDirectExecuteRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK"

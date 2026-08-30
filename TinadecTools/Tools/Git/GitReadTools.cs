@@ -54,6 +54,30 @@ public sealed class GitPushReadinessResult
     [JsonPropertyName("status")] public GitStatusResult Status { get; set; } = new();
 }
 
+public sealed class GitLogArgs
+{
+    [JsonPropertyName("repository_path")] public string? RepositoryPath { get; set; }
+    [JsonPropertyName("limit")] public int? Limit { get; set; } = 50;
+    [JsonPropertyName("ref")] public string? Ref { get; set; }
+    [JsonPropertyName("base_ref")] public string? BaseRef { get; set; }
+    [JsonPropertyName("head_ref")] public string? HeadRef { get; set; }
+}
+
+public sealed class GitLogCommit
+{
+    [JsonPropertyName("hash")] public string Hash { get; set; } = string.Empty;
+    [JsonPropertyName("short_hash")] public string ShortHash { get; set; } = string.Empty;
+    [JsonPropertyName("author")] public string Author { get; set; } = string.Empty;
+    [JsonPropertyName("email")] public string Email { get; set; } = string.Empty;
+    [JsonPropertyName("date")] public string Date { get; set; } = string.Empty;
+    [JsonPropertyName("subject")] public string Subject { get; set; } = string.Empty;
+}
+
+public sealed class GitLogResult : GitSimpleResult
+{
+    [JsonPropertyName("commits")] public List<GitLogCommit> Commits { get; set; } = new();
+}
+
 public sealed class GitDiffArgs
 {
     [JsonPropertyName("repository_path")] public string? RepositoryPath { get; set; }
@@ -240,6 +264,9 @@ public class GitSimpleResult
 [JsonSerializable(typeof(GitStatusResult))]
 [JsonSerializable(typeof(GitPushReadinessArgs))]
 [JsonSerializable(typeof(GitPushReadinessResult))]
+[JsonSerializable(typeof(GitLogArgs))]
+[JsonSerializable(typeof(GitLogResult))]
+[JsonSerializable(typeof(GitLogCommit))]
 [JsonSerializable(typeof(GitDiffArgs))]
 [JsonSerializable(typeof(GitDiffResult))]
 [JsonSerializable(typeof(GitBranchListArgs))]
@@ -290,6 +317,60 @@ internal static class GitReadTools
         if (status.Behind > 0) blockers.Add($"Branch is behind upstream by {status.Behind} commit(s).");
         if (status.HasUncommittedChanges) blockers.Add("Working tree has uncommitted changes.");
         return new GitPushReadinessResult { Success = true, Status = status, NeedsPush = status.Ahead > 0, Ready = blockers.Count == 0, Blockers = blockers };
+    }
+
+    [ToolFunction("git_log")]
+    public static async ValueTask<GitLogResult> LogAsync(GitLogArgs args, CancellationToken cancellationToken)
+    {
+        var repo = GitCli.ResolveRepo(args.RepositoryPath ?? string.Empty, out var error);
+        if (repo is null) return new GitLogResult { Success = false, Error = error, ErrorCode = GitCli.NotARepoCode };
+
+        var revision = ResolveLogRevision(args);
+        var limit = Math.Clamp(args.Limit ?? 50, 1, 500);
+        var execution = await GitCli.RunAsync(
+            repo,
+            ["log", "--date=iso-strict", "--format=%H%x09%h%x09%an%x09%ae%x09%ad%x09%s", $"--max-count={limit}", revision],
+            cancellationToken: cancellationToken,
+            timeoutMs: 30_000).ConfigureAwait(false);
+        if (!execution.Ok) return Fail<GitLogResult>(execution.Stderr, execution.ExitCode);
+
+        var commits = new List<GitLogCommit>();
+        foreach (var line in execution.Stdout.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = line.Split('\t', StringSplitOptions.None);
+            if (fields.Length < 6) continue;
+            commits.Add(new GitLogCommit
+            {
+                Hash = fields[0],
+                ShortHash = fields[1],
+                Author = fields[2],
+                Email = fields[3],
+                Date = fields[4],
+                Subject = string.Join('\t', fields.Skip(5))
+            });
+        }
+
+        return new GitLogResult { Success = true, Commits = commits };
+    }
+
+    private static string ResolveLogRevision(GitLogArgs args)
+    {
+        var baseRef = string.IsNullOrWhiteSpace(args.BaseRef) ? null : args.BaseRef.Trim();
+        var headRef = string.IsNullOrWhiteSpace(args.HeadRef) ? null : args.HeadRef.Trim();
+        var singleRef = string.IsNullOrWhiteSpace(args.Ref) ? null : args.Ref.Trim();
+        if (baseRef is not null)
+        {
+            GitCli.ValidateRevision(baseRef, "base_ref");
+            var head = headRef ?? "HEAD";
+            GitCli.ValidateRevision(head, "head_ref");
+            return $"{baseRef}..{head}";
+        }
+
+        if (headRef is not null)
+            GitCli.ValidateRevision(headRef, "head_ref");
+        if (singleRef is not null)
+            GitCli.ValidateRevision(singleRef, "ref");
+        return singleRef ?? headRef ?? "HEAD";
     }
 
     [ToolFunction("git_diff")]

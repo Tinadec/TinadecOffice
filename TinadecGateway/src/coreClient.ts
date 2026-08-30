@@ -21,6 +21,33 @@ export interface ProxyResult {
   headers?: Headers;
 }
 
+/** For transport surfaces, preserve the Core status, headers, and bytes. */
+export async function proxyRaw(path: string, options: ProxyOptions = {}): Promise<Response> {
+  const body = typeof options.body === 'string'
+    ? options.body
+    : options.body === undefined
+      ? undefined
+      : JSON.stringify(options.body);
+  const baseHeaders = proxyBaseHeaders(options.headers);
+  try {
+    return await fetch(coreEndpoint(path), {
+      method: options.method ?? 'GET',
+      headers: {
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        ...baseHeaders,
+        ...options.headers,
+      },
+      body,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Network request failed';
+    return new Response(JSON.stringify({ code: 'CORE_UNREACHABLE', message: `Cannot reach Core at ${coreUrl()}: ${message}` }), {
+      status: 502,
+      headers: { 'content-type': 'application/problem+json' },
+    });
+  }
+}
+
 function proxyBaseHeaders(incoming?: HeadersInit): Record<string, string> {
   let incomingRequestId: string | null = null;
   if (incoming) {

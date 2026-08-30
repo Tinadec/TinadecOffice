@@ -6,7 +6,7 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Memory;
 
-public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, IStorageMigrationParticipant
+public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolver, IConversationStore, IStorageMigrationParticipant
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SessionLocks = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
@@ -621,6 +621,31 @@ public sealed class ProjectSessionStore : ISessionLocator, IConversationStore, I
         var scope = _tenantContext.Current;
         return await db.Projects.AsNoTracking()
             .Where(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active)
+            .Select(x => new ProjectReference(x.Id, x.TenantId, x.WorkspaceId, x.RootPath))
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ProjectReference?> FindByRootAsync(string cwd, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(cwd)) return null;
+
+        string normalized;
+        try
+        {
+            normalized = NormalizeRootPath(cwd.Trim());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        return await db.Projects.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId
+                && x.WorkspaceId == scope.WorkspaceId
+                && x.LifecycleStatus == LifecycleStatuses.Active
+                && x.NormalizedRootPath == normalized)
             .Select(x => new ProjectReference(x.Id, x.TenantId, x.WorkspaceId, x.RootPath))
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }

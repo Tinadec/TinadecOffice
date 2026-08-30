@@ -53,7 +53,7 @@ public sealed class GitReadToolsTests
     {
         GeneratedToolRegistry.RegisterAll();
         var tools = ToolRegistry.ListTools().ToDictionary(tool => tool.Id, StringComparer.OrdinalIgnoreCase);
-        foreach (var toolId in new[] { "git_status", "git_push_readiness", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview" })
+        foreach (var toolId in new[] { "git_status", "git_push_readiness", "git_diff", "git_branch_list", "git_worktree_list", "git_ref_list", "git_remote_list", "git_blame", "git_file_at_revision", "git_conflict_preview", "git_log" })
         {
             var descriptor = tools[toolId];
             Assert.False(descriptor.RequiresApproval);

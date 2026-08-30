@@ -394,7 +394,7 @@ test('tool provider execution is a transport-only facade', { concurrency: false 
 
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), { ok: true });
-  assert.equal(forwarded?.url, 'http://127.0.0.1:48732/api/v1/tools/command_run/execute');
+  assert.equal(forwarded?.url, 'http://127.0.0.1:48731/api/v1/tools/command_run/execute');
   assert.equal(forwarded?.method, 'POST');
   assert.deepEqual(JSON.parse(forwarded?.body ?? ''), body);
   assert.equal(forwarded?.headers.get('x-request-id'), 'request-1');
@@ -410,9 +410,9 @@ test('code tools remain the current v1 direct user transport and preserve provid
       body: typeof init?.body === 'string' ? init.body : undefined,
       headers: new Headers(init?.headers),
     };
-    return new Response(JSON.stringify({ code: 'provider_denied', detail: 'Tool provider rejected the user request.' }), {
+    return new Response('provider-denied: raw body', {
       status: 422,
-      headers: { 'content-type': 'application/problem+json', etag: '"provider-4"' },
+      headers: { 'content-type': 'text/plain; charset=utf-8', etag: '"provider-4"' },
     });
   }) as typeof fetch;
 
@@ -429,10 +429,10 @@ test('code tools remain the current v1 direct user transport and preserve provid
   }));
 
   assert.equal(response.status, 422);
-  assert.equal(response.headers.get('content-type'), 'application/problem+json');
+  assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
   assert.equal(response.headers.get('etag'), '"provider-4"');
-  assert.deepEqual(await response.json(), { code: 'provider_denied', detail: 'Tool provider rejected the user request.' });
-  assert.equal(forwarded?.url, 'http://127.0.0.1:48732/api/v1/tools/read_file/execute');
+  assert.equal(await response.text(), 'provider-denied: raw body');
+  assert.equal(forwarded?.url, 'http://127.0.0.1:48731/api/v1/tools/read_file/execute');
   assert.equal(forwarded?.method, 'POST');
   assert.deepEqual(JSON.parse(forwarded?.body ?? ''), body);
   assert.equal(forwarded?.headers.get('x-request-id'), 'request-direct-1');

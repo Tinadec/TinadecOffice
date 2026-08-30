@@ -18,6 +18,7 @@ public sealed class MemoryModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<MemoryDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<ProjectSessionStore>();
         builder.Services.AddSingleton<ISessionLocator>(sp => sp.GetRequiredService<ProjectSessionStore>());
+        builder.Services.AddSingleton<IWorkspaceRootResolver>(sp => sp.GetRequiredService<ProjectSessionStore>());
         builder.Services.AddSingleton<IConversationStore>(sp => sp.GetRequiredService<ProjectSessionStore>());
         builder.Services.AddSingleton<TinadecCore.Persistence.IStorageMigrationParticipant>(sp => sp.GetRequiredService<ProjectSessionStore>());
         builder.Services.AddSingleton<IMemoryStore, MemoryStore>();

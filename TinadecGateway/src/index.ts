@@ -6,7 +6,7 @@
 import { Elysia, t } from 'elysia';
 import { swagger } from '@elysiajs/swagger';
 import { getConfig } from './config.js';
-import { coreUrl, proxyJson, proxySse } from './coreClient.js';
+import { coreUrl, proxyJson, proxyRaw, proxySse } from './coreClient.js';
 import { proxyToolRuntimeJson, toolRuntimeUrl } from './toolRuntimeClient.js';
 import {
   authenticate,
@@ -1046,20 +1046,19 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Harness manifest (Core-owned)', tags: ['System'] } })
-  // Current v1 user tool transport. Desktop and other explicit users use this
-  // path; Gateway only forwards the request to the Tool Provider.
+  // Current v1 user tool transport is Core-owned. Gateway preserves the
+  // raw request and response bytes without consulting the old runtime URL.
   .post('/api/v1/code/tools/:toolId/execute', async ({ params, body, set, request }) => {
-    const toolId = params.toolId;
     const headers = forwardHeaders(request);
-    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(toolId)}/execute`, {
+    const result = await proxyRaw(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
       method: 'POST',
-      body: body as Record<string, unknown> | undefined,
+      body: JSON.stringify(body ?? {}),
       headers,
     });
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
-    return result.data;
-  }, { detail: { summary: 'Execute user tool (direct transport)', tags: ['Tools'], description: 'Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.' } })
+    return result;
+  }, { detail: { summary: 'Execute user tool (Core-owned)', tags: ['Tools'], description: 'Core resolves the registered workspace root and invokes the Tool Provider.' } })
   .get('/api/v1/prompt-fragments', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -2134,15 +2133,15 @@ const app = new Elysia()
   }, { detail: { summary: 'Tool provider tools', tags: ['System'] } })
   .post('/api/v1/tool-runtime/tools/:toolId/execute', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
-    const result = await proxyToolRuntimeJson(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
+    const result = await proxyRaw(`/api/v1/tools/${encodeURIComponent(params.toolId)}/execute`, {
       method: 'POST',
-      body: body as Record<string, unknown> | undefined,
+      body: JSON.stringify(body ?? {}),
       headers,
     });
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
-    return result.data;
-  }, { detail: { summary: 'Execute user tool (direct transport)', tags: ['Tools'], description: 'Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.' } });
+    return result;
+  }, { detail: { summary: 'Execute user tool (Core-owned)', tags: ['Tools'], description: 'Core resolves the registered workspace root and invokes the Tool Provider.' } });
 
 export { app };
 

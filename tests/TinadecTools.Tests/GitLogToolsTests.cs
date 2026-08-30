@@ -5,6 +5,41 @@ namespace TinadecTools.Tests;
 
 public sealed class GitLogToolsTests
 {
+    [Fact]
+    public async Task Log_ReturnsDesktopCommitFieldsAndSupportsRange()
+    {
+        using var repo = new TempGitRepo("git-log-direct");
+        repo.SeedInitialCommit("base.txt", "base\n");
+        var baseRef = repo.CaptureGit("rev-parse", "HEAD");
+        repo.CommitFile("change.txt", "change\n", "add change");
+        var headRef = repo.CaptureGit("rev-parse", "HEAD");
+
+        var result = await GitReadTools.LogAsync(
+            new GitLogArgs { RepositoryPath = repo, BaseRef = baseRef, HeadRef = headRef, Limit = 10 },
+            CancellationToken.None);
+
+        Assert.True(result.Success, result.Error);
+        var commit = Assert.Single(result.Commits);
+        Assert.False(string.IsNullOrWhiteSpace(commit.Hash));
+        Assert.False(string.IsNullOrWhiteSpace(commit.ShortHash));
+        Assert.Equal("Test", commit.Author);
+        Assert.Equal("test@example.com", commit.Email);
+        Assert.Contains("T", commit.Date);
+        Assert.Equal("add change", commit.Subject);
+    }
+
+    [Fact]
+    public async Task Log_RejectsOptionLikeReferences()
+    {
+        using var repo = new TempGitRepo("git-log-direct");
+        repo.SeedInitialCommit();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            GitReadTools.LogAsync(
+                new GitLogArgs { RepositoryPath = repo, Ref = "--all" },
+                CancellationToken.None).AsTask());
+    }
+
     // ── git_log_list ───────────────────────────────────────────────────────────
 
     [Fact]

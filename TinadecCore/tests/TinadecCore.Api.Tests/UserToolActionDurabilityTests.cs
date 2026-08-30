@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -313,6 +314,75 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         Assert.Equal(0, _factory.Provider.CallCount);
     }
 
+    [Fact]
+    public async Task DirectExecute_RejectsUnregisteredCwd()
+    {
+        var client = _factory!.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/v1/tools/git_status/execute", new
+        {
+            cwd = Path.Combine(_root, "unknown"),
+            arguments = new { }
+        }, Json);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("workspace_root_not_registered", body.GetProperty("code").GetString());
+        Assert.Equal(0, _factory.Provider.CallCount);
+    }
+
+    [Fact]
+    public async Task DirectExecute_GitFacade_UsesRegisteredRootAsRepositoryPath()
+    {
+        var client = _factory!.CreateClient();
+        var projectPath = Path.Combine(_root, "direct-git");
+        Directory.CreateDirectory(projectPath);
+        await CreateProjectAsync(client, "direct-git", projectPath);
+
+        var response = await client.PostAsJsonAsync("/api/v1/tools/git_worktree_manager/execute", new
+        {
+            cwd = projectPath,
+            arguments = new { action = "diff_preview" }
+        }, Json);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("completed", body.GetProperty("status").GetString());
+        Assert.Equal(projectPath, body.GetProperty("data").GetProperty("git_root").GetString());
+        Assert.Equal(new[] { "git_diff", "git_status" }, _factory.Provider.Requests.Select(x => x.ToolId).OrderBy(x => x).ToArray());
+        Assert.All(_factory.Provider.Requests, request =>
+        {
+            var repositoryPath = request.Params is { } parameters ? parameters.GetProperty("repository_path").GetString() : null;
+            Assert.Equal(projectPath, repositoryPath);
+        });
+    }
+
+    [Fact]
+    public async Task DirectExecute_BlocksMutatingToolsWithoutUserToolActionPath()
+    {
+        var client = _factory!.CreateClient();
+        var projectPath = Path.Combine(_root, "direct-blocked");
+        Directory.CreateDirectory(projectPath);
+        await CreateProjectAsync(client, "direct-blocked", projectPath);
+
+        var response = await client.PostAsJsonAsync("/api/v1/tools/git_push/execute", new
+        {
+            cwd = projectPath,
+            arguments = new { confirm_push = "PUSH" }
+        }, Json);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("blocked", body.GetProperty("status").GetString());
+        Assert.Equal(0, _factory.Provider.CallCount);
+    }
+
+    private async Task CreateProjectAsync(HttpClient client, string key, string projectPath)
+    {
+        var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new { name = key, path = projectPath }, Json);
+        projectResponse.EnsureSuccessStatusCode();
+    }
+
     private async Task<(Guid ActionId, Guid PermissionId)> CreateActionAsync(HttpClient client, string key)
     {
         var projectPath = Path.Combine(_root, key);
@@ -363,6 +433,7 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         public int CallCount => Volatile.Read(ref _callCount);
         public bool RequiresApproval { get; set; }
         public TimeSpan CallDelay { get; set; }
+        public ConcurrentBag<ToolWireRequestDto> Requests { get; } = new();
 
         public void ChangeDescription(string value) => _description = value;
 
@@ -375,6 +446,13 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
         public async Task<ToolWireResponseDto> CallAsync(string workspaceRoot, ToolWireRequestDto request, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _callCount);
+            Requests.Add(new ToolWireRequestDto
+            {
+                ToolId = request.ToolId,
+                SessionId = request.SessionId,
+                Approved = request.Approved,
+                Params = request.Params is { } p ? p.Clone() : default
+            });
             if (CallDelay > TimeSpan.Zero) await Task.Delay(CallDelay, cancellationToken);
             using var result = JsonDocument.Parse("{\"value\":\"ok\"}");
             return new ToolWireResponseDto { IsSuccess = true, Result = result.RootElement.Clone() };
@@ -417,9 +495,27 @@ public sealed class UserToolActionDurabilityTests : IAsyncLifetime
                     RetrySafety = "unsafe",
                     ConfirmationFields = ["confirm_push"],
                     InputSchema = JsonDocument.Parse("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},\"confirm_push\":{\"type\":\"string\"}},\"required\":[\"query\",\"confirm_push\"],\"additionalProperties\":false}").RootElement.Clone()
-                }
+                },
+                ReadOnlyGitTool("git_status", "Working tree status"),
+                ReadOnlyGitTool("git_diff", "Workspace diff"),
+                ReadOnlyGitTool("git_push_readiness", "Push readiness"),
+                ReadOnlyGitTool("git_log", "Commit log"),
+                ReadOnlyGitTool("git_branch_list", "Branch list"),
+                ReadOnlyGitTool("git_worktree_list", "Worktree list"),
+                ReadOnlyGitTool("git_remote_list", "Remote list")
             };
             return new ToolManifestDto { ProtocolVersion = 2, ManifestHash = ToolManifestHasher.Compute(tools), Tools = tools };
         }
+
+        private static ToolManifestEntryDto ReadOnlyGitTool(string id, string description) => new()
+        {
+            Id = id,
+            Description = description,
+            Risk = "low",
+            MutatesWorkspace = false,
+            RequiresApproval = false,
+            RetrySafety = "safe",
+            InputSchema = JsonDocument.Parse("{\"type\":\"object\",\"additionalProperties\":true}").RootElement.Clone()
+        };
     }
 }
