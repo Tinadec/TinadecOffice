@@ -30,4 +30,8 @@ oc-debug.log
 /apps/desktop/.mimosa
 /.playwright-mcp
 /TinadecCore/Api/data/secrets
+/TinadecCore/Api/data/events/
+/TinadecCore/Api/data/tasks/
 /apps/desktop/release/
+tmp/
+.workbuddy/
