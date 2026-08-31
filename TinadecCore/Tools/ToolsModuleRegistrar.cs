@@ -29,6 +29,10 @@ public sealed class ToolsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IToolInvocationScopeResolver, ToolInvocationScopeResolver>();
         builder.Services.AddSingleton<IFrozenToolManifestCatalog, FrozenToolManifestCatalog>();
         builder.Services.AddSingleton<ToolDispatchOptions>();
+        builder.Services.AddSingleton<ITerminalSessionRegistry, TerminalSessionRegistry>();
+        builder.Services.AddSingleton<TerminalSessionEventBridge>();
+        builder.Services.AddSingleton<ITerminalSessionControl, TerminalSessionControlService>();
+        builder.Services.AddHostedService<TerminalSessionBridgeHost>();
         builder.Services.AddSingleton<IToolDispatcher, ToolDispatcher>();
         builder.RegisterModule(new ModuleDescriptor
         {

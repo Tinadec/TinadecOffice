@@ -26,6 +26,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapWorkspaceSnapshotEndpoints();
         endpoints.MapUserToolActionEndpoints();
         endpoints.MapDirectToolEndpoints();
+        endpoints.MapTerminalEndpoints();
         endpoints.MapStubEndpoints();
         return endpoints;
     }

@@ -163,7 +163,10 @@ public static class StubEndpoints
             catch (Exception ex) { return Results.Json(new { code = "TOOL_REGISTRY_UNAVAILABLE", message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
         });
 
-        app.MapPost("/api/v1/tools/shell", () => Results.Json(new { code = "NOT_IMPLEMENTED", message = "Shell tool execution is not implemented in skeleton mode." }, statusCode: 501));
+        // `POST /api/v1/tools/shell` was a 501 stub before the terminal work landed.
+        // Agent shell execution is now a governed tool: prepare via
+        // `POST /api/v1/runs/{runId}/tools/shell/execute` (approval gating applies),
+        // and drive the session via `GET/POST /api/v1/terminals/*`.
 
         app.MapPost("/api/v1/runs/{runId}/tools/{toolId}/execute", async (string runId, string toolId, ToolDispatchRequestDto? input, IToolDispatcher dispatcher, CancellationToken ct) =>
         {

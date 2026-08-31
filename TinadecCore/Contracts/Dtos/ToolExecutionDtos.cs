@@ -39,6 +39,27 @@ public sealed class ToolWireResponseDto
     public string? Error { get; init; }
 }
 
+/// <summary>
+/// Unsolicited notification a TinadecTools child process emits <em>while</em> a call is in
+/// flight. Event lines are distinguished from responses by their <c>kind</c> field.
+/// <c>call_id</c> &lt;= 0 designates a broadcast event, e.g. the exit of a long-lived
+/// terminal session whose originating call has already returned.
+/// </summary>
+public sealed class ToolWireEventDto
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = "event";
+
+    [JsonPropertyName("call_id")]
+    public long CallId { get; init; }
+
+    [JsonPropertyName("event")]
+    public string Event { get; init; } = string.Empty;
+
+    [JsonPropertyName("payload")]
+    public JsonElement? Payload { get; init; }
+}
+
 /// <summary>Manifest handshake payload returned for the reserved <c>#manifest</c> tool call.</summary>
 public sealed class ToolManifestDto
 {

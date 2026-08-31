@@ -2234,6 +2234,74 @@ export const api = {
     source.addEventListener('step.result.created', handle as EventListener);
     source.addEventListener('supervision.checked', handle as EventListener);
     source.addEventListener('context.pack.created', handle as EventListener);
+    // Agent terminal stream (shell tool → tool-core-gateway → run event journal).
+    source.addEventListener('terminal.command', handle as EventListener);
+    source.addEventListener('terminal.stdout', handle as EventListener);
+    source.addEventListener('terminal.exit', handle as EventListener);
+    source.addEventListener('terminal.stdin', handle as EventListener);
+    source.addEventListener('terminal.session.killed', handle as EventListener);
     return source;
-  }
+  },
+
+  /** Terminal sessions Core has admitted for a run (agent terminal panel source). */
+  async listTerminalSessions(runId: string): Promise<TerminalSessionDto[]> {
+    return request<TerminalSessionDto[]>(
+      `/api/v1/terminals?run_id=${encodeURIComponent(runId)}`,
+    );
+  },
+
+  /** Send user keystrokes into an agent-owned terminal session. */
+  async sendTerminalStdin(terminalSessionId: string, data: string): Promise<{ terminal_session_id: string; accepted: boolean }> {
+    return request<{ terminal_session_id: string; accepted: boolean }>(
+      `/api/v1/terminals/${encodeURIComponent(terminalSessionId)}/stdin`,
+      {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ data }),
+      },
+    );
+  },
+
+  /** Terminate an agent-owned terminal session (panel × run control). */
+  async killTerminalSession(terminalSessionId: string): Promise<{ terminal_session_id: string; killed: boolean }> {
+    return request<{ terminal_session_id: string; killed: boolean }>(
+      `/api/v1/terminals/${encodeURIComponent(terminalSessionId)}/kill`,
+      { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' } },
+    );
+  },
+
+  /**
+   * Pause / resume / cancel a run. Cancelling on the Core side also terminates
+   * the live terminal sessions that run owns.
+   */
+  async controlRun(
+    runId: string,
+    action: 'pause' | 'resume' | 'cancel',
+    clientControlId?: string,
+  ): Promise<{ run_id: string; status: string; action: string; accepted: boolean; killed_terminal_sessions?: number }> {
+    return request<{ run_id: string; status: string; action: string; accepted: boolean; killed_terminal_sessions?: number }>(
+      `/api/v1/runs/${encodeURIComponent(runId)}/control`,
+      {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ action, client_control_id: clientControlId }),
+      },
+    );
+  },
 };
+
+/** One Core-owned terminal session projection. */
+export interface TerminalSessionDto {
+  terminal_session_id: string;
+  run_id: string;
+  task_id: string;
+  agent_instance_id: string;
+  execution_id: string;
+  command: string;
+  status: string;
+  live: boolean;
+  started_at: string;
+  ended_at?: string | null;
+  exit_code?: number | null;
+  timed_out?: boolean;
+}

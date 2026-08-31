@@ -34,6 +34,23 @@ public interface IToolProvider
 /// </summary>
 public interface IToolProcessManager : IToolProvider
 {
+    /// <summary>
+    /// Dispatches one structured tool call and forwards unsolicited wire events
+    /// (terminal output, session lifecycle) raised while the call is in flight.
+    /// </summary>
+    Task<ToolWireResponseDto> CallStreamingAsync(
+        string workspaceRoot,
+        ToolWireRequestDto request,
+        TimeSpan? timeout,
+        Action<ToolWireEventDto>? onEvent,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Events not attributable to an in-flight call, e.g. the exit of a long-lived
+    /// terminal session. Subscribers must be exception-safe; a throwing subscriber
+    /// must not break the provider read loop.
+    /// </summary>
+    event Action<ToolWireEventDto>? WireEventBroadcast;
 }
 
 /// <summary>Cached view of the TinadecTools manifest exposed by a process manager.</summary>

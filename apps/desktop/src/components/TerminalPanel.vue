@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Circle,
   Square,
+  PowerOff,
   type LucideIcon,
 } from '@lucide/vue'
 import TerminalView from './TerminalView.vue'
@@ -46,6 +47,7 @@ const {
   loadShells,
   createTerminal,
   closeTerminal,
+  killTerminal,
   setActiveTerminal,
   fitTerminal,
   focusTerminal,
@@ -67,7 +69,13 @@ const activeTerminal = computed<TerminalInstance | null>(() =>
 )
 
 const hasTerminals = computed(() => terminals.value.length > 0)
-const terminalAvailable = computed(() => isTerminalAvailable())
+const terminalAvailable = computed(() => isTerminalAvailable() || hasTerminals.value)
+
+/**
+ * Agent terminals are hosted by Core, not by this machine's PTY bridge, so the
+ * panel stays usable in the browser build — only "new local terminal" is blocked.
+ */
+const localTerminalAvailable = computed(() => isTerminalAvailable())
 
 // ---- Actions ----
 
@@ -98,6 +106,11 @@ async function handleNewTerminal(shellId?: string): Promise<void> {
   } catch (err) {
     notify.error(err, { title: t('terminal.createFailed', 'Failed to create terminal') })
   }
+}
+
+/** Terminate an agent-owned session (panel kill switch). */
+function handleKill(id: string): void {
+  killTerminal(id)
 }
 
 /**
@@ -289,9 +302,23 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
                 class="terminal-tab-status"
                 :class="instance.exited ? 'status-exited' : 'status-running'"
               />
+              <span
+                v-if="instance.sourceKind === 'agent'"
+                class="terminal-tab-source"
+                title="Agent session (tool-core-gateway)"
+              >AGENT</span>
               <span class="terminal-tab-label">{{ instance.title }}</span>
             </button>
             <button
+              v-if="instance.sourceKind === 'agent'"
+              class="terminal-tab-kill"
+              :title="'Terminate agent session'"
+              @click.stop="handleKill(instance.id)"
+            >
+              <PowerOff :size="11" />
+            </button>
+            <button
+              v-else
               class="terminal-tab-restart"
               :title="t('terminal.restart')"
               @click.stop="handleRestart(instance.id)"
@@ -308,8 +335,8 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
           </div>
         </div>
 
-        <!-- New terminal button with shell selector -->
-        <div ref="shellMenuRef" class="terminal-new-wrapper">
+        <!-- New terminal button with shell selector (local PTY only) -->
+        <div v-if="localTerminalAvailable" ref="shellMenuRef" class="terminal-new-wrapper">
           <button
             class="terminal-new-btn"
             :title="t('terminal.newTerminal')"
@@ -373,11 +400,16 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
       <div v-if="hasTerminals && activeTerminal" class="terminal-status-bar">
         <span class="terminal-status-info">
           {{ activeTerminal.title }}
+          <span v-if="activeTerminal.sourceKind === 'agent'" class="terminal-status-source">
+            · agent session
+          </span>
           <span v-if="activeTerminal.exited" class="terminal-status-exited">
             ({{ t('terminal.exited') }})
           </span>
         </span>
-        <span class="terminal-status-hint">{{ t('terminal.shortcutHint') }}</span>
+        <span class="terminal-status-hint">
+          {{ activeTerminal.sourceKind === 'agent' ? 'input is forwarded to the agent session' : t('terminal.shortcutHint') }}
+        </span>
       </div>
     </template>
   </div>
@@ -486,6 +518,19 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   text-overflow: ellipsis;
 }
 
+.terminal-tab-source {
+  flex-shrink: 0;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent-primary);
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  line-height: 14px;
+}
+
+.terminal-tab-kill,
 .terminal-tab-restart,
 .terminal-tab-close {
   display: flex;
@@ -503,8 +548,14 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
 }
 
 .terminal-tab:hover .terminal-tab-restart,
+.terminal-tab:hover .terminal-tab-kill,
 .terminal-tab:hover .terminal-tab-close {
   opacity: 1;
+}
+
+.terminal-tab-kill:hover {
+  background: var(--bg-error);
+  color: var(--text-error);
 }
 
 .terminal-tab-restart:hover {
@@ -686,6 +737,10 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   font-size: 10.5px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.terminal-status-source {
+  color: var(--accent-primary);
 }
 
 .terminal-status-exited {

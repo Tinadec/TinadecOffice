@@ -20,6 +20,7 @@ var logger = LogManager.GetCurrentClassLogger();
 FileToolRuntime.InitializeWorkspace();
 
 GeneratedToolRegistry.RegisterAll();
+TinadecTools.Tools.Command.ShellToolRegistration.Register();
 
 try
 {

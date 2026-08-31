@@ -10,9 +10,12 @@ import {
   ChevronRight,
 } from '@lucide/vue'
 import type { ToolCall } from '@/composables/useAgentActivity'
+import TerminalCallBlock from './TerminalCallBlock.vue'
 
 const props = defineProps<{
   toolCall: ToolCall
+  /** Run that owns the tool call; enables pause/resume on terminal blocks. */
+  runId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +96,14 @@ const hasDetails = computed(
 const isRisky = computed(
   () => props.toolCall.risk === 'high' || props.toolCall.risk === 'critical',
 )
+
+/**
+ * Shell calls render as a live terminal block: the user can watch output, pause
+ * the run, and jump into the function panel to help the agent finish.
+ */
+const isShellCall = computed(
+  () => props.toolCall.toolId === 'shell' || props.toolCall.toolName.includes('Shell'),
+)
 </script>
 
 <template>
@@ -147,6 +158,14 @@ const isRisky = computed(
         </button>
       </div>
     </div>
+
+    <TerminalCallBlock
+      v-if="isShellCall && expanded"
+      :execution-id="toolCall.id"
+      :command="toolCall.argsSummary"
+      :run-id="runId"
+      :status="toolCall.status"
+    />
 
     <!-- Keep details mounted so the grid-rows collapse transition can play. -->
     <div v-if="hasDetails" class="tool-details-collapse chat-collapse" :class="{ open: expanded }">

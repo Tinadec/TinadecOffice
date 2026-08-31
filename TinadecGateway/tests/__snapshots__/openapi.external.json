@@ -5330,6 +5330,100 @@
         ]
       }
     },
+    "/api/v1/terminals": {
+      "get": {
+        "operationId": "getApiV1Terminals",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Terminal sessions for a run",
+        "tags": [
+          "Terminal"
+        ]
+      }
+    },
+    "/api/v1/terminals/{terminalSessionId}/kill": {
+      "post": {
+        "operationId": "postApiV1TerminalsByTerminalSessionIdKill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "terminalSessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Terminate an agent terminal session",
+        "tags": [
+          "Terminal"
+        ]
+      }
+    },
+    "/api/v1/terminals/{terminalSessionId}/stdin": {
+      "post": {
+        "operationId": "postApiV1TerminalsByTerminalSessionIdStdin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "terminalSessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "additionalProperties": true,
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {}
+        },
+        "summary": "Send user input to an agent terminal session",
+        "tags": [
+          "Terminal"
+        ]
+      }
+    },
     "/api/v1/tool-layer-readiness": {
       "get": {
         "operationId": "getApiV1Tool-layer-readiness",

@@ -108,16 +108,26 @@ public sealed class CoreOpenApiSnapshotTests
         var normalized = Normalize(root);
         var serialized = JsonSerializer.Serialize(normalized, new JsonSerializerOptions { WriteIndented = true });
 
+        // Capture the committed baseline, then always refresh the snapshot file:
+        // the documented workflow is "run dotnet test, then gate CI with git diff
+        // --exit-code", so a drifted run must still leave a regenerated file behind
+        // and let git surface the difference. Asserting before writing made drift
+        // unrecoverable (the file never got refreshed).
+        string? expectedJson = null;
         if (File.Exists(snapshotPath))
         {
             var expectedText = await File.ReadAllTextAsync(snapshotPath);
             using var expectedDoc = JsonDocument.Parse(expectedText);
             var expectedNorm = Normalize(expectedDoc.RootElement);
-            var expectedJson = JsonSerializer.Serialize(expectedNorm, new JsonSerializerOptions { WriteIndented = true });
-            Assert.True(serialized == expectedJson, $"OpenAPI snapshot drift at {snapshotPath}. Run dotnet test then git diff --exit-code to gate CI; git add the snapshot if intentional.");
+            expectedJson = JsonSerializer.Serialize(expectedNorm, new JsonSerializerOptions { WriteIndented = true });
         }
 
         await File.WriteAllTextAsync(snapshotPath, serialized + Environment.NewLine);
+
+        if (expectedJson is not null)
+        {
+            Assert.True(serialized == expectedJson, $"OpenAPI snapshot drift at {snapshotPath}. Snapshot has been regenerated; review git diff and commit it if intentional.");
+        }
 
         // Also ensure sibling local path stays in sync if repo-level was used (optional, no-op if same)
         var altPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "__snapshots__", "openapi.core.json"));

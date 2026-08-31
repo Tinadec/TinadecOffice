@@ -26,12 +26,16 @@ public sealed class ToolDispatcher : IToolDispatcher
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> WorkspaceLocks = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Tool ids whose calls stream wire events (terminal output) while in flight.</summary>
+    internal static readonly HashSet<string> StreamingTools = new(StringComparer.OrdinalIgnoreCase) { "shell" };
+
     private readonly IToolProvider _provider;
     private readonly IToolInvocationScopeResolver _scopeResolver;
     private readonly IToolExecutionCoordinator _executions;
     private readonly IAuthorizationService _authorization;
     private readonly IWorkspaceSnapshotService _snapshots;
     private readonly ILifecycleManager _lifecycle;
+    private readonly ITerminalSessionRegistry _terminalSessions;
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
 
@@ -42,6 +46,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         IAuthorizationService authorization,
         IWorkspaceSnapshotService snapshots,
         ILifecycleManager lifecycle,
+        ITerminalSessionRegistry terminalSessions,
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger)
     {
@@ -51,6 +56,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         _authorization = authorization;
         _snapshots = snapshots;
         _lifecycle = lifecycle;
+        _terminalSessions = terminalSessions;
         _options = options;
         _logger = logger;
     }
@@ -330,70 +336,73 @@ public sealed class ToolDispatcher : IToolDispatcher
         var retryLimit = safeReadRetry ? Math.Max(0, scope.WorkerRetryLimit) : 0;
         var timeoutSeconds = scope.DefaultTimeoutSeconds > 0 ? scope.DefaultTimeoutSeconds : Math.Max(1, _options.DefaultTimeoutSeconds);
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
-        ToolWireResponseDto? last = null;
-        for (var attempt = 1; attempt <= retryLimit + 1; attempt++)
+        var streaming = _provider as IToolProcessManager;
+        var streams = streaming is not null && StreamingTools.Contains(descriptor.Id);
+        ToolEventPump? pump = null;
+        if (streams)
         {
-            var wire = new ToolWireRequestDto
-            {
-                ToolId = descriptor.Id,
-                SessionId = execution.SessionId.ToString(),
-                Approved = execution.RequiresApproval,
-                Params = parameters
-            };
-            ToolWireResponseDto response;
-            if (scope.SerializeWorkspaceWrites && execution.MutatesWorkspace)
-            {
-                var gate = WorkspaceLocks.GetOrAdd(scope.WorkspaceRoot, _ => new SemaphoreSlim(1, 1));
-                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    response = await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    gate.Release();
-                }
-            }
-            else
-            {
-                response = await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
-            }
+            pump = new ToolEventPump(_lifecycle, _logger, execution.RunId, execution.TaskId, execution.Id, descriptor.Id);
+            await pump.AppendCommandAsync(parameters, scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
+        }
 
-            if (response.IsSuccess)
+        ToolWireResponseDto? last = null;
+        try
+        {
+            for (var attempt = 1; attempt <= retryLimit + 1; attempt++)
             {
-                var resultJson = response.Result is { } result ? result.GetRawText() : "null";
-                var completed = await _executions.CompleteAsync(execution.Id, resultJson, cancellationToken).ConfigureAwait(false);
-                await AppendEventAsync(execution.RunId, "tool.execution.completed", $"Tool '{descriptor.Id}' completed.", new
+                var wire = new ToolWireRequestDto
+                {
+                    ToolId = descriptor.Id,
+                    SessionId = execution.SessionId.ToString(),
+                    Approved = execution.RequiresApproval,
+                    Params = parameters
+                };
+
+                var response = await CallProviderAsync(
+                    streaming, pump, scope, execution, wire, timeout, cancellationToken).ConfigureAwait(false);
+
+                if (response.IsSuccess)
+                {
+                    var resultJson = response.Result is { } result ? result.GetRawText() : "null";
+                    if (streams) RecordTerminalSession(response.Result, execution, scope);
+                    var completed = await _executions.CompleteAsync(execution.Id, resultJson, cancellationToken).ConfigureAwait(false);
+                    await AppendEventAsync(execution.RunId, "tool.execution.completed", $"Tool '{descriptor.Id}' completed.", new
+                    {
+                        execution_id = execution.Id,
+                        task_id = execution.TaskId,
+                        tool_id = descriptor.Id,
+                        attempt
+                    }, cancellationToken, execution.TaskId, descriptor.Id).ConfigureAwait(false);
+                    return new ToolDispatchResultDto
+                    {
+                        Status = ToolDispatchStatus.Completed,
+                        ExecutionId = completed.Id.ToString(),
+                        ApprovalId = completed.ApprovalId?.ToString(),
+                        Attempt = attempt,
+                        Result = response.Result
+                    };
+                }
+
+                last = response;
+                var category = WireErrorCategory(response.Error);
+                var retry = safeReadRetry && (category is "timeout" or "process_exit") && attempt <= retryLimit;
+                await AppendEventAsync(execution.RunId, "tool.execution.failed", $"Tool '{descriptor.Id}' failed ({category}).", new
                 {
                     execution_id = execution.Id,
                     task_id = execution.TaskId,
                     tool_id = descriptor.Id,
-                    attempt
-                }, cancellationToken, execution.TaskId, descriptor.Id).ConfigureAwait(false);
-                return new ToolDispatchResultDto
-                {
-                    Status = ToolDispatchStatus.Completed,
-                    ExecutionId = completed.Id.ToString(),
-                    ApprovalId = completed.ApprovalId?.ToString(),
-                    Attempt = attempt,
-                    Result = response.Result
-                };
+                    attempt,
+                    category,
+                    retryable = retry
+                }, cancellationToken, execution.TaskId, descriptor.Id, retry ? "warning" : "error").ConfigureAwait(false);
+                if (!retry) break;
+                _logger.LogWarning("Retrying safe read-only tool {ToolId} after {Category} ({Attempt}/{Max})", descriptor.Id, category, attempt + 1, retryLimit + 1);
             }
-
-            last = response;
-            var category = WireErrorCategory(response.Error);
-            var retry = safeReadRetry && (category is "timeout" or "process_exit") && attempt <= retryLimit;
-            await AppendEventAsync(execution.RunId, "tool.execution.failed", $"Tool '{descriptor.Id}' failed ({category}).", new
-            {
-                execution_id = execution.Id,
-                task_id = execution.TaskId,
-                tool_id = descriptor.Id,
-                attempt,
-                category,
-                retryable = retry
-            }, cancellationToken, execution.TaskId, descriptor.Id, retry ? "warning" : "error").ConfigureAwait(false);
-            if (!retry) break;
-            _logger.LogWarning("Retrying safe read-only tool {ToolId} after {Category} ({Attempt}/{Max})", descriptor.Id, category, attempt + 1, retryLimit + 1);
+        }
+        finally
+        {
+            // Let buffered terminal events land before the execution is reported.
+            if (pump is not null) await pump.CompleteAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
         }
 
         var finalCategory = WireErrorCategory(last?.Error);
@@ -408,6 +417,75 @@ public sealed class ToolDispatcher : IToolDispatcher
         var failureStatus = finalCategory == "timeout" ? "timed_out" : "failed";
         var failedExecution = await _executions.FailAsync(execution.Id, failureStatus, finalCategory, message, cancellationToken).ConfigureAwait(false);
         return ResultForFailure(failedExecution, failureStatus == "timed_out" ? ToolDispatchStatus.Timeout : finalCategory == "process_exit" ? ToolDispatchStatus.ProcessExit : ToolDispatchStatus.Failed);
+    }
+
+    /// <summary>
+    /// Calls the provider, using the streaming overload when the provider supports it,
+    /// so terminal output raised during the call reaches the run event log.
+    /// </summary>
+    private async Task<ToolWireResponseDto> CallProviderAsync(
+        IToolProcessManager? streaming,
+        ToolEventPump? pump,
+        ToolInvocationScope scope,
+        ToolExecutionSnapshot execution,
+        ToolWireRequestDto wire,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        Action<ToolWireEventDto>? observer = pump is null ? null : pump.Enqueue;
+
+        if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
+        {
+            return streaming is not null
+                ? await streaming.CallStreamingAsync(scope.WorkspaceRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
+                : await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+        }
+
+        var gate = WorkspaceLocks.GetOrAdd(scope.WorkspaceRoot, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return streaming is not null
+                ? await streaming.CallStreamingAsync(scope.WorkspaceRoot, wire, timeout, observer, cancellationToken).ConfigureAwait(false)
+                : await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records the terminal session a shell call created so the panel and stdin
+    /// routes can address it later. Exit events arrive through the provider broadcast.
+    /// </summary>
+    private void RecordTerminalSession(JsonElement? result, ToolExecutionSnapshot execution, ToolInvocationScope scope)
+    {
+        if (result is not { ValueKind: JsonValueKind.Object } payload) return;
+        if (!payload.TryGetProperty("terminal_session_id", out var sessionId)
+            || sessionId.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(sessionId.GetString()))
+        {
+            return;
+        }
+
+        var status = payload.TryGetProperty("status", out var statusElement) && statusElement.ValueKind == JsonValueKind.String
+            ? statusElement.GetString() ?? "completed"
+            : "completed";
+        var command = payload.TryGetProperty("command", out var commandElement) && commandElement.ValueKind == JsonValueKind.String
+            ? commandElement.GetString() ?? string.Empty
+            : string.Empty;
+
+        _terminalSessions.Record(new TerminalSessionRecord(
+            sessionId.GetString()!,
+            execution.RunId,
+            execution.TaskId,
+            execution.AgentInstanceId,
+            execution.Id,
+            scope.WorkspaceRoot,
+            command,
+            status,
+            DateTimeOffset.UtcNow));
     }
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)

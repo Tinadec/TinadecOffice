@@ -8,6 +8,7 @@ using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Runtime;
+using TinadecCore.Tools;
 
 namespace TinadecCore.AspNetCore.Endpoints;
 
@@ -257,14 +258,20 @@ public static class DmaeaEndpoints
             return Results.Ok(nodes);
         });
 
-        app.MapPost("/api/v1/runs/{runId}/control", async (string runId, RunControlRequest? request, IFullDuplexRunCoordinator coordinator, CancellationToken ct) =>
+        app.MapPost("/api/v1/runs/{runId}/control", async (string runId, RunControlRequest? request, IFullDuplexRunCoordinator coordinator, ITerminalSessionControl terminalSessions, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
             if (request is null || string.IsNullOrWhiteSpace(request.Action)) return Results.BadRequest(new { code = "INVALID_RUN_CONTROL", message = "Action is required." });
             try
             {
                 var result = await coordinator.ControlAsync(runGuid, new RunControlCommand(request.Action, request.ClientControlId, request.ExpectedContextRevision), ct);
-                return Results.Ok(new { run_id = result.RunId, status = result.Status, action = result.Action, accepted = result.Accepted });
+                // A cancelled run must not leave long-lived terminal processes behind.
+                var killedSessions = 0;
+                if (string.Equals(request.Action, "cancel", StringComparison.OrdinalIgnoreCase) && result.Accepted)
+                {
+                    killedSessions = await terminalSessions.KillForRunAsync(runGuid, ct).ConfigureAwait(false);
+                }
+                return Results.Ok(new { run_id = result.RunId, status = result.Status, action = result.Action, accepted = result.Accepted, killed_terminal_sessions = killedSessions });
             }
             catch (RunAdmissionException ex)
             {

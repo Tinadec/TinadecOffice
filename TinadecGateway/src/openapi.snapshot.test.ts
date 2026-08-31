@@ -126,9 +126,17 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
   mkdirSync(dirname(snapshotPath), { recursive: true });
   const normalized = sortKeys(doc);
   const serialized = JSON.stringify(normalized, null, 2) + '\n';
-  if (existsSync(snapshotPath)) {
-    const expected = JSON.parse(readFileSync(snapshotPath, 'utf8')) as unknown;
-    assert.deepEqual(normalized, sortKeys(expected), `OpenAPI snapshot drift at ${snapshotPath}. Run bun test then git diff --exit-code to gate CI; git add the snapshot if intentional.`);
-  }
+
+  // Capture the committed baseline, then always refresh the snapshot file: the
+  // documented workflow is "run bun test, then gate CI with git diff --exit-code",
+  // so a drifted run must still leave a regenerated file behind and let git
+  // surface the difference. Asserting before writing made drift unrecoverable.
+  const expected = existsSync(snapshotPath)
+    ? (JSON.parse(readFileSync(snapshotPath, 'utf8')) as unknown)
+    : null;
   writeFileSync(snapshotPath, serialized, 'utf8');
+
+  if (expected !== null) {
+    assert.deepEqual(normalized, sortKeys(expected), `OpenAPI snapshot drift at ${snapshotPath}. Snapshot has been regenerated; review git diff and commit it if intentional.`);
+  }
 });

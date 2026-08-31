@@ -479,9 +479,28 @@ function recordApproval(approval: ApprovalDto) {
   approvals.value = [approval, ...approvals.value.filter((item) => item.id !== approval.id)]
 }
 
+/**
+ * Fan-out for terminal widgets. The controller owns the single SSE connection, so
+ * agent terminal panels subscribe here instead of opening their own EventSource.
+ */
+const eventListeners = new Set<(event: EventEnvelope) => void>()
+function onEvent(handler: (event: EventEnvelope) => void): () => void {
+  eventListeners.add(handler)
+  return () => {
+    eventListeners.delete(handler)
+  }
+}
+
 function reconnectEvents() {
   eventSource.value?.close()
   eventSource.value = api.connectEvents(selectedSessionId.value, async (event) => {
+    for (const listener of [...eventListeners]) {
+      try {
+        listener(event)
+      } catch {
+        // A failing terminal widget must not break the session event pipeline.
+      }
+    }
     const bySeq = new Map(events.value.map((item) => [item.seq, item]))
     bySeq.set(event.seq, event)
     events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
@@ -536,6 +555,7 @@ export const homeController = {
   modelSettings,
   orchestration,
   toolExecutions,
+  onEvent,
   selectedProjectId,
   selectedSessionId,
   draft,

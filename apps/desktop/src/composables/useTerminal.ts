@@ -7,7 +7,12 @@
  * Architecture:
  * - Each terminal has a unique ID from the main process.
  * - xterm.js Terminal instances are created lazily and attached to DOM elements.
- * - Data flow: xterm input → IPC write → pty stdin → pty stdout → IPC data → xterm write.
+ * - Local terminals (the user's own shell) run over node-pty in the main process:
+ *   xterm input → IPC write → pty stdin → pty stdout → IPC data → xterm write.
+ * - Agent terminals belong to a Core-owned session created by the `shell` tool and
+ *   reached through the tool-core-gateway path: output replays from the run event
+ *   journal and then follows the session event stream; input is an audited HTTP
+ *   call. Both are rendered by the same widget (see useTerminalSource).
  * - Theme is adapted from CSS variables to xterm ITheme on changes.
  */
 
@@ -17,11 +22,12 @@ import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { useNotifications } from '@/composables/useNotifications'
+import { createLocalTerminalSource, type TerminalSource, type TerminalSourceKind } from '@/composables/useTerminalSource'
 
 // ---- Types ----
 
 export interface TerminalInstance {
-  /** Unique terminal ID from main process */
+  /** Unique terminal ID from the main process (or `agent:<sessionId>`) */
   id: string
   /** Shell executable path */
   shell: string
@@ -39,6 +45,17 @@ export interface TerminalInstance {
   cwd: string
   /** Shell profile ID (e.g. 'pwsh', 'cmd', 'bash') */
   shellId: string
+  /**
+   * Transport behind the widget: `local` is the Electron PTY the user owns;
+   * `agent` is a Core-owned session the agent started.
+   */
+  sourceKind: TerminalSourceKind
+  /** Core terminal session id for agent terminals. */
+  terminalSessionId: string | null
+  /** Run that owns an agent session; drives pause/cancel controls. */
+  runId: string | null
+  /** Data plug used by TerminalView. */
+  source: TerminalSource | null
 }
 
 export interface ShellProfile {
@@ -211,6 +228,10 @@ async function createTerminalInstance(
       ready: false,
       cwd: options.cwd || '',
       shellId,
+      sourceKind: 'local',
+      terminalSessionId: null,
+      runId: null,
+      source: createLocalTerminalSource(result.id),
     }
 
     terminalInstances.value = [...terminalInstances.value, instance]
@@ -259,11 +280,38 @@ function attachTerminal(
     // Fit may fail if container has no dimensions yet
   }
 
+  instance.ready = true
+
+  // Agent sessions have no local PTY: the xterm widget is fed by the Core-owned
+  // session stream (replay + follow) and keystrokes go back as audited stdin.
+  if (instance.sourceKind === 'agent' && instance.source) {
+    instance.source.attach({
+      onData: (data) => {
+        if (instance.term && !instance.exited) instance.term.write(data)
+      },
+      onStatus: (status) => {
+        if (status === 'exited' || status === 'killed') instance.exited = true
+      },
+    })
+
+    const agentInputDisposable = term.onData((data) => {
+      instance.source?.write(data)
+    })
+    const agentResizeDisposable = term.onResize(({ cols, rows }) => {
+      instance.source?.resize(cols, rows)
+    })
+
+    ipcCleanup.set(id, [
+      instance.source.detach,
+      () => agentInputDisposable.dispose(),
+      () => agentResizeDisposable.dispose(),
+    ])
+    return
+  }
+
   // Notify main process of the initial size
   const { cols, rows } = term
   window.tinadec.terminal.resize(id, cols, rows)
-
-  instance.ready = true
 
   // Set up IPC data listener → xterm write
   const removeDataListener = window.tinadec.terminal.onData(id, (data) => {
@@ -333,10 +381,15 @@ function detachTerminal(id: string): void {
  * @param id - Terminal ID
  */
 function closeTerminal(id: string): void {
+  const instance = terminalInstances.value.find((t) => t.id === id)
   detachTerminal(id)
 
-  // Tell main process to destroy the PTY
-  if (isTerminalAvailable()) {
+  if (instance?.sourceKind === 'agent') {
+    // Closing the tab detaches the view; the session Core owns keeps running
+    // until it exits or the user kills it explicitly (killTerminal).
+    instance.source?.dispose()
+  } else if (isTerminalAvailable()) {
+    // Tell main process to destroy the PTY
     window.tinadec.terminal.destroy(id)
   }
 
@@ -346,6 +399,60 @@ function closeTerminal(id: string): void {
   // Update active terminal
   if (activeTerminalId.value === id) {
     activeTerminalId.value = terminalInstances.value[0]?.id ?? null
+  }
+}
+
+/**
+ * Open an agent-owned terminal session in the panel.
+ *
+ * The session already exists in Core (created by the `shell` tool dispatch); this
+ * only attaches a view to it. Re-opening the same session reuses the widget state
+ * so the jump from the conversation is idempotent.
+ */
+function openAgentTerminal(options: {
+  terminalSessionId: string
+  runId?: string | null
+  title?: string
+  command?: string
+  source: TerminalSource
+}): string {
+  const id = `agent:${options.terminalSessionId}`
+  const existing = terminalInstances.value.find((t) => t.id === id)
+  if (existing) {
+    activeTerminalId.value = existing.id
+    return existing.id
+  }
+
+  const instance: TerminalInstance = {
+    id,
+    shell: 'agent',
+    title: options.title || options.command?.slice(0, 40) || 'Agent terminal',
+    term: null,
+    fitAddon: null,
+    exited: false,
+    ready: false,
+    cwd: '',
+    shellId: 'agent',
+    sourceKind: 'agent',
+    terminalSessionId: options.terminalSessionId,
+    runId: options.runId ?? null,
+    source: options.source,
+  }
+
+  terminalInstances.value = [...terminalInstances.value, instance]
+  activeTerminalId.value = instance.id
+  return instance.id
+}
+
+/** Terminate an agent-owned terminal session (kill switch in the panel header). */
+function killTerminal(id: string): void {
+  const instance = terminalInstances.value.find((t) => t.id === id)
+  if (!instance) return
+  if (instance.sourceKind === 'agent') {
+    instance.source?.kill()
+    instance.exited = true
+  } else {
+    closeTerminal(id)
   }
 }
 
@@ -497,6 +604,8 @@ export function useTerminal() {
     // Actions
     loadShells,
     createTerminal: createTerminalInstance,
+    openAgentTerminal,
+    killTerminal,
     closeTerminal,
     closeAllTerminals,
     getTerminal,

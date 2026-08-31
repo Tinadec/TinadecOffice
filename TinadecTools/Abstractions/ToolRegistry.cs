@@ -43,6 +43,43 @@ internal static class ToolRegistry
         }
     }
 
+    /// <summary>
+    /// Registers a delegate handler with full manifest metadata. Used for tools
+    /// that need the raw request (e.g. streaming terminal events correlated by
+    /// call id) rather than the source-generated typed wrapper.
+    /// </summary>
+    public static void Register(
+        string toolId,
+        ToolHandlerDelegate handler,
+        bool requiresApproval,
+        string? description = null,
+        string? inputSchemaJson = null,
+        string? risk = null,
+        bool? mutatesWorkspace = null,
+        string? retrySafety = null,
+        IReadOnlyList<string>? confirmationFields = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolId);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        lock (RegistrationLock)
+        {
+            Handlers[toolId] = handler;
+            var mutates = mutatesWorkspace ?? requiresApproval;
+            Descriptors[toolId] = new ToolDescriptor
+            {
+                Id = toolId,
+                Description = description ?? string.Empty,
+                RequiresApproval = requiresApproval,
+                InputSchemaJson = inputSchemaJson ?? "{\"type\":\"object\",\"additionalProperties\":true}",
+                Risk = risk ?? (requiresApproval ? "high" : "low"),
+                MutatesWorkspace = mutates,
+                RetrySafety = retrySafety ?? (mutates ? "unsafe" : "safe"),
+                ConfirmationFields = confirmationFields ?? []
+            };
+        }
+    }
+
     public static void Register<TArgs, TResult>(ToolHandlerBase<TArgs, TResult> handler)
         where TArgs : notnull
     {
@@ -114,12 +151,16 @@ internal static class ToolRegistry
         }
     }
 
-    /// <summary>Returns every registered tool's descriptor, ordered by id, for manifest reporting.</summary>
+    /// <summary>Returns every registered tool's descriptor, ordered by id, for manifest reporting.
+    /// Reserved control tools (ids prefixed with '#') are transport-internal and excluded.</summary>
     public static IReadOnlyList<ToolDescriptor> ListTools()
     {
         lock (RegistrationLock)
         {
-            return Descriptors.Values.OrderBy(x => x.Id, StringComparer.OrdinalIgnoreCase).ToList();
+            return Descriptors.Values
+                .Where(x => !x.Id.StartsWith('#'))
+                .OrderBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
     }
 

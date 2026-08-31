@@ -686,6 +686,36 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Run control (pause/resume/cancel)', tags: ['Runs'] }, body: t.Object({ command: t.Optional(t.String()), action: t.Optional(t.String()), expected_context_revision: t.Optional(t.Number()), expectedContextRevision: t.Optional(t.Number()), client_control_id: t.Optional(t.String()) }, { additionalProperties: true }) })
+  // ── Terminal sessions (agent terminal transport) ──────────────────────────────
+  // Thin proxies: Core owns session identity, run binding, and audit events.
+  // Live output travels over the already-proxied run SSE stream.
+  .get('/api/v1/terminals', async ({ query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    if ((query as Record<string,unknown>).run_id) search.set('run_id', String((query as Record<string,unknown>).run_id));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/terminals${suffix}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/terminals'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Terminal sessions for a run', tags: ['Terminal'] } })
+  .post('/api/v1/terminals/:terminalSessionId/stdin', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/terminals/${params.terminalSessionId}/stdin`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/terminals/${params.terminalSessionId}/stdin`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Send user input to an agent terminal session', tags: ['Terminal'] }, body: t.Object({ data: t.Optional(t.String()) }, { additionalProperties: true }) })
+  .post('/api/v1/terminals/:terminalSessionId/kill', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/terminals/${params.terminalSessionId}/kill`, { method: 'POST', body: (body ?? {}) as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/terminals/${params.terminalSessionId}/kill`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Terminate an agent terminal session', tags: ['Terminal'] } })
   .get('/api/v1/sessions/:sessionId/tool-executions', async ({ params, query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();

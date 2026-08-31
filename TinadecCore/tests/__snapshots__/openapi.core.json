@@ -1444,6 +1444,14 @@
         },
         "type": "object"
       },
+      "TerminalStdinRequest": {
+        "properties": {
+          "data": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ToolDirectExecuteRequestDto": {
         "properties": {
           "arguments": {
@@ -5417,6 +5425,87 @@
         ]
       }
     },
+    "/api/v1/terminals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/terminals/{terminalSessionId}/kill": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "terminalSessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/terminals/{terminalSessionId}/stdin": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "terminalSessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TerminalStdinRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/tool-executions/{id}/recovery-decision": {
       "post": {
         "parameters": [
@@ -5492,18 +5581,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
-        ]
-      }
-    },
-    "/api/v1/tools/shell": {
-      "post": {
         "responses": {
           "200": {
             "description": "OK"
