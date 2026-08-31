@@ -168,6 +168,128 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The dual-layer split must be enforced as permission policy, not as an engine
+    /// convention.  The shipped Office pack still publishes "*" for the meeting agent, so
+    /// the layer rule is the only authority that can deny a governance-layer tool call;
+    /// the execution worker on the same task must still be allowed.
+    /// </summary>
+    [Fact]
+    public async Task OperationLayerToolInvoke_IsDeniedByLayerPolicy_WhileWorkerIsAllowed()
+    {
+        var (provider, client, _, runId, approvalId, _) = await StartFakeProviderRunAsync("layer-policy");
+        Assert.Equal(0, provider.CallCount);
+        Assert.NotEqual(Guid.Empty, approvalId);
+
+        var resolver = _factory!.Services.GetRequiredService<IAuthorizationContextResolver>();
+        var scope = _factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var meeting = Assert.Single(lineage, item => item.GetProperty("role").GetString() == "session_coordinator");
+        var worker = Assert.Single(lineage, item => item.GetProperty("generated").GetBoolean());
+        var taskId = worker.GetProperty("task_id").GetGuid();
+        var claim = new CapabilityClaim("tool.file", "tool.invoke", "tool://write_file");
+
+        var governanceBoundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId,
+            meeting.GetProperty("id").GetGuid(), claim, runId, taskId)).ConfigureAwait(false);
+        var denial = Assert.Single(governanceBoundaries, boundary => boundary.Name == "operation_layer_cannot_invoke_tools");
+        Assert.Equal("deny", Assert.Single(denial.Rules).Effect);
+
+        var workerBoundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId,
+            worker.GetProperty("id").GetGuid(), claim, runId, taskId)).ConfigureAwait(false);
+        Assert.DoesNotContain(workerBoundaries, boundary => boundary.Name == "operation_layer_cannot_invoke_tools");
+        Assert.NotEmpty(workerBoundaries.Where(boundary => boundary.Name != "run")
+            .Where(boundary => boundary.Rules.Any(rule => rule.Effect == "allow")));
+    }
+
+    /// <summary>
+    /// A wildcard is legal only in a published declaration, where it names a delegable
+    /// envelope.  A derived instance must carry a concrete grant, otherwise a planner that
+    /// wrote "*" would mint a worker holding every tool in the manifest.
+    /// </summary>
+    [Fact]
+    public async Task DerivedAgentCannotCarryWildcardToolGrant()
+    {
+        var (_, client, _, runId, _, _) = await StartFakeProviderRunAsync("wildcard-spawn");
+        var instances = _factory!.Services.GetRequiredService<IAgentInstanceService>();
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var planner = Assert.Single(lineage, item => item.GetProperty("role").GetString() == "execution_coordinator");
+
+        var refused = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => instances.SpawnAsync(new AgentSpawnRequest(
+            planner.GetProperty("id").GetGuid(), "越权探测", ["观察"], ["task_context"], null,
+            ["*"], ["workspace"], 4096))).ConfigureAwait(false);
+        Assert.Contains("wildcard", refused.Message, StringComparison.OrdinalIgnoreCase);
+
+        var narrowed = await instances.SpawnAsync(new AgentSpawnRequest(
+            planner.GetProperty("id").GetGuid(), "收窄派生", ["观察"], ["task_context"], null,
+            ["write_file"], ["workspace"], 4096)).ConfigureAwait(false);
+        Assert.Equal(["write_file"], narrowed.AllowedTools);
+    }
+
+    /// <summary>
+    /// The <c>agent_version</c> boundary must read the tool scope the immutable published
+    /// version actually declares (<c>tool_scope</c>) and treat it as final: a tool outside
+    /// the specialist's own scope is denied even though the run-frozen roster copy is derived
+    /// from the same data and could otherwise answer more broadly.
+    /// </summary>
+    [Fact]
+    public async Task AgentVersionBoundary_UsesDeclaredToolScope_AsFinalAnswer()
+    {
+        var (_, client, _, runId, _, _) = await StartFakeProviderRunAsync("agent-version-scope");
+        var resolver = _factory!.Services.GetRequiredService<IAuthorizationContextResolver>();
+        var scope = _factory.Services.GetRequiredService<ITenantContextAccessor>().Current;
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var worker = Assert.Single(lineage, item => item.GetProperty("generated").GetBoolean());
+        var workerId = worker.GetProperty("id").GetGuid();
+        var taskId = worker.GetProperty("task_id").GetGuid();
+
+        var boundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, workerId,
+            new CapabilityClaim("tool.file", "tool.invoke", "tool://write_file"), runId, taskId)).ConfigureAwait(false);
+        var granted = Assert.Single(boundaries, boundary => boundary.Name == "agent_version");
+        Assert.Equal("allow", Assert.Single(granted.Rules).Effect);
+
+        var outside = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, workerId,
+            new CapabilityClaim("tool.git", "tool.invoke", "tool://git_commit"), runId, taskId)).ConfigureAwait(false);
+        var refused = Assert.Single(outside, boundary => boundary.Name == "agent_version");
+        Assert.Equal("deny", Assert.Single(refused.Rules).Effect);
+    }
+
+    /// <summary>
+    /// Drives one full-duplex run up to the moment its worker write is parked on an
+    /// approval, so permission assertions see real frozen bindings while the root and
+    /// worker instances are still live and unreleased.
+    /// </summary>
+    private async Task<(FakeToolProvider Provider, HttpClient Client, Guid SessionId, Guid RunId, Guid ApprovalId, ActiveInvoke Active)> StartFakeProviderRunAsync(string label)
+    {
+        var workspace = Path.Combine(_root, "workspace-" + label);
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"write-probe\",\"title\":\"写探针文件\",\"description\":\"创建 probe.txt\",\"success_criteria\":[\"文件存在\"],\"dependencies\":[],\"required_capabilities\":[\"tool.file\"],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("文件已写入。");
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+        await InstallOfficeAgentPackAsync(client);
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = label + " project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = label + " session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一个文件", client_message_id = label + "-c-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var runId = ack.GetProperty("run_id").GetGuid();
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        return (provider, client, sessionId, runId, approvalId, active);
+    }
+
+    /// <summary>
     /// The git steward operational role must fire only for runs that touched
     /// git tools: this test drives a real git_status call through the approval
     /// gate and waits for the post-run steward bypass call.

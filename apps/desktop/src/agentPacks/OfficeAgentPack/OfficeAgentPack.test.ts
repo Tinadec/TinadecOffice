@@ -12,9 +12,14 @@ describe('OfficeAgentPack', () => {
     expect(officeAgentPackManifest.metadata.pack_id).toBe(OFFICE_AGENT_PACK_ID)
     expect(officeAgentPackManifest.metadata.owner).toBe('tinadec.office')
     expect(officeAgentPackManifest.metadata.product_id).toBe('tinadec.office')
-    expect(officeAgentPackManifest.metadata.version).toBe('0.2.0')
+    expect(officeAgentPackManifest.metadata.version).toBe('0.2.1')
     expect(officeAgentPackManifest.resources.agents).toHaveLength(14)
     expect(officeAgentPackManifest.resources.agents.every((agent) => Boolean(agent.system_prompt?.trim()))).toBe(true)
+    // Core denies every tool invocation for an operation-layer instance, so a governance
+    // role that declared tools would ship a pack whose data contradicts its enforced behavior.
+    for (const agent of officeAgentPackManifest.resources.agents.filter((row) => row.layer === 'operation')) {
+      expect(agent.tool_scope, `agent '${agent.resource_key}' must declare no tools`).toEqual([])
+    }
 
     const resourceKeys = new Set(officeAgentPackManifest.resources.agents.map((agent) => agent.resource_key))
     const promptKeys = new Set(officeAgentPackManifest.resources.prompt_pipelines.map((pipeline) => pipeline.resource_key))

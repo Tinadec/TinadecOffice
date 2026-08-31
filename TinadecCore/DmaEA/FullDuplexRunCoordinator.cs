@@ -268,7 +268,10 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         FrozenRunConfigurationV1 configuration,
         CancellationToken cancellationToken)
     {
-        var definitions = configuration.OperationAgents.Concat(configuration.ExecutionAgents).ToArray();
+        // The run-frozen manifest is the execution ceiling.  The governance layer never
+        // contributes to it: an operation-layer declaration must not be able to widen what
+        // execution workers may reach.
+        var definitions = configuration.ExecutionAgents.ToArray();
         var allowedToolIds = definitions
             .SelectMany(agent => agent.AllowedTools)
             .Where(value => !string.IsNullOrWhiteSpace(value))

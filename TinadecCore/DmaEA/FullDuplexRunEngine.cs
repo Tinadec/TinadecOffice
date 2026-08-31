@@ -652,7 +652,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IReadOnlyList<WorkerToolDescriptor> descriptors;
         try
         {
-            descriptors = await GetWorkerToolsAsync(run, configuration, task, cancellationToken).ConfigureAwait(false);
+            descriptors = await GetWorkerToolsAsync(run, configuration, task, worker, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -801,27 +801,24 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         RunState run,
         FrozenRunConfigurationV1 configuration,
         DurableTaskNode task,
+        RuntimeAgentInstance worker,
         CancellationToken cancellationToken)
     {
         if (task.RequiredTools.Count == 0) return [];
-        var sessions = _services.GetRequiredService<ISessionLocator>();
-        var sessionId = Guid.Parse(run.SessionId);
-        var session = await sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Session was not found while resolving worker tools.");
-        var project = await sessions.FindProjectAsync(session.ProjectId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Project was not found while resolving worker tools.");
-        var provider = _services.GetRequiredService<IToolProvider>();
-        var manifest = await provider.GetManifestAsync(project.RootPath, cancellationToken).ConfigureAwait(false);
-        if (manifest.ProtocolVersion < 2) throw new InvalidOperationException("TinadecTools manifest v2 is required for autonomous workers.");
-        if (!string.IsNullOrWhiteSpace(configuration.ToolManifestHash)
-            && !string.Equals(configuration.ToolManifestHash, manifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The live TinadecTools manifest differs from the frozen run manifest.");
+        // The declaration surface is the intersection of this instance's grant and the
+        // run-frozen manifest.  The live provider manifest is deliberately not consulted:
+        // a tool that appeared in a child process after admission is not authority for
+        // what a worker may be told it can call.
+        var catalog = _services.GetRequiredService<IFrozenToolManifestCatalog>();
+        var authorized = await catalog.ListAuthorizedAsync(
+            Guid.Parse(run.RunId), task.TaskId, worker.Id, cancellationToken).ConfigureAwait(false);
+        var byId = authorized.ToDictionary(entry => entry.Id, StringComparer.OrdinalIgnoreCase);
 
         var entries = new List<WorkerToolDescriptor>(task.RequiredTools.Count);
         foreach (var required in task.RequiredTools)
         {
-            var entry = manifest.Tools.FirstOrDefault(item => string.Equals(item.Id, required, StringComparison.OrdinalIgnoreCase));
-            if (entry is null) throw new KeyNotFoundException($"Required tool '{required}' is not present in the frozen manifest.");
+            if (!byId.TryGetValue(required, out var entry))
+                throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{required}', which is not authorized for the assigned worker instance.");
             entries.Add(new WorkerToolDescriptor(entry.Id, entry.Description, entry.InputSchema));
         }
         return entries;
@@ -1637,7 +1634,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         if (meeting is null)
         {
             meeting = await _instances.CreateRootAsync(new RuntimeAgentSeed(sessionId, runId, meetingDefinition.Id, meetingDefinition.Layer,
-                meetingDefinition.Role, "chat", meetingDefinition.Capabilities, [], ["workspace"], configuration.Context.DefaultTokenBudget,
+                meetingDefinition.Role, "chat", meetingDefinition.Capabilities, meetingDefinition.AllowedTools, ["workspace"], configuration.Context.DefaultTokenBudget,
                 AgentDefinitionId: meetingDefinition.AgentDefinitionId,
                 AgentVersionId: meetingDefinition.AgentVersionId,
                 VersionContentHash: meetingDefinition.VersionContentHash), cancellationToken).ConfigureAwait(false);
@@ -1691,7 +1688,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             definition.Role,
             "chat",
             definition.Capabilities,
-            [],
+            definition.AllowedTools,
             ["workspace"],
             configuration.Context.DefaultTokenBudget,
             AgentDefinitionId: definition.AgentDefinitionId,
@@ -2307,7 +2304,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             definition.Role,
             "chat",
             definition.Capabilities,
-            [],
+            definition.AllowedTools,
             ["workspace"],
             configuration.Context.DefaultTokenBudget,
             AgentDefinitionId: definition.AgentDefinitionId,

@@ -6,7 +6,7 @@
     "owner": "tinadec.office",
     "product_id": "tinadec.office",
     "name": "OfficeAgentPack",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -27,7 +27,7 @@
         "role": "session_coordinator",
         "capabilities": ["user.respond", "task.dispatch", "agent.create_temporary", "agent.create_persistent", "agent.create_profile"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["*"],
+        "tool_scope": [],
         "system_prompt": "你是用户与系统的唯一对话入口。负责理解用户意图、拆解任务并按双层治理派发给执行层；对用户保持简洁、可执行的表达，汇报时先结论后依据。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"
@@ -41,7 +41,7 @@
         "role": "context_maintenance",
         "capabilities": ["context.read", "context.patch"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["*"],
+        "tool_scope": [],
         "system_prompt": "你擅长长文本提炼。在保留任务目标、已确认事实与未完成事项的前提下，把冗余对话压缩为结构化摘要；绝不丢弃审批与工具调用结论。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"
@@ -55,7 +55,7 @@
         "role": "capability_advisor",
         "capabilities": ["tool.search", "agent.propose"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["*"],
+        "tool_scope": [],
         "system_prompt": "你是技能推荐智能体。根据任务目标、约束和当前可用能力，给出最小充分的技能与工具组合、适用理由和风险提示；你不直接执行任务、不批准权限，也不直接面向用户输出，建议必须交给会议或规划智能体决策。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"
@@ -69,7 +69,7 @@
         "role": "quality_controller",
         "capabilities": ["supervision.review"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["*"],
+        "tool_scope": [],
         "system_prompt": "你是质量与合规的把关者。审查执行层智能体的计划与结果，发现偏差即打回并给出修正指令；在用户已授予委托额度时可为低风险权限请求代批，超出额度必须上报用户，绝不越权。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"
@@ -83,7 +83,7 @@
         "role": "experience_curator",
         "capabilities": ["memory.candidate", "agent.candidate", "agent.create_persistent"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["*"],
+        "tool_scope": [],
         "system_prompt": "你负责智能体配置的演化。观察运行中的重复模式与能力缺口，起草新的智能体定义（角色/提示词/工具范围），以临时实例参与验证；只有用户明确确认后才转为持久化配置。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"

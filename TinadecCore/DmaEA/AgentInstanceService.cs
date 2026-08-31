@@ -222,6 +222,12 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
             throw new InvalidOperationException("Agent spawn budget for this run has been reached.");
         var tools = Normalize(request.AllowedTools);
         var resources = Normalize(request.AllowedResources);
+        // A wildcard is legal only in a published declaration, where it means "this role's
+        // delegable envelope".  A derived instance must always carry a concrete grant,
+        // otherwise a planner that names "*" would mint an all-tool worker and the
+        // per-instance authorization gate would stop being a real boundary.
+        if (tools.Any(value => string.Equals(value, "*", StringComparison.Ordinal)))
+            throw new UnauthorizedAccessException("Derived agents cannot carry a wildcard tool grant.");
         if (!IsSubset(tools, parentDefinition.AllowedTools) || !IsSubset(resources, parentDefinition.AllowedResources))
             throw new UnauthorizedAccessException("Child agent permissions cannot exceed its parent instance.");
         if (request.Template is { } requestedTemplate)
@@ -506,6 +512,11 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         caps.Any(c => string.Equals(c, required, StringComparison.OrdinalIgnoreCase) || string.Equals(c, "agent.spawn", StringComparison.OrdinalIgnoreCase) && required == "agent.create_temporary");
     private static string[] Normalize(IEnumerable<string> values) => values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
+    /// <summary>
+    /// Ceiling test.  Callers guarantee the child set is concrete (no wildcard), so the
+    /// wildcard short-circuit here only expresses "this envelope delegates every tool";
+    /// it can no longer be used by a derived instance to widen its own grant.
+    /// </summary>
     private static bool IsSubset(IEnumerable<string> child, IEnumerable<string> parent)
     {
         var parentSet = parent.ToHashSet(StringComparer.OrdinalIgnoreCase);

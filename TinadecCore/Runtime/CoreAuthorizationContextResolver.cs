@@ -70,6 +70,14 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
             return [DenyBoundary("agent_instance_unavailable", request.Claim)];
 
         var claim = request.Claim;
+
+        // Dual-layer invariant, enforced as policy rather than as a call-site convention:
+        // the governance layer coordinates, reviews, and proposes; it never executes a side
+        // effect. A published operation agent that still declares a broad tool scope cannot
+        // use it, because every external action must be owned by an execution-layer instance.
+        if (string.Equals(instance.Layer, "operation", StringComparison.Ordinal))
+            return [DenyBoundary("operation_layer_cannot_invoke_tools", claim)];
+
         var rules = new List<AuthorizationBoundary>
         {
             new("run", RunRules(run.PermissionMode, claim)),
@@ -101,14 +109,18 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
                 if (!string.Equals(instance.AgentVersionHash, version.ContentHash, StringComparison.OrdinalIgnoreCase))
                     return [DenyBoundary("agent_version_changed", claim)];
                 var versionRules = AgentVersionRules(version.SnapshotJson, claim);
-                if (versionRules.Any(rule => rule.Effect.Equals("allow", StringComparison.OrdinalIgnoreCase)))
+                if (versionRules is not null)
+                {
+                    // The published immutable version is the authority: a narrow declared
+                    // scope must never be re-widened by the frozen roster or instance copy.
                     rules.Add(new AuthorizationBoundary("agent_version", versionRules));
+                }
                 else if (TryFrozenAgentRules(frozen.Content, instance, claim, out var frozenRules))
                     rules.Add(new AuthorizationBoundary("agent_version", frozenRules));
                 else if (await TryInstanceDefinitionRulesAsync(instance, claim, cancellationToken).ConfigureAwait(false) is { } instanceRules)
                     rules.Add(new AuthorizationBoundary("agent_version", instanceRules));
                 else
-                    rules.Add(new AuthorizationBoundary("agent_version", versionRules));
+                    rules.Add(DenyBoundary("agent_version_scope_unavailable", claim));
             }
             else if (TryFrozenAgentRules(frozen.Content, instance, claim, out var frozenRules))
             {
@@ -247,20 +259,36 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
                 : string.Empty;
     }
 
-    private static IReadOnlyList<CapabilityRule> AgentVersionRules(string snapshot, CapabilityClaim claim)
+    /// <summary>
+    /// Reads the immutable AgentVersion's own declared tool scope.  The writers
+    /// (<c>BootstrapAgentDirectory</c>) and <c>AgentPackService</c> persist the
+    /// scope as <c>tool_scope</c>, while hand-authored and legacy snapshots use
+    /// <c>allowed_tools</c>/<c>tools</c>.  A snapshot that declares a scope is a final
+    /// answer, including a deny: only a snapshot with no readable scope at all returns
+    /// null so the caller may fall back to another immutable binding source.
+    /// </summary>
+    private static IReadOnlyList<CapabilityRule>? AgentVersionRules(string snapshot, CapabilityClaim claim)
     {
         try
         {
             using var doc = JsonDocument.Parse(snapshot);
-            if (doc.RootElement.TryGetProperty("allowed_tools", out var tools) && tools.ValueKind == JsonValueKind.Array)
+            var id = claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? claim.Resource[7..] : string.Empty;
+            foreach (var name in new[] { "tool_scope", "allowed_tools", "tools" })
             {
-                var id = claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? claim.Resource[7..] : string.Empty;
-                if (tools.EnumerateArray().Any(x => x.ValueKind == JsonValueKind.String && (x.GetString() == "*" || string.Equals(x.GetString(), id, StringComparison.OrdinalIgnoreCase))))
-                    return [new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)];
+                if (!TryProperty(doc.RootElement, name, out var scope) || scope.ValueKind != JsonValueKind.Array) continue;
+                var declared = scope.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String)
+                    .Select(x => x.GetString()!.Trim())
+                    .Where(x => x.Length != 0)
+                    .ToArray();
+                if (declared.Length == 0) return [new CapabilityRule("deny", "tool.invoke", "*", "*")];
+                return declared.Any(x => x == "*" || string.Equals(x, id, StringComparison.OrdinalIgnoreCase))
+                    ? [new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)]
+                    : [new CapabilityRule("deny", "tool.invoke", "*", "*")];
             }
         }
         catch (JsonException) { }
-        return [new CapabilityRule("deny", "tool.invoke", "*", "*")];
+        return null;
     }
 
     private static bool TryFrozenAgentRules(

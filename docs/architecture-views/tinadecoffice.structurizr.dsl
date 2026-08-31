@@ -20,7 +20,7 @@ workspace "TinadecOffice 架构（当前态）" "证据来源：仓库源码、s
             localState = container "App 本地状态" "仅体验偏好：settings.json、workbench-layout.json、.tinadec-panel-layout.json、pets/、dynamic-palette 缓存。" "Electron userData / localStorage" {
                 tags "Database"
             }
-            officePack = container "OfficeAgentPack 制品" "静态携带 tinadec.office.agent-pack@0.2.0（14 Agent + baseline-prompt + 7 Mode）与硬编码 RFC8785 摘要。" "apps/desktop/src/agentPacks/OfficeAgentPack"
+            officePack = container "OfficeAgentPack 制品" "静态携带 tinadec.office.agent-pack@0.2.1（14 Agent + baseline-prompt + 7 Mode，治理角色 tool_scope 为空）与硬编码 RFC8785 摘要。" "apps/desktop/src/agentPacks/OfficeAgentPack"
         }
 
         # ---------- TinadecGateway（产品：API 门面）----------

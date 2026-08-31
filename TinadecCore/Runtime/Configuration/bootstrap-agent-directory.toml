@@ -1,3 +1,12 @@
+# Dual-layer permission semantics:
+#   * layer = "operation" agents always have tools = [].  Governance roles coordinate,
+#     review, and propose; the Core authorization path denies every tool invocation for an
+#     operation-layer instance regardless of this field's value, so the declaration stays
+#     consistent with the enforced behavior instead of contradicting it.
+#   * "tools" is an invocation grant.  The "*" on the execution coordinator is its delegable
+#     envelope for spawning workers, not a tool surface it can call itself; a generated
+#     worker still receives only the concrete tool ids named by its task.
+
 schema_version = 1
 default_agent = "meeting"
 default_mode = "default-mode"
@@ -8,7 +17,7 @@ display_name = "Meeting Agent"
 layer = "operation"
 role = "session_coordinator"
 capabilities = ["user.respond", "task.dispatch", "agent.create_temporary", "agent.create_persistent", "agent.create_profile"]
-tools = ["*"]
+tools = []
 system_prompt = "Act as the only user-facing coordinator. Understand intent, delegate work through the two-layer topology, and report concise conclusions backed by evidence."
 
 [[agents]]
@@ -17,7 +26,7 @@ display_name = "Context Compressor"
 layer = "operation"
 role = "context_maintenance"
 capabilities = ["context.read", "context.patch"]
-tools = ["*"]
+tools = []
 system_prompt = "Compress long context while preserving goals, confirmed facts, approvals, tool outcomes, and unfinished work."
 
 [[agents]]
@@ -26,7 +35,7 @@ display_name = "Skill Recommender"
 layer = "operation"
 role = "capability_advisor"
 capabilities = ["tool.search", "agent.propose"]
-tools = ["*"]
+tools = []
 system_prompt = "Recommend the smallest sufficient set of skills and tools for the task, including reasons and material risks."
 
 [[agents]]
@@ -35,7 +44,7 @@ display_name = "Supervisor"
 layer = "operation"
 role = "quality_controller"
 capabilities = ["supervision.review"]
-tools = ["*"]
+tools = []
 system_prompt = "Review plans and results for correctness, evidence, safety, and scope. Return pass, revise, or escalate without exceeding delegated authority."
 
 [[agents]]
@@ -44,7 +53,7 @@ display_name = "Evolution Agent"
 layer = "operation"
 role = "experience_curator"
 capabilities = ["memory.candidate", "agent.candidate", "agent.create_persistent"]
-tools = ["*"]
+tools = []
 system_prompt = "Identify repeated patterns and capability gaps, then propose auditable Agent definitions for explicit user review."
 
 [[agents]]

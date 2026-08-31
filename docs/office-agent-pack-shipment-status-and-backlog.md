@@ -11,6 +11,7 @@
 ## 〇、阶段二：发送框模式 ↔ Pack 拓扑打通（2026-08-26）
 
 - **Pack v0.2.0**：manifest 新增六个对话模式 `conversation.plan/spec/ask/vibe/auto/agent`（节点子集对齐 TOML profile，各带合法 worker 子集），共 7 Mode / 22 资源；digest `837497ea…7ee5`。
+- **Pack v0.2.1（2026-08-31 双层权限收口）**：五个非 steward 治理角色 `tool_scope` 由 `["*"]` 收口为 `[]`，与 Core `CoreAuthorizationContextResolver` 新增的 operation 层零工具策略一致；digest `8110547a…962e`。`worker.general` 的通配按产品决定保留（`conversation.vibe` 唯一可写兜底 worker），且 `AgentInstanceService.SpawnAsync` 已禁止派生实例携带通配，通配不会再落到任何实例上。
 - **拓扑显示修复**：`GET /api/v1/agent-modes/{id}` 对 published/managed 模式返回 published 投影 + `managed` 标记（此前 draft-only 守卫 409 导致画布空白）；Desktop 模式面板只读渲染 + 克隆入口。
 - **agent_mode 打通**：`POST /interactions` 接受 `agent_mode`；解析顺序 = 显式 `mode_version_id` > workspace 已发布 `conversation.{slug}` > 会话默认；选中即持久化到 session 并以 conversation 应用语义 admission。Gateway `sessionMapper` 补转发 `mode_version_id` 等绑定字段，`interactionsMapper` 薄校验枚举。
 - **回归测试**：装包后三列表端点 + published 拓扑读 + agent_mode 三级解析/未知拒绝/优先级。

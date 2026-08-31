@@ -212,7 +212,7 @@ public sealed class AgentPackEndpointTests
         using var detailResponse = await client.GetAsync($"/api/v1/agent-packs/{PackId}");
         Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
         var detail = await detailResponse.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("0.2.0", detail.GetProperty("active_version").GetString());
+        Assert.Equal(BundledOfficePackVersion(), detail.GetProperty("active_version").GetString());
         Assert.Equal(22, detail.GetProperty("resources").GetArrayLength());
 
         var defaults = await client.GetFromJsonAsync<JsonElement>("/api/v1/workspace-defaults");
@@ -597,6 +597,16 @@ public sealed class AgentPackEndpointTests
             manifest = manifestElement,
             integrity = new { algorithm = "sha256", digest }
         });
+    }
+
+    /// <summary>
+    /// The version shipped in the App-owned bundled manifest, so assertions track the
+    /// artifact instead of a duplicated literal that drifts on every pack upgrade.
+    /// </summary>
+    private static string BundledOfficePackVersion()
+    {
+        using var manifest = JsonDocument.Parse(File.ReadAllText(FindOfficeManifestPath(), Encoding.UTF8));
+        return manifest.RootElement.GetProperty("metadata").GetProperty("version").GetString()!;
     }
 
     private static string FindOfficeManifestPath()
