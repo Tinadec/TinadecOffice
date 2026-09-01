@@ -30,7 +30,7 @@ const emit = defineEmits<{
 
 const {
   attachTerminal,
-  closeTerminal,
+  detachTerminal,
   fitTerminal,
   focusTerminal,
   getTerminal,
@@ -75,16 +75,10 @@ onMounted(() => {
   // Attach to the terminal backend
   attachTerminal(props.terminalId, containerRef.value, term, fitAddon)
 
-  // Set up ResizeObserver for auto-fitting
-  resizeObserver = new ResizeObserver(() => {
-    if (fitAddon && term) {
-      try {
-        fitAddon.fit()
-      } catch {
-        // Ignore fit errors during rapid resize
-      }
-    }
-  })
+  // Set up ResizeObserver for auto-fitting. Goes through `fitTerminal` so the
+  // zero-size guard applies: this host is `display:none` whenever its card is not
+  // the active tab, and fitting against that would shrink the PTY to 2×1.
+  resizeObserver = new ResizeObserver(() => fitTerminal(props.terminalId))
   resizeObserver.observe(containerRef.value)
 
   // Focus the terminal after a short delay to ensure it's ready
@@ -100,20 +94,11 @@ onUnmounted(() => {
     resizeObserver = null
   }
 
-  // When the TerminalView is unmounted (tab closed, detached, or page
-  // navigation), fully close the terminal to prevent orphaned PTY processes.
-  // closeTerminal() calls detachTerminal() internally and also destroys the
-  // PTY process in the main process.
-  const instance = getTerminal(props.terminalId)
-  if (instance) {
-    closeTerminal(props.terminalId)
-  } else {
-    // Instance already removed (e.g. closeTerminal was called by the panel),
-    // just dispose the local xterm if it still exists.
-    if (term) {
-      try { term.dispose() } catch { /* ignore */ }
-    }
-  }
+  // Unmounting means this view went away, not that the user asked to kill the
+  // shell: closing a tab, collapsing the feature column, a route change and a
+  // detach all unmount here. Detach the listeners and xterm and leave the process
+  // running; explicit close/restart/Ctrl+W still reach closeTerminal().
+  detachTerminal(props.terminalId)
 
   term = null
   fitAddon = null

@@ -28,7 +28,8 @@ function resolveKey(bundle: Bundle, key: string): unknown {
 }
 
 // ── sources whose t() references must exist in BOTH bundles ─────────
-// Agent-center panel sources only — the merged D7 surface this contract guards.
+// Panel sources this contract guards. A referenced key missing from both bundles
+// renders nothing at all, so every user-facing panel belongs here.
 const panelSources = import.meta.glob(
   [
     './../settings/sections/AgentModesPanel.vue',
@@ -36,6 +37,7 @@ const panelSources = import.meta.glob(
     './../settings/sections/RuntimeInstancesPanel.vue',
     './../components/agentCenter/GovernanceRolesPanel.vue',
     './../components/AgentEvolutionPanel.vue',
+    './../components/TerminalPanel.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

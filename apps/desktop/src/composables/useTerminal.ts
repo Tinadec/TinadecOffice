@@ -14,14 +14,17 @@
  *   journal and then follows the session event stream; input is an audited HTTP
  *   call. Both are rendered by the same widget (see useTerminalSource).
  * - Theme is adapted from CSS variables to xterm ITheme on changes.
+ *
+ * Every value handed to `window.tinadec.terminal.*` must be plain data: Electron
+ * serializes IPC with the V8 algorithm, which refuses Proxy objects — and a deep
+ * `ref`/`reactive` store hands out Proxies that still pass `Array.isArray`.
  */
 
-import { ref, computed, onUnmounted } from 'vue'
+import { computed, getCurrentInstance, onUnmounted, ref, shallowRef } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import type { ITheme as XtermTheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { useNotifications } from '@/composables/useNotifications'
 import { createLocalTerminalSource, type TerminalSource, type TerminalSourceKind } from '@/composables/useTerminalSource'
 
 // ---- Types ----
@@ -135,8 +138,30 @@ function buildXtermTheme(): XtermTheme {
 
 const terminalInstances = ref<TerminalInstance[]>([])
 const activeTerminalId = ref<string | null>(null)
-const availableShells = ref<ShellProfile[]>([])
+/**
+ * `shallowRef` keeps the IPC reply from being re-wrapped in a deep reactive Proxy:
+ * `profile.args` is read straight into a `terminal:create` payload, and Electron's
+ * serializer refuses Proxy objects.
+ */
+const availableShells = shallowRef<ShellProfile[]>([])
 const shellsLoaded = ref(false)
+
+/** Last terminal creation failure; shown in-panel and cleared on the next success. */
+const creationError = ref<{ message: string; retryable: boolean } | null>(null)
+
+/**
+ * Copy into a plain string array. A reactive Proxy reads exactly like an array but
+ * Electron's IPC serializer refuses it, so never pass a store value through as-is.
+ */
+function plainStringArray(value: readonly string[] | undefined | null): string[] | undefined {
+  if (value === undefined || value === null) return undefined
+  return Array.from(value, (item) => String(item))
+}
+
+function plainText(value: string | undefined | null): string | undefined {
+  if (value === undefined || value === null) return undefined
+  return String(value)
+}
 
 /** Cleanup functions for IPC listeners, keyed by terminal ID */
 const ipcCleanup = new Map<string, Array<() => void>>()
@@ -152,6 +177,9 @@ function isTerminalAvailable(): boolean {
 
 /**
  * Load available shell profiles from Electron IPC.
+ *
+ * The reply is frozen on the way in: a deep-reactive copy would hand
+ * `terminal:create` a Proxy for `args`, which Electron's serializer refuses.
  */
 async function loadShells(): Promise<void> {
   if (!isTerminalAvailable()) {
@@ -160,7 +188,14 @@ async function loadShells(): Promise<void> {
   }
   try {
     const shells = await window.tinadec.terminal.getShells()
-    availableShells.value = shells
+    availableShells.value = Object.freeze(
+      shells.map((s) => Object.freeze({
+        id: String(s.id),
+        label: String(s.label),
+        shell: String(s.shell),
+        args: Object.freeze(plainStringArray(s.args) ?? []),
+      })),
+    ) as ShellProfile[]
     shellsLoaded.value = true
   } catch {
     availableShells.value = []
@@ -184,43 +219,41 @@ async function createTerminalInstance(
     rows?: number
   } = {},
 ): Promise<TerminalInstance | null> {
-  // Ensure shells are loaded for default selection
-  if (!shellsLoaded.value) {
-    await loadShells()
-  }
+  creationError.value = null
 
   try {
-    // Determine shell and args
-    let shell = options.shell
-    let args = options.args
-    let shellId = options.shellId || 'default'
+    let shell = plainText(options.shell)
+    let args = plainStringArray(options.args)
+    let shellId = plainText(options.shellId) || 'default'
 
-    if (!shell && availableShells.value.length > 0) {
+    // Only consult the catalog when it is already cached. A cold start lets the main
+    // process resolve the default shell so a click never waits on an IPC round-trip.
+    if (!shell && shellsLoaded.value && availableShells.value.length > 0) {
       const profile = availableShells.value.find((s) => s.id === shellId)
         ?? availableShells.value[0]
-      shell = profile.shell
-      args = args ?? profile.args
-      shellId = profile.id
+      shell = plainText(profile.shell)
+      args = args ?? plainStringArray(profile.args)
+      shellId = plainText(profile.id) ?? 'default'
     }
 
-    let result: { id: string; shell: string; title: string } | null = null
-    if (isTerminalAvailable()) {
-      result = await window.tinadec.terminal.create({
+    const result = isTerminalAvailable()
+      ? await window.tinadec.terminal.create({
         shell,
         args,
-        cwd: options.cwd,
+        cwd: plainText(options.cwd),
         cols: options.cols ?? 80,
         rows: options.rows ?? 24,
-        title: options.title,
+        title: plainText(options.title),
       })
-    }
-    if (!result) {
-      throw new Error('Electron terminal IPC not available')
+      : null
+
+    if (!result?.id) {
+      throw new Error(result?.error || 'The main process started no terminal')
     }
 
     const instance: TerminalInstance = {
       id: result.id,
-      shell: result.shell,
+      shell: result.shell || shell || 'shell',
       title: result.title || options.title || 'Terminal',
       term: null,
       fitAddon: null,
@@ -240,7 +273,10 @@ async function createTerminalInstance(
     return instance
   } catch (err) {
     console.error('[useTerminal] Failed to create terminal:', err)
-    useNotifications().notify.error(err, { title: 'Failed to create terminal', source: 'terminal' })
+    creationError.value = {
+      message: err instanceof Error ? err.message : String(err),
+      retryable: true,
+    }
     return null
   }
 }
@@ -260,8 +296,12 @@ function attachTerminal(
   term: Terminal,
   fitAddon: FitAddon,
 ): void {
-  const instance = terminalInstances.value.find((t) => t.id === id)
+  const instance = terminalInstances.value.find((entry) => entry.id === id)
   if (!instance) return
+
+  // Re-attaching overwrote the previous cleanup array and leaked an xterm plus its
+  // IPC listeners, so tear the earlier attachment down first.
+  if (ipcCleanup.has(id)) detachTerminal(id)
 
   // Store references
   instance.term = term
@@ -313,12 +353,19 @@ function attachTerminal(
   const { cols, rows } = term
   window.tinadec.terminal.resize(id, cols, rows)
 
+  // The shell starts printing as soon as it spawns, so listen first and hold the
+  // bytes until the replay snapshot has been written; writing in that order leaves
+  // neither a gap nor a duplicate.
+  let replayed = false
+  const held: string[] = []
+  const writeOrHold = (data: string) => {
+    if (!instance.term || instance.exited) return
+    if (replayed) instance.term.write(data)
+    else held.push(data)
+  }
+
   // Set up IPC data listener → xterm write
-  const removeDataListener = window.tinadec.terminal.onData(id, (data) => {
-    if (instance.term && !instance.exited) {
-      instance.term.write(data)
-    }
-  })
+  const removeDataListener = window.tinadec.terminal.onData(id, writeOrHold)
 
   // Set up IPC exit listener
   const removeExitListener = window.tinadec.terminal.onExit(id, (exitCode) => {
@@ -345,6 +392,21 @@ function attachTerminal(
     () => inputDisposable.dispose(),
     () => resizeDisposable.dispose(),
   ])
+
+  void window.tinadec.terminal.snapshot(id).then((snapshot) => {
+    replayed = true
+    if (instance.term) {
+      if (snapshot?.replay) instance.term.write(snapshot.replay)
+      for (const chunk of held) instance.term.write(chunk)
+      if (snapshot?.exited) instance.exited = true
+    }
+    held.length = 0
+  }).catch(() => {
+    // No snapshot available; deliver whatever was held and keep streaming.
+    replayed = true
+    if (instance.term) for (const chunk of held) instance.term.write(chunk)
+    held.length = 0
+  })
 }
 
 /**
@@ -354,7 +416,7 @@ function attachTerminal(
  * @param id - Terminal ID
  */
 function detachTerminal(id: string): void {
-  const instance = terminalInstances.value.find((t) => t.id === id)
+  const instance = terminalInstances.value.find((entry) => entry.id === id)
   if (!instance) return
 
   // Run cleanup functions
@@ -381,7 +443,7 @@ function detachTerminal(id: string): void {
  * @param id - Terminal ID
  */
 function closeTerminal(id: string): void {
-  const instance = terminalInstances.value.find((t) => t.id === id)
+  const instance = terminalInstances.value.find((entry) => entry.id === id)
   detachTerminal(id)
 
   if (instance?.sourceKind === 'agent') {
@@ -394,7 +456,7 @@ function closeTerminal(id: string): void {
   }
 
   // Remove from instances list
-  terminalInstances.value = terminalInstances.value.filter((t) => t.id !== id)
+  terminalInstances.value = terminalInstances.value.filter((entry) => entry.id !== id)
 
   // Update active terminal
   if (activeTerminalId.value === id) {
@@ -417,7 +479,7 @@ function openAgentTerminal(options: {
   source: TerminalSource
 }): string {
   const id = `agent:${options.terminalSessionId}`
-  const existing = terminalInstances.value.find((t) => t.id === id)
+  const existing = terminalInstances.value.find((entry) => entry.id === id)
   if (existing) {
     activeTerminalId.value = existing.id
     return existing.id
@@ -446,7 +508,7 @@ function openAgentTerminal(options: {
 
 /** Terminate an agent-owned terminal session (kill switch in the panel header). */
 function killTerminal(id: string): void {
-  const instance = terminalInstances.value.find((t) => t.id === id)
+  const instance = terminalInstances.value.find((entry) => entry.id === id)
   if (!instance) return
   if (instance.sourceKind === 'agent') {
     instance.source?.kill()
@@ -469,14 +531,14 @@ function closeAllTerminals(): void {
  * Get a terminal instance by ID.
  */
 function getTerminal(id: string): TerminalInstance | undefined {
-  return terminalInstances.value.find((t) => t.id === id)
+  return terminalInstances.value.find((entry) => entry.id === id)
 }
 
 /**
  * Set the active terminal.
  */
 function setActiveTerminal(id: string): void {
-  if (terminalInstances.value.some((t) => t.id === id)) {
+  if (terminalInstances.value.some((entry) => entry.id === id)) {
     activeTerminalId.value = id
   }
 }
@@ -500,27 +562,28 @@ function refreshTerminalThemes(): void {
  */
 function fitAllTerminals(): void {
   for (const instance of terminalInstances.value) {
-    if (instance.fitAddon && instance.term) {
-      try {
-        instance.fitAddon.fit()
-      } catch {
-        // Ignore fit errors
-      }
-    }
+    fitTerminal(instance.id)
   }
 }
 
 /**
  * Fit a specific terminal by ID.
+ *
+ * Never fit against an unlaid-out host: FitAddon measures the xterm element's
+ * parent, so a `display:none` card proposes its 2×1 minimum and the shell then
+ * repaints at that size.
  */
 function fitTerminal(id: string): void {
   const instance = getTerminal(id)
-  if (instance?.fitAddon && instance.term) {
-    try {
-      instance.fitAddon.fit()
-    } catch {
-      // Ignore
-    }
+  if (!instance?.fitAddon || !instance.term) return
+
+  const host = instance.term.element?.parentElement
+  if (!host || !host.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) return
+
+  try {
+    instance.fitAddon.fit()
+  } catch {
+    // Ignore fit errors during a rapid resize
   }
 }
 
@@ -581,15 +644,17 @@ export function useTerminal() {
   // Install theme watcher on first use
   installThemeWatcher()
 
-  // Clean up all terminals when the last composable user unmounts
-  // (We use a module-level singleton, so cleanup happens on page navigation)
-  onUnmounted(() => {
-    // Don't destroy terminals on unmount — they persist across panel switches.
-    // Only uninstall the theme watcher if there are no more terminals.
-    if (terminalInstances.value.length === 0) {
-      uninstallThemeWatcher()
-    }
-  })
+  // This module is a singleton reached from non-component call sites too, so the
+  // unmount hook is only registered when a setup instance actually owns it.
+  if (getCurrentInstance()) {
+    onUnmounted(() => {
+      // Don't destroy terminals on unmount — they persist across panel switches.
+      // Only uninstall the theme watcher if there are no more terminals.
+      if (terminalInstances.value.length === 0) {
+        uninstallThemeWatcher()
+      }
+    })
+  }
 
   return {
     // State
@@ -597,13 +662,15 @@ export function useTerminal() {
     activeTerminalId,
     availableShells,
     shellsLoaded,
+    creationError,
     activeTerminal: computed(() =>
-      terminalInstances.value.find((t) => t.id === activeTerminalId.value) ?? null,
+      terminalInstances.value.find((entry) => entry.id === activeTerminalId.value) ?? null,
     ),
 
     // Actions
     loadShells,
     createTerminal: createTerminalInstance,
+    clearCreationError: () => { creationError.value = null },
     openAgentTerminal,
     killTerminal,
     closeTerminal,
@@ -620,4 +687,14 @@ export function useTerminal() {
     // Utilities
     isTerminalAvailable,
   }
+}
+
+/** Test-only: reset the module singleton between cases. */
+export function __resetTerminalStateForTests(): void {
+  for (const id of [...ipcCleanup.keys()]) detachTerminal(id)
+  terminalInstances.value = []
+  activeTerminalId.value = null
+  availableShells.value = []
+  shellsLoaded.value = false
+  creationError.value = null
 }

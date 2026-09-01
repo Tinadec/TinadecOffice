@@ -1172,6 +1172,8 @@ retry: '重试',
   },
   terminal: {
     newTerminal: '新建终端',
+    createFailed: '无法创建终端',
+    retry: '重试',
     close: '关闭终端',
     restart: '重启终端',
     defaultShell: '默认终端',

@@ -79,9 +79,20 @@ interface TerminalCreateOptions {
 }
 
 interface TerminalCreateResult {
-  id: string;
-  shell: string;
-  title: string;
+  /** Null when no process could be started; `error` then explains why. */
+  id: string | null;
+  shell?: string;
+  title?: string;
+  /** Which backend actually started. `'pty'` is a real pseudo-terminal. */
+  backend: 'pty' | null;
+  error?: string;
+}
+
+interface TerminalSnapshot {
+  /** Everything the terminal has printed so far, bounded by the main process. */
+  replay: string;
+  exited: boolean;
+  exitCode: number | null;
 }
 
 interface TerminalInfo {
@@ -96,6 +107,7 @@ interface TerminalApi {
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   destroy: (id: string) => void;
+  snapshot: (id: string) => Promise<TerminalSnapshot | null>;
   getShells: () => Promise<ShellProfile[]>;
   list: () => Promise<TerminalInfo[]>;
   onData: (id: string, callback: (data: string) => void) => () => void;

@@ -44,6 +44,7 @@ const {
   activeTerminalId,
   availableShells,
   shellsLoaded,
+  creationError,
   loadShells,
   createTerminal,
   closeTerminal,
@@ -52,6 +53,7 @@ const {
   fitTerminal,
   focusTerminal,
   fitAllTerminals,
+  clearCreationError,
   isTerminalAvailable,
 } = useTerminal()
 
@@ -221,18 +223,29 @@ function handleKeydown(event: KeyboardEvent): void {
 
 // ---- Watchers ----
 
-// Auto-fit when panel becomes visible
-watch(() => props.visible, (visible) => {
-  if (visible) {
-    const activeId = activeTerminalId.value
-    nextTick(() => {
-      fitAllTerminals()
-      if (activeId) {
-        setTimeout(() => focusTerminal(activeId), 50)
-      }
-    })
+/**
+ * A card host keeps every card mounted and toggles `display:none`, so a terminal
+ * created while hidden gets fit against a zero-size host and never takes focus.
+ * Hosts that never pass `visible` keep the previous create-on-mount behaviour, so
+ * only an explicit false counts as hidden.
+ */
+const shown = computed(() => props.visible !== false)
+
+// Create, fit and focus on first show; the guard lives in `fitTerminal`.
+watch(shown, (isShown) => {
+  if (!isShown) return
+  if (terminalAvailable.value && terminals.value.length === 0) {
+    void handleNewTerminal()
+    return
   }
-})
+  const activeId = activeTerminalId.value
+  nextTick(() => {
+    fitAllTerminals()
+    if (activeId) {
+      setTimeout(() => focusTerminal(activeId), 50)
+    }
+  })
+}, { immediate: true })
 
 // Auto-fit when active terminal changes
 watch(activeTerminalId, (id) => {
@@ -250,11 +263,6 @@ onMounted(() => {
   void loadShells()
   document.addEventListener('click', handleDocumentClick)
   document.addEventListener('keydown', handleKeydown)
-
-  // Auto-create a terminal if none exist
-  if (terminalAvailable.value && terminals.value.length === 0) {
-    void handleNewTerminal()
-  }
 })
 
 onUnmounted(() => {
@@ -367,6 +375,23 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Persistent reason the panel has no shell (a failed create is not a no-op) -->
+      <div v-if="creationError" class="terminal-error" role="alert">
+        <span class="terminal-error-text">
+          {{ t('terminal.createFailed') }}：{{ creationError.message }}
+        </span>
+        <button
+          v-if="creationError.retryable"
+          class="terminal-error-btn"
+          @click="handleNewTerminal(activeTerminal?.shellId)"
+        >
+          {{ t('terminal.retry') }}
+        </button>
+        <button class="terminal-error-close" aria-label="dismiss" @click="clearCreationError()">
+          <X :size="12" />
+        </button>
       </div>
 
       <!-- Terminal content area -->
@@ -647,6 +672,60 @@ function setTerminalViewRef(id: string, el: InstanceType<typeof TerminalView> | 
   height: 1px;
   background: var(--border-muted);
   margin: 4px 0;
+}
+
+/* ---- Creation error strip ---- */
+/* A descendant row, never a material root: it consumes the inherited surface token
+   and the fixed semantic error colour, and adds no second backdrop-filter. */
+.terminal-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  flex-shrink: 0;
+  background: var(--surface-section);
+  border-bottom: 1px solid var(--border-default);
+  font-size: 11.5px;
+  color: var(--text-error);
+}
+
+.terminal-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-error-btn,
+.terminal-error-close {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-button);
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.terminal-error-close {
+  padding: 2px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.terminal-error-btn:hover {
+  background: var(--bg-button-hover);
+  color: var(--text-primary);
+}
+
+.terminal-error-close:hover {
+  color: var(--text-error);
 }
 
 /* ---- Content area ---- */

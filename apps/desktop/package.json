@@ -10,7 +10,7 @@
     "electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run && node --test electron/appConfig.test.cjs electron/layoutStore.test.cjs electron/serviceDiscovery.test.cjs",
+    "test": "vitest run && node --test electron/appConfig.test.cjs electron/layoutStore.test.cjs electron/serviceDiscovery.test.cjs electron/terminalManager.test.cjs",
     "generate:client": "npx -y openapi-typescript@6 ../../TinadecGateway/tests/__snapshots__/openapi.external.json -o src/generated/schema.d.ts",
     "check:drift": "npm run generate:client && git diff --exit-code -- src/generated/",
     "rebuild:native": "electron-rebuild -f -w node-pty",
@@ -30,6 +30,21 @@
       "electron/**/*",
       "dist/**/*",
       "!node_modules/**/*",
+      {
+        "from": "../../node_modules/node-pty",
+        "to": "node_modules/node-pty",
+        "filter": [
+          "package.json",
+          "lib/**/*",
+          "prebuilds/**/*",
+          "!prebuilds/darwin-x64/**",
+          "!prebuilds/darwin-arm64/**",
+          "!prebuilds/linux-*/**",
+          "!prebuilds/win32-arm64/**"
+        ]
+      }
+    ],
+    "asarUnpack": [
       "node_modules/node-pty/**/*"
     ],
     "npmRebuild": false,

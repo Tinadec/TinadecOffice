@@ -189,6 +189,9 @@ async function createPanelWindow(tabId, type, title, state = {}, options = {}) {
   });
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Mirrors tagMainWindow(): lets the terminal output router recognise a window that
+  // can host a terminal view without consulting the panel tracking Map.
+  win._isTinadecPanel = true;
 
   // Register the window in our tracking Map BEFORE loading so it's
   // tracked even if the load fails.

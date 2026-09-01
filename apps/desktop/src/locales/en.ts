@@ -1172,6 +1172,8 @@ retry: 'Retry',
   },
   terminal: {
     newTerminal: 'New Terminal',
+    createFailed: 'Could not create terminal',
+    retry: 'Retry',
     close: 'Close Terminal',
     restart: 'Restart Terminal',
     defaultShell: 'Default Shell',

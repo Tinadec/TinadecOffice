@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('tinadec', {
     write: (id, data) => ipcRenderer.send('terminal:write', id, data),
     resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', id, cols, rows),
     destroy: (id) => ipcRenderer.send('terminal:destroy', id),
+    snapshot: (id) => ipcRenderer.invoke('terminal:snapshot', id),
     getShells: () => ipcRenderer.invoke('terminal:get-shells'),
     list: () => ipcRenderer.invoke('terminal:list'),
     onData: (id, callback) => {

@@ -18,8 +18,7 @@ import { api, type EventEnvelope } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { useTerminal } from '@/composables/useTerminal'
 import { createAgentTerminalSource } from '@/composables/useTerminalSource'
-import { usePanelTabs } from '@/composables/usePanelTabs'
-import { TerminalSquare } from '@lucide/vue'
+import { useUie } from '@tinadec/ui'
 import { useNotifications } from '@/composables/useNotifications'
 
 const props = defineProps<{
@@ -35,7 +34,6 @@ const props = defineProps<{
 
 const { notify } = useNotifications()
 const { openAgentTerminal } = useTerminal()
-const { openPanel } = usePanelTabs()
 
 const containerRef = ref<HTMLElement | null>(null)
 const terminalSessionId = ref<string | null>(null)
@@ -122,6 +120,8 @@ function openInPanel() {
     sendStdin: (id, data) => api.sendTerminalStdin(id, data),
     kill: (id) => api.killTerminalSession(id),
   })
+  // Registering first makes this session the active tab of the shared terminal
+  // list, so opening the card is the whole handoff.
   openAgentTerminal({
     terminalSessionId: sessionId,
     runId: resolvedRunId.value,
@@ -129,11 +129,23 @@ function openInPanel() {
     title: props.command?.slice(0, 40) || 'Agent terminal',
     source: panelSource,
   })
-  openPanel('terminal', props.command?.slice(0, 24) || 'Agent terminal', TerminalSquare, {
-    source: 'agent',
-    terminalSessionId: sessionId,
-    runId: resolvedRunId.value,
-  })
+  try {
+    const wb = useUie()
+    wb.bus.dispatch({
+      command: {
+        type: 'openCard',
+        scope: wb.scope.value,
+        descriptorId: 'terminal',
+        slotId: 'right',
+        title: props.command?.slice(0, 24) || 'Agent terminal',
+      },
+      source: 'user',
+      expectedRevision: wb.snapshot.value.revision,
+    })
+  } catch {
+    // No layout engine on this host: the session is registered, just not visible.
+    notify.info('已加入终端面板，请在右侧功能面板打开「终端」标签查看')
+  }
 }
 
 async function togglePause() {
@@ -194,8 +206,6 @@ onMounted(() => {
   }
 
   unsubscribeEvents = homeController.onEvent(inspect)
-  // Sessions started before this block mounted are still discoverable.
-  void api.listTerminalSessions(resolvedRunId.value ?? '').catch(() => [])
 })
 
 onBeforeUnmount(() => {

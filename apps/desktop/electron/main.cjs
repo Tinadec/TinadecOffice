@@ -377,8 +377,14 @@ ipcMain.on('tinadec:broadcast-status-notification', (event, payload) => {
   }
 });
 
-// Register terminal IPC handlers
-registerTerminalIpc();
+// Register terminal IPC handlers. Output is delivered only to windows that can host
+// a terminal view; pet windows and Debug Studio have none and used to receive every
+// chunk of the user's shell because delivery broadcast to all windows.
+registerTerminalIpc({
+  hostFilter: () => BrowserWindow.getAllWindows().filter(
+    (w) => !w.isDestroyed() && (w._isTinadecMain || w._isTinadecPanel),
+  ),
+});
 
 // Persist panel states before quit and clean up terminals
 app.on('before-quit', () => {

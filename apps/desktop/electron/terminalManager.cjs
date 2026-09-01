@@ -16,37 +16,39 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 // ---- PTY backend selection ----
+// node-pty resolves its native addon lazily on Windows, so a successful `require`
+// proves nothing: the real verdict only arrives when `pty.spawn` throws.
 let pty = null;
+let ptyLoadError = null;
 try {
   pty = require('node-pty');
 } catch (err) {
-  console.warn('[terminalManager] node-pty not available, falling back to child_process.spawn:', err.message);
+  ptyLoadError = err.message;
+  console.warn('[terminalManager] node-pty not available:', err.message);
 }
-
-const usePty = pty !== null;
 
 /**
  * @typedef {Object} TerminalEntry
- * @property {any} [process]      - node-pty IPty instance or ChildProcess
- * @property {string} id          - unique terminal ID
- * @property {string} shell       - shell executable path
- * @property {string[]} args      - shell arguments
- * @property {string} cwd         - working directory
- * @property {number} cols        - terminal width in columns
- * @property {number} rows        - terminal height in rows
- * @property {boolean} exited     - whether the process has exited
- * @property {boolean} isPty      - whether using real PTY
- * @property {string} title       - terminal display title
+ * @property {any} [process]            - node-pty IPty instance or ChildProcess
+ * @property {string} id                - unique terminal ID
+ * @property {string} shell             - shell executable path
+ * @property {string[]} args            - shell arguments
+ * @property {string} cwd               - working directory
+ * @property {number} cols              - terminal width in columns
+ * @property {number} rows              - terminal height in rows
+ * @property {boolean} exited           - whether the process has exited
+ * @property {'pty'|null} backend      - what was actually spawned
+ * @property {number|null} exitCode     - last reported exit code
+ * @property {string} title             - terminal display title
+ * @property {number} [ownerWebContentsId] - webContents that created the terminal
+ * @property {string[]} pending         - output awaiting the coalescing flush
+ * @property {number} pendingTimer      - handle of the armed flush, 0 when idle
+ * @property {string[]} replay          - bounded recent output for late subscribers
+ * @property {number} replayBytes       - total bytes held in `replay`
  */
 
 /** @type {Map<string, TerminalEntry>} */
 const terminals = new Map();
-
-/** @type {Map<string, Set<(data: string) => void>>} */
-const dataListeners = new Map();
-
-/** @type {Map<string, Set<(exitCode: number, signal?: number) => void>>} */
-const exitListeners = new Map();
 
 let terminalCounter = 0;
 
@@ -58,80 +60,117 @@ function generateId() {
   return `term-${++terminalCounter}`;
 }
 
+// ---- Shell profiles ----
+
+const systemRoot = () => process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+const programFiles = () => process.env.ProgramFiles || 'C:\\Program Files';
+const localAppData = () => process.env.LOCALAPPDATA || '';
+
+function firstExisting(candidates) {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // Unreadable candidate path: skip it.
+    }
+  }
+  return null;
+}
+
 /**
- * Detect available shell profiles on the current platform.
+ * Shell catalog for this machine, built from absolute paths only.
+ *
+ * A bare `'powershell.exe'` depends on a PATH lookup the spawned process may not
+ * inherit, and `process.env.SHELL` is meaningless on Windows — when Electron is
+ * launched from Git Bash it holds an MSYS path node-pty cannot spawn.
  * @returns {Array<{id: string, label: string, shell: string, args: string[]}>}
  */
-function getAvailableShells() {
-  const platform = process.platform;
-  const shells = [];
-
-  if (platform === 'win32') {
-    // PowerShell (Windows Terminal / pwsh or built-in powershell)
-    const pwshPaths = [
-      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-      'C:\\Program Files\\PowerShell\\6\\pwsh.exe',
-    ];
-    const pwshPath = pwshPaths.find((p) => {
-      try { return fs.existsSync(p); } catch { return false; }
-    });
-    if (pwshPath) {
-      shells.push({ id: 'pwsh', label: 'PowerShell 7', shell: pwshPath, args: ['-NoLogo'] });
+function resolveStaticShells() {
+  if (process.platform === 'win32') {
+    const shells = [];
+    const pwsh = firstExisting([
+      path.join(programFiles(), 'PowerShell', '7', 'pwsh.exe'),
+      path.join(programFiles(), 'PowerShell', '6', 'pwsh.exe'),
+      path.join(localAppData(), 'Programs', 'PowerShell', '7', 'pwsh.exe'),
+    ]);
+    if (pwsh) {
+      shells.push({ id: 'pwsh', label: 'PowerShell 7', shell: pwsh, args: ['-NoLogo'] });
     }
-
-    // Windows PowerShell (built-in)
     shells.push({
       id: 'powershell',
       label: 'Windows PowerShell',
-      shell: 'powershell.exe',
+      shell: path.join(systemRoot(), 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       args: ['-NoLogo'],
     });
-
-    // Command Prompt
     shells.push({
       id: 'cmd',
       label: 'Command Prompt',
-      shell: 'cmd.exe',
+      shell: process.env.ComSpec || path.join(systemRoot(), 'System32', 'cmd.exe'),
       args: [],
     });
-
-    // Git Bash (if installed)
-    const gitBashPaths = [
-      'C:\\Program Files\\Git\\bin\\bash.exe',
-      'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-    ];
-    const gitBashPath = gitBashPaths.find((p) => {
-      try { return fs.existsSync(p); } catch { return false; }
-    });
-    if (gitBashPath) {
-      shells.push({ id: 'gitbash', label: 'Git Bash', shell: gitBashPath, args: ['--login', '-i'] });
+    const gitBash = firstExisting([
+      path.join(programFiles(), 'Git', 'bin', 'bash.exe'),
+      path.join(localAppData(), 'Programs', 'Git', 'bin', 'bash.exe'),
+    ]);
+    if (gitBash) {
+      shells.push({ id: 'gitbash', label: 'Git Bash', shell: gitBash, args: ['--login', '-i'] });
     }
-
-    // WSL (if available)
-    try {
-      const wslCheck = childProcess.execSync('wsl --list --quiet', { encoding: 'utf-8', timeout: 3000 });
-      if (wslCheck.trim()) {
-        shells.push({ id: 'wsl', label: 'WSL (Ubuntu)', shell: 'wsl.exe', args: [] });
-      }
-    } catch {
-      // WSL not available
-    }
-  } else if (platform === 'darwin') {
-    const zshPath = '/bin/zsh';
-    shells.push({ id: 'zsh', label: 'zsh', shell: zshPath, args: ['-l'] });
-    shells.push({ id: 'bash', label: 'bash', shell: '/bin/bash', args: ['-l'] });
-  } else {
-    // Linux
-    const bashPath = '/bin/bash';
-    shells.push({ id: 'bash', label: 'bash', shell: bashPath, args: ['-l'] });
-    try {
-      if (fs.existsSync('/bin/zsh')) {
-        shells.push({ id: 'zsh', label: 'zsh', shell: '/bin/zsh', args: ['-l'] });
-      }
-    } catch { /* ignore */ }
+    return shells;
   }
 
+  if (process.platform === 'darwin') {
+    return [
+      { id: 'zsh', label: 'zsh', shell: '/bin/zsh', args: ['-l'] },
+      { id: 'bash', label: 'bash', shell: '/bin/bash', args: ['-l'] },
+    ];
+  }
+
+  const shells = [{ id: 'bash', label: 'bash', shell: '/bin/bash', args: ['-l'] }];
+  try {
+    if (fs.existsSync('/bin/zsh')) shells.push({ id: 'zsh', label: 'zsh', shell: '/bin/zsh', args: ['-l'] });
+  } catch { /* ignore */ }
   return shells;
+}
+
+/** @type {{id: string, label: string, shell: string, args: string[]} | null} */
+let wslProfile = null;
+let wslProbed = false;
+/** @type {Array<{id: string, label: string, shell: string, args: string[]}> | null} */
+let shellCatalog = null;
+
+/**
+ * Detect WSL once, off the create path. `wsl --list` used to run through execSync
+ * inside every `terminal:create` and blocked Electron's main process for up to 3s.
+ */
+function probeWsl() {
+  if (process.platform !== 'win32' || wslProbed) return;
+  wslProbed = true;
+  childProcess.execFile(
+    'wsl.exe',
+    ['--list', '--quiet'],
+    { encoding: 'utf-8', timeout: 3000, windowsHide: true },
+    (err, stdout) => {
+      if (!err && stdout && stdout.trim()) {
+        wslProfile = { id: 'wsl', label: 'WSL', shell: path.join(systemRoot(), 'System32', 'wsl.exe'), args: [] };
+        shellCatalog = null;
+      }
+      console.log('[terminalManager] WSL probe:', wslProfile ? 'available' : 'none');
+    },
+  );
+}
+
+/**
+ * Detect available shell profiles on the current platform (cached: it is a pure
+ * function of the machine).
+ * @returns {Array<{id: string, label: string, shell: string, args: string[]}>}
+ */
+function getAvailableShells() {
+  if (!shellCatalog) {
+    shellCatalog = resolveStaticShells();
+    if (wslProfile) shellCatalog = [...shellCatalog, wslProfile];
+  }
+  return shellCatalog;
 }
 
 /**
@@ -139,26 +178,29 @@ function getAvailableShells() {
  * @returns {{shell: string, args: string[]}}
  */
 function getDefaultShell() {
-  const shells = getAvailableShells();
-  const preferred = shells[0] ?? { shell: process.env.SHELL || 'sh', args: [] };
-  return { shell: preferred.shell, args: preferred.args };
+  const preferred = getAvailableShells()[0];
+  if (preferred) return { shell: preferred.shell, args: preferred.args };
+  return process.platform === 'win32'
+    ? { shell: path.join(systemRoot(), 'System32', 'cmd.exe'), args: [] }
+    : { shell: process.env.SHELL || '/bin/sh', args: [] };
 }
 
 /**
  * Resolve environment variables for the terminal process.
- * Merges process.env with a clean TERM setting.
- * Filters out undefined and null values to avoid issues with child_process.spawn.
+ * Merges process.env with a clean TERM setting, drops the npm and colour overrides
+ * a packaged Electron inherits, and filters out undefined values.
  * @param {Record<string, string>} extra
  * @returns {Record<string, string>}
  */
 function buildEnv(extra = {}) {
   const cleanEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && value !== null) {
-      cleanEnv[key] = value;
-    }
+    if (value === undefined || value === null) continue;
+    if (key.startsWith('npm_config_') || key.startsWith('npm_package_')) continue;
+    if (key === 'NO_COLOR' || key === 'FORCE_COLOR' || key === 'COLORFGBG') continue;
+    cleanEnv[key] = value;
   }
-  
+
   return {
     ...cleanEnv,
     TERM: 'xterm-256color',
@@ -179,11 +221,10 @@ function buildEnv(extra = {}) {
  * @param {number} [options.cols=80]     - initial terminal width
  * @param {number} [options.rows=24]     - initial terminal height
  * @param {string} [options.title]       - terminal display title
- * @returns {{id: string, shell: string, title: string}}
+ * @param {number} [ownerWebContentsId]  - webContents that asked for this terminal
+ * @returns {{id: string|null, shell?: string, title?: string, backend: 'pty'|null, error?: string}}
  */
-function createTerminal(options = {}) {
-  console.log('[terminalManager] Creating terminal, usePty:', usePty, 'options:', options);
-  
+function createTerminal(options = {}, ownerWebContentsId = null) {
   const id = options.id || generateId();
   const defaultShell = getDefaultShell();
   const shell = options.shell || defaultShell.shell;
@@ -192,9 +233,25 @@ function createTerminal(options = {}) {
   const cols = options.cols || 80;
   const rows = options.rows || 24;
   const title = options.title || path.basename(shell);
+
+  console.log('[terminalManager] Creating terminal:', { id, shell, args, cwd, cols, rows, title, ptyAvailable: !!pty });
+
+  if (!pty) {
+    return { id: null, backend: null, error: ptyLoadError || 'node-pty is not available in this build' };
+  }
+
+  // A stale project directory would otherwise surface as an opaque spawn failure.
+  if (options.cwd) {
+    try {
+      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+        return { id: null, backend: null, error: `Working directory is not available: ${cwd}` };
+      }
+    } catch (err) {
+      return { id: null, backend: null, error: `Working directory is not readable: ${cwd} (${err.message})` };
+    }
+  }
+
   const env = buildEnv();
-  
-  console.log('[terminalManager] Terminal config:', { id, shell, args, cwd, cols, rows, title });
 
   /** @type {TerminalEntry} */
   const entry = {
@@ -205,120 +262,47 @@ function createTerminal(options = {}) {
     cols,
     rows,
     exited: false,
-    isPty: usePty,
+    backend: 'pty',
+    exitCode: null,
     title,
+    ownerWebContentsId,
+    pending: [],
+    pendingTimer: 0,
+    replay: [],
+    replayBytes: 0,
     process: null,
   };
 
-  if (usePty) {
-    // ---- Real PTY mode (node-pty) ----
-    try {
-      const ptyProcess = pty.spawn(shell, args, {
-        name: 'xterm-color',
-        cols,
-        rows,
-        cwd,
-        env,
-      });
+  try {
+    const ptyProcess = pty.spawn(shell, args, {
+      // On the Windows ConPTY path `name` does not set the child's TERM, so the
+      // value stays authoritative in buildEnv(); the two must agree either way.
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd,
+      env,
+    });
 
-      entry.process = ptyProcess;
+    entry.process = ptyProcess;
 
-      ptyProcess.onData((data) => {
-        notifyData(id, data);
-      });
+    ptyProcess.onData((data) => {
+      notifyData(id, data);
+    });
 
-      ptyProcess.onExit(({ exitCode, signal }) => {
-        entry.exited = true;
-        notifyExit(id, exitCode, signal);
-        terminals.delete(id);
-        dataListeners.delete(id);
-        exitListeners.delete(id);
-      });
-    } catch (err) {
-      console.error('[terminalManager] Failed to spawn PTY, falling back to spawn:', err.message);
-      createSpawnFallback(entry, shell, args, cwd, cols, rows, env);
-    }
-  } else {
-    // ---- Fallback mode (child_process.spawn) ----
-    createSpawnFallback(entry, shell, args, cwd, cols, rows, env);
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      entry.exited = true;
+      entry.exitCode = exitCode;
+      flushPending(id);
+      notifyExit(id, exitCode, signal);
+    });
+  } catch (err) {
+    console.error('[terminalManager] Failed to spawn PTY:', err.message);
+    return { id: null, backend: null, error: err.message };
   }
 
   terminals.set(id, entry);
-  return { id, shell, title };
-}
-
-/**
- * Create a terminal using child_process.spawn as a fallback.
- * This mode doesn't support full PTY features (no interactive programs like vim),
- * but handles basic command-line interaction.
- *
- * @param {TerminalEntry} entry
- * @param {string} shell
- * @param {string[]} args
- * @param {string} cwd
- * @param {number} cols
- * @param {number} rows
- * @param {Record<string, string>} env
- */
-function createSpawnFallback(entry, shell, args, cwd, cols, rows, env) {
-  const isWindows = process.platform === 'win32';
-  console.log('[terminalManager] Creating spawn fallback for:', shell, 'on Windows:', isWindows);
-  
-  const child = childProcess.spawn(shell, args, {
-    cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: false,
-    shell: false,
-  });
-
-  entry.process = child;
-  entry.isPty = false;
-
-  // Convert raw output to string and forward
-  const onData = (chunk) => {
-    notifyData(entry.id, chunk.toString('utf-8'));
-  };
-
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
-
-  child.on('error', (err) => {
-    console.error('[terminalManager] Spawn error:', err.message);
-    notifyData(entry.id, `\r\n\x1b[31mFailed to start process: ${err.message}\x1b[0m\r\n`);
-    entry.exited = true;
-    notifyExit(entry.id, 1);
-    terminals.delete(entry.id);
-  });
-
-  child.on('exit', (code, signal) => {
-    console.log('[terminalManager] Spawn exited:', { code, signal });
-    entry.exited = true;
-    notifyExit(entry.id, code ?? 0, signal ? 1 : undefined);
-    terminals.delete(entry.id);
-    dataListeners.delete(entry.id);
-    exitListeners.delete(entry.id);
-  });
-
-  // Windows特定：发送初始化命令显示提示符
-  if (isWindows && child.stdin && !child.stdin.destroyed) {
-    child.stdin.setDefaultEncoding('utf-8');
-    
-    setTimeout(() => {
-      try {
-        if (shell.includes('powershell')) {
-          child.stdin.write('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n');
-        } else if (shell.includes('cmd')) {
-          child.stdin.write('chcp 65001\r\n');
-        }
-      } catch (e) {
-        console.warn('[terminalManager] Init command failed:', e.message);
-      }
-    }, 200);
-  }
-
-  // In spawn mode, we don't have real PTY resize support.
-  // The terminal will still function for basic I/O.
+  return { id, shell, title, backend: entry.backend };
 }
 
 /**
@@ -328,13 +312,9 @@ function createSpawnFallback(entry, shell, args, cwd, cols, rows, env) {
  */
 function writeTerminal(id, data) {
   const entry = terminals.get(id);
-  if (!entry || entry.exited) return;
+  if (!entry || entry.exited || !entry.process) return;
 
-  if (entry.isPty && entry.process && typeof entry.process.write === 'function') {
-    entry.process.write(data);
-  } else if (entry.process && entry.process.stdin && !entry.process.stdin.destroyed) {
-    entry.process.stdin.write(data);
-  }
+  entry.process.write(data);
 }
 
 /**
@@ -345,19 +325,20 @@ function writeTerminal(id, data) {
  */
 function resizeTerminal(id, cols, rows) {
   const entry = terminals.get(id);
-  if (!entry || entry.exited) return;
+  if (!entry || entry.exited || !entry.process) return;
+
+  // The size comes from the renderer's fit calculation; a zero measured against a
+  // hidden host would make node-pty throw.
+  if (!(cols >= 1) || !(rows >= 1)) return;
 
   entry.cols = cols;
   entry.rows = rows;
 
-  if (entry.isPty && entry.process && typeof entry.process.resize === 'function') {
-    try {
-      entry.process.resize(cols, rows);
-    } catch {
-      // Ignore resize errors
-    }
+  try {
+    entry.process.resize(cols, rows);
+  } catch {
+    // The shell may have exited between the check and the resize.
   }
-  // spawn mode doesn't support resize
 }
 
 /**
@@ -370,19 +351,18 @@ function destroyTerminal(id) {
 
   if (!entry.exited && entry.process) {
     try {
-      if (entry.isPty && typeof entry.process.kill === 'function') {
-        entry.process.kill();
-      } else if (entry.process.kill) {
-        entry.process.kill();
-      }
+      entry.process.kill();
     } catch {
       // Process may have already exited
     }
   }
 
+  if (entry.pendingTimer) {
+    clearTimeout(entry.pendingTimer);
+    entry.pendingTimer = 0;
+  }
+
   terminals.delete(id);
-  dataListeners.delete(id);
-  exitListeners.delete(id);
 }
 
 /**
@@ -420,51 +400,102 @@ function listTerminals() {
   return result;
 }
 
-// ---- Internal event notification ----
+// ---- Output routing ----
 
 /**
- * Notify all data listeners for a terminal.
- * Also sends IPC event to the renderer.
- * @param {string} id
- * @param {string} data
+ * Windows allowed to receive terminal output. Defaults to every window so this
+ * module stays usable before the host wires a filter in.
+ * @type {() => import('electron').BrowserWindow[]}
  */
-function notifyData(id, data) {
-  // Notify local listeners
-  const listeners = dataListeners.get(id);
-  if (listeners) {
-    for (const cb of listeners) {
-      try { cb(data); } catch { /* ignore */ }
-    }
-  }
+let terminalHostFilter = () => BrowserWindow.getAllWindows();
 
-  // Send via IPC to all browser windows (supports detached panels)
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(`terminal:data:${id}`, data);
+/**
+ * Declare which windows may host a terminal view.
+ * @param {() => import('electron').BrowserWindow[]} filter
+ */
+function setTerminalHostFilter(filter) {
+  if (typeof filter === 'function') terminalHostFilter = filter;
+}
+
+function sendToTerminalHosts(channel, payload) {
+  for (const win of terminalHostFilter()) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, payload);
     }
   }
 }
 
+/** Coalescing window: one IPC send per flush instead of one per pty chunk. */
+const OUTPUT_FLUSH_MS = 16;
+/** Recent output kept per terminal so a late subscriber can catch up. */
+const REPLAY_LIMIT_BYTES = 200 * 1024;
+
 /**
- * Notify all exit listeners for a terminal.
- * Also sends IPC event to the renderer.
+ * Emit whatever output has accumulated for a terminal.
+ * @param {string} id
+ */
+function flushPending(id) {
+  const entry = terminals.get(id);
+  if (!entry) return;
+  if (entry.pendingTimer) {
+    clearTimeout(entry.pendingTimer);
+    entry.pendingTimer = 0;
+  }
+  if (!entry.pending.length) return;
+  const chunk = entry.pending.join('');
+  entry.pending = [];
+  sendToTerminalHosts(`terminal:data:${id}`, chunk);
+}
+
+/**
+ * Deliver shell output: retain it for replay and queue it for the next flush.
+ * @param {string} id
+ * @param {string} data
+ */
+function notifyData(id, data) {
+  const entry = terminals.get(id);
+  if (!entry) return;
+
+  entry.replay.push(data);
+  entry.replayBytes += data.length;
+  while (entry.replayBytes > REPLAY_LIMIT_BYTES && entry.replay.length > 1) {
+    entry.replayBytes -= entry.replay.shift().length;
+  }
+
+  entry.pending.push(data);
+  if (!entry.pendingTimer) {
+    entry.pendingTimer = setTimeout(() => {
+      entry.pendingTimer = 0;
+      flushPending(id);
+    }, OUTPUT_FLUSH_MS);
+  }
+}
+
+/**
+ * Report a terminal's exit. Pending output is flushed first so the last lines are
+ * never lost behind the exit notification.
  * @param {string} id
  * @param {number} exitCode
  * @param {number} [signal]
  */
 function notifyExit(id, exitCode, signal) {
-  const listeners = exitListeners.get(id);
-  if (listeners) {
-    for (const cb of listeners) {
-      try { cb(exitCode, signal); } catch { /* ignore */ }
-    }
-  }
+  flushPending(id);
+  sendToTerminalHosts(`terminal:exit:${id}`, { exitCode, signal });
+}
 
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(`terminal:exit:${id}`, { exitCode, signal });
-    }
-  }
+/**
+ * Everything a late-attaching view needs to catch up before it starts listening.
+ * @param {string} id
+ * @returns {{replay: string, exited: boolean, exitCode: number|null} | null}
+ */
+function readTerminalSnapshot(id) {
+  const entry = terminals.get(id);
+  if (!entry) return null;
+  return {
+    replay: entry.replay.join(''),
+    exited: entry.exited,
+    exitCode: entry.exitCode,
+  };
 }
 
 // ---- IPC Handler Registration ----
@@ -472,11 +503,15 @@ function notifyExit(id, exitCode, signal) {
 /**
  * Register all terminal-related IPC handlers.
  * Should be called once during app initialization.
+ * @param {{hostFilter?: () => import('electron').BrowserWindow[]}} [options]
  */
-function registerTerminalIpc() {
+function registerTerminalIpc(registration = {}) {
+  setTerminalHostFilter(registration.hostFilter);
+  probeWsl();
+
   // Create a new terminal
-  ipcMain.handle('terminal:create', async (_event, options) => {
-    return createTerminal(options || {});
+  ipcMain.handle('terminal:create', async (event, options) => {
+    return createTerminal(options || {}, event.sender.id);
   });
 
   // Write data to a terminal
@@ -492,6 +527,11 @@ function registerTerminalIpc() {
   // Destroy a terminal
   ipcMain.on('terminal:destroy', (_event, id) => {
     destroyTerminal(id);
+  });
+
+  // Replay what a terminal has printed so far
+  ipcMain.handle('terminal:snapshot', async (_event, id) => {
+    return readTerminalSnapshot(id);
   });
 
   // Get available shell profiles
@@ -515,5 +555,7 @@ module.exports = {
   listTerminals,
   getAvailableShells,
   getDefaultShell,
+  readTerminalSnapshot,
+  setTerminalHostFilter,
   registerTerminalIpc,
 };
