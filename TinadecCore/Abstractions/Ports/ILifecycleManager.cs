@@ -108,6 +108,22 @@ public interface ILifecycleManager
         string runId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Pending orchestration directives aimed at one run, oldest first. The
+    /// pending-status filter is the resume mechanism, so draining marks rows
+    /// instead of deleting them.
+    /// </summary>
+    Task<IReadOnlyList<RunDirective>> ListPendingRunDirectivesAsync(
+        Guid runId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Marks the given still-pending directives as drained or rejected.</summary>
+    Task<RunDirectiveDrainResult> DrainRunDirectivesAsync(
+        Guid runId,
+        IReadOnlyList<Guid> directiveIds,
+        string drainedStatus,
+        CancellationToken cancellationToken = default);
+
     Task<RunLease> TryAcquireRunLeaseAsync(
         string runId,
         string ownerId,
@@ -175,6 +191,17 @@ public sealed record RunState
     public DateTimeOffset StartedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; init; }
 }
+
+/// <summary>A durable orchestration directive row projected for the engine.</summary>
+public sealed record RunDirective(
+    Guid Id,
+    Guid SessionId,
+    string Kind,
+    string PayloadJson,
+    string? IdempotencyKey);
+
+/// <summary>Outcome of a drain batch.</summary>
+public sealed record RunDirectiveDrainResult(int DrainedCount);
 
 /// <summary>Immutable values captured when a full-duplex run is admitted.</summary>
 public sealed record RunStartRequest(

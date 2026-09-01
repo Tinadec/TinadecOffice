@@ -1211,6 +1211,109 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TwoLanes_WithLanesEnabled_RunCompletesWithBothTasks()
+    {
+        var runtimeToml = RuntimeTomlWith(
+            "enabled = false\ncontext_token_threshold = 0\ncompress_on_task_closed = false\nrecommend_on_task_created = false\ncurate_on_run_closed = false\ngit_steward_on_run_closed = false\n")
+            + "\n[orchestration]\nlanes_enabled = true\nmax_lanes_per_run = 4\nmax_tasks_per_lane = 6\n";
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\",\"lane_key\":\"l2\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("两个泳道都完成了。");
+        var factory = CreateFactory(script, runtimeToml: runtimeToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "并行目标", client_message_id = "lanes-basic" });
+
+        var done = Assert.Single(chunks.Where(chunk => KindOf(chunk) == "done"));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+        var runId = RunIdOf(chunks[0]);
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
+        var nodes = orchestration.GetProperty("nodes").EnumerateArray().ToList();
+        Assert.Equal(2, nodes.Count);
+        Assert.All(nodes, node => Assert.Equal("completed", node.GetProperty("status").GetString()));
+    }
+
+    [Fact]
+    public async Task RunTerminal_DrainsQueuedDirective_RejectedWhenLanesDisabled()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("好了。");
+        script.BeforeWorker = gate.Task;
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "drain-a" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "drain-b" });
+        await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (script.WorkerGateEntries < 2 && DateTimeOffset.UtcNow < waitDeadline)
+        {
+            await Task.Delay(50);
+        }
+
+        var queued = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "完成后测试并提交", client_message_id = "drain-followup" });
+        Assert.Equal(HttpStatusCode.Created, queued.StatusCode);
+        var queuedBody = await queued.Content.ReadFromJsonAsync<JsonElement>();
+        var directiveId = queuedBody.GetProperty("interaction_id").GetGuid();
+
+        gate.SetResult();
+        await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        await runB.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            var directive = await db.RunDirectives.SingleAsync(x => x.Id == directiveId);
+            Assert.Equal("rejected", directive.Status);
+            Assert.NotNull(directive.DrainedAt);
+        }
+
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0);
+        var rejection = Assert.Single(events, e => e.EventType == "orchestration.directive.rejected");
+        var payload = (JsonElement)rejection.Payload["payload"]!;
+        Assert.Equal("lanes_disabled", payload.GetProperty("code").GetString());
+        Assert.Equal(directiveId.ToString(), payload.GetProperty("directive_id").GetString());
+    }
+
+    [Fact]
+    public async Task LaneCheckpointSave_NeverReusesPriorRevisionBody()
+    {
+        var factory = CreateFactory(new ScriptedChatClient());
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var runId = await manager.StartRunAsync(sessionId.ToString());
+
+        // Same purpose and revision from two lanes must produce two checkpoint
+        // rows; a shared key would hand the second lane the first lane's body.
+        var mainSave = await manager.SaveRunCheckpointAsync(runId, new RunCheckpointWrite(0, "executing", "{\"v\":\"main\"}", IdempotencyKey: $"run:{runId}:main:tick:1"));
+        var laneSave = await manager.SaveRunCheckpointAsync(runId, new RunCheckpointWrite(mainSave.Revision, "executing", "{\"v\":\"l2\"}", IdempotencyKey: $"run:{runId}:l2:tick:1"));
+
+        Assert.Equal(mainSave.Revision + 1, laneSave.Revision);
+        var current = await manager.GetCurrentRunCheckpointAsync(runId);
+        Assert.NotNull(current);
+        Assert.Contains("\"l2\"", current!.Content, StringComparison.Ordinal);
+
+        // An exact replay — same expected revision, phase, body, and key —
+        // returns the stored row instead of writing a new one.
+        var replay = await manager.SaveRunCheckpointAsync(runId, new RunCheckpointWrite(0, "executing", "{\"v\":\"main\"}", IdempotencyKey: $"run:{runId}:main:tick:1"));
+        Assert.Equal(mainSave.Revision, replay.Revision);
+    }
+
+    [Fact]
     public async Task RunControl_Cancel_EndsWithDoneCancelled()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

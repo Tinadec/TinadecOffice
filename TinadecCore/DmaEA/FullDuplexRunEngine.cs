@@ -243,7 +243,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 run = await _lifecycle.GetRunStateAsync(runId.ToString(), stoppingToken).ConfigureAwait(false);
                 if (run.Status == RunStatus.Cancelled)
                 {
-                    await FinalizeCancellationAsync(runId, checkpoint, stoppingToken).ConfigureAwait(false);
+                    await FinalizeCancellationAsync(runId, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
                     return;
                 }
                 if (run.Status == RunStatus.Paused
@@ -431,6 +431,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
                     ? materialized
                     : MergeReplannedGraph(checkpoint.Tasks, materialized);
+                SyncLanes(checkpoint);
                 lastError = null;
                 break;
             }
@@ -466,6 +467,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
+        // The frozen lanes_enabled switch keeps the single-lane fast path below
+        // byte-for-byte: with lanes off, directive and lane machinery stay idle.
+        if (configuration.Orchestration.LanesEnabled)
+        {
+            return await ExecuteLaneTickAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+
         var runId = Guid.Parse(run.RunId);
         await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -591,6 +599,262 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision,
             "tasks-completed", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// One multi-lane tick: every non-terminal lane advances at most one step.
+    /// Worker concurrency is budgeted globally across lanes, and a lane blocked
+    /// on another lane's unfinished work parks as "waiting" instead of failing
+    /// the run as an invalid graph. All lanes stay inside the single run lease.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> ExecuteLaneTickAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        SyncLanes(checkpoint);
+
+        // A previous worker may have stopped after PrepareAsync persisted an
+        // execution. Resume it before asking a model to produce another call.
+        var pending = checkpoint.Tasks.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId));
+        if (pending is not null)
+        {
+            var resumed = await ResumePendingToolAsync(run, configuration, checkpoint, pending, cancellationToken).ConfigureAwait(false);
+            checkpoint = resumed.Checkpoint;
+            if (resumed.Waiting)
+            {
+                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken, LaneKeyOf(pending)).ConfigureAwait(false);
+                throw new RunAwaitingExternalDecisionException();
+            }
+            if (resumed.Result is not null)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, resumed.Result, cancellationToken).ConfigureAwait(false);
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-resumed", cancellationToken, LaneKeyOf(pending)).ConfigureAwait(false);
+            }
+        }
+
+        MarkBlockedDescendants(checkpoint.Tasks);
+        SyncLanes(checkpoint);
+
+        // Per-lane ready sets dispatched under one global worker budget so the
+        // active worker peak across lanes never exceeds MaxParallelWorkers.
+        var budget = Math.Max(1, configuration.Spawn.MaxParallelWorkers);
+        var laneOrder = checkpoint.Lanes
+            .Where(lane => checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && task.Status is "pending" or "ready" or "running"))
+            .Select(lane => lane.LaneKey)
+            .OrderBy(key => string.Equals(key, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var dispatched = new List<(string LaneKey, DurableTaskNode Task)>();
+        var progress = true;
+        while (dispatched.Count < budget && progress)
+        {
+            progress = false;
+            foreach (var laneKey in laneOrder)
+            {
+                if (dispatched.Count >= budget) break;
+                var ready = checkpoint.Tasks
+                    .Where(item => LaneKeyOf(item) == laneKey
+                        && item.Status is "pending" or "ready"
+                        && item.Dependencies.All(dependency => checkpoint.Tasks.Any(other => other.TaskKey == dependency && other.Status == "completed")))
+                    .OrderBy(item => item.Priority).ThenBy(item => item.TaskKey, StringComparer.Ordinal)
+                    .FirstOrDefault(item => dispatched.All(pair => pair.Task != item));
+                if (ready is null) continue;
+                dispatched.Add((laneKey, ready));
+                progress = true;
+            }
+        }
+
+        if (dispatched.Count == 0)
+        {
+            if (checkpoint.Tasks.All(item => item.Status is "completed" or "failed" or "blocked"))
+            {
+                checkpoint.Phase = "reviewing";
+                return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "execution-complete", cancellationToken).ConfigureAwait(false);
+            }
+            if (checkpoint.Tasks.Any(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId)))
+            {
+                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
+                throw new RunAwaitingExternalDecisionException();
+            }
+            checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+            // Anything still dispatchable-but-not-waiting is genuinely stuck: a
+            // crashed "running" dispatch or an in-lane chain planning validation
+            // failed to exclude. That stays an invalid graph.
+            var stuck = checkpoint.Tasks.Any(item => item.Status is "pending" or "ready" or "running"
+                && checkpoint.Lanes.First(lane => string.Equals(lane.LaneKey, LaneKeyOf(item), StringComparison.OrdinalIgnoreCase)).Status != "waiting");
+            if (stuck)
+            {
+                await FailRunAsync(runId, checkpoint, "invalid_task_graph", "No dependency-ready task remains in the persisted graph.", cancellationToken).ConfigureAwait(false);
+                return checkpoint;
+            }
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lanes-waiting", cancellationToken).ConfigureAwait(false);
+            throw new RunAwaitingExternalDecisionException();
+        }
+
+        foreach (var (_, task) in dispatched)
+        {
+            task.Status = "running";
+            task.Attempt++;
+            task.InputContextRevision = checkpoint.ContextRevision;
+            task.Waits = [];
+        }
+        foreach (var lane in checkpoint.Lanes)
+        {
+            if (dispatched.Any(pair => pair.LaneKey == lane.LaneKey)) lane.Status = "executing";
+        }
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tasks-dispatched", cancellationToken).ConfigureAwait(false);
+
+        var plannerId = checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
+        foreach (var (_, task) in dispatched)
+        {
+            _ = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+        }
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
+
+        var textOnly = dispatched.Where(pair => pair.Task.RequiredTools.Count == 0).Select(pair => pair.Task).ToList();
+        var toolCapable = dispatched.Where(pair => pair.Task.RequiredTools.Count != 0).Select(pair => pair.Task).ToList();
+        var results = await Task.WhenAll(textOnly.Select(task => ExecuteTextTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken))).ConfigureAwait(false);
+        var contextChanged = await ApplyPendingContextPatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false);
+        foreach (var result in results)
+        {
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, result.Usage);
+            if (!contextChanged)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var staleTask = checkpoint.Tasks.FirstOrDefault(item => item.TaskId == result.TaskId);
+                if (staleTask is not null)
+                {
+                    staleTask.StaleEvidence.Add(new StaleTaskEvidence(
+                        staleTask.InputContextRevision,
+                        result.Status,
+                        result.Result.Summary,
+                        result.Result.Evidence,
+                        DateTimeOffset.UtcNow));
+                    staleTask.Status = "pending";
+                    staleTask.ResultStatus = null;
+                    staleTask.ResultSummary = null;
+                    staleTask.Evidence = [];
+                    staleTask.CompletedAt = null;
+                }
+            }
+        }
+
+        if (contextChanged)
+        {
+            foreach (var task in toolCapable)
+            {
+                task.Status = "pending";
+                task.ResultStatus = null;
+                task.ResultSummary = null;
+                task.Evidence = [];
+                task.CompletedAt = null;
+            }
+            SyncLanes(checkpoint);
+            return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tasks-stale-after-context", cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var task in toolCapable)
+        {
+            var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            checkpoint = result.Checkpoint;
+            if (result.Waiting)
+            {
+                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken, LaneKeyOf(task)).ConfigureAwait(false);
+                throw new RunAwaitingExternalDecisionException();
+            }
+            if (result.Result is not null)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint, result.Result, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        SyncLanes(checkpoint);
+        return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lane-tick", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Parks lanes that cannot advance because their unmet dependencies live in
+    /// other lanes' unfinished work. Emits one transition event per newly
+    /// waiting lane; already-waiting lanes only refresh their Waits roster.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> MarkWaitingLanesAsync(
+        Guid runId,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        foreach (var lane in checkpoint.Lanes)
+        {
+            var waits = CrossLaneWaitsFor(checkpoint.Tasks, lane.LaneKey);
+            if (waits is null) continue;
+
+            if (!string.Equals(lane.Status, "waiting", StringComparison.Ordinal))
+            {
+                lane.Status = "waiting";
+                await AppendEventAsync(runId, "orchestration.lane_waiting",
+                    $"Lane '{lane.LaneKey}' is waiting on other lanes.",
+                    new { lane_key = lane.LaneKey, waits = waits }, cancellationToken).ConfigureAwait(false);
+            }
+            foreach (var task in checkpoint.Tasks.Where(item => LaneKeyOf(item) == lane.LaneKey && item.Status is "pending" or "ready"))
+            {
+                task.Waits = [.. waits];
+            }
+        }
+        return checkpoint;
+    }
+
+    /// <summary>
+    /// The lanes a lane must wait on, or null when the lane is not waiting
+    /// material: terminal, still dispatching (running or parked on a tool
+    /// decision), without dispatchable tasks, blocked only inside itself, or
+    /// blocked on a dependency that no planned task satisfies (a planning error
+    /// that stays an invalid graph).
+    /// </summary>
+    internal static List<string>? CrossLaneWaitsFor(IReadOnlyList<DurableTaskNode> tasks, string laneKey)
+    {
+        var laneTasks = tasks.Where(item => LaneKeyOf(item) == laneKey).ToList();
+        if (laneTasks.Count == 0) return null;
+        if (laneTasks.All(item => item.Status is "completed" or "failed" or "blocked")) return null;
+        if (laneTasks.Any(item => item.Status == "running" || !string.IsNullOrWhiteSpace(item.PendingToolExecutionId))) return null;
+        var waitingTasks = laneTasks.Where(item => item.Status is "pending" or "ready").ToList();
+        if (waitingTasks.Count == 0) return null;
+
+        var waits = waitingTasks
+            .SelectMany(item => item.Dependencies)
+            .Where(dependency => !tasks.Any(other => other.TaskKey == dependency && other.Status == "completed"))
+            .Select(dependency => tasks.FirstOrDefault(other => other.TaskKey == dependency))
+            .OfType<DurableTaskNode>()
+            .Select(other => LaneKeyOf(other))
+            .Where(key => !string.Equals(key, laneKey, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return waits.Count == 0 ? null : waits;
+    }
+
+    private static string LaneKeyOf(DurableTaskNode task) =>
+        string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
+
+    private static void SyncLanes(FullDuplexCheckpointV1 checkpoint)
+    {
+        foreach (var group in checkpoint.Tasks.GroupBy(item => LaneKeyOf(item), StringComparer.OrdinalIgnoreCase))
+        {
+            var lane = checkpoint.Lanes.FirstOrDefault(item => string.Equals(item.LaneKey, group.Key, StringComparison.OrdinalIgnoreCase));
+            if (lane is null)
+            {
+                lane = new DurableLane { LaneKey = group.Key, Status = "pending" };
+                checkpoint.Lanes.Add(lane);
+            }
+            if (group.All(item => item.Status == "completed")) lane.Status = "completed";
+        }
     }
 
     private async Task<TaskExecutionResult> ExecuteTextTaskAsync(
@@ -1530,7 +1794,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             var stateBeforeMeeting = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
             if (stateBeforeMeeting.Status == RunStatus.Cancelled)
             {
-                await FinalizeCancellationAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                await FinalizeCancellationAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
                 return;
             }
             var meetingDefinition = RequiredAgent(configuration.OperationAgents, "meeting");
@@ -1540,7 +1804,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             if (stateAfterMeeting.Status == RunStatus.Cancelled)
             {
                 checkpoint.MeetingResponse = null;
-                await FinalizeCancellationAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+                await FinalizeCancellationAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
                 return;
             }
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "meeting-response", cancellationToken).ConfigureAwait(false);
@@ -1577,11 +1841,16 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             FinishReason: "completed",
             IdempotencyKey: $"run:{run.RunId}:turn:{checkpoint.TurnId}:done"), cancellationToken).ConfigureAwait(false);
         await _lifecycle.CompleteRunAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+        checkpoint = await DrainRunDirectivesAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.RunFinalized, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task FinalizeCancellationAsync(Guid runId, FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken)
+    private async Task FinalizeCancellationAsync(
+        Guid runId,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
     {
         var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
@@ -1592,7 +1861,47 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             "done",
             FinishReason: "cancelled",
             IdempotencyKey: $"run:{runId}:turn:{checkpoint.TurnId}:cancelled"), cancellationToken).ConfigureAwait(false);
+        await DrainRunDirectivesAsync(state, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Run-terminal drain of orchestration directives queued while this run held
+    /// the session. Lanes-disabled runs reject every directive; lanes-enabled
+    /// runs accept and mark them consumed for the M4 orchestration port. The
+    /// pending-status filter makes a replayed finalize idempotent.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> DrainRunDirectivesAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
+        foreach (var directive in pending)
+        {
+            if (!configuration.Orchestration.LanesEnabled)
+            {
+                await AppendEventAsync(runId, "orchestration.directive.rejected",
+                    "A queued directive was rejected because lanes are disabled for this run.",
+                    new { directive_id = directive.Id, kind = directive.Kind, code = "lanes_disabled" }, cancellationToken).ConfigureAwait(false);
+                await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], "rejected", cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await AppendEventAsync(runId, "orchestration.directive.accepted",
+                    "A queued directive was accepted at run terminal.",
+                    new { directive_id = directive.Id, kind = directive.Kind }, cancellationToken).ConfigureAwait(false);
+                await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], "drained", cancellationToken).ConfigureAwait(false);
+            }
+            checkpoint.DirectiveCursor++;
+        }
+        if (pending.Count > 0)
+        {
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "directives-drained", cancellationToken).ConfigureAwait(false);
+        }
+        return checkpoint;
     }
 
     private async Task FailRunAsync(Guid runId, FullDuplexCheckpointV1 checkpoint, string category, string message, CancellationToken cancellationToken)
@@ -1628,13 +1937,21 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
     }
 
-    private async Task<FullDuplexCheckpointV1> SaveCheckpointAsync(FullDuplexCheckpointV1 checkpoint, long expectedRevision, string key, CancellationToken cancellationToken)
+    private async Task<FullDuplexCheckpointV1> SaveCheckpointAsync(
+        FullDuplexCheckpointV1 checkpoint,
+        long expectedRevision,
+        string key,
+        CancellationToken cancellationToken,
+        string laneKey = "main")
     {
+        // The lane segment keeps same-purpose saves from distinct lanes from
+        // colliding on one idempotency row, which would return the first body
+        // and silently drop the second lane's update.
         var stored = await _lifecycle.SaveRunCheckpointAsync(checkpoint.RunId.ToString(), new RunCheckpointWrite(
             expectedRevision,
             checkpoint.Phase,
             JsonSerializer.Serialize(checkpoint, JsonOptions),
-            IdempotencyKey: $"run:{checkpoint.RunId}:{key}:{expectedRevision + 1}"), cancellationToken).ConfigureAwait(false);
+            IdempotencyKey: $"run:{checkpoint.RunId}:{laneKey}:{key}:{expectedRevision + 1}"), cancellationToken).ConfigureAwait(false);
         checkpoint.CheckpointRevision = stored.Revision;
         return checkpoint;
     }
@@ -2603,8 +2920,8 @@ internal sealed class FullDuplexCheckpointV1
     public List<DurableLane> Lanes { get; set; } = [];
 
     /// <summary>
-    /// Highest drained run_directives id, so the M2 run-terminal drain resumes
-    /// without replaying or skipping queued interactions after a restart.
+    /// Count of run_directives rows this run has drained. Resume safety comes
+    /// from the pending-status filter on the drain query, not from this cursor.
     /// </summary>
     public long DirectiveCursor { get; set; }
 }

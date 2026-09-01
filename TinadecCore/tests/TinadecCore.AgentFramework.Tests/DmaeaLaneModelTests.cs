@@ -170,6 +170,61 @@ public sealed class DmaeaLaneModelTests : IDisposable
             () => OrchestrationPolicy.Validate(new OrchestrationPolicy(true, 17, 6)));
     }
 
+    [Fact]
+    public void CrossLaneWaits_WaitsOnOtherLaneActiveDependency()
+    {
+        var tasks = new[]
+        {
+            Node("a", "main", "running"),
+            Node("b", "l2", "pending", ["a"])
+        };
+
+        Assert.Equal(["main"], FullDuplexRunEngine.CrossLaneWaitsFor(tasks, "l2"));
+    }
+
+    [Fact]
+    public void CrossLaneWaits_ReturnsNullForInLaneUnmetDependency()
+    {
+        var tasks = new[]
+        {
+            Node("a", "l2", "pending"),
+            Node("b", "l2", "pending", ["a"])
+        };
+
+        // A lane blocked only by its own chain is a stuck graph, not a wait.
+        Assert.Null(FullDuplexRunEngine.CrossLaneWaitsFor(tasks, "l2"));
+    }
+
+    [Fact]
+    public void CrossLaneWaits_ReturnsNullWhenLaneStillHasInflightWork()
+    {
+        var running = new[] { Node("a", "l2", "running"), Node("b", "l2", "pending", ["a"]) };
+        Assert.Null(FullDuplexRunEngine.CrossLaneWaitsFor(running, "l2"));
+
+        var parked = Node("c", "l3", "pending");
+        parked.PendingToolExecutionId = "exec-1";
+        var parkedTasks = new[] { parked, Node("d", "l3", "pending", ["c"]) };
+        Assert.Null(FullDuplexRunEngine.CrossLaneWaitsFor(parkedTasks, "l3"));
+    }
+
+    [Fact]
+    public void CrossLaneWaits_ReturnsNullWhenDependencyDangles()
+    {
+        var tasks = new[] { Node("b", "l2", "pending", ["ghost"]) };
+
+        Assert.Null(FullDuplexRunEngine.CrossLaneWaitsFor(tasks, "l2"));
+    }
+
+    private static DurableTaskNode Node(string taskKey, string lane, string status, string[]? dependencies = null) => new()
+    {
+        TaskId = Guid.NewGuid(),
+        TaskKey = taskKey,
+        Title = taskKey,
+        Status = status,
+        LaneKey = lane,
+        Dependencies = dependencies?.ToList() ?? []
+    };
+
     private static PlannedTask Task(string? taskKey, string title, string? lane = null) => new()
     {
         TaskKey = taskKey,

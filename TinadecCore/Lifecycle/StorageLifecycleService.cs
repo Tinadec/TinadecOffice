@@ -522,6 +522,32 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return checkpoint is null ? null : await ReadCheckpointAsync(checkpoint, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<RunDirective>> ListPendingRunDirectivesAsync(Guid runId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.RunDirectives.AsNoTracking()
+            .Where(x => x.RunId == runId && x.Status == "pending")
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return rows.OrderBy(x => x.CreatedAt).ThenBy(x => x.Id)
+            .Select(x => new RunDirective(x.Id, x.SessionId, x.Kind, x.PayloadJson, x.IdempotencyKey))
+            .ToList();
+    }
+
+    public async Task<RunDirectiveDrainResult> DrainRunDirectivesAsync(Guid runId, IReadOnlyList<Guid> directiveIds, string drainedStatus, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(directiveIds);
+        if (directiveIds.Count == 0) return new RunDirectiveDrainResult(0);
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        var updated = await db.RunDirectives
+            .Where(x => x.RunId == runId && directiveIds.Contains(x.Id) && x.Status == "pending")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.Status, drainedStatus)
+                .SetProperty(x => x.DrainedAt, now)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        return new RunDirectiveDrainResult(updated);
+    }
+
     public async Task<RunLease> TryAcquireRunLeaseAsync(Guid runId, string ownerId, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var owner = NormalizeLeaseOwner(ownerId);

@@ -188,6 +188,20 @@ internal sealed class LifecycleManager : ILifecycleManager
         return await storage.GetCurrentRunCheckpointAsync(id, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<RunDirective>> ListPendingRunDirectivesAsync(Guid runId, CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        if (storage is null) return [];
+        return await storage.ListPendingRunDirectivesAsync(runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<RunDirectiveDrainResult> DrainRunDirectivesAsync(Guid runId, IReadOnlyList<Guid> directiveIds, string drainedStatus, CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        if (storage is null) return new RunDirectiveDrainResult(0);
+        return await storage.DrainRunDirectivesAsync(runId, directiveIds, drainedStatus, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<RunLease> TryAcquireRunLeaseAsync(string runId, string ownerId, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var storage = TryStorage() ?? throw new InvalidOperationException("Run lease persistence requires relational storage.");
