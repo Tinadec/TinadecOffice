@@ -410,12 +410,17 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
 
     private static JsonElement Section(JsonElement root, string? section) => section is null ? root : root.TryGetProperty(section, out var value) ? value : default;
 
-    private static string NormalizePermissionMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    // Unattended permission modes pass through admission verbatim instead of
+    // being folded away: a frozen body must record the mode the run was
+    // actually admitted under. Executability stays fail-closed in
+    // ToolInvocationScopeResolver, and every executable grant is still minted
+    // through the approval coordinator's binding-checked path.
+    internal static string NormalizePermissionMode(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         "deny" => "deny",
+        "auto-approve" => "auto-approve",
+        "full-access" => "full-access",
         "default" or "ask" or null or "" => "ask",
-        // The first vertical slice deliberately has no approval bypass.
-        "auto-approve" or "full-access" => "ask",
         _ => "ask"
     };
 

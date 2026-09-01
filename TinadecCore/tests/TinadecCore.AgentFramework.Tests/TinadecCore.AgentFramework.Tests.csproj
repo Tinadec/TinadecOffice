@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\LoopGuard\TinadecCore.LoopGuard.csproj" />
     <ProjectReference Include="..\..\Lifecycle\TinadecCore.Lifecycle.csproj" />
     <ProjectReference Include="..\..\Runtime\TinadecCore.Runtime.csproj" />
+    <ProjectReference Include="..\..\Tools\TinadecCore.Tools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

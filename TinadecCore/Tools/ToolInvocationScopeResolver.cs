@@ -246,14 +246,10 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             using var document = JsonDocument.Parse(content);
             // Current frozen bodies use JsonSerializerDefaults.Web (camelCase),
             // while imported or older frozen bodies can retain TOML snake_case.
-            // Neither form may turn a first-slice tool call into an approval
-            // bypass, and deny mode must not execute a tool at all.
+            // Deny and unknown modes must not execute a tool at all; passing
+            // this gate never grants an approval by itself.
             var permissionMode = ReadString(document.RootElement, "permissionMode", "permission_mode");
-            if (!string.IsNullOrWhiteSpace(permissionMode)
-                && permissionMode is not ("ask" or "default"))
-            {
-                throw new UnauthorizedAccessException("Frozen run permission mode does not permit tool execution.");
-            }
+            EnsurePermissionModeExecutable(permissionMode);
             var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 120, 1, 1800);
             var retries = ReadInt(document.RootElement, "scheduling", "workerRetryLimit", "worker_retry_limit", 0, 0, 10);
             var serialize = ReadBoolean(document.RootElement, "tools", "serializeWorkspaceWrites", "serialize_workspace_writes", true);
@@ -262,6 +258,16 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         catch (JsonException ex)
         {
             throw new InvalidDataException("Frozen run configuration is not valid JSON.", ex);
+        }
+    }
+
+    internal static void EnsurePermissionModeExecutable(string? permissionMode)
+    {
+        var normalized = permissionMode?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(normalized)
+            && normalized is not ("ask" or "default" or "auto-approve" or "full-access"))
+        {
+            throw new UnauthorizedAccessException("Frozen run permission mode does not permit tool execution.");
         }
     }
 
