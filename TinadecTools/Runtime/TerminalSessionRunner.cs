@@ -305,10 +305,16 @@ public static class TerminalSessionHost
 
 // ── 会话式执行 ────────────────────────────────────────────────────────────────
 
-/// <summary>One-shot result payload returned by the <c>shell</c> tool.</summary>
+/// <summary>
+/// One-shot result payload returned by the <c>shell</c> tool. Serialized by
+/// <c>ShellToolJsonContext</c> with the snake_case wire policy shared with the
+/// <c>terminal.stdout</c> / <c>terminal.exit</c> events, because Core correlates
+/// the session by <c>terminal_session_id</c> and needs <c>command</c> to attribute it.
+/// </summary>
 public sealed record ShellToolResult(
     bool Success,
     string TerminalSessionId,
+    string Command,
     string Status,          // completed | long_lived | timed_out | failed | rejected
     int ExitCode,
     string Stdout,
@@ -342,7 +348,7 @@ public static class TerminalSessionRunner
     {
         if (!TerminalSessionHost.CanAdmit)
         {
-            return new ShellToolResult(false, string.Empty, "rejected", -1, string.Empty, string.Empty,
+            return new ShellToolResult(false, string.Empty, command, "rejected", -1, string.Empty, string.Empty,
                 false, false, false, 0, "Too many active terminal sessions.");
         }
 
@@ -369,15 +375,16 @@ public static class TerminalSessionRunner
                 session.Exited = true;
                 var output = TerminalSessionHost.ReadReplay(session);
                 var (stdout, stderr, truncated) = SplitReplay(output);
-                return new ShellToolResult(process.ExitCode == 0, session.TerminalSessionId, "completed",
-                    process.ExitCode, stdout, stderr, truncated, truncated, false, stopwatch.ElapsedMilliseconds);
+                return new ShellToolResult(process.ExitCode == 0, session.TerminalSessionId, session.Command,
+                    "completed", process.ExitCode, stdout, stderr, truncated, truncated, false,
+                    stopwatch.ElapsedMilliseconds);
             }
 
             // Flush whatever arrived during the settle window before the response,
             // then let the session keep streaming as a broadcast session.
             await DrainOutputAsync(session, 500).ConfigureAwait(false);
             session.AttachedCallId = -1;
-            return new ShellToolResult(true, session.TerminalSessionId, "long_lived", -1,
+            return new ShellToolResult(true, session.TerminalSessionId, session.Command, "long_lived", -1,
                 TerminalSessionHost.ReadReplay(session), string.Empty, false, false, false,
                 stopwatch.ElapsedMilliseconds);
         }
@@ -408,7 +415,7 @@ public static class TerminalSessionRunner
             await DrainOutputAsync(session, 1000).ConfigureAwait(false);
             var output = TerminalSessionHost.ReadReplay(session);
             var (stdout, stderr, truncated) = SplitReplay(output);
-            return new ShellToolResult(false, session.TerminalSessionId, "timed_out", -1,
+            return new ShellToolResult(false, session.TerminalSessionId, session.Command, "timed_out", -1,
                 stdout, stderr, truncated, truncated, true, stopwatch.ElapsedMilliseconds,
                 $"Command timed out after {timeoutMs}ms and was terminated.");
         }
@@ -421,8 +428,8 @@ public static class TerminalSessionRunner
         session.Exited = true;
         var finalOutput = TerminalSessionHost.ReadReplay(session);
         var (finalStdout, finalStderr, finalTruncated) = SplitReplay(finalOutput);
-        return new ShellToolResult(process.ExitCode == 0, session.TerminalSessionId, "completed",
-            process.ExitCode, finalStdout, finalStderr, finalTruncated, finalTruncated, false,
+        return new ShellToolResult(process.ExitCode == 0, session.TerminalSessionId, session.Command,
+            "completed", process.ExitCode, finalStdout, finalStderr, finalTruncated, finalTruncated, false,
             stopwatch.ElapsedMilliseconds);
     }
 

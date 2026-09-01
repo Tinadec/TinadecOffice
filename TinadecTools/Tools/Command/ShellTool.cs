@@ -220,7 +220,7 @@ internal static class ShellToolRegistration
         CallId = callId,
         IsSuccess = true,
         Response = JsonSerializer.SerializeToElement(
-            new ShellToolResult(false, string.Empty, "failed", -1, string.Empty, string.Empty,
+            new ShellToolResult(false, string.Empty, string.Empty, "failed", -1, string.Empty, string.Empty,
                 false, false, false, 0, message),
             ShellToolJsonContext.Default.ShellToolResult)
     };
@@ -232,7 +232,9 @@ public sealed record TerminalControlResult(
     string? TerminalSessionId,
     List<JsonElement>? Sessions);
 
-[JsonSourceGenerationOptions(WriteIndented = false)]
+// Wire format is snake_case, matching the manually emitted terminal.stdout /
+// terminal.exit events and Core's RecordTerminalSession reader.
+[JsonSourceGenerationOptions(WriteIndented = false, PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(ShellToolResult))]
 [JsonSerializable(typeof(TerminalControlResult))]
 [JsonSerializable(typeof(TerminalSessionSnapshot))]
