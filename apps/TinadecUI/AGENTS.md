@@ -1,6 +1,6 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-08-28
+**Last Updated:** 2026-09-01
 
 TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desktop`, `apps/web`) import it as `@tinadec/ui` — a registered alias in both packages' `vite.config.ts` and `tsconfig.json` that resolves to `apps/TinadecUI/src/index.ts`. Both consumers also map `@` → `apps/desktop/src`, so TinadecUI files may reference app code via `@/` and it resolves under every consumer. The boundary is a module home + public barrel, not a build-isolated library.
 
@@ -49,6 +49,7 @@ The feature/right column supports **dock splits** — recursive binary split tre
 - All layout mutations go through `commandBus.dispatch({ command, source, expectedRevision })`; `ai` source is reserved/rejected.
 - Persistence format is versioned; changing snapshot shape requires a `migrate.ts` bump.
 - Vapor: Components-module SFCs are `<template vapor>`; keep `apps/desktop/src/vapor/` registries in sync when adding/renaming components or cards.
+- **Card context injections are reactive contracts.** `UieCardHost` provides `wb:instanceId` (stable value), `wb:cardState` (stable object identity) and `wb:active` (a `ComputedRef`). A Vapor SFC's setup runs once, so providing `props.x` directly freezes it at mount time — which is what made a card mounted behind the active tab report itself hidden forever. Consumers read `wb:active` through `inject<MaybeRefOrGetter<boolean>>` + `toValue`, which also tolerates a host that supplies a plain boolean.
 
 ## Adding a new module
 1. Create `apps/TinadecUI/src/<module>/`.

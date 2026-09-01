@@ -15,9 +15,13 @@ const component = computed(() => wb.componentFor(props.instance.descriptorId))
 
 // Provide card context via inject so the card content can read its instance id,
 // serialized state, and visibility without extraneous non-props attribute warnings.
+//
+// `wb:active` is provided as a ComputedRef: this SFC is Vapor, so setup runs once and
+// a plain value would freeze the flag at whatever it was on mount. Consumers must
+// unwrap it (`toValue`) rather than treat it as a boolean.
 provide('wb:instanceId', props.instance.id)
 provide('wb:cardState', props.instance.state)
-provide('wb:active', props.active)
+provide('wb:active', computed(() => props.active))
 </script>
 
 <template vapor>
