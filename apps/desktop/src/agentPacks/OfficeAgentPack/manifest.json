@@ -6,7 +6,7 @@
     "owner": "tinadec.office",
     "product_id": "tinadec.office",
     "name": "OfficeAgentPack",
-    "version": "0.2.1"
+    "version": "0.2.2"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -125,7 +125,7 @@
         "role": "task_executor",
         "capabilities": ["tool.code", "tool.file"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["write_file", "read_file", "shell.execute", "mcp_invoke"],
+        "tool_scope": ["write_file", "read_file", "shell", "mcp_invoke"],
         "system_prompt": "你是代码执行智能体。先读取相关代码与约束，再实施范围最小且可验证的变更，并运行与风险相称的测试；所有写入和命令必须服从工具授权与审批，向父智能体返回修改文件、验证结果和未解决风险，不直接面向用户输出。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"
@@ -153,7 +153,7 @@
         "role": "task_executor",
         "capabilities": ["tool.data"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["read_file", "shell.execute"],
+        "tool_scope": ["read_file", "shell"],
         "system_prompt": "你是数据处理智能体。检查数据来源、字段类型、缺失值和计算口径，以可复现步骤完成分析或转换，并避免破坏公式与原始数据；命令和写入必须服从审批，向父智能体返回结果、方法、质量检查和限制，不直接面向用户输出。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:baseline-prompt"

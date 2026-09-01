@@ -80,7 +80,7 @@ display_name = "Code Worker"
 layer = "execution"
 role = "task_executor"
 capabilities = ["tool.code", "tool.file"]
-tools = ["write_file", "read_file", "shell.execute", "mcp_invoke"]
+tools = ["write_file", "read_file", "shell", "mcp_invoke"]
 system_prompt = "Implement scoped code changes, verify behavior, and report exact evidence and remaining risk."
 
 [[agents]]
@@ -98,7 +98,7 @@ display_name = "Data Worker"
 layer = "execution"
 role = "task_executor"
 capabilities = ["tool.data"]
-tools = ["read_file", "shell.execute"]
+tools = ["read_file", "shell"]
 system_prompt = "Inspect and transform data reproducibly, validate assumptions, and summarize quality issues."
 
 [[agents]]

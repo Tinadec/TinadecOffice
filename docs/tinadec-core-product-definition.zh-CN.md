@@ -489,7 +489,7 @@ spec:
   prompt_pipeline_ref: frontend-v3
   capabilities: [task.execute, artifact.propose]
   tool_scope:
-    allow: [read_file, write_file, shell.execute]
+    allow: [read_file, write_file, shell]
   resource_scope:
     workspace_paths: ["src/frontend/**"]
     network: deny
