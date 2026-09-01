@@ -620,6 +620,31 @@ flowchart TD
 - 单次动作审批必须绑定 tool id、规范化参数哈希、run/task/agent、有效期和一次性 nonce。
 - ACP 的 `permission.request` 后续应转换为 Core `PermissionRequest`，暂停当前 turn 并走同一治理流程；当前阶段继续 fail-closed 并明确返回未实现，不伪造授权事实。
 
+### 10.5 无人值守授权与审批旁路的刻意推翻（2026-09-01，M5）
+
+早期实现曾把"冻结运行配置刻意不提供审批旁路"作为不变量钉在 `FrozenRunConfiguration.cs`（以代码注释形式）：任何高风险动作都必须落到人工决策。M5 针对场景 1——用户留下"完成后测试并提交"后离开，延迟 lane 需要无人值守跑完测试与提交——**有意推翻**了这条不变量。此处记录推翻理由、补偿控制与残余风险；这不是一次意外删除。
+
+**推翻理由**
+
+- 无人值守是产品目标而非配置疏漏。若冻结配置只能请求人工决策，run 会在 `awaiting_user` 无限滞留（决策窗口到期只能 park，不能放行），场景 1 无法成立。
+- UI 面早已暴露 full-access / auto-approve 等模式，只是被静默折叠为 `ask`。权限模型并不否认能力可以被预授予，缺的只是与之配套的治理路径——此前是模式面与治理面不一致，而不是一个更强的安全属性。
+- 人工审批的价值在于"知情的判断"，不在于"每一单必须有人按键"。预授权与策略自动批准把人的判断前移到包络批准时刻（选择权限模式、配置 human-only 清单、冻结参数哈希），单次动作按确定性规则放行；决策记录、审计与 lease 语义保持不变。
+
+**补偿控制**（四条放行路径全部保留原有治理不变量）
+
+1. 冻结不可加宽：`full-access` / `auto-approve` 只是权限模式的合法取值，工具面仍取实例授权 ∩ 冻结 manifest 的交集；`tool_manifest_hash` 在 run 内不可变（有测试钉住），任何模式都不能扩大授权面。
+2. 预授权绑定校验：`pre_authorization` 引用在铸造时校验存在性与绑定（tool id、run/task、参数哈希），消费仍走一次性 nonce 与窗口校验；引用缺失或绑定不匹配 fail-closed。
+3. 策略自动批准默认关闭：`auto_approve_enabled` 默认 `false`；仅当无委托且调用者无人类权限时介入；human-only 工具（`git_push`、`command_run`、`git_worktree_remove`、`mcp_invoke` 及 `*_delete`/`delete_*`）与超过风险上限（默认 medium）的请求永不自动批准；per-run 预算耗尽时**升级为 `awaiting_user` 而非拒绝**——拒绝是终态，之后不可能再由人补批，升级保留了人工兜底。
+4. 决策可归因、不可冒充：自动批准的决策 `DecisionSource="auto_policy"`，两个 `DecidedBy*` 列置空——策略决定永远不冒充人或 agent；每次决策追加 `approval.auto_decided` 审计事件，治理决策记录可区分 user/agent/delegation/auto_policy 四种来源。
+5. 执行窗口仍是硬边界：决策窗口到期 park（`approval.park_expired` 事件，执行保持 `awaiting_approval`），执行窗口到期仍 fail-closed（`approval_expired`，执行失败）——旁路不改变"过窗不跑"。
+
+**残余风险**
+
+- 开启 auto-approve 或 full-access 后，无人值守产生的变更（含 commit）没有人类复核点；缓解依赖 lane 门控评审（模型只能 tighten、不能推翻事实）与事后审计，无法事前阻止。
+- 工具层仍缺"禁止直推主干"守卫（推送前校验目标分支）：计划建议与 M5 同批补齐，尚未落地，这是当前最大的单点残余风险。
+- 策略自动批准尚未接入 Lifecycle 工具审批链（`ToolDispatcher` 铸造的工具审批仍走人工/预授权路径）；接入需要 Abstractions 端口（Lifecycle 不引用 Governance）。
+- 风险上限与 human-only 清单是静态全局配置，不随租户/工作区差异化；预算按 run 内次数计数，不是成本度量。
+
 ## 11. 上下文、记忆与压缩
 
 ### 11.1 上下文组成
