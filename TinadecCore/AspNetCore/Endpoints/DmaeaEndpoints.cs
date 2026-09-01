@@ -145,23 +145,75 @@ public static class DmaeaEndpoints
             var run = runs.FirstOrDefault();
             if (run is null) return Results.Json(new { run = (object?)null, graph = (object?)null, nodes = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
-            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created")
-                .Select(e => new
+            var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(run.Id, ct);
+            FullDuplexCheckpointV1? checkpoint = null;
+            if (checkpointRow is not null)
+            {
+                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content); } catch { }
+            }
+            static string LaneOfTaskSession(DurableTaskNode task) =>
+                string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
+            var taskLaneById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (checkpoint is not null)
+            {
+                foreach (var task in checkpoint.Tasks)
                 {
-                    id = PayloadString(e.Payload, "task_node_id"),
-                    graph_id = PayloadString(e.Payload, "graph_id"),
-                    run_id = run.Id.ToString(),
-                    session_id = sessionId,
-                    title = PayloadString(e.Payload, "title") ?? "",
-                    description = PayloadString(e.Payload, "description") ?? "",
-                    status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
-                    priority = 1,
-                    risk = "medium",
-                    success_criteria = Array.Empty<string>(),
-                    dependencies = Array.Empty<string>(),
-                    required_capabilities = Array.Empty<string>(),
-                    created_at = e.Timestamp,
-                    updated_at = e.Timestamp
+                    taskLaneById.TryAdd(task.TaskKey, LaneOfTaskSession(task));
+                    taskLaneById.TryAdd(task.TaskId.ToString(), LaneOfTaskSession(task));
+                }
+            }
+            var lanes = checkpoint is null
+                ? new List<object>()
+                : (checkpoint.Lanes.Count > 0
+                    ? checkpoint.Lanes.Select(l => (object)new
+                    {
+                        lane_key = l.LaneKey,
+                        status = l.Status,
+                        escalated = l.Escalated,
+                        task_keys = checkpoint.Tasks.Where(t => LaneOfTaskSession(t) == l.LaneKey).Select(t => t.TaskKey).ToList(),
+                        waits = checkpoint.Tasks.Where(t => LaneOfTaskSession(t) == l.LaneKey)
+                            .SelectMany(t => t.Waits.Select(w => new
+                            {
+                                waiting_task = t.TaskKey,
+                                lane = w.LaneKey,
+                                predicate = w.Predicate,
+                                required_criteria = w.RequiredCriteria,
+                                facts_hash = w.ObservedFactsHash
+                            })).ToList()
+                    }).ToList()
+                    : new List<object>
+                    {
+                        new
+                        {
+                            lane_key = "main",
+                            status = checkpoint.Phase,
+                            escalated = false,
+                            task_keys = checkpoint.Tasks.Select(t => t.TaskKey).ToList(),
+                            waits = Array.Empty<object>()
+                        }
+                    });
+            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created")
+                .Select(e =>
+                {
+                    var nodeId = PayloadString(e.Payload, "task_node_id") ?? "";
+                    return new
+                    {
+                        id = PayloadString(e.Payload, "task_node_id"),
+                        graph_id = PayloadString(e.Payload, "graph_id"),
+                        run_id = run.Id.ToString(),
+                        session_id = sessionId,
+                        title = PayloadString(e.Payload, "title") ?? "",
+                        description = PayloadString(e.Payload, "description") ?? "",
+                        status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
+                        lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
+                        priority = 1,
+                        risk = "medium",
+                        success_criteria = Array.Empty<string>(),
+                        dependencies = Array.Empty<string>(),
+                        required_capabilities = Array.Empty<string>(),
+                        created_at = e.Timestamp,
+                        updated_at = e.Timestamp
+                    };
                 })
                 .ToList();
             var stepResults = events.Where(e => e.EventType == "step.result.created")
@@ -191,6 +243,7 @@ public static class DmaeaEndpoints
                 },
                 graph = (object?)null,
                 nodes,
+                lanes,
                 assignments = Array.Empty<object>(),
                 step_results = stepResults,
                 context_packs = Array.Empty<object>(),
