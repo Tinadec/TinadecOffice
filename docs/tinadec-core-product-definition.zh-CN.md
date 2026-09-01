@@ -351,6 +351,15 @@ DmaEA 用“专业化 + 双层治理 + 受控演化”解决这一矛盾：
 
 前端、后端、测试、数据、文档、浏览器、文件等专业 worker 均使用同一配置契约。专业化不是写死“某模型永远最好”，而是通过能力需求、评测数据、成本和可用性动态选择。
 
+#### 6.4.1 执行层横向通道（lanes，2026-09-01）
+
+执行层内部以 **lane（泳道）** 作为横向调度单元：任务节点归属某个 lane（缺省为隐式 `main`），引擎按 lane 并行推进、按 lane 汇聚监督与完成判定。落地面（M1–M3 实现，M6 可观测收口）：
+
+- **lane 状态机**：`planning` → `executing` → `waiting` / `gate_review` → `finalizing` → `done`（终态 `failed`）。`waiting` 表示该 lane 的任务在等跨 lane 前置（lane_done / lane_tasks_completed / lane_supervision_pass 三种谓词，记录在 `LaneWait`，含 `required_criteria` 与观测 `facts_hash`）；`gate_review` 表示该 lane 已到达需要跨 lane 门控裁决的检查点。`escalated` 标记 lane 已升级人工/治理层介入。
+- **完成判定命名**：任务图节点的成功判据字段为 `success_criteria`；跨 lane 门控按 `LaneWait.required_criteria` 逐条裁决。两者语义不同——前者是单任务完成的判据，后者是放行下游 lane 的门控条件；不要混用字段名。
+- **可观测投影**（M6）：`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/sessions/{sessionId}/orchestration` 与 `GET /api/v1/runs/{runId}/replay` 均投影 `lanes` 数组（`lane_key`/`status`/`escalated`/`task_keys`/`waits`）与每个节点的 `lane_key`（缺省 `main`）；checkpoint 缺失或不可读时退化为空 lanes / 隐式 main lane，不影响事件账本重建。Gateway 外部 DTO（`Lane`/`LaneWait`/`OrchestrationSnapshot.lanes`）与 Desktop 生成客户端类型同批更新；Desktop Workbench 任务图按 `lane_key` 渲染泳道并以徽标标注 `waiting`/`gate_review`。
+- lane 结构是引擎内部调度状态的可观测投影，不是第三方可写资源；修改 lane 划分与门控谓词仍然只能通过 run 指令与任务图变更完成。
+
 ### 6.5 模型能力画像
 
 Agent 配置绑定的是可评测的能力要求，不是在产品代码里硬编码某个模型品牌。
@@ -457,6 +466,8 @@ run 创建时必须持久化以下引用和哈希：
 - checkpoint 记录 `applied_through_seq`；恢复时先核对既有 tool receipt，再决定重试、补偿或升级人工判断。
 - 客户端先加载 snapshot，再从其 cursor 之后重放事件，最后跟随实时流；按 `run_id + seq` 去重。
 - 当前契约的消费者可以忽略不影响自身的未知加法字段和事件 kind；这不是对旧客户端的兼容承诺。字段或事件语义发生变化时，直接更新 `/api/v1`、schema、测试、客户端生成物和本文。
+
+lane 维度的投影（§6.4.1）遵循同一条加法字段规则：`orchestration` / `replay` 快照新增的 `lanes` 数组与节点 `lane_key` 对旧消费者透明；checkpoint 缺失时 lanes 为空或退化为隐式 `main`，不构成状态机漂移。
 
 ## 9. 智能体配置模型
 
