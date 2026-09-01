@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
 
@@ -16,19 +17,25 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private readonly IAuthorizationContextResolver _authorizationContextResolver;
     private readonly INonceMaterialStore _nonceMaterials;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptions<AutoApproveOptions> _autoApproveOptions;
+    private readonly ILifecycleManager? _lifecycle;
 
     public GovernanceService(
         IDbContextFactory<GovernanceDbContext> dbFactory,
         ITenantContextAccessor tenantAccessor,
         IAuthorizationContextResolver authorizationContextResolver,
         TimeProvider? timeProvider = null,
-        INonceMaterialStore? nonceMaterials = null)
+        INonceMaterialStore? nonceMaterials = null,
+        IOptions<AutoApproveOptions>? autoApproveOptions = null,
+        ILifecycleManager? lifecycle = null)
     {
         _dbFactory = dbFactory;
         _tenantAccessor = tenantAccessor;
         _authorizationContextResolver = authorizationContextResolver;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
+        _autoApproveOptions = autoApproveOptions ?? Options.Create(new AutoApproveOptions());
+        _lifecycle = lifecycle;
     }
 
     /// <summary>
@@ -635,6 +642,9 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 command.ApproverAgentInstanceId, command.ApprovalDelegationId, now, cancellationToken).ConfigureAwait(false);
         }
 
+        var autoPolicyApproved = false;
+        string? autoToolId = null;
+        var autoBudgetRemaining = 0;
         ApprovalDelegationRecord? delegation = null;
         if (command.ApprovalDelegationId is { } delegationId)
         {
@@ -667,9 +677,36 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         }
         else if (command.ApproverAgentInstanceId is not null || !CanHumanApprove(scope))
         {
-            return await DenyRequestAsync(db, transaction, request, scope, claim, "unauthorized_approver",
-                "The approver has no valid user authority or approval delegation.", command.ApproverAgentInstanceId,
-                null, now, cancellationToken).ConfigureAwait(false);
+            var (autoOutcome, outcomeToolId, outcomeBudgetRemaining) = await TryAutoPolicyAsync(
+                db, request, scope, command.Approve, cancellationToken).ConfigureAwait(false);
+            autoToolId = outcomeToolId;
+            if (autoOutcome == AutoPolicyOutcome.BudgetExhausted)
+            {
+                // Escalate, not deny: a denied request is terminal and a human
+                // could never decide it afterwards. The request stays pending.
+                request.Status = PermissionRequestStatuses.AwaitingUser;
+                request.Revision++;
+                request.UpdatedAt = now;
+                request.EscalationChainJson = AppendEscalation(request.EscalationChainJson, "auto_policy_budget_exhausted", now);
+                var escalated = NewDecision(scope, request.SubjectPrincipalId, request.SubjectAgentInstanceId, claim,
+                    GovernanceOutcomes.UserRequired, "auto_policy_budget_exhausted",
+                    "The auto-approve budget for this run is exhausted; a human must decide.",
+                    "auto_policy", request.PolicySnapshotHash, request.RunId, request.TaskId, request.Id);
+                escalated.DecidedByPrincipalId = Guid.Empty;
+                db.AuthorizationDecisions.Add(escalated);
+                request.AuthorizationDecisionId = escalated.Id;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return new PermissionResolution(ToSnapshot(request), ToSnapshot(escalated), null, null);
+            }
+            if (autoOutcome != AutoPolicyOutcome.Approved)
+            {
+                return await DenyRequestAsync(db, transaction, request, scope, claim, "unauthorized_approver",
+                    "The approver has no valid user authority or approval delegation.", command.ApproverAgentInstanceId,
+                    null, now, cancellationToken).ConfigureAwait(false);
+            }
+            autoPolicyApproved = true;
+            autoBudgetRemaining = outcomeBudgetRemaining;
         }
 
         var storedBoundaries = CapabilityRuleMatcher.DeserializeBoundaries(request.BoundariesJson);
@@ -721,15 +758,83 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         request.CapabilityLeaseId = lease.Id;
         request.UpdatedAt = now;
         var allowedDecision = NewDecision(scope, request.SubjectPrincipalId, request.SubjectAgentInstanceId, claim,
-            GovernanceOutcomes.Allowed, delegation is null ? "user_approved" : "delegated_approval",
-            Truncate(command.Reason, 4096, "Permission approved."), delegation is null ? "user" : "delegation",
+            GovernanceOutcomes.Allowed,
+            autoPolicyApproved ? "auto_policy_approved" : delegation is null ? "user_approved" : "delegated_approval",
+            autoPolicyApproved
+                ? Truncate($"Auto-approved by policy {AutoApproveOptions.PolicyVersion}. {command.Reason}", 4096, "Auto-approved.")
+                : Truncate(command.Reason, 4096, "Permission approved."),
+            autoPolicyApproved ? "auto_policy" : delegation is null ? "user" : "delegation",
             boundaryResult.Hash, request.RunId, request.TaskId, request.Id, grant.Id, lease.Id,
             command.ApproverAgentInstanceId, delegation?.Id);
+        if (autoPolicyApproved)
+        {
+            // The policy decided, not a person or an agent: leave both decider
+            // columns empty so an auto approval can never masquerade as human.
+            allowedDecision.DecidedByPrincipalId = Guid.Empty;
+            allowedDecision.DecidedByAgentInstanceId = null;
+        }
         db.AuthorizationDecisions.Add(allowedDecision);
         request.AuthorizationDecisionId = allowedDecision.Id;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        if (autoPolicyApproved && _lifecycle is not null && request.RunId is { } autoRunId)
+        {
+            await _lifecycle!.AppendEventAsync(autoRunId, "approval.auto_decided", new
+            {
+                policy_version = AutoApproveOptions.PolicyVersion,
+                tool_id = autoToolId,
+                risk = request.Risk,
+                lane_key = (string?)null,
+                budget_remaining = autoBudgetRemaining
+            }, $"Auto-approve policy {AutoApproveOptions.PolicyVersion} decided '{autoToolId ?? request.Resource}' (risk {request.Risk}).",
+                "info", request.TaskId, toolId: autoToolId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
         return new PermissionResolution(ToSnapshot(request), ToSnapshot(allowedDecision), ToSnapshot(grant), ToSnapshot(lease, nonce));
+    }
+
+    private enum AutoPolicyOutcome
+    {
+        NotEngaged,
+        Approved,
+        BudgetExhausted
+    }
+
+    /// <summary>
+    /// Decides whether the auto-approve policy may approve this request instead
+    /// of failing it as unauthorized_approver. Returning Approved does NOT skip
+    /// any binding check: the caller still evaluates the frozen boundaries and
+    /// issues the same grant/lease CAS path a human approval would take.
+    /// </summary>
+    private async Task<(AutoPolicyOutcome Outcome, string? ToolId, int BudgetRemaining)> TryAutoPolicyAsync(
+        GovernanceDbContext db,
+        PermissionRequestRecord request,
+        TenantContext scope,
+        bool approveIntent,
+        CancellationToken cancellationToken)
+    {
+        var options = _autoApproveOptions.Value;
+        var toolId = ExtractToolId(request.Resource);
+        if (!options.AutoApproveEnabled || !approveIntent) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
+        if (toolId is not null && options.IsHumanOnlyTool(toolId)) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
+        if (RiskRank(request.Risk) > RiskRank(options.AutoApproveRiskMax)) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
+        // Run-less requests share the null-run pool so a background flow cannot
+        // farm unlimited grants by omitting the run id.
+        var used = await db.AuthorizationDecisions.CountAsync(x =>
+            x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+            && x.RunId == request.RunId && x.DecisionSource == "auto_policy", cancellationToken).ConfigureAwait(false);
+        var remaining = options.AutoApproveMaxPerRun - used;
+        return remaining > 0
+            ? (AutoPolicyOutcome.Approved, toolId, remaining - 1)
+            : (AutoPolicyOutcome.BudgetExhausted, toolId, 0);
+    }
+
+    private static string? ExtractToolId(string resource)
+    {
+        const string prefix = "tool://";
+        var candidate = resource.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? resource[prefix.Length..]
+            : null;
+        return string.IsNullOrWhiteSpace(candidate) ? null : candidate;
     }
 
     private async Task<PermissionResolution> ReadConcurrentDecisionAsync(

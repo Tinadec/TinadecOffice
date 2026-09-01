@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Governance;
 
@@ -344,7 +345,7 @@ internal sealed class GovernanceHarness : IAsyncDisposable
     public TestAuthorizationContextResolver Context { get; }
     public MutableTimeProvider Time { get; }
 
-    public static async Task<GovernanceHarness> CreateAsync()
+    public static async Task<GovernanceHarness> CreateAsync(AutoApproveOptions? autoApprove = null)
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"tinadec-governance-{Guid.NewGuid():N}.db");
         var options = new DbContextOptionsBuilder<GovernanceDbContext>()
@@ -359,7 +360,9 @@ internal sealed class GovernanceHarness : IAsyncDisposable
         };
         var context = new TestAuthorizationContextResolver();
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 22, 0, 0, 0, TimeSpan.Zero));
-        return new GovernanceHarness(databasePath, new GovernanceService(factory, tenant, context, time), tenant, context, time);
+        var service = new GovernanceService(factory, tenant, context, time,
+            autoApproveOptions: Options.Create(autoApprove ?? new AutoApproveOptions()));
+        return new GovernanceHarness(databasePath, service, tenant, context, time);
     }
 
     public ValueTask DisposeAsync()

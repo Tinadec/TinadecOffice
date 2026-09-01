@@ -17,6 +17,7 @@ public sealed class GovernanceModuleRegistrar : IModuleRegistrar
         builder.Services.TryAddSingleton<IAuthorizationContextResolver, FailClosedAuthorizationContextResolver>();
         builder.Services.AddDbContextFactory<GovernanceDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<GovernanceDbContext>>();
+        builder.Services.AddOptions<AutoApproveOptions>().BindConfiguration(AutoApproveOptions.SectionName);
         builder.Services.AddSingleton<GovernanceService>();
         builder.Services.AddSingleton<IPolicyDecisionPoint>(sp => sp.GetRequiredService<GovernanceService>());
         builder.Services.AddSingleton<IAuthorizationService>(sp => sp.GetRequiredService<GovernanceService>());
