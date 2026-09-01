@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -614,8 +615,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
-        await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
         SyncLanes(checkpoint);
+        // An escalated lane keeps the run parked on awaiting_user; do not
+        // overwrite it with "executing" at tick start.
+        if (!checkpoint.Lanes.Any(lane => lane.Escalated))
+        {
+            await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
 
         // A previous worker may have stopped after PrepareAsync persisted an
         // execution. Resume it before asking a model to produce another call.
@@ -626,7 +632,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint = resumed.Checkpoint;
             if (resumed.Waiting)
             {
-                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken, LaneKeyOf(pending)).ConfigureAwait(false);
                 throw new RunAwaitingExternalDecisionException();
             }
@@ -639,12 +644,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         MarkBlockedDescendants(checkpoint.Tasks);
         SyncLanes(checkpoint);
+        checkpoint = await ClassifyParkedLanesAsync(runId, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
 
         // Per-lane ready sets dispatched under one global worker budget so the
         // active worker peak across lanes never exceeds MaxParallelWorkers.
+        // Parked lanes (waiting/gate_review/escalated) never dispatch here: a
+        // waiting lane first passes its gate review in the classification pass.
         var budget = Math.Max(1, configuration.Spawn.MaxParallelWorkers);
         var laneOrder = checkpoint.Lanes
-            .Where(lane => checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && task.Status is "pending" or "ready" or "running"))
+            .Where(lane => !lane.Escalated
+                && lane.Status is "pending" or "executing"
+                && checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && task.Status is "pending" or "ready" or "running"))
             .Select(lane => lane.LaneKey)
             .OrderBy(key => string.Equals(key, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(key => key, StringComparer.OrdinalIgnoreCase)
@@ -671,6 +681,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         if (dispatched.Count == 0)
         {
+            if (checkpoint.Lanes.Any(lane => lane.Escalated))
+            {
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lanes-awaiting-user", cancellationToken).ConfigureAwait(false);
+                throw new RunAwaitingExternalDecisionException();
+            }
             if (checkpoint.Tasks.All(item => item.Status is "completed" or "failed" or "blocked"))
             {
                 checkpoint.Phase = "reviewing";
@@ -678,16 +693,15 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
             if (checkpoint.Tasks.Any(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId)))
             {
-                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
                 throw new RunAwaitingExternalDecisionException();
             }
-            checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
-            // Anything still dispatchable-but-not-waiting is genuinely stuck: a
+            // Anything still dispatchable-but-not-parked is genuinely stuck: a
             // crashed "running" dispatch or an in-lane chain planning validation
-            // failed to exclude. That stays an invalid graph.
+            // failed to exclude. That stays an invalid graph. Parked lanes
+            // (waiting/gate_review) and escalated lanes are expected here.
             var stuck = checkpoint.Tasks.Any(item => item.Status is "pending" or "ready" or "running"
-                && checkpoint.Lanes.First(lane => string.Equals(lane.LaneKey, LaneKeyOf(item), StringComparison.OrdinalIgnoreCase)).Status != "waiting");
+                && IsLaneStuckEligible(checkpoint, LaneKeyOf(item)));
             if (stuck)
             {
                 await FailRunAsync(runId, checkpoint, "invalid_task_graph", "No dependency-ready task remains in the persisted graph.", cancellationToken).ConfigureAwait(false);
@@ -768,7 +782,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint = result.Checkpoint;
             if (result.Waiting)
             {
-                checkpoint = await MarkWaitingLanesAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting-decision", cancellationToken, LaneKeyOf(task)).ConfigureAwait(false);
                 throw new RunAwaitingExternalDecisionException();
             }
@@ -783,33 +796,428 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     }
 
     /// <summary>
-    /// Parks lanes that cannot advance because their unmet dependencies live in
-    /// other lanes' unfinished work. Emits one transition event per newly
-    /// waiting lane; already-waiting lanes only refresh their Waits roster.
+    /// One classification pass over every non-terminal lane. A lane whose
+    /// cross-lane waits are unmet parks as "waiting" with the target lane's
+    /// facts hash frozen into each wait; a parked lane whose waits now hold
+    /// enters "gate_review" and really calls this lane's planner — proceed
+    /// lets it dispatch this tick, wait_more re-parks (facts unchanged means
+    /// no progress is possible and escalates), and a proceed that contradicts
+    /// code facts (stale hash or unsatisfied per-criterion verdicts) is
+    /// discarded with gate.review.rejected_stale. The model can only tighten
+    /// a gate, never loosen it. A lane whose tasks are all terminal gets its
+    /// supervision verdict first so gates can read per-criterion evidence.
     /// </summary>
-    private async Task<FullDuplexCheckpointV1> MarkWaitingLanesAsync(
+    private async Task<FullDuplexCheckpointV1> ClassifyParkedLanesAsync(
         Guid runId,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
         foreach (var lane in checkpoint.Lanes)
         {
-            var waits = CrossLaneWaitsFor(checkpoint.Tasks, lane.LaneKey);
-            if (waits is null) continue;
+            if (lane.Escalated) continue;
+            var laneTasks = checkpoint.Tasks.Where(item => LaneKeyOf(item) == lane.LaneKey).ToList();
+            if (laneTasks.Count == 0) continue;
+            var terminal = laneTasks.All(item => item.Status is "completed" or "failed" or "blocked");
 
-            if (!string.Equals(lane.Status, "waiting", StringComparison.Ordinal))
+            if (terminal)
             {
+                // 裁决落 lane: a finished lane gets its supervision verdict and
+                // per-criterion evidence while other lanes may still run, so a
+                // gate waiting on this lane reads real verdicts instead of
+                // waiting for the run-level review that cannot start yet.
+                if (lane.SupervisionDecision is null
+                    && configuration.Supervision.RequiredBeforeFinal
+                    && checkpoint.Lanes.Any(other => !string.Equals(other.LaneKey, lane.LaneKey, StringComparison.OrdinalIgnoreCase)
+                        && checkpoint.Tasks.Any(task => LaneKeyOf(task) == other.LaneKey && task.Status is "pending" or "ready" or "running")))
+                {
+                    await SuperviseLaneAsync(runId, run, configuration, checkpoint, lane, laneTasks, cancellationToken).ConfigureAwait(false);
+                }
+                continue;
+            }
+            if (laneTasks.Any(item => item.Status == "running" || !string.IsNullOrWhiteSpace(item.PendingToolExecutionId))) continue;
+
+            var unmet = UnmetLaneWaits(checkpoint, lane.LaneKey);
+            if (unmet.Count > 0)
+            {
+                foreach (var task in laneTasks.Where(item => item.Status is "pending" or "ready"))
+                {
+                    task.Waits = [.. unmet];
+                }
+                if (!string.Equals(lane.Status, "waiting", StringComparison.Ordinal))
+                {
+                    lane.Status = "waiting";
+                    await AppendEventAsync(runId, "orchestration.lane_waiting",
+                        $"Lane '{lane.LaneKey}' is waiting on other lanes.",
+                        new { lane_key = lane.LaneKey, waits = unmet.Select(wait => new { lane = wait.LaneKey, predicate = wait.Predicate, facts_hash = wait.ObservedFactsHash }) }, cancellationToken).ConfigureAwait(false);
+                }
+                continue;
+            }
+
+            if (!string.Equals(lane.Status, "waiting", StringComparison.Ordinal)) continue;
+
+            // Waits hold: the parked lane must pass its gate before dispatching.
+            lane.Status = "gate_review";
+            var targetLanes = GateTargetLanes(checkpoint, lane.LaneKey);
+            var factsHash = ComputeLaneFactsHash(checkpoint, targetLanes);
+            await AppendEventAsync(runId, "orchestration.gate_review",
+                $"Lane '{lane.LaneKey}' entered gate review.",
+                new { lane_key = lane.LaneKey, facts_hash = factsHash, targets = targetLanes }, cancellationToken).ConfigureAwait(false);
+            var gatePrompt = BuildGatePrompt(checkpoint, lane, targetLanes, factsHash);
+            var gateDecision = await RunGateReviewAsync(run, configuration, checkpoint, lane, gatePrompt, cancellationToken).ConfigureAwait(false);
+
+            if (gateDecision.Decision == "proceed")
+            {
+                var currentHash = ComputeLaneFactsHash(checkpoint, targetLanes);
+                if (!string.Equals(currentHash, factsHash, StringComparison.Ordinal))
+                {
+                    // Facts moved while the gate call was in flight: re-park so
+                    // waits re-freeze against the new facts.
+                    await RejectStaleGateAsync(runId, lane, "facts hash changed during gate review", cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                if (!GateCodeFactsHold(checkpoint, targetLanes))
+                {
+                    await RejectStaleGateAsync(runId, lane, "model proceeded against unsatisfied criteria verdicts", cancellationToken).ConfigureAwait(false);
+                    await EscalateLaneAsync(runId, run, lane, "Gate proceed rejected: per-criterion verdicts do not hold over code facts.", cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                lane.LastGateFactsHash = factsHash;
+                lane.Status = "executing";
+                await AppendEventAsync(runId, "orchestration.gate_review.completed",
+                    $"Lane '{lane.LaneKey}' gate approved to proceed.",
+                    new { lane_key = lane.LaneKey, decision = "proceed", reasons = gateDecision.Reasons }, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            if (gateDecision.Decision == "wait_more"
+                && !string.Equals(lane.LastGateFactsHash, factsHash, StringComparison.Ordinal))
+            {
+                lane.LastGateFactsHash = factsHash;
                 lane.Status = "waiting";
-                await AppendEventAsync(runId, "orchestration.lane_waiting",
-                    $"Lane '{lane.LaneKey}' is waiting on other lanes.",
-                    new { lane_key = lane.LaneKey, waits = waits }, cancellationToken).ConfigureAwait(false);
+                await AppendEventAsync(runId, "orchestration.gate_review.completed",
+                    $"Lane '{lane.LaneKey}' gate asked for more evidence.",
+                    new { lane_key = lane.LaneKey, decision = "wait_more", reasons = gateDecision.Reasons }, cancellationToken).ConfigureAwait(false);
+                continue;
             }
-            foreach (var task in checkpoint.Tasks.Where(item => LaneKeyOf(item) == lane.LaneKey && item.Status is "pending" or "ready"))
-            {
-                task.Waits = [.. waits];
-            }
+            // escalate, unparsable output, or wait_more over unchanged facts
+            // (nothing can change while parked): freeze only this lane.
+            await EscalateLaneAsync(runId, run, lane,
+                gateDecision.Reasons.Count > 0 ? string.Join("; ", gateDecision.Reasons) : "Gate review did not approve the lane to proceed.",
+                cancellationToken).ConfigureAwait(false);
         }
         return checkpoint;
+    }
+
+    private async Task SuperviseLaneAsync(
+        Guid runId,
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableLane lane,
+        List<DurableTaskNode> laneTasks,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var supervisorDefinition = RequiredAgent(configuration.OperationAgents, "supervisor");
+            var supervisorInstance = await EnsureSupervisorAgentAsync(run, configuration, checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
+            checkpoint.SupervisorAgentId = supervisorInstance.Id;
+            var context = await BuildContextAsync(run, configuration, supervisorDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+            var assembly = await AssemblePromptAsync(supervisorDefinition, context, cancellationToken).ConfigureAwait(false);
+            var supervisor = new SupervisionAgent(CreateModelFactory(configuration, checkpoint, supervisorDefinition,
+                supervisorInstance.Id, supervisorInstance.ParentInstanceId), _logger);
+            var plans = laneTasks.Select(ToPlannedTask).ToArray();
+            var results = laneTasks.Select(item => new StepResult
+            {
+                TaskNodeId = item.TaskId,
+                AgentId = item.WorkerAgentId?.ToString() ?? string.Empty,
+                Status = item.ResultStatus ?? item.Status,
+                Summary = item.ResultSummary ?? string.Empty,
+                Evidence = item.Evidence
+            }).ToArray();
+            var verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, assembly.Instructions, cancellationToken).ConfigureAwait(false);
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
+            lane.SupervisionRound = checkpoint.SupervisionRound;
+            lane.SupervisionDecision = verdict.DecictionString();
+            lane.SupervisionReasons = verdict.Reasons.ToList();
+            MapCriterionVerdicts(checkpoint, verdict);
+            await AppendEventAsync(runId, "supervision.lane_completed",
+                $"Lane '{lane.LaneKey}' supervision decision: {lane.SupervisionDecision}.",
+                new { lane_key = lane.LaneKey, decision = lane.SupervisionDecision, reasons = lane.SupervisionReasons }, cancellationToken).ConfigureAwait(false);
+            if (verdict.Decision == SupervisionDecision.Escalate)
+            {
+                await EscalateLaneAsync(runId, run, lane, "Lane supervision escalated.", cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Lane supervision failed; escalating lane.");
+            await EscalateLaneAsync(runId, run, lane, "Lane supervision failed: " + ex.Message, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task EscalateLaneAsync(
+        Guid runId,
+        RunState run,
+        DurableLane lane,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        lane.Escalated = true;
+        await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", reason, cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "supervision.user_review.requested",
+            "A lane escalated and is waiting for a user decision while other lanes continue.",
+            new { run_id = run.RunId, lane_key = lane.LaneKey, decision = "escalate", reasons = new[] { reason }, options = new[] { "continue", "correct", "cancel" } }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RejectStaleGateAsync(
+        Guid runId,
+        DurableLane lane,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        lane.Status = "waiting";
+        await AppendEventAsync(runId, "gate.review.rejected_stale",
+            "A gate proceed was discarded because the frozen code facts no longer hold.",
+            new { lane_key = lane.LaneKey, reason }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<GateDecision> RunGateReviewAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableLane lane,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+            var plannerInstanceId = checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
+            var factory = CreateModelFactory(configuration, checkpoint, plannerDefinition, plannerInstanceId, null);
+            var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
+            if (!resolution.IsAvailable)
+            {
+                return new GateDecision("escalate", [resolution.Error ?? "Chat route is unavailable."]);
+            }
+            var chatClient = await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
+            using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
+                chatClient,
+                "operation.task_planner",
+                "task_planner",
+                "Reviews cross-lane gate evidence and may only tighten, never loosen, the gate.",
+                new ChatOptions
+                {
+                    Instructions = "你是任务规划智能体，正在执行门控评审（gate review）。对照给出的代码事实与逐条验收裁决，判断本 lane 是否可以开始执行。只能收紧、不能放宽：任何一条验收裁决不满足或事实哈希不符都必须拒绝放行。仅输出 JSON 对象：{\"decision\":\"proceed|wait_more|escalate\",\"reasons\":[...]}，不要输出其他文字。"
+                });
+            var response = await agent.RunAsync(prompt, cancellationToken: cancellationToken).ConfigureAwait(false);
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+            return ParseGateDecision(response.Text)
+                ?? new GateDecision("escalate", ["Gate review response was unparsable; manual confirmation is required."]);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new GateDecision("escalate", ["Gate review failed: " + ex.Message]);
+        }
+    }
+
+    private static string BuildGatePrompt(
+        FullDuplexCheckpointV1 checkpoint,
+        DurableLane lane,
+        IReadOnlyCollection<string> targetLanes,
+        string factsHash)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.AppendLine($"Lane: {lane.LaneKey}");
+        builder.AppendLine($"门控评审：lane '{lane.LaneKey}' 的等待谓词已满足，请裁决是否放行开始执行。");
+        foreach (var key in targetLanes)
+        {
+            builder.AppendLine($"等待目标 lane '{key}' 逐任务事实:");
+            foreach (var task in checkpoint.Tasks
+                .Where(item => string.Equals(LaneKeyOf(item), key, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(item => item.TaskKey, StringComparer.Ordinal))
+            {
+                builder.AppendLine($"- [{task.TaskKey}] {task.Title} | criteria: {string.Join("; ", task.SuccessCriteria)} | status: {task.ResultStatus ?? task.Status} | result: {task.ResultSummary ?? "-"} | evidence: {string.Join(" / ", task.Evidence)}");
+                var verdicts = task.CriteriaVerdicts
+                    .OrderBy(verdict => verdict.Round)
+                    .Select(verdict => $"{{\"criterion\":\"{verdict.Criterion}\",\"satisfied\":{verdict.Satisfied.ToString().ToLowerInvariant()},\"evidence\":\"{verdict.Evidence ?? string.Empty}\"}}");
+                builder.AppendLine($"  verdicts: [{string.Join(", ", verdicts)}]");
+            }
+        }
+        builder.AppendLine($"ObservedFactsHash: {factsHash}");
+        builder.AppendLine("仅输出 JSON：{\"decision\":\"proceed|wait_more|escalate\",\"reasons\":[...]}");
+        return builder.ToString();
+    }
+
+    private static GateDecision? ParseGateDecision(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<GateDecisionBody>(text.Substring(start, end - start + 1), JsonOptions);
+            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Decision)) return null;
+            var decision = parsed.Decision.Trim().ToLowerInvariant() switch
+            {
+                "proceed" => "proceed",
+                "wait_more" => "wait_more",
+                _ => "escalate"
+            };
+            return new GateDecision(decision, parsed.Reasons ?? []);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record GateDecision(string Decision, IReadOnlyList<string> Reasons);
+
+    private sealed class GateDecisionBody
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("decision")]
+        public string? Decision { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("reasons")]
+        public string[]? Reasons { get; set; }
+    }
+
+    /// <summary>
+    /// The structured waits a lane must still honor: derived from unmet
+    /// cross-lane dependencies (predicate lane_done, hash frozen now) plus any
+    /// explicit wait already recorded on its tasks whose predicate does not
+    /// yet hold.
+    /// </summary>
+    private static List<LaneWait> UnmetLaneWaits(FullDuplexCheckpointV1 checkpoint, string laneKey)
+    {
+        var laneTasks = checkpoint.Tasks.Where(item => LaneKeyOf(item) == laneKey).ToList();
+        var unmet = new List<LaneWait>();
+        void Add(LaneWait wait)
+        {
+            if (EvaluateLaneWait(checkpoint, wait)) return;
+            if (!unmet.Any(existing => string.Equals(existing.LaneKey, wait.LaneKey, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(existing.Predicate, wait.Predicate, StringComparison.Ordinal)))
+            {
+                unmet.Add(wait);
+            }
+        }
+
+        var dependencies = laneTasks.Where(item => item.Status is "pending" or "ready")
+            .SelectMany(item => item.Dependencies)
+            .Where(dependency => !checkpoint.Tasks.Any(other => other.TaskKey == dependency && other.Status == "completed"))
+            .Select(dependency => checkpoint.Tasks.FirstOrDefault(other => other.TaskKey == dependency))
+            .OfType<DurableTaskNode>()
+            .Select(other => LaneKeyOf(other))
+            .Where(key => !string.Equals(key, laneKey, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in dependencies)
+        {
+            Add(new LaneWait(key, LaneWait.LaneDone, [], ComputeLaneFactsHash(checkpoint, [key])));
+        }
+        foreach (var wait in laneTasks.SelectMany(item => item.Waits))
+        {
+            Add(wait);
+        }
+        return unmet;
+    }
+
+    /// <summary>Eval only trusts code facts, never model self-reports.</summary>
+    private static bool EvaluateLaneWait(FullDuplexCheckpointV1 checkpoint, LaneWait wait)
+    {
+        var targetTasks = checkpoint.Tasks
+            .Where(item => string.Equals(LaneKeyOf(item), wait.LaneKey, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var targetLane = checkpoint.Lanes.FirstOrDefault(item => string.Equals(item.LaneKey, wait.LaneKey, StringComparison.OrdinalIgnoreCase));
+        var holds = wait.Predicate switch
+        {
+            LaneWait.LaneSupervisionPass => targetLane?.SupervisionDecision == "pass",
+            _ => targetTasks.Count > 0
+                && targetTasks.All(item => item.Status is "completed" or "failed" or "blocked")
+                && targetTasks.All(item => item.Status == "completed")
+        };
+        if (!holds) return false;
+        return wait.RequiredCriteria.Count == 0 || CriterionVerdictsHold(targetTasks, wait.RequiredCriteria);
+    }
+
+    /// <summary>
+    /// Hard gate validation over code facts: every target lane fully completed
+    /// and every latest-round criterion verdict satisfied with evidence.
+    /// </summary>
+    internal static bool GateCodeFactsHold(FullDuplexCheckpointV1 checkpoint, IReadOnlyCollection<string> targetLaneKeys)
+    {
+        foreach (var key in targetLaneKeys)
+        {
+            var tasks = checkpoint.Tasks
+                .Where(item => string.Equals(LaneKeyOf(item), key, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (tasks.Count == 0) continue;
+            if (tasks.Any(item => item.Status is not ("completed" or "failed" or "blocked"))) return false;
+            if (tasks.Any(item => item.Status != "completed")) return false;
+            if (!CriterionVerdictsHold(tasks, null)) return false;
+        }
+        return true;
+    }
+
+    private static bool CriterionVerdictsHold(List<DurableTaskNode> tasks, IReadOnlyList<string>? requiredCriteria)
+    {
+        var latest = tasks.SelectMany(item => item.CriteriaVerdicts.Select(verdict => (TaskKey: item.TaskKey, Verdict: verdict)))
+            .GroupBy(pair => (pair.TaskKey, pair.Verdict.Criterion))
+            .ToDictionary(group => group.Key, group => group.OrderBy(pair => pair.Verdict.Round).Last().Verdict);
+        foreach (var verdict in latest.Values)
+        {
+            if (requiredCriteria is not null && !requiredCriteria.Contains(verdict.Criterion, StringComparer.Ordinal)) continue;
+            if (!verdict.Satisfied || string.IsNullOrWhiteSpace(verdict.Evidence)) return false;
+        }
+        return true;
+    }
+
+    private static List<string> GateTargetLanes(FullDuplexCheckpointV1 checkpoint, string laneKey) =>
+        checkpoint.Tasks
+            .Where(item => string.Equals(LaneKeyOf(item), laneKey, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(item => item.Waits)
+            .Select(wait => wait.LaneKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// SHA-256 over the checkpoint revision plus each target lane's supervision
+    /// decision and task status vector — the observable-facts identity a gate
+    /// is frozen against.
+    /// </summary>
+    private static string ComputeLaneFactsHash(FullDuplexCheckpointV1 checkpoint, IReadOnlyCollection<string> targetLaneKeys)
+    {
+        var payload = string.Join(";", targetLaneKeys
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .Select(key =>
+            {
+                var lane = checkpoint.Lanes.FirstOrDefault(item => string.Equals(item.LaneKey, key, StringComparison.OrdinalIgnoreCase));
+                var tasks = checkpoint.Tasks
+                    .Where(item => LaneKeyOf(item) == key)
+                    .OrderBy(item => item.TaskKey, StringComparer.Ordinal)
+                    .Select(item => $"{item.TaskKey}:{item.Status}:{item.ResultStatus ?? "-"}");
+                return $"{key}|supervision={lane?.SupervisionDecision ?? "-"}|{string.Join(",", tasks)}";
+            }));
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"rev={checkpoint.CheckpointRevision}|{payload}"));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static bool IsLaneStuckEligible(FullDuplexCheckpointV1 checkpoint, string laneKey)
+    {
+        var lane = checkpoint.Lanes.FirstOrDefault(item => string.Equals(item.LaneKey, laneKey, StringComparison.OrdinalIgnoreCase));
+        if (lane is null || lane.Escalated) return true;
+        return lane.Status is not ("waiting" or "gate_review" or "completed");
     }
 
     /// <summary>
@@ -1592,6 +2000,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         checkpoint.SupervisionDecision = verdict.DecictionString();
         checkpoint.SupervisionReasons = verdict.Reasons.ToList();
+        MapCriterionVerdicts(checkpoint, verdict);
+        foreach (var lane in checkpoint.Lanes)
+        {
+            lane.SupervisionRound = checkpoint.SupervisionRound;
+            lane.SupervisionDecision = checkpoint.SupervisionDecision;
+            lane.SupervisionReasons = checkpoint.SupervisionReasons.ToList();
+        }
         await AppendEventAsync(runId, "supervision.completed", $"Supervision decision: {checkpoint.SupervisionDecision}.", new
         {
             decision = checkpoint.SupervisionDecision,
@@ -1635,8 +2050,32 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "replanned", cancellationToken).ConfigureAwait(false);
         }
 
+        if (checkpoint.Lanes.Any(lane => lane.Escalated))
+        {
+            // A lane escalation is still pending a user decision: the run must
+            // not finalize while that gate is unresolved, even though every
+            // task is terminal.
+            checkpoint.Phase = "awaiting_user";
+            await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "A lane escalation is pending a user decision.", cancellationToken).ConfigureAwait(false);
+            return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lane-escalation-parked", cancellationToken).ConfigureAwait(false);
+        }
         checkpoint.Phase = "finalizing";
         return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "reviewed", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lands the supervision verdict's per-criterion verdicts on the tasks they
+    /// name (裁决落 lane): a gate later reads these as code facts and can only
+    /// tighten, never loosen, its decision.
+    /// </summary>
+    private static void MapCriterionVerdicts(FullDuplexCheckpointV1 checkpoint, SupervisionVerdict verdict)
+    {
+        if (verdict.CriterionVerdicts is not { Count: > 0 }) return;
+        foreach (var item in verdict.CriterionVerdicts)
+        {
+            var task = checkpoint.Tasks.FirstOrDefault(node => string.Equals(node.TaskKey, item.TaskKey, StringComparison.OrdinalIgnoreCase));
+            task?.CriteriaVerdicts.Add(new CriterionVerdict(item.Criterion, item.Satisfied, item.Evidence, "supervisor", checkpoint.SupervisionRound));
+        }
     }
 
     private async Task<FullDuplexCheckpointV1> RespondToInteractionAsync(
@@ -1740,6 +2179,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 checkpoint.SupervisionDecision = null;
                 checkpoint.SupervisionReasons = [];
                 checkpoint.MeetingResponse = null;
+                foreach (var lane in checkpoint.Lanes)
+                {
+                    lane.Escalated = false;
+                    lane.Status = "pending";
+                    lane.SupervisionDecision = null;
+                    lane.SupervisionReasons = [];
+                    lane.LastGateFactsHash = null;
+                }
                 await AppendEventAsync(Guid.Parse(run.RunId), "context.goal_adjusted", "The active goal changed and will be replanned.", new
                 {
                     patch_id = patch.Id,
@@ -2119,6 +2566,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private static string PlannerInstructions(FullDuplexCheckpointV1 checkpoint, string baseInstructions)
     {
+        // The Lane line lets scripted and real routing tell which lane a
+        // planning or gate call belongs to; the initial plan runs on "main".
+        baseInstructions += "\nLane: main";
         if (checkpoint.RecommendedCapabilities.Count == 0) return baseInstructions;
         var lines = string.Join("\n", checkpoint.RecommendedCapabilities.Select(item =>
             $"- {item.Skill} (confidence: {item.Confidence}): {item.Reason}"));
@@ -2971,10 +3421,11 @@ internal sealed class DurableTaskNode
     public string? LaneKey { get; set; }
 
     /// <summary>
-    /// Lane keys this task is docked behind; the M2 main loop keeps the task
-    /// waiting until every listed lane reaches a terminal state.
+    /// Structured cross-lane waits this task is docked behind; the M3 tick
+    /// keeps the task waiting until every wait's predicate holds over code
+    /// facts and the frozen facts hash still matches at gate time.
     /// </summary>
-    public List<string> Waits { get; set; } = [];
+    public List<LaneWait> Waits { get; set; } = [];
 
     /// <summary>
     /// Per-criterion verdicts produced by supervision (M3). Empty means no
@@ -2983,14 +3434,107 @@ internal sealed class DurableTaskNode
     public List<CriterionVerdict> CriteriaVerdicts { get; set; } = [];
 }
 
-/// <summary>Per-criterion supervised verdict for a lane-gated task.</summary>
-internal sealed record CriterionVerdict(string Criterion, bool Satisfied, string? Evidence);
+    /// <summary>
+    /// Per-criterion supervised verdict for a lane-gated task. ReviewedBy and
+    /// Round attribute the verdict to a supervision pass; a gate may only
+    /// proceed when every recorded verdict is satisfied with evidence.
+    /// </summary>
+    internal sealed record CriterionVerdict(string Criterion, bool Satisfied, string? Evidence, string? ReviewedBy = null, int Round = 0);
+
+/// <summary>
+/// A structured cross-lane wait: the owning task is docked behind
+/// <paramref name="LaneKey"/> until the predicate holds over code facts.
+/// ObservedFactsHash freezes the target lane's observable state at park time
+/// so a gate cannot proceed against facts that moved underneath it.
+/// </summary>
+[JsonConverter(typeof(LaneWaitJsonConverter))]
+internal sealed record LaneWait(string LaneKey, string Predicate, IReadOnlyList<string> RequiredCriteria, string? ObservedFactsHash)
+{
+    public const string LaneDone = "lane_done";
+    public const string LaneTasksCompleted = "lane_tasks_completed";
+    public const string LaneSupervisionPass = "lane_supervision_pass";
+
+    public static LaneWait UntilLaneDone(string laneKey) => new(laneKey, LaneDone, [], null);
+}
+
+/// <summary>
+/// Reads M2-era waits serialized as plain lane-key strings ("main") as
+/// lane_done waits; writes the full structured shape.
+/// </summary>
+internal sealed class LaneWaitJsonConverter : JsonConverter<LaneWait>
+{
+    public override LaneWait? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            var key = reader.GetString();
+            return string.IsNullOrWhiteSpace(key) ? null : new LaneWait(key.Trim(), LaneWait.LaneDone, [], null);
+        }
+        if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException("LaneWait must be a string or an object.");
+        string? laneKey = null, predicate = null, hash = null;
+        var criteria = new List<string>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new JsonException();
+            var property = reader.GetString();
+            reader.Read();
+            switch (property)
+            {
+                case "lane_key" when reader.TokenType == JsonTokenType.String: laneKey = reader.GetString(); break;
+                case "predicate" when reader.TokenType == JsonTokenType.String: predicate = reader.GetString(); break;
+                case "observed_facts_hash" when reader.TokenType == JsonTokenType.String: hash = reader.GetString(); break;
+                case "required_criteria" when reader.TokenType == JsonTokenType.StartArray:
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                    {
+                        if (reader.TokenType == JsonTokenType.String) criteria.Add(reader.GetString() ?? string.Empty);
+                    }
+                    break;
+                default: reader.Skip(); break;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(laneKey)) throw new JsonException("LaneWait requires lane_key.");
+        return new LaneWait(laneKey.Trim(), string.IsNullOrWhiteSpace(predicate) ? LaneWait.LaneDone : predicate!, criteria, hash);
+    }
+
+    public override void Write(Utf8JsonWriter writer, LaneWait value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("lane_key", value.LaneKey);
+        writer.WriteString("predicate", value.Predicate);
+        writer.WriteStartArray("required_criteria");
+        foreach (var criterion in value.RequiredCriteria) writer.WriteStringValue(criterion);
+        writer.WriteEndArray();
+        if (value.ObservedFactsHash is { } hash) writer.WriteString("observed_facts_hash", hash);
+        writer.WriteEndObject();
+    }
+}
 
 /// <summary>A named execution lane recorded in the run checkpoint.</summary>
 internal sealed class DurableLane
 {
     public string LaneKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Lane phase: planning | executing | waiting | gate_review | reviewing |
+    /// finalizing | done | failed. "completed" is the M2 spelling of "done"
+    /// and is still written/read for checkpoint compatibility.
+    /// </summary>
     public string Status { get; set; } = "pending";
+
+    /// <summary>Supervision attribution copied from the run-level verdict.</summary>
+    public int SupervisionRound { get; set; }
+    public string? SupervisionDecision { get; set; }
+    public List<string> SupervisionReasons { get; set; } = [];
+
+    /// <summary>
+    /// Set when the lane's gate escalates (model decision or a rejected stale
+    /// proceed). Only this lane freezes; the run status becomes awaiting_user
+    /// while other lanes keep advancing.
+    /// </summary>
+    public bool Escalated { get; set; }
+
+    /// <summary>Facts hash observed at this lane's most recent gate review.</summary>
+    public string? LastGateFactsHash { get; set; }
 }
 
 internal sealed record StaleTaskEvidence(

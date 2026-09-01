@@ -68,7 +68,7 @@ public sealed class DmaeaLaneModelTests : IDisposable
             Title = "Test the build",
             Status = "completed",
             LaneKey = "l2",
-            Waits = ["main"],
+            Waits = [LaneWait.UntilLaneDone("main")],
             CriteriaVerdicts =
             [
                 new CriterionVerdict("全部测试通过", true, "run:pytest 42 passed"),
@@ -90,7 +90,9 @@ public sealed class DmaeaLaneModelTests : IDisposable
         Assert.Equal("completed", node.Status);
         Assert.Equal(prior.TaskId, node.TaskId);
         Assert.Equal("l2", node.LaneKey);
-        Assert.Equal(["main"], node.Waits);
+        var wait = Assert.Single(node.Waits);
+        Assert.Equal("main", wait.LaneKey);
+        Assert.Equal(LaneWait.LaneDone, wait.Predicate);
         Assert.Equal(2, node.CriteriaVerdicts.Count);
         Assert.Contains(node.CriteriaVerdicts, verdict => verdict.Satisfied);
         Assert.Contains(node.CriteriaVerdicts, verdict => !verdict.Satisfied);
@@ -106,7 +108,7 @@ public sealed class DmaeaLaneModelTests : IDisposable
             Title = "Implement",
             Status = "failed",
             LaneKey = "l2",
-            Waits = ["main"]
+            Waits = [LaneWait.UntilLaneDone("main")]
         };
         var replacement = new DurableTaskNode
         {
@@ -115,7 +117,7 @@ public sealed class DmaeaLaneModelTests : IDisposable
             Title = "Implement",
             Status = "pending",
             LaneKey = "l9",
-            Waits = ["main", "l2"]
+            Waits = [LaneWait.UntilLaneDone("main"), LaneWait.UntilLaneDone("l2")]
         };
 
         var merged = FullDuplexRunEngine.MergeReplannedGraph([prior], [replacement]);
@@ -124,7 +126,7 @@ public sealed class DmaeaLaneModelTests : IDisposable
         // Only completed tasks keep their prior runtime state; an unfinished task
         // adopts the planner's new lane topology wholesale.
         Assert.Equal("l9", node.LaneKey);
-        Assert.Equal(["main", "l2"], node.Waits);
+        Assert.Equal(["main", "l2"], node.Waits.Select(wait => wait.LaneKey).ToArray());
     }
 
     [Fact]

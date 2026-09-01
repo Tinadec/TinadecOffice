@@ -17,12 +17,14 @@ public enum SupervisionDecision
 /// <summary>
 /// Operation-layer supervision verdict returned before the meeting agent's final output.
 /// Revise carries the indexes of tasks that must be re-executed; escalate means the
-/// supervisor cannot approve and the user must decide.
+/// supervisor cannot approve and the user must decide. CriterionVerdicts carry the
+/// per-criterion satisfaction verdicts that lane gates later read as code facts.
 /// </summary>
 public sealed record SupervisionVerdict(
     SupervisionDecision Decision,
     IReadOnlyList<string> Reasons,
-    IReadOnlyList<int> ReviseTaskIndexes)
+    IReadOnlyList<int> ReviseTaskIndexes,
+    IReadOnlyList<LaneCriterionVerdict>? CriterionVerdicts = null)
 {
     public static SupervisionVerdict EscalateVerdict(string reason) => new(SupervisionDecision.Escalate, [reason], []);
     public string DecictionString() => Decision switch
@@ -33,6 +35,9 @@ public sealed record SupervisionVerdict(
     };
 }
 
+/// <summary>A per-criterion verdict naming the task it belongs to.</summary>
+public sealed record LaneCriterionVerdict(string TaskKey, string Criterion, bool Satisfied, string? Evidence);
+
 /// <summary>
 /// Supervision-layer agent: reviews planned tasks against execution evidence and returns
 /// pass / revise / escalate. Model unavailability or an unparsable response escalates —
@@ -41,7 +46,7 @@ public sealed record SupervisionVerdict(
 public sealed class SupervisionAgent
 {
     private const string SupervisionInstructions =
-        "你是监督智能体。对照任务列表与执行证据给出质量结论。仅输出 JSON 对象，包含 decision（pass/revise/escalate）、reasons（字符串数组）、revise_task_indexes（decision 为 revise 时需要重做的任务下标数组，其他情况为空数组）。证据不足或存在无法自动处理的风险时选择 escalate。不要输出其他文字。";
+        "你是监督智能体。对照任务列表与执行证据给出质量结论。仅输出 JSON 对象，包含 decision（pass/revise/escalate）、reasons（字符串数组）、revise_task_indexes（decision 为 revise 时需要重做的任务下标数组，其他情况为空数组），以及可选的 criteria_verdicts（逐条验收裁决数组，每项形如 {\"task_key\":\"...\",\"criterion\":\"...\",\"satisfied\":true|false,\"evidence\":\"支持该裁决的证据摘要\"}，给出后门控将以这些裁决为事实依据）。证据不足或存在无法自动处理的风险时选择 escalate。不要输出其他文字。";
 
     private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
 
@@ -132,7 +137,12 @@ public sealed class SupervisionAgent
                 .Where(index => index >= 0 && index < 100)
                 .Distinct()
                 .ToArray();
-            return new SupervisionVerdict(decision, parsed.Reasons ?? [], decision == SupervisionDecision.Revise ? indexes : []);
+            var criterionVerdicts = (parsed.CriterionVerdicts ?? [])
+                .Where(item => !string.IsNullOrWhiteSpace(item.TaskKey) && !string.IsNullOrWhiteSpace(item.Criterion))
+                .Select(item => new LaneCriterionVerdict(item.TaskKey!.Trim(), item.Criterion!.Trim(), item.Satisfied, item.Evidence))
+                .ToList();
+            return new SupervisionVerdict(decision, parsed.Reasons ?? [], decision == SupervisionDecision.Revise ? indexes : [],
+                criterionVerdicts.Count > 0 ? criterionVerdicts : null);
         }
         catch (JsonException)
         {
@@ -150,5 +160,23 @@ public sealed class SupervisionAgent
 
         [JsonPropertyName("revise_task_indexes")]
         public int[]? ReviseTaskIndexes { get; set; }
+
+        [JsonPropertyName("criteria_verdicts")]
+        public CriterionVerdictBody[]? CriterionVerdicts { get; set; }
+    }
+
+    private sealed class CriterionVerdictBody
+    {
+        [JsonPropertyName("task_key")]
+        public string? TaskKey { get; set; }
+
+        [JsonPropertyName("criterion")]
+        public string? Criterion { get; set; }
+
+        [JsonPropertyName("satisfied")]
+        public bool Satisfied { get; set; }
+
+        [JsonPropertyName("evidence")]
+        public string? Evidence { get; set; }
     }
 }

@@ -1238,6 +1238,180 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.All(nodes, node => Assert.Equal("completed", node.GetProperty("status").GetString()));
     }
 
+    private static string LanesEnabledToml() =>
+        RuntimeTomlWith(
+            "enabled = false\ncontext_token_threshold = 0\ncompress_on_task_closed = false\nrecommend_on_task_created = false\ncurate_on_run_closed = false\ngit_steward_on_run_closed = false\n")
+        + "\n[orchestration]\nlanes_enabled = true\nmax_lanes_per_run = 4\nmax_tasks_per_lane = 6\n";
+
+    [Fact]
+    public async Task TwoLanes_AdvanceInParallelUnderSingleRunLease()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\",\"lane_key\":\"l2\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("都完成了。");
+        script.BeforeWorker = gate.Task;
+        var factory = CreateFactory(script, runtimeToml: LanesEnabledToml());
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var run = StartStreamingInvoke(client, sessionId, new { content = "并行目标", client_message_id = "parallel-lease" });
+        var runId = RunIdOf(await run.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+
+        // Both lanes dispatch their worker under the same run before either
+        // finishes: two gate entries prove per-lane ticks share one run loop.
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (script.WorkerGateEntries < 2 && DateTimeOffset.UtcNow < waitDeadline)
+        {
+            await Task.Delay(50);
+        }
+        Assert.Equal(2, script.WorkerGateEntries);
+
+        gate.SetResult();
+        var chunks = await run.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        var done = Assert.Single(chunks.Where(chunk => KindOf(chunk) == "done"));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
+        Assert.All(orchestration.GetProperty("nodes").EnumerateArray(),
+            node => Assert.Equal("completed", node.GetProperty("status").GetString()));
+    }
+
+    [Fact]
+    public async Task LaneGate_WaitingDoesNotFailRunAsInvalidTaskGraph()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[\"a\"],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\",\"lane_key\":\"l2\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。");
+        script.BeforeWorker = gate.Task;
+        var factory = CreateFactory(script, runtimeToml: LanesEnabledToml());
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var run = StartStreamingInvoke(client, sessionId, new { content = "跨 lane 目标", client_message_id = "lane-wait-park" });
+        var runId = RunIdOf(await run.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+
+        // l2 parks behind main instead of the old invalid_task_graph failure.
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        JsonElement? waitingPayload = null;
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (waitingPayload is null && DateTimeOffset.UtcNow < waitDeadline)
+        {
+            foreach (var envelope in await manager.ReplayEventsAsync(sessionId, 0))
+            {
+                if (envelope.EventType != "orchestration.lane_waiting") continue;
+                waitingPayload = (JsonElement)envelope.Payload["payload"]!;
+                break;
+            }
+            if (waitingPayload is null) await Task.Delay(50);
+        }
+        Assert.NotNull(waitingPayload);
+        Assert.Equal("l2", waitingPayload!.Value.GetProperty("lane_key").GetString());
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        Assert.NotEqual("failed", orchestration.GetProperty("run").GetProperty("status").GetString());
+        Assert.NotEqual("invalid_task_graph", orchestration.GetProperty("run").GetProperty("status").GetString());
+
+        gate.SetResult();
+        var chunks = await run.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+    }
+
+    [Fact]
+    public async Task LaneGate_GateSequenceProceedsThroughWaitingReviewExecuting()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[\"a\"],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\",\"lane_key\":\"l2\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[],\"criteria_verdicts\":[{\"task_key\":\"a\",\"criterion\":\"完成\",\"satisfied\":true,\"evidence\":\"worker 输出含完成标记\"}]}")
+            .WhenMeeting("完成。")
+            .WhenGate("{\"decision\":\"proceed\",\"reasons\":[\"事实与裁决一致\"]}");
+        var runtimeToml = LanesEnabledToml() + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n";
+        var factory = CreateFactory(script, runtimeToml: runtimeToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "门控目标", client_message_id = "gate-sequence" });
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+        var runId = RunIdOf(chunks[0]);
+
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var laneEventTypes = (await manager.ReplayEventsAsync(sessionId, 0))
+            .Where(e => e.EventType.StartsWith("orchestration.", StringComparison.Ordinal))
+            .Select(e => (EventType: e.EventType, Payload: (JsonElement)e.Payload["payload"]!))
+            .Where(pair => pair.Payload.TryGetProperty("lane_key", out var laneKey) && laneKey.GetString() == "l2")
+            .Select(pair => pair.EventType)
+            .ToArray();
+        Assert.Equal(new[] { "orchestration.lane_waiting", "orchestration.gate_review", "orchestration.gate_review.completed" }, laneEventTypes);
+
+        Assert.Equal(1, script.GateCalls);
+        var gatePrompt = Assert.Single(script.GatePrompts);
+        Assert.Contains("Lane: l2", gatePrompt, StringComparison.Ordinal);
+        Assert.Contains("门控评审", gatePrompt, StringComparison.Ordinal);
+        Assert.Contains("ObservedFactsHash: ", gatePrompt, StringComparison.Ordinal);
+        Assert.Contains("criteria: 完成", gatePrompt, StringComparison.Ordinal);
+        Assert.Contains("\"satisfied\":true", gatePrompt, StringComparison.Ordinal);
+        Assert.Equal(1, script.PlannerLaneCalls["main"]);
+        Assert.Equal(2, script.WorkerCalls);
+    }
+
+    [Fact]
+    public async Task GateReview_ModelProceedCannotOverrideFalseFacts()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[\"a\"],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\",\"lane_key\":\"l2\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[],\"criteria_verdicts\":[{\"task_key\":\"a\",\"criterion\":\"完成\",\"satisfied\":false,\"evidence\":\"\"}]}")
+            .WhenMeeting("不应到达。")
+            .WhenGate("{\"decision\":\"proceed\",\"reasons\":[]}");
+        var runtimeToml = LanesEnabledToml() + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n";
+        var factory = CreateFactory(script, runtimeToml: runtimeToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var run = StartStreamingInvoke(client, sessionId, new { content = "假事实目标", client_message_id = "gate-stale" });
+        await run.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var runId = RunIdOf(await run.Acknowledgement);
+
+        string? status = null;
+        JsonElement orchestration = default;
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < waitDeadline)
+        {
+            orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+            status = orchestration.GetProperty("run").GetProperty("status").GetString();
+            if (status == "awaiting_user" || status == "failed") break;
+            await Task.Delay(50);
+        }
+        Assert.Equal("awaiting_user", status);
+        Assert.False(run.Completion.IsCompleted);
+
+        // The model said proceed, but the supervisor's unsatisfied verdict over
+        // code facts rejects the gate and escalates only the waiting lane.
+        Assert.Equal(1, script.GateCalls);
+        Assert.Equal(1, script.WorkerCalls);
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0);
+        var rejection = Assert.Single(events, e => e.EventType == "gate.review.rejected_stale");
+        var rejectionPayload = (JsonElement)rejection.Payload["payload"]!;
+        Assert.Equal("l2", rejectionPayload.GetProperty("lane_key").GetString());
+        Assert.Contains(events, e => e.EventType == "supervision.user_review.requested");
+        // Task b was never dispatched, so the event-rebuilt orchestration graph
+        // has no node for it.
+        var nodes = orchestration.GetProperty("nodes").EnumerateArray().ToList();
+        Assert.DoesNotContain(nodes, node => node.GetProperty("title").GetString() == "任务B");
+    }
+
     [Fact]
     public async Task RunTerminal_DrainsQueuedDirective_RejectedWhenLanesDisabled()
     {
@@ -1615,12 +1789,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
     /// <summary>
     /// Routes calls by agent name: planner/executor/supervisor/meeting get independent
-    /// scripts. Extra supervision verdicts play in order after the first.
+    /// scripts. Extra supervision verdicts play in order after the first. Lane-aware:
+    /// planner prompts carrying a "Lane: &lt;key&gt;" line (in prompt or instructions) route
+    /// to their per-lane script, and gate-review prompts (marked "门控评审") route to the
+    /// gate script instead of the planner script.
     /// </summary>
     public sealed class ScriptedChatClient : IChatClient
     {
         private readonly Queue<string> _supervisorVerdicts = new();
         private string? _planner;
+        private readonly Dictionary<string, string> _plannerLanes = new(StringComparer.Ordinal);
+        private string? _gate;
         private string? _worker;
         private string? _meeting;
         private string? _compressor;
@@ -1634,6 +1813,14 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public int RecommenderCalls;
         public int CuratorCalls;
         public int StewardCalls;
+        public int GateCalls;
+        public Dictionary<string, int> PlannerLaneCalls { get; } = new(StringComparer.Ordinal);
+        private readonly object _laneGate = new();
+        private readonly List<string> _gatePrompts = [];
+        public IReadOnlyList<string> GatePrompts
+        {
+            get { lock (_laneGate) return _gatePrompts.ToArray(); }
+        }
         public Task? BeforeMeeting;
         public Task? BeforeWorker;
         public TaskCompletionSource? WorkerStarted;
@@ -1647,6 +1834,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         }
 
         public ScriptedChatClient WhenPlanner(string script) { _planner = script; return this; }
+        public ScriptedChatClient WhenPlanner(string lane, string script) { _plannerLanes[lane] = script; return this; }
+        public ScriptedChatClient WhenGate(string script) { _gate = script; return this; }
         public ScriptedChatClient WhenWorker(string script) { _worker = script; return this; }
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient ThenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
@@ -1714,10 +1903,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 return RecordOperational(ref CuratorCalls, _curator ?? "{\"memory_candidates\":[],\"agent_candidates\":[]}");
             if (instructions?.Contains("You are the git steward", StringComparison.Ordinal) == true)
                 return RecordOperational(ref StewardCalls, _steward ?? "No git changes to review.");
+            if (prompt.Contains("门控评审", StringComparison.Ordinal))
+                return RecordGate(prompt, _gate ?? "{\"decision\":\"proceed\",\"reasons\":[]}");
+            var plannerLane = LaneKeyFromPrompt(prompt) ?? LaneKeyFromPrompt(instructions);
             if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
-                return RecordPlanner(_planner ?? "[]");
+            {
+                if (plannerLane is not null) RecordPlannerLane(plannerLane);
+                return RecordPlanner(
+                    plannerLane is not null && _plannerLanes.TryGetValue(plannerLane, out var laneScript) ? laneScript : _planner ?? "[]");
+            }
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
@@ -1735,6 +1931,34 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         {
             Interlocked.Increment(ref PlannerCalls);
             return text;
+        }
+
+        private string RecordGate(string prompt, string text)
+        {
+            Interlocked.Increment(ref GateCalls);
+            lock (_laneGate) _gatePrompts.Add(prompt);
+            return text;
+        }
+
+        private void RecordPlannerLane(string lane)
+        {
+            lock (_laneGate)
+            {
+                PlannerLaneCalls[lane] = PlannerLaneCalls.GetValueOrDefault(lane) + 1;
+            }
+        }
+
+        /// <summary>Extracts the first "Lane: &lt;key&gt;" token from prompt or instructions text.</summary>
+        private static string? LaneKeyFromPrompt(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            const string marker = "Lane: ";
+            var start = text.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0) return null;
+            start += marker.Length;
+            var end = start;
+            while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+            return end > start ? text[start..end] : null;
         }
 
         private static string RecordOperational(ref int counter, string text)
