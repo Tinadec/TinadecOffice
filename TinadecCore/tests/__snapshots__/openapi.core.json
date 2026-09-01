@@ -1347,6 +1347,73 @@
         },
         "type": "object"
       },
+      "PreAuthorizationRequestDto": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "lane_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "max_uses": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "parameter_constraint_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "risk_max": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "lane_key",
+          "tool_scope",
+          "parameter_constraint_hash",
+          "risk_max",
+          "max_uses",
+          "expires_at",
+          "summary"
+        ],
+        "type": "object"
+      },
       "ProblemDetails": {
         "properties": {
           "detail": {
@@ -2777,6 +2844,28 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/approvals/pre-authorizations": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreAuthorizationRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "OK"

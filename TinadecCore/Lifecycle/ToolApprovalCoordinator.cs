@@ -23,19 +23,22 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     private readonly IContentStore _content;
     private readonly ISessionLocator _sessions;
     private readonly INonceMaterialStore _nonceMaterials;
+    private readonly ILifecycleManager? _lifecycle;
 
     public ToolApprovalCoordinator(
         IDbContextFactory<LifecycleDbContext> factory,
         ITenantContextAccessor tenant,
         IContentStore content,
         ISessionLocator sessions,
-        INonceMaterialStore? nonceMaterials = null)
+        INonceMaterialStore? nonceMaterials = null,
+        ILifecycleManager? lifecycle = null)
     {
         _factory = factory;
         _tenant = tenant;
         _content = content;
         _sessions = sessions;
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
+        _lifecycle = lifecycle;
     }
 
     public async Task<ToolExecutionPreparation> PrepareAsync(
@@ -269,6 +272,151 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             return await ToSnapshotAsync(winner, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// Converts this execution's pending approval into an approved one when an
+    /// unattended grant covers it. A grant spends its budget through a CAS on
+    /// use_count; a lane-bound grant never mints until executions carry a lane,
+    /// and wildcard scopes are refused here even if one was ever stored.
+    /// </summary>
+    public async Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        if (execution is null || !execution.RequiresApproval || execution.ApprovalId is not { } approvalId) return null;
+        var approval = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == approvalId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        if (approval is null || approval.Status != "pending") return null;
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == execution.RunId, cancellationToken).ConfigureAwait(false);
+        if (run is null) return null;
+
+        var frozenMode = await ReadFrozenPermissionModeAsync(execution.RunId, cancellationToken).ConfigureAwait(false);
+        PreAuthorizationRecord? spent = null;
+        if (string.Equals(frozenMode, "full-access", StringComparison.Ordinal))
+        {
+            // The frozen manifest and per-instance grants are still enforced by
+            // ToolInvocationScopeResolver; the mint only removes the human wait.
+        }
+        else
+        {
+            // SQLite cannot translate DateTimeOffset relational comparisons, so
+            // expiry stays out of the SQL predicates: candidates are loaded with
+            // the translatable CAS state and filtered in memory, mirroring
+            // TryConsumeApprovalAsync.
+            var candidates = await db.PreAuthorizations
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.RunId == execution.RunId && !x.Revoked
+                    && x.UseCount < x.MaxUses
+                    && x.LaneKey == null)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            // SQLite cannot order by DateTimeOffset either, so oldest-grant-first
+            // ordering happens client-side after the translatable load.
+            var matched = candidates
+                .OrderBy(x => x.CreatedAt)
+                .FirstOrDefault(x => x.ExpiresAt > now && MatchesGrant(x, execution));
+            if (matched is null) return null;
+            var cas = await db.PreAuthorizations
+                .Where(x => x.Id == matched.Id && !x.Revoked && x.UseCount < x.MaxUses)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.UseCount, x => x.UseCount + 1)
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+            if (cas != 1) return null;
+            spent = matched;
+            var spentRow = await db.PreAuthorizations.AsNoTracking().SingleAsync(x => x.Id == matched.Id, cancellationToken).ConfigureAwait(false);
+            if (spentRow.ExpiresAt <= now)
+            {
+                // The grant lapsed between load and spend; give the budget back
+                // rather than minting from an expired grant.
+                await db.PreAuthorizations
+                    .Where(x => x.Id == matched.Id && x.UseCount == matched.UseCount + 1)
+                    .ExecuteUpdateAsync(set => set
+                        .SetProperty(x => x.UseCount, x => x.UseCount - 1)
+                        .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+        }
+
+        var reason = spent is null ? "full_access_auto_mint" : "pre_authorized";
+        // The approval can never outlive the grant that backed it.
+        var expiry = spent is { } grant && grant.ExpiresAt < now.Add(DefaultExpiry) ? grant.ExpiresAt : now.Add(DefaultExpiry);
+        var upgraded = await db.ApprovalRequests
+            .Where(x => x.Id == approvalId && x.Status == "pending")
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Status, "approved")
+                .SetProperty(x => x.Decision, "approved")
+                .SetProperty(x => x.DecisionReason, reason)
+                .SetProperty(x => x.DecidedAt, now)
+                .SetProperty(x => x.ExpiresAt, expiry)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        if (upgraded != 1) return null;
+
+        db.ApprovalDecisions.Add(new ApprovalDecisionRecord
+        {
+            Id = Guid.NewGuid(),
+            ApprovalRequestId = approvalId,
+            Decision = "approved",
+            Reason = reason,
+            DecidedByPrincipalId = spent?.GrantedByPrincipalId ?? run.InitiatedByPrincipalId,
+            CreatedAt = now
+        });
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        var fresh = await db.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        return new PreAuthorizationMintResult(await ToSnapshotAsync(fresh ?? execution, cancellationToken).ConfigureAwait(false), reason);
+    }
+
+    private async Task<string?> ReadFrozenPermissionModeAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        if (_lifecycle is null) return null;
+        try
+        {
+            var frozen = await _lifecycle.GetFrozenRunConfigurationAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(frozen?.Content)) return null;
+            using var document = JsonDocument.Parse(frozen.Content);
+            foreach (var name in new[] { "permissionMode", "permission_mode" })
+            {
+                if (document.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString()?.Trim().ToLowerInvariant();
+            }
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool MatchesGrant(PreAuthorizationRecord grant, ToolExecutionRecord execution)
+    {
+        List<string> tools;
+        try
+        {
+            tools = JsonSerializer.Deserialize<List<string>>(grant.ToolScopeJson, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        if (tools.Count == 0 || tools.Any(t => string.Equals(t, "*", StringComparison.Ordinal))) return false;
+        if (!tools.Any(t => string.Equals(t, execution.ToolId, StringComparison.OrdinalIgnoreCase))) return false;
+        if (!string.IsNullOrWhiteSpace(grant.ParameterConstraintHash)
+            && !string.Equals(grant.ParameterConstraintHash, execution.ParametersHash, StringComparison.OrdinalIgnoreCase)) return false;
+        return RiskRank(execution.Risk) <= RiskRank(grant.RiskMax);
+    }
+
+    private static int RiskRank(string? risk) => risk?.Trim().ToLowerInvariant() switch
+    {
+        "low" => 0,
+        "medium" => 1,
+        "high" => 2,
+        "elevated" => 3,
+        "critical" => 4,
+        _ => 5
+    };
 
     public async Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, CancellationToken cancellationToken = default)
     {

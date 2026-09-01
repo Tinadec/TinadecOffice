@@ -22,6 +22,7 @@ public sealed class LifecycleDbContext : DbContext
     public DbSet<UserToolActionRecord> UserToolActions => Set<UserToolActionRecord>();
     public DbSet<ModelInvocationRecord> ModelInvocations => Set<ModelInvocationRecord>();
     public DbSet<RunDirectiveRecord> RunDirectives => Set<RunDirectiveRecord>();
+    public DbSet<PreAuthorizationRecord> PreAuthorizations => Set<PreAuthorizationRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -211,6 +212,17 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.IdempotencyKey).HasMaxLength(256);
             entity.HasIndex(x => new { x.SessionId, x.Status, x.CreatedAt });
             entity.HasIndex(x => x.IdempotencyKey).IsUnique();
+        });
+        modelBuilder.Entity<PreAuthorizationRecord>(entity =>
+        {
+            entity.ToTable("pre_authorizations");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.LaneKey).HasMaxLength(128);
+            entity.Property(x => x.ToolScopeJson).HasMaxLength(4096).IsRequired();
+            entity.Property(x => x.ParameterConstraintHash).HasMaxLength(128);
+            entity.Property(x => x.RiskMax).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Summary).HasMaxLength(512);
+            entity.HasIndex(x => new { x.RunId, x.Revoked });
         });
         modelBuilder.UseTinadecSnakeCase();
     }
@@ -410,6 +422,33 @@ public sealed class ModelInvocationRecord
     public long? TotalTokens { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+}
+
+/// <summary>
+/// A user-granted unattended approval budget for one run. Mint converts a
+/// pending tool approval into an approved one only while the grant has budget,
+/// the tool is in its scope, and the risk stays under its ceiling; wildcard
+/// scopes are rejected at mint time even if they are ever stored.
+/// </summary>
+public sealed class PreAuthorizationRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid RunId { get; set; }
+    public string? LaneKey { get; set; }
+    public string ToolScopeJson { get; set; } = "[]";
+    public string? ParameterConstraintHash { get; set; }
+    public string RiskMax { get; set; } = "low";
+    public int MaxUses { get; set; } = 1;
+    public int UseCount { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public bool Revoked { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+    public Guid GrantedByPrincipalId { get; set; }
+    public string? Summary { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }
 
 /// <summary>

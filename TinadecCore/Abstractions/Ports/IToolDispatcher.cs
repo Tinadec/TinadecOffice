@@ -208,6 +208,14 @@ public interface IToolExecutionCoordinator
         CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
     /// <summary>
+    /// Attempts to turn this execution's pending approval into an approved one
+    /// from an unattended grant: an explicit pre-authorization row, or the run's
+    /// frozen full-access mode. All binding checks in TryStartAsync still apply
+    /// afterwards. Returns null when no grant matches; the execution then keeps
+    /// waiting on its normal human approval path.
+    /// </summary>
+    Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
+    /// <summary>
     /// Compatibility projection for callers that own an execution coordinator but
     /// need to atomically consume its bound action approval.
     /// </summary>
@@ -238,6 +246,9 @@ public sealed record ToolExecutionPrepareRequest(
     string Summary,
     bool DeferApproval = false,
     int LeaseUses = 1);
+
+/// <param name="Source">Why the approval was minted: pre_authorized or full_access_auto_mint.</param>
+public sealed record PreAuthorizationMintResult(ToolExecutionSnapshot Snapshot, string Source);
 
 public sealed record ToolExecutionSnapshot(
     Guid Id,

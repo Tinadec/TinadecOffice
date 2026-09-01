@@ -17,6 +17,16 @@ using TinadecCore.Tools;
 
 namespace TinadecCore.Runtime;
 
+public sealed record PreAuthorizationRequestDto(
+    Guid RunId,
+    string? LaneKey,
+    IReadOnlyList<string>? ToolScope,
+    string? ParameterConstraintHash,
+    string? RiskMax,
+    int MaxUses,
+    DateTimeOffset? ExpiresAt,
+    string? Summary);
+
 public sealed class ControlPlaneService
 {
     private readonly IDbContextFactory<ModelControlDbContext> _models;
@@ -379,6 +389,63 @@ public sealed class ControlPlaneService
         }
         return Results.Ok(result.OrderByDescending(x => x is ApprovalResponseDto approval ? approval.CreatedAt : DateTimeOffset.MinValue));
     }
+    public async Task<IResult> CreatePreAuthorization(PreAuthorizationRequestDto input, CancellationToken ct)
+    {
+        if (input.RunId == Guid.Empty) return Results.BadRequest(new { message = "run_id is required." });
+        var tools = (input.ToolScope ?? [])
+            .Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (tools.Count == 0) return Results.BadRequest(new { message = "tool_scope must contain at least one tool id." });
+        if (tools.Any(t => string.Equals(t, "*", StringComparison.Ordinal)))
+            return Results.BadRequest(new { message = "Wildcard tool grants are not allowed in a pre-authorization." });
+        var riskMax = (input.RiskMax ?? "low").Trim().ToLowerInvariant() switch
+        {
+            "low" or "medium" or "high" or "elevated" or "critical" => (input.RiskMax ?? "low").Trim().ToLowerInvariant(),
+            _ => "low"
+        };
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = input.ExpiresAt ?? now.AddDays(7);
+        if (expiresAt <= now) return Results.BadRequest(new { message = "expires_at must be in the future." });
+        var maxUses = Math.Clamp(input.MaxUses <= 0 ? 1 : input.MaxUses, 1, 64);
+        await using var db = await _lifecycle.CreateDbContextAsync(ct);
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == input.RunId
+            && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+        if (run is null) return Results.NotFound(new { message = "Run was not found in this tenant/workspace." });
+        var row = new PreAuthorizationRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Tenant.TenantId,
+            WorkspaceId = Tenant.WorkspaceId,
+            RunId = input.RunId,
+            LaneKey = string.IsNullOrWhiteSpace(input.LaneKey) ? null : input.LaneKey!.Trim(),
+            ToolScopeJson = JsonSerializer.Serialize(tools),
+            ParameterConstraintHash = string.IsNullOrWhiteSpace(input.ParameterConstraintHash) ? null : input.ParameterConstraintHash!.Trim().ToLowerInvariant(),
+            RiskMax = riskMax,
+            MaxUses = maxUses,
+            UseCount = 0,
+            ExpiresAt = expiresAt,
+            GrantedByPrincipalId = Tenant.PrincipalId,
+            Summary = input.Summary,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.PreAuthorizations.Add(row);
+        await db.SaveChangesAsync(ct);
+        return Results.Json(new
+        {
+            id = row.Id,
+            run_id = row.RunId,
+            lane_key = row.LaneKey,
+            tool_scope = tools,
+            parameter_constraint_hash = row.ParameterConstraintHash,
+            risk_max = row.RiskMax,
+            max_uses = row.MaxUses,
+            use_count = 0,
+            expires_at = row.ExpiresAt,
+            revoked = false
+        }, statusCode: 201);
+    }
+
     public async Task<IResult> GetApproval(Guid id, CancellationToken ct)
     {
         await using var db = await _lifecycle.CreateDbContextAsync(ct);

@@ -157,7 +157,18 @@ public sealed class ToolDispatcher : IToolDispatcher
                     "requested",
                     cancellationToken).ConfigureAwait(false);
                 if (execution.RequiresApproval)
+                {
                     execution = await _executions.EnsureApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
+                    var minted = await _executions.TryMintPreAuthorizedApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
+                    if (minted is not null)
+                    {
+                        execution = minted.Snapshot;
+                        await AppendEventAsync(scope.RunId, "approval.pre_authorized_minted",
+                            $"Tool '{descriptor.Entry.Id}' was approved by {minted.Source}.",
+                            new { execution_id = execution.Id, approval_id = execution.ApprovalId, tool_id = descriptor.Entry.Id, source = minted.Source },
+                            cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
+                    }
+                }
             }
 
             if (!preparation.Existing)
@@ -271,6 +282,15 @@ public sealed class ToolDispatcher : IToolDispatcher
             }
             if (execution.RequiresApproval && execution.ApprovalId is null)
                 execution = await _executions.EnsureApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
+            var resumedMint = await _executions.TryMintPreAuthorizedApprovalAsync(executionGuid, cancellationToken).ConfigureAwait(false);
+            if (resumedMint is not null)
+            {
+                execution = resumedMint.Snapshot;
+                await AppendEventAsync(execution.RunId, "approval.pre_authorized_minted",
+                    $"Tool '{descriptor.Id}' was approved by {resumedMint.Source}.",
+                    new { execution_id = execution.Id, approval_id = execution.ApprovalId, tool_id = descriptor.Id, source = resumedMint.Source },
+                    cancellationToken, execution.TaskId, descriptor.Id).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or UnauthorizedAccessException or KeyNotFoundException or DirectoryNotFoundException)
         {
