@@ -6,6 +6,7 @@ export interface ExternalTaskNodeDto {
   title: string;
   description: string;
   status: string;
+  lane_key: string;
   priority: number;
   risk: string;
   success_criteria: string[];
@@ -29,6 +30,7 @@ export function mapTaskNode(core: unknown): ExternalTaskNodeDto | null {
     title: String(core.title ?? ''),
     description: String(core.description ?? ''),
     status: String(core.status ?? 'unknown'),
+    lane_key: String(core.lane_key ?? core.laneKey ?? 'main'),
     priority: Number(core.priority ?? 1),
     risk: String(core.risk ?? 'medium'),
     success_criteria: (core.success_criteria as string[]) ?? (core.successCriteria as string[]) ?? [],

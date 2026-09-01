@@ -81,6 +81,7 @@ const taskNode = t.Object({
   title: t.String(),
   description: t.String(),
   status: t.String(),
+  lane_key: t.String(),
   priority: t.Unsafe({ type: 'integer' }),
   risk: t.String(),
   success_criteria: t.Array(t.String()),
@@ -88,6 +89,22 @@ const taskNode = t.Object({
   required_capabilities: t.Array(t.String()),
   created_at: nullableString(),
   updated_at: nullableString(),
+}, { additionalProperties: true });
+
+const laneWait = t.Object({
+  waiting_task: t.String(),
+  lane: t.String(),
+  predicate: t.String(),
+  required_criteria: t.Array(t.String()),
+  facts_hash: nullableString(),
+}, { additionalProperties: true });
+
+const lane = t.Object({
+  lane_key: t.String(),
+  status: t.String(),
+  escalated: t.Unsafe({ type: 'boolean' }),
+  task_keys: t.Array(t.String()),
+  waits: t.Array(componentRef('LaneWait')),
 }, { additionalProperties: true });
 
 const supervisionFinding = t.Object({
@@ -127,6 +144,7 @@ const orchestrationSnapshot = t.Object({
   run: nullableRef('Run'),
   graph: nullableJsonObject(),
   nodes: t.Array(t.Unknown()),
+  lanes: t.Array(componentRef('Lane')),
   assignments: t.Array(componentRef('Assignment')),
   step_results: t.Array(t.Unknown()),
   context_packs: t.Array(t.Unknown()),
@@ -155,6 +173,8 @@ export const externalDtoSchemas = {
   RunList: t.Array(componentRef('Run')),
   TaskNode: taskNode,
   TaskNodeList: t.Array(componentRef('TaskNode')),
+  LaneWait: laneWait,
+  Lane: lane,
   SupervisionFinding: supervisionFinding,
   SupervisionFindingList: t.Array(componentRef('SupervisionFinding')),
   ContextVersion: contextVersion,

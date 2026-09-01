@@ -947,6 +947,72 @@
         ],
         "type": "object"
       },
+      "Lane": {
+        "additionalProperties": true,
+        "properties": {
+          "escalated": {
+            "type": "boolean"
+          },
+          "lane_key": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waits": {
+            "items": {
+              "$ref": "#/components/schemas/LaneWait"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lane_key",
+          "status",
+          "escalated",
+          "task_keys",
+          "waits"
+        ],
+        "type": "object"
+      },
+      "LaneWait": {
+        "additionalProperties": true,
+        "properties": {
+          "facts_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "predicate": {
+            "type": "string"
+          },
+          "required_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waiting_task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "waiting_task",
+          "lane",
+          "predicate",
+          "required_criteria",
+          "facts_hash"
+        ],
+        "type": "object"
+      },
       "MeetingModelOverride": {
         "additionalProperties": true,
         "properties": {
@@ -1037,6 +1103,12 @@
             "nullable": true,
             "type": "object"
           },
+          "lanes": {
+            "items": {
+              "$ref": "#/components/schemas/Lane"
+            },
+            "type": "array"
+          },
           "nodes": {
             "items": {},
             "type": "array"
@@ -1066,6 +1138,7 @@
           "run",
           "graph",
           "nodes",
+          "lanes",
           "assignments",
           "step_results",
           "context_packs",
@@ -1398,6 +1471,9 @@
           "id": {
             "type": "string"
           },
+          "lane_key": {
+            "type": "string"
+          },
           "priority": {
             "type": "integer"
           },
@@ -1441,6 +1517,7 @@
           "title",
           "description",
           "status",
+          "lane_key",
           "priority",
           "risk",
           "success_criteria",

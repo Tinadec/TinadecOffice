@@ -138,8 +138,8 @@ export interface paths {
   };
   "/api/v1/code/tools/{toolId}/execute": {
     /**
-     * Execute user tool (direct transport)
-     * @description Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.
+     * Execute user tool (Core-owned)
+     * @description Core resolves the registered workspace root and invokes the Tool Provider.
      */
     post: operations["postApiV1CodeToolsByToolIdExecute"];
   };
@@ -649,6 +649,18 @@ export interface paths {
     /** Move session to trash */
     post: operations["postApiV1SessionsBySessionIdTrash"];
   };
+  "/api/v1/terminals": {
+    /** Terminal sessions for a run */
+    get: operations["getApiV1Terminals"];
+  };
+  "/api/v1/terminals/{terminalSessionId}/kill": {
+    /** Terminate an agent terminal session */
+    post: operations["postApiV1TerminalsByTerminalSessionIdKill"];
+  };
+  "/api/v1/terminals/{terminalSessionId}/stdin": {
+    /** Send user input to an agent terminal session */
+    post: operations["postApiV1TerminalsByTerminalSessionIdStdin"];
+  };
   "/api/v1/tool-layer-readiness": {
     /** Tool layer readiness */
     get: operations["getApiV1Tool-layer-readiness"];
@@ -667,8 +679,8 @@ export interface paths {
   };
   "/api/v1/tool-runtime/tools/{toolId}/execute": {
     /**
-     * Execute user tool (direct transport)
-     * @description Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.
+     * Execute user tool (Core-owned)
+     * @description Core resolves the registered workspace root and invokes the Tool Provider.
      */
     post: operations["postApiV1Tool-runtimeToolsByToolIdExecute"];
   };
@@ -980,6 +992,22 @@ export interface components {
       tool_runtime_url: string;
       [key: string]: unknown;
     };
+    Lane: {
+      escalated: boolean;
+      lane_key: string;
+      status: string;
+      task_keys: string[];
+      waits: components["schemas"]["LaneWait"][];
+      [key: string]: unknown;
+    };
+    LaneWait: {
+      facts_hash: string | null;
+      lane: string;
+      predicate: string;
+      required_criteria: string[];
+      waiting_task: string;
+      [key: string]: unknown;
+    };
     MeetingModelOverride: {
       model: string | null;
       provider_instance_id: string;
@@ -1005,6 +1033,7 @@ export interface components {
       graph: {
         [key: string]: unknown;
       } | null;
+      lanes: components["schemas"]["Lane"][];
       nodes: unknown[];
       run: components["schemas"]["Run"] | null;
       step_results: unknown[];
@@ -1092,6 +1121,7 @@ export interface components {
       description: string;
       graph_id: string | null;
       id: string;
+      lane_key: string;
       priority: number;
       required_capabilities: string[];
       risk: string;
@@ -1659,8 +1689,8 @@ export interface operations {
     };
   };
   /**
-   * Execute user tool (direct transport)
-   * @description Current v1 user tool transport for Desktop and explicit clients. Gateway forwards the request and Tool Provider owns validation and execution.
+   * Execute user tool (Core-owned)
+   * @description Core resolves the registered workspace root and invokes the Tool Provider.
    */
   postApiV1CodeToolsByToolIdExecute: {
     parameters: {
@@ -3316,6 +3346,56 @@ export interface operations {
       };
     };
   };
+  /** Terminal sessions for a run */
+  getApiV1Terminals: {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Terminate an agent terminal session */
+  postApiV1TerminalsByTerminalSessionIdKill: {
+    parameters: {
+      path: {
+        terminalSessionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Send user input to an agent terminal session */
+  postApiV1TerminalsByTerminalSessionIdStdin: {
+    parameters: {
+      path: {
+        terminalSessionId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          data?: string;
+          [key: string]: unknown;
+        };
+        "multipart/form-data": {
+          data?: string;
+          [key: string]: unknown;
+        };
+        "text/plain": {
+          data?: string;
+          [key: string]: unknown;
+        };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
   /** Tool layer readiness */
   "getApiV1Tool-layer-readiness": {
     responses: {
@@ -3349,8 +3429,8 @@ export interface operations {
     };
   };
   /**
-   * Execute user tool (direct transport)
-   * @description Current v1 user tool transport. Gateway forwards the request; Tool Provider owns validation and execution.
+   * Execute user tool (Core-owned)
+   * @description Core resolves the registered workspace root and invokes the Tool Provider.
    */
   "postApiV1Tool-runtimeToolsByToolIdExecute": {
     parameters: {
