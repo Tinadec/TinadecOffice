@@ -172,7 +172,10 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null) return 0;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await db.Runs.CountAsync(x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled", cancellationToken).ConfigureAwait(false);
+        // Runs parked on awaiting_user are waiting for a human decision, not
+        // consuming worker capacity, so they do not count against the session's
+        // active-run admission limit.
+        return await db.Runs.CountAsync(x => x.SessionId == sessionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled" && x.Status != "awaiting_user", cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetRunStatusAsync(Guid runId, string status, string? summary = null, CancellationToken cancellationToken = default)

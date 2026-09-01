@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
 
@@ -15,7 +16,6 @@ namespace TinadecCore.Lifecycle;
 /// </summary>
 public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExecutionCoordinator
 {
-    private static readonly TimeSpan DefaultExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<LifecycleDbContext> _factory;
@@ -24,6 +24,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     private readonly ISessionLocator _sessions;
     private readonly INonceMaterialStore _nonceMaterials;
     private readonly ILifecycleManager? _lifecycle;
+    private readonly TimeSpan _decisionWindow;
+    private readonly TimeSpan _executionWindow;
 
     public ToolApprovalCoordinator(
         IDbContextFactory<LifecycleDbContext> factory,
@@ -31,7 +33,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         IContentStore content,
         ISessionLocator sessions,
         INonceMaterialStore? nonceMaterials = null,
-        ILifecycleManager? lifecycle = null)
+        ILifecycleManager? lifecycle = null,
+        IOptions<TinadecApprovalOptions>? approvalOptions = null)
     {
         _factory = factory;
         _tenant = tenant;
@@ -39,6 +42,9 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         _sessions = sessions;
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
         _lifecycle = lifecycle;
+        var options = approvalOptions?.Value ?? new TinadecApprovalOptions();
+        _decisionWindow = TimeSpan.FromMinutes(Math.Clamp(options.DecisionWindowMinutes, 1, 1440));
+        _executionWindow = TimeSpan.FromMinutes(Math.Clamp(options.ExecutionWindowMinutes, 1, 1440));
     }
 
     public async Task<ToolExecutionPreparation> PrepareAsync(
@@ -125,7 +131,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     ParametersReference = parameters.Value,
                     Summary = Truncate(request.Summary, 4096),
                     Status = "pending",
-                    ExpiresAt = now.Add(DefaultExpiry),
+                    ExpiresAt = now.Add(_decisionWindow),
                     RequestedByPrincipalId = scope.PrincipalId,
                     CreatedAt = now,
                     UpdatedAt = now
@@ -245,7 +251,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ParametersReference = row.ParametersReference,
             Summary = $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.",
             Status = "pending",
-            ExpiresAt = row.UpdatedAt.Add(DefaultExpiry),
+            ExpiresAt = row.UpdatedAt.Add(_decisionWindow),
             RequestedByPrincipalId = scope.PrincipalId,
             CreatedAt = row.UpdatedAt,
             UpdatedAt = row.UpdatedAt
@@ -341,7 +347,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
         var reason = spent is null ? "full_access_auto_mint" : "pre_authorized";
         // The approval can never outlive the grant that backed it.
-        var expiry = spent is { } grant && grant.ExpiresAt < now.Add(DefaultExpiry) ? grant.ExpiresAt : now.Add(DefaultExpiry);
+        var expiry = spent is { } grant && grant.ExpiresAt < now.Add(_decisionWindow) ? grant.ExpiresAt : now.Add(_decisionWindow);
         var upgraded = await db.ApprovalRequests
             .Where(x => x.Id == approvalId && x.Status == "pending")
             .ExecuteUpdateAsync(set => set
@@ -350,6 +356,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 .SetProperty(x => x.DecisionReason, reason)
                 .SetProperty(x => x.DecidedAt, now)
                 .SetProperty(x => x.ExpiresAt, expiry)
+                .SetProperty(x => x.ExecutionWindowExpiresAt, now.Add(_executionWindow))
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
         if (upgraded != 1) return null;
 
@@ -478,17 +485,41 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         }
 
         var now = DateTimeOffset.UtcNow;
-        if (approval.ExpiresAt <= now && approval.Status is "pending" or "approved")
+        if (approval.Status == "pending" && approval.ExpiresAt <= now)
         {
+            // Park, don't fail: a lapsed decision window means the human never
+            // answered, not that the tool call was wrong. The execution keeps
+            // waiting and the lane escalates when the engine consumes
+            // approval.park_expired.
             approval.Status = "expired";
             approval.UpdatedAt = now;
-            execution.Status = "failed";
-            execution.ErrorCategory = "approval_expired";
-            execution.SafeErrorMessage = "Approval expired before execution began.";
-            execution.UpdatedAt = now;
-            execution.CompletedAt = execution.UpdatedAt;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            return new ToolExecutionStartDecision("not_approved", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
+            if (_lifecycle is not null)
+            {
+                await _lifecycle.AppendEventAsync(execution.RunId, "approval.park_expired",
+                    new { execution_id = execution.Id, approval_id = approval.Id, tool_id = execution.ToolId },
+                    "Approval decision window elapsed; execution parked awaiting escalation or re-approval.",
+                    "warning", taskId: execution.TaskId, approvalId: approval.Id, toolId: execution.ToolId, cancellationToken).ConfigureAwait(false);
+            }
+            return new ToolExecutionStartDecision("awaiting_approval", snapshot, "Decision window elapsed; execution parked awaiting escalation or re-approval.");
+        }
+        if (approval.Status == "approved")
+        {
+            // Legacy rows predating the split windows keep their old hard-fail
+            // semantics through the decision-window fallback.
+            var executionWindow = approval.ExecutionWindowExpiresAt ?? approval.ExpiresAt;
+            if (executionWindow <= now)
+            {
+                approval.Status = "expired";
+                approval.UpdatedAt = now;
+                execution.Status = "failed";
+                execution.ErrorCategory = "approval_expired";
+                execution.SafeErrorMessage = "Approval expired before execution began.";
+                execution.UpdatedAt = now;
+                execution.CompletedAt = execution.UpdatedAt;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                return new ToolExecutionStartDecision("not_approved", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
+            }
         }
         if (approval.Kind != "tool"
             || approval.ExecutionId != execution.Id
@@ -695,7 +726,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 ParametersReference = source.ParametersReference,
                 Summary = $"Retry for tool '{source.ToolId}' after unknown outcome from execution {source.Id}.",
                 Status = "pending",
-                ExpiresAt = now.Add(DefaultExpiry),
+                ExpiresAt = now.Add(_decisionWindow),
                 RequestedByPrincipalId = scope.PrincipalId,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -765,7 +796,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ParametersReference = string.Empty,
             Summary = Truncate(summary, 4096),
             Status = "pending",
-            ExpiresAt = now.Add(DefaultExpiry),
+            ExpiresAt = now.Add(_decisionWindow),
             RequestedByPrincipalId = scope.PrincipalId,
             CreatedAt = now,
             UpdatedAt = now
@@ -882,6 +913,9 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 .SetProperty(x => x.Decision, normalized)
                 .SetProperty(x => x.DecisionReason, decisionReason)
                 .SetProperty(x => x.DecidedAt, now)
+                // The execution window only starts on an approval: after it
+                // lapses the approved call hard-fails instead of replaying.
+                .SetProperty(x => x.ExecutionWindowExpiresAt, normalized == "approved" ? now.Add(_executionWindow) : (DateTimeOffset?)null)
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
         if (changed != 1)
         {

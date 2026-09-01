@@ -28,6 +28,7 @@ public sealed class LifecycleModuleRegistrar : IModuleRegistrar
         // Waiting authorization states remain paused; other non-terminal runs are
         // marked failed with an auditable recovery event.
         builder.Services.AddHostedService<RunRecoveryHostedService>();
+        builder.Services.AddOptions<TinadecApprovalOptions>().BindConfiguration(TinadecApprovalOptions.SectionName);
         builder.Services.AddSingleton<ToolApprovalCoordinator>();
         builder.Services.AddSingleton<IToolApprovalCoordinator>(sp => sp.GetRequiredService<ToolApprovalCoordinator>());
         builder.Services.AddSingleton<IToolExecutionCoordinator>(sp => sp.GetRequiredService<ToolApprovalCoordinator>());
