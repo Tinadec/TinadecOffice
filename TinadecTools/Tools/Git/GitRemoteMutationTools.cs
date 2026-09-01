@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
+using TinadecTools.Tools.Command;
 
 namespace TinadecTools.Tools.Git;
 
@@ -73,6 +74,11 @@ internal static class GitRemoteMutationTools
         var branch = string.IsNullOrWhiteSpace(args.Branch) ? status.Branch : args.Branch.Trim();
         var valid = await GitCli.RunAsync(repo, ["check-ref-format", "--branch", branch], cancellationToken: ct).ConfigureAwait(false);
         if (!valid.Ok) return Failure("push", $"Invalid branch name '{branch}'.");
+        // The command below pushes the current branch when an upstream exists,
+        // otherwise the resolved `branch` — guard whichever is the real target.
+        var pushTarget = string.IsNullOrWhiteSpace(status.Upstream) ? branch : status.Branch;
+        var branchGuard = ProtectedBranchGuard.EvaluatePushBranch(pushTarget);
+        if (!branchGuard.Allowed) return Failure("push", branchGuard.Detail ?? "Protected-branch push refused.");
         if (!string.IsNullOrWhiteSpace(status.Upstream) && status.Ahead == 0)
             return new GitRemoteMutationResult { Success = true, Action = "push", Remote = remote, Branch = branch, Changed = false, Status = status };
         if (string.IsNullOrWhiteSpace(status.Upstream) && !args.SetUpstream) return Failure("push", "No upstream branch is configured; set_upstream is required.");

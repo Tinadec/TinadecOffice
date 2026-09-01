@@ -641,7 +641,7 @@ flowchart TD
 **残余风险**
 
 - 开启 auto-approve 或 full-access 后，无人值守产生的变更（含 commit）没有人类复核点；缓解依赖 lane 门控评审（模型只能 tighten、不能推翻事实）与事后审计，无法事前阻止。
-- 工具层仍缺"禁止直推主干"守卫（推送前校验目标分支）：计划建议与 M5 同批补齐，尚未落地，这是当前最大的单点残余风险。
+- 工具层"禁止直推主干"守卫已随 M5 同批落地（2026-09-01）：`TinadecTools` 的 `ProtectedBranchGuard` 同时覆盖两条 agent 推送路径——结构化 `git_push` 工具拒绝推送受保护分支（默认 `main`/`master`，`TINADEC_PROTECTED_BRANCHES` 环境变量可覆盖），`shell` 工具在执行前对命令文本做引用感知解析，识别 `git push` 的 refspec 目标（含 `HEAD:main`、`:main` 删除、`main:master`、`--all`/`--mirror`、裸 push 与仅给仓库名的 push），命中即拒并返回结构化错误。已知限制：文本级解析无法拦截别名、脚本或包装可执行文件内部的推送；守卫只作用于 agent 工具面，用户自己的终端（Electron node-pty）不受管辖——这是刻意边界，人的推送不经守卫。
 - 策略自动批准尚未接入 Lifecycle 工具审批链（`ToolDispatcher` 铸造的工具审批仍走人工/预授权路径）；接入需要 Abstractions 端口（Lifecycle 不引用 Governance）。
 - 风险上限与 human-only 清单是静态全局配置，不随租户/工作区差异化；预算按 run 内次数计数，不是成本度量。
 

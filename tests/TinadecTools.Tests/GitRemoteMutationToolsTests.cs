@@ -72,10 +72,28 @@ public sealed class GitRemoteMutationToolsTests
     }
 
     [Fact]
+    public async Task PushAsync_RejectsProtectedBranch()
+    {
+        using var repo = new TempGitRepo("git-remote");
+        repo.SeedInitialCommit("a.txt", "v1\n");
+        repo.RunGit("remote", "add", "origin", NewBareRemote("git-remote-protected"));
+        repo.CommitFile("a.txt", "v2\n", "second");
+        var result = await GitRemoteMutationTools.PushAsync(new GitRemoteMutationArgs
+        {
+            RepositoryPath = repo,
+            SetUpstream = true,
+            ConfirmPush = "ok"
+        }, CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.Contains("protected branch", result.Error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task PushAsync_RequiresSetUpstreamWhenNoUpstreamConfigured()
     {
         using var repo = new TempGitRepo("git-remote");
         repo.SeedInitialCommit("a.txt", "v1\n");
+        repo.RunGit("checkout", "-b", "feature-push");
         string bare = NewBareRemote("git-remote-bare");
         repo.RunGit("remote", "add", "origin", bare);
         repo.CommitFile("a.txt", "v2\n", "second");
@@ -93,6 +111,7 @@ public sealed class GitRemoteMutationToolsTests
     {
         using var repo = new TempGitRepo("git-remote");
         repo.SeedInitialCommit("a.txt", "v1\n");
+        repo.RunGit("checkout", "-b", "feature-push");
         string bare = NewBareRemote("git-remote-bare");
         repo.RunGit("remote", "add", "origin", bare);
         repo.CommitFile("a.txt", "v2\n", "second");

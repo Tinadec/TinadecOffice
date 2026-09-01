@@ -105,6 +105,13 @@ internal static class ShellToolRegistration
             return Fail(request.ToolCallId, "Shell tool requires a non-empty 'command' parameter.");
         }
 
+        var branchGuard = ProtectedBranchGuard.EvaluateShellCommand(command);
+        if (!branchGuard.Allowed)
+        {
+            return Fail(request.ToolCallId,
+                $"Blocked by protected-branch policy [{branchGuard.ReasonCode}]: {branchGuard.Detail}");
+        }
+
         var workingDirectory = ResolveWorkingDirectory(cwd);
         if (workingDirectory is null || !Directory.Exists(workingDirectory))
         {
