@@ -40,8 +40,6 @@ internal sealed class LoopGuardEvaluator : ILoopGuard
         LoopGuardContext context,
         CancellationToken cancellationToken = default)
     {
-        var warnings = new List<string>();
-
         if (LoopDetection.isOverIterationLimit(context.Iteration, context.MaxIterations))
             return Task.FromResult(new LoopGuardDecision
             {
@@ -70,13 +68,19 @@ internal sealed class LoopGuardEvaluator : ILoopGuard
                 Reason = $"Too many consecutive errors: {context.ConsecutiveErrors}/{context.MaxConsecutiveErrors}"
             });
 
+        // A stuck worker repeats the identical call; three in a row is the signal
+        // to stop it rather than burn the remaining rounds. Repeat detection is
+        // a veto, not advice — callers rely on ShouldContinue to fail the task.
         if (LoopDetection.detectRepeatCalls(context.RecentToolCallFingerprints))
-            warnings.Add("Repeated tool call detected — consider alternative approach.");
+            return Task.FromResult(new LoopGuardDecision
+            {
+                ShouldContinue = false,
+                Reason = "Repeated identical tool call detected; the loop guard rejected further rounds."
+            });
 
         return Task.FromResult(new LoopGuardDecision
         {
-            ShouldContinue = true,
-            Warnings = warnings
+            ShouldContinue = true
         });
     }
 }

@@ -44,6 +44,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private readonly IServiceProvider _services;
     private readonly IAgentModelResolver? _modelResolver;
     private readonly IOperationalTriggerEvaluator? _triggerEvaluator;
+    private readonly ILoopGuard? _loopGuard;
     private readonly ILongTermMemoryService? _longTermMemory;
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
@@ -69,7 +70,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         IServiceProvider services,
         ILogger<FullDuplexRunEngine> logger,
         IAgentModelResolver? modelResolver = null,
-        IOperationalTriggerEvaluator? triggerEvaluator = null)
+        IOperationalTriggerEvaluator? triggerEvaluator = null,
+        ILoopGuard? loopGuard = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -80,6 +82,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _services = services;
         _modelResolver = modelResolver ?? services.GetService(typeof(IAgentModelResolver)) as IAgentModelResolver;
         _triggerEvaluator = triggerEvaluator ?? services.GetService(typeof(IOperationalTriggerEvaluator)) as IOperationalTriggerEvaluator;
+        _loopGuard = loopGuard ?? services.GetService(typeof(ILoopGuard)) as ILoopGuard;
         _longTermMemory = services.GetService(typeof(ILongTermMemoryService)) as ILongTermMemoryService;
         _logger = logger;
     }
@@ -649,6 +652,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
         var dispatcher = _services.GetRequiredService<IToolDispatcher>();
         var executionCoordinator = _services.GetRequiredService<IToolExecutionCoordinator>();
+        var roundLimit = configuration.Tools.ResolveTaskRoundLimit(task.Category, task.Risk);
         IReadOnlyList<WorkerToolDescriptor> descriptors;
         try
         {
@@ -683,7 +687,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                         AgentInstanceId = worker.Id.ToString(),
                         ToolId = pendingTurn.ToolId,
                         ToolCallKey = toolCallKey,
-                        LeaseUses = Math.Max(1, configuration.Tools.MaxToolRounds - task.ToolRounds + 1),
+                        LeaseUses = Math.Max(1, roundLimit - task.ToolRounds + 1),
                         Params = parameters
                     }, cancellationToken).ConfigureAwait(false);
 
@@ -767,9 +771,39 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
 
             task.ToolRounds++;
-            if (task.ToolRounds > configuration.Tools.MaxToolRounds)
+            if (task.ToolRounds > roundLimit)
             {
-                return FailedToolTask(checkpoint, task, worker, "tool_round_limit", $"The worker exceeded the frozen max_tool_rounds limit ({configuration.Tools.MaxToolRounds}).");
+                return FailedToolTask(checkpoint, task, worker, "tool_round_limit", $"The worker exceeded the effective max_tool_rounds limit ({roundLimit}).");
+            }
+            if (_loopGuard is { } guard && task.ToolRounds > configuration.Tools.MaxToolRounds)
+            {
+                // The task is running past the frozen global default only because a
+                // category/risk override raised its limit; every extra round must
+                // clear the loop guard before another call is dispatched.
+                var fingerprints = task.ToolTurns
+                    .Where(turn => !string.IsNullOrWhiteSpace(turn.ResultJson))
+                    .Select(turn => $"{turn.ToolId}:{turn.ArgumentsJson}")
+                    .ToArray();
+                var decision = await guard.EvaluateAsync(
+                    run.SessionId.ToString(),
+                    run.RunId.ToString(),
+                    new LoopGuardContext
+                    {
+                        // ToolRounds counts the round about to dispatch and the
+                        // engine allows ToolRounds == roundLimit, but the F#
+                        // iteration check rejects on >=; report completed rounds
+                        // so the guard's boundary matches the engine's `>`.
+                        Iteration = task.ToolRounds - 1,
+                        MaxIterations = roundLimit,
+                        ToolCallCount = task.ToolTurns.Count,
+                        RecentToolCallFingerprints = fingerprints
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                if (!decision.ShouldContinue)
+                {
+                    return FailedToolTask(checkpoint, task, worker, "tool_loop_detected",
+                        decision.Reason ?? "The loop guard rejected further tool rounds for this task.");
+                }
             }
 
             var existingCallIds = task.ToolTurns.Select(item => item.CallId).ToHashSet(StringComparer.Ordinal);
@@ -1800,6 +1834,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             TaskKey = candidate.Key,
             Title = candidate.Task.Title.Trim(),
             Description = candidate.Task.Description,
+            Category = string.IsNullOrWhiteSpace(candidate.Task.Category) ? null : candidate.Task.Category.Trim(),
             SuccessCriteria = candidate.Task.SuccessCriteria.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
             Dependencies = candidate.Task.Dependencies.Select(value => aliases.TryGetValue(value, out var dependency) ? dependency : throw new InvalidTaskGraphException($"Task '{candidate.Key}' references unknown dependency '{value}'.")).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             RequiredCapabilities = candidate.Task.RequiredCapabilities.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
@@ -1840,6 +1875,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 TaskKey = item.TaskKey,
                 Title = item.Title,
                 Description = item.Description,
+                Category = item.Category,
                 SuccessCriteria = item.SuccessCriteria,
                 Dependencies = item.Dependencies,
                 RequiredCapabilities = item.RequiredCapabilities,
@@ -2552,6 +2588,7 @@ internal sealed class DurableTaskNode
     public string TaskKey { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
     public string? Description { get; init; }
+    public string? Category { get; init; }
     public List<string> SuccessCriteria { get; init; } = [];
     public List<string> Dependencies { get; init; } = [];
     public List<string> RequiredCapabilities { get; init; } = [];

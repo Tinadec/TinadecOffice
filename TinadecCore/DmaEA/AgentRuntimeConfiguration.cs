@@ -18,9 +18,27 @@ public sealed record ContextPolicy(int DefaultTokenBudget, int RecentMessageLimi
 
 public sealed record MemoryPolicy(bool CandidateOnly, int RetrievalLimit, IReadOnlyList<string> AllowedScopes, IReadOnlyList<string> AllowedKinds);
 
-public sealed record ToolRuntimePolicy(string Provider, bool MutationRequiresApproval, bool SerializeWorkspaceWrites, int DefaultTimeoutSeconds, int MaxToolRounds)
+public sealed record ToolRuntimePolicy(
+    string Provider,
+    bool MutationRequiresApproval,
+    bool SerializeWorkspaceWrites,
+    int DefaultTimeoutSeconds,
+    int MaxToolRounds,
+    IReadOnlyDictionary<string, int>? TaskRoundOverrides = null)
 {
     public const int MaximumRounds = 32;
+
+    /// <summary>
+    /// Hard ceiling for any per-task round override, regardless of what the
+    /// baseline or a workspace override declares. Raising a task's limit past the
+    /// frozen default is only ever allowed under the loop guard's watch.
+    /// </summary>
+    public const int MaxTaskOverrideRounds = 12;
+
+    public IReadOnlyDictionary<string, int> Overrides { get; init; } =
+        TaskRoundOverrides is { Count: > 0 }
+            ? new Dictionary<string, int>(TaskRoundOverrides, StringComparer.OrdinalIgnoreCase)
+            : (IReadOnlyDictionary<string, int>)System.Collections.Frozen.FrozenDictionary<string, int>.Empty;
 
     public static void Validate(ToolRuntimePolicy policy)
     {
@@ -30,6 +48,26 @@ public sealed record ToolRuntimePolicy(string Provider, bool MutationRequiresApp
             throw new InvalidDataException(
                 $"max_tool_rounds must be between 0 and the Core safety ceiling ({MaximumRounds}).");
         }
+        foreach (var (key, rounds) in policy.Overrides)
+        {
+            if (rounds is < 0 or > MaxTaskOverrideRounds)
+            {
+                throw new InvalidDataException(
+                    $"task_round_overrides['{key}'] must be between 0 and the per-task ceiling ({MaxTaskOverrideRounds}).");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Effective tool-round limit for one task: the category override wins, the
+    /// risk class doubles as the category when the planner omitted one, and the
+    /// frozen global default applies otherwise.
+    /// </summary>
+    public int ResolveTaskRoundLimit(string? category, string risk)
+    {
+        if (!string.IsNullOrWhiteSpace(category) && Overrides.TryGetValue(category.Trim(), out var byCategory)) return byCategory;
+        if (!string.IsNullOrWhiteSpace(risk) && Overrides.TryGetValue(risk.Trim(), out var byRisk)) return byRisk;
+        return MaxToolRounds;
     }
 }
 
@@ -301,7 +339,7 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
         var tools = Table(root, "tools");
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
-        var toolPolicy = new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4));
+        var toolPolicy = new ToolRuntimePolicy(Text(tools, "provider"), Boolean(tools, "mutation_requires_approval"), Boolean(tools, "serialize_workspace_writes"), Integer(tools, "default_timeout_seconds", 120), Integer(tools, "max_tool_rounds", 4), ReadTaskRoundOverrides(tools));
         ToolRuntimePolicy.Validate(toolPolicy);
         // The trigger chain is opt-in: a baseline without a [triggers] table keeps
         // operational roles dormant, matching pre-trigger deployments.
@@ -335,6 +373,17 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
     }
 
     public static string NormalizeLayer(string? layer) => string.Equals(layer, "planning", StringComparison.OrdinalIgnoreCase) ? "operation" : layer?.Trim().ToLowerInvariant() ?? string.Empty;
+
+    private static IReadOnlyDictionary<string, int>? ReadTaskRoundOverrides(TomlTable tools)
+    {
+        if (!tools.TryGetValue("task_round_overrides", out var node) || node is not TomlTable table) return null;
+        var overrides = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in table)
+        {
+            if (value is long rounds) overrides[key] = checked((int)rounds);
+        }
+        return overrides.Count == 0 ? null : overrides;
+    }
 
     private static TomlTable Table(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : throw new InvalidDataException($"Missing TOML table '{key}'.");
     private static TomlTable? OptionalTable(TomlTable table, string key) => table.TryGetValue(key, out var value) && value is TomlTable nested ? nested : null;

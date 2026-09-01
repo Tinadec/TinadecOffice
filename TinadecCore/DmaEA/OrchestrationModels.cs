@@ -23,6 +23,8 @@ public sealed class PlannedTask
     public string? TaskKey { get; init; }
     [JsonPropertyName("title")]
     public string Title { get; init; } = string.Empty;
+    [JsonPropertyName("category")]
+    public string? Category { get; init; }
     [JsonPropertyName("description")]
     public string? Description { get; init; }
     [JsonPropertyName("success_criteria")]

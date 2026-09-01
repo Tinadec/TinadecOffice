@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="TinadecCore.AgentFramework.Tests" />
     <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
     <ProjectReference Include="..\Strategies\TinadecCore.Strategies.fsproj" />
   </ItemGroup>

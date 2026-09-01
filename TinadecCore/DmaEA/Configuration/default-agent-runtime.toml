@@ -36,6 +36,13 @@ serialize_workspace_writes = true
 default_timeout_seconds = 120
 max_tool_rounds = 4
 
+# Per-task round overrides, keyed by the planner's task category (the risk class
+# doubles as the key when the planner omits category). Every value is clamped to
+# the per-task hard ceiling (12) at parse time, and rounds past the global
+# default must clear the loop guard's repeat-call detection before each call.
+[tools.task_round_overrides]
+test = 12
+
 # Operational-role trigger chain (context compression, skill recommendation,
 # experience curation, git stewardship). Roles stay dormant when disabled or
 # when the frozen roster does not carry the role.

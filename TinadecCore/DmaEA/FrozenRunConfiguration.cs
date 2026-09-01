@@ -332,9 +332,28 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             Positive(root, "tools", "default_timeout_seconds", fallback.DefaultTimeoutSeconds, 1, 1800),
             // Core tool rounds count durable model/tool/result cycles. MAF's
             // auto-approval iteration limit has different N+1 inner-call semantics.
-            Positive(root, "tools", "max_tool_rounds", fallback.MaxToolRounds, 0, ToolRuntimePolicy.MaximumRounds));
+            Positive(root, "tools", "max_tool_rounds", fallback.MaxToolRounds, 0, ToolRuntimePolicy.MaximumRounds),
+            MergeTaskRoundOverrides(root, fallback.Overrides));
         ToolRuntimePolicy.Validate(policy);
         return policy;
+    }
+
+    private static IReadOnlyDictionary<string, int>? MergeTaskRoundOverrides(JsonElement root, IReadOnlyDictionary<string, int> fallback)
+    {
+        if (!root.TryGetProperty("tools", out var tools) || tools.ValueKind != JsonValueKind.Object
+            || !tools.TryGetProperty("task_round_overrides", out var node) || node.ValueKind != JsonValueKind.Object)
+        {
+            return fallback.Count == 0 ? null : fallback;
+        }
+        var merged = new Dictionary<string, int>(fallback, StringComparer.OrdinalIgnoreCase);
+        foreach (var property in node.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out var rounds))
+            {
+                merged[property.Name] = rounds;
+            }
+        }
+        return merged;
     }
 
     private static RuntimeProfileDefinition ReadProfile(JsonElement root, RuntimeProfileDefinition fallback)
