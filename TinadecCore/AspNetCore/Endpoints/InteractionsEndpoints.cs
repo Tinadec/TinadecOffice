@@ -22,7 +22,7 @@ public static class InteractionsEndpoints
         return app;
     }
 
-    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, StorageLifecycleService lifecycle, CancellationToken ct)
+    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, StorageLifecycleService lifecycle, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
@@ -178,10 +178,43 @@ public static class InteractionsEndpoints
         }
         catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")
         {
-            // meeting busy -> keep queued without run
+            // Meeting busy: the interaction must survive the wait. Persist a
+            // directive row + the user message + a run.queued event on the
+            // active run so the M2 run-terminal hook can drain it; the old
+            // branch fabricated a transient id and lost all three.
+            var idempotencyKey = $"session:{sessionId}:queued:{clientMessageId}";
+            await using var lifecycleDb = await lifecycleDbFactory.CreateDbContextAsync(ct);
+            var replay = await lifecycleDb.RunDirectives.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, ct);
+            if (replay is not null)
+            {
+                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction" });
+            }
             var queuedId = Guid.NewGuid();
-            // ponytail: no run yet, keep as transient queued interaction without durable event
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = (Guid?)null, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message });
+            var runs = await lifecycle.ListRunsAsync(sessionId, ct);
+            var activeRun = runs.FirstOrDefault(run => run.Status is not ("completed" or "failed" or "cancelled"));
+            var message = await conversations.AppendMessageAsync(sessionId, "user", content.Trim(), clientMessageId: $"queued:{clientMessageId}", cancellationToken: ct);
+            lifecycleDb.RunDirectives.Add(new RunDirectiveRecord
+            {
+                Id = queuedId,
+                TenantId = session.TenantId,
+                WorkspaceId = session.WorkspaceId,
+                SessionId = sessionId,
+                RunId = activeRun?.Id,
+                MessageId = message.Id,
+                Kind = "queued_interaction",
+                Status = "pending",
+                PayloadJson = JsonSerializer.Serialize(new { content, client_message_id = clientMessageId, dispatch_mode = dispatchMode, mode_version_id = modeVersionId, agent_mode = agentMode }),
+                IdempotencyKey = idempotencyKey,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await lifecycleDb.SaveChangesAsync(ct);
+            if (activeRun is { } target)
+            {
+                await lifecycle.AppendEventAsync(target.Id, "run.queued", new { interaction_id = queuedId, directive_id = queuedId, message_id = message.Id, content, dispatch_mode = dispatchMode }, "Interaction queued behind the active run", "info", cancellationToken: ct);
+            }
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = activeRun?.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message });
         }
         catch (RunAdmissionException ex) when (ex.Code == "CONTEXT_REVISION_CONFLICT")
         {

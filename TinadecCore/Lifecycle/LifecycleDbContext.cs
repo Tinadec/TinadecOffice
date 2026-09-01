@@ -21,6 +21,7 @@ public sealed class LifecycleDbContext : DbContext
     public DbSet<SessionMetadataSnapshotRecord> SessionMetadataSnapshots => Set<SessionMetadataSnapshotRecord>();
     public DbSet<UserToolActionRecord> UserToolActions => Set<UserToolActionRecord>();
     public DbSet<ModelInvocationRecord> ModelInvocations => Set<ModelInvocationRecord>();
+    public DbSet<RunDirectiveRecord> RunDirectives => Set<RunDirectiveRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -199,6 +200,17 @@ public sealed class LifecycleDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.AgentDefinitionId, x.StartedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ModeVersionId, x.StartedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ProviderInstanceId, x.Model, x.StartedAt });
+        });
+        modelBuilder.Entity<RunDirectiveRecord>(entity =>
+        {
+            entity.ToTable("run_directives");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Kind).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PayloadJson).HasMaxLength(16384).IsRequired();
+            entity.Property(x => x.IdempotencyKey).HasMaxLength(256);
+            entity.HasIndex(x => new { x.SessionId, x.Status, x.CreatedAt });
+            entity.HasIndex(x => x.IdempotencyKey).IsUnique();
         });
         modelBuilder.UseTinadecSnakeCase();
     }
@@ -398,4 +410,27 @@ public sealed class ModelInvocationRecord
     public long? TotalTokens { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+}
+
+/// <summary>
+/// A durable orchestration instruction aimed at a run (or, from M1, a lane).
+/// Created today for interactions queued behind a busy meeting so a run-terminal
+/// hook can drain them; the row is the replacement for the transient interaction
+/// id the queued endpoint used to fabricate and lose.
+/// </summary>
+public sealed class RunDirectiveRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid? RunId { get; set; }
+    public Guid? MessageId { get; set; }
+    public string Kind { get; set; } = "queued_interaction";
+    public string Status { get; set; } = "pending";
+    public string PayloadJson { get; set; } = string.Empty;
+    public string? IdempotencyKey { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? DrainedAt { get; set; }
 }

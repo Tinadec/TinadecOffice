@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
+using TinadecCore.Lifecycle;
 using TinadecCore.Persistence;
 
 namespace TinadecCore.Api.Tests;
@@ -1137,6 +1138,72 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("ACTIVE_RUN_LIMIT", body.GetProperty("code").GetString());
+
+        gate.SetResult();
+        await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        await runB.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task Interactions_QueuedBehindActiveRunLimit_PersistsDirectiveMessageAndEvent()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("好了。");
+        script.BeforeWorker = gate.Task;
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "qa" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "qb" });
+        await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (script.WorkerGateEntries < 2 && DateTimeOffset.UtcNow < waitDeadline)
+        {
+            await Task.Delay(50);
+        }
+        Assert.True(script.WorkerGateEntries >= 2, "Both runs should reach the worker gate before the queued probe.");
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "完成后测试并提交", client_message_id = "queued-followup" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("queued", body.GetProperty("status").GetString());
+        Assert.NotEqual(Guid.Empty, body.GetProperty("run_id").GetGuid());
+
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            var directives = await db.RunDirectives.Where(x => x.SessionId == sessionId).ToListAsync();
+            var directive = Assert.Single(directives);
+            Assert.Equal("queued_interaction", directive.Kind);
+            Assert.Equal("pending", directive.Status);
+            Assert.Equal(body.GetProperty("interaction_id").GetGuid(), directive.Id);
+            Assert.NotNull(directive.RunId);
+            Assert.NotNull(directive.MessageId);
+            var payload = JsonSerializer.Deserialize<JsonElement>(directive.PayloadJson);
+            Assert.Equal("完成后测试并提交", payload.GetProperty("content").GetString());
+            Assert.Equal("queued-followup", payload.GetProperty("client_message_id").GetString());
+            Assert.Equal(body.GetProperty("run_id").GetGuid(), directive.RunId!.Value);
+
+            var queuedEvents = await db.EventIndex
+                .Where(x => x.SessionId == sessionId && x.EventType == "run.queued")
+                .ToListAsync();
+            Assert.Single(queuedEvents, x => x.RunId == directive.RunId!.Value);
+        }
+
+        // The same client message replays the stored directive instead of queueing twice.
+        var replay = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "完成后测试并提交", client_message_id = "queued-followup" });
+        Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
+        var replayBody = await replay.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(body.GetProperty("interaction_id").GetGuid(), replayBody.GetProperty("interaction_id").GetGuid());
 
         gate.SetResult();
         await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
