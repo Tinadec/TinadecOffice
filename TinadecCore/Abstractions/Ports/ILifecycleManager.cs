@@ -124,6 +124,14 @@ public interface ILifecycleManager
         string drainedStatus,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Queues a durable orchestration directive aimed at one run. An exact
+    /// idempotency-key replay returns the stored row instead of inserting.
+    /// </summary>
+    Task<RunDirective> EnqueueRunDirectiveAsync(
+        RunDirectiveWrite write,
+        CancellationToken cancellationToken = default);
+
     Task<RunLease> TryAcquireRunLeaseAsync(
         string runId,
         string ownerId,
@@ -202,6 +210,15 @@ public sealed record RunDirective(
 
 /// <summary>Outcome of a drain batch.</summary>
 public sealed record RunDirectiveDrainResult(int DrainedCount);
+
+/// <summary>Values for queueing a new orchestration directive at one target run.</summary>
+public sealed record RunDirectiveWrite(
+    Guid TargetRunId,
+    Guid SessionId,
+    Guid? MessageId,
+    string Kind,
+    string PayloadJson,
+    string? IdempotencyKey);
 
 /// <summary>Immutable values captured when a full-duplex run is admitted.</summary>
 public sealed record RunStartRequest(

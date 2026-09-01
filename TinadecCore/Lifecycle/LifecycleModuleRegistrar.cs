@@ -202,6 +202,12 @@ internal sealed class LifecycleManager : ILifecycleManager
         return await storage.DrainRunDirectivesAsync(runId, directiveIds, drainedStatus, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<RunDirective> EnqueueRunDirectiveAsync(RunDirectiveWrite write, CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage() ?? throw new InvalidOperationException("Run directive persistence requires relational storage.");
+        return await storage.EnqueueRunDirectiveAsync(write, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<RunLease> TryAcquireRunLeaseAsync(string runId, string ownerId, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var storage = TryStorage() ?? throw new InvalidOperationException("Run lease persistence requires relational storage.");

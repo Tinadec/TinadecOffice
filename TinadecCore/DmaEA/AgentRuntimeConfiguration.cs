@@ -164,12 +164,6 @@ public sealed record RuntimeAgentDefinition(
     /// <summary>Event triggers that activate the agent (logical channels).</summary>
     public IReadOnlyList<string> Triggers { get; init; } = [];
 
-    /// <summary>Accepted logical messages (validated against the dual-layer bus).</summary>
-    public IReadOnlyList<string> Accepts { get; init; } = [];
-
-    /// <summary>Emitted logical messages.</summary>
-    public IReadOnlyList<string> Emits { get; init; } = [];
-
     /// <summary>Supervisor decisions when applicable (pass/revise/escalate).</summary>
     public IReadOnlyList<string> Decisions { get; init; } = [];
 

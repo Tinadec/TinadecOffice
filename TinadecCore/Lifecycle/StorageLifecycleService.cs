@@ -548,6 +548,38 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return new RunDirectiveDrainResult(updated);
     }
 
+    public async Task<RunDirective> EnqueueRunDirectiveAsync(RunDirectiveWrite write, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(write.IdempotencyKey))
+        {
+            var replay = await db.RunDirectives.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.IdempotencyKey == write.IdempotencyKey, cancellationToken).ConfigureAwait(false);
+            if (replay is not null)
+                return new RunDirective(replay.Id, replay.SessionId, replay.Kind, replay.PayloadJson, replay.IdempotencyKey);
+        }
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == write.TargetRunId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Target run was not found.");
+        var row = new RunDirectiveRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = run.TenantId,
+            WorkspaceId = run.WorkspaceId,
+            SessionId = write.SessionId,
+            RunId = write.TargetRunId,
+            MessageId = write.MessageId,
+            Kind = write.Kind,
+            Status = "pending",
+            PayloadJson = write.PayloadJson,
+            IdempotencyKey = write.IdempotencyKey,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.RunDirectives.Add(row);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return new RunDirective(row.Id, row.SessionId, row.Kind, row.PayloadJson, row.IdempotencyKey);
+    }
+
     public async Task<RunLease> TryAcquireRunLeaseAsync(Guid runId, string ownerId, TimeSpan duration, CancellationToken cancellationToken = default)
     {
         var owner = NormalizeLeaseOwner(ownerId);

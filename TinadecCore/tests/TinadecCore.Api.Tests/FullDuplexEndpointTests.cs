@@ -1413,6 +1413,61 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MeetingDirective_LaneOpenConsumedByTargetRun()
+    {
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeetingOnce("收到。已登记延后执行。\nLANE_OPEN: {\"lane_key\":\"l2\",\"goal\":\"完成后测试并提交\",\"tasks\":[{\"task_key\":\"t1\",\"title\":\"测试并提交\",\"description\":\"\",\"success_criteria\":[\"通过\"],\"dependencies\":[],\"priority\":1,\"risk\":\"low\"}],\"waits\":[{\"lane\":\"main\"}]}")
+            .WhenMeeting("全部完成。");
+        script.BeforeWorker = workerGate.Task;
+        script.WorkerStarted = workerStarted;
+        var factory = CreateFactory(script, runtimeToml: LanesEnabledToml());
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var target = StartStreamingInvoke(client, sessionId, new { content = "开发功能 X", client_message_id = "lane-open-target" });
+        var runId = RunIdOf(await target.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // The user leaves mid-task with a deferred instruction; the meeting turn
+        // must carry it as a durable directive, and the protocol line must never
+        // reach the user stream — the confirmation sentence is code-generated.
+        var clarification = await StreamInvokeAsync(client, sessionId, new
+        {
+            content = "完成后测试并提交",
+            client_message_id = "lane-open-1",
+            target_run_id = runId
+        });
+        var meetingDelta = string.Concat(clarification
+            .Where(chunk => KindOf(chunk) == "delta")
+            .Select(chunk => chunk.GetProperty("delta").GetString()));
+        Assert.DoesNotContain("LANE_OPEN", meetingDelta, StringComparison.Ordinal);
+        Assert.Contains("Orchestration registered", meetingDelta, StringComparison.Ordinal);
+
+        workerGate.SetResult();
+        var chunks = await target.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = (await manager.ReplayEventsAsync(sessionId, 0))
+            .Where(e => e.RunId == runId.ToString())
+            .ToList();
+        var opened = Assert.Single(events, e => e.EventType == "orchestration.lane_opened");
+        var openedPayload = (JsonElement)opened.Payload["payload"]!;
+        Assert.Equal("l2", openedPayload.GetProperty("lane_key").GetString());
+        Assert.Equal("t1", openedPayload.GetProperty("task_keys").EnumerateArray().Single().GetString());
+        Assert.Equal("main", openedPayload.GetProperty("waits").EnumerateArray().Single().GetProperty("lane").GetString());
+        Assert.DoesNotContain(events, e => e.EventType == "orchestration.directive.rejected");
+
+        // The opened lane really executed its deferred task under the same run
+        // and lease: the main worker ran once, then the l2 worker ran once.
+        Assert.Equal(2, script.WorkerCalls);
+    }
+
+    [Fact]
     public async Task RunTerminal_DrainsQueuedDirective_RejectedWhenLanesDisabled()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1802,6 +1857,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private string? _gate;
         private string? _worker;
         private string? _meeting;
+        private string? _meetingOnce;
         private string? _compressor;
         private string? _recommender;
         private string? _curator;
@@ -1840,6 +1896,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient ThenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ScriptedChatClient WhenMeeting(string script) { _meeting = script; return this; }
+
+        /// <summary>Meeting text consumed by the very next meeting call, then falls
+        /// back to WhenMeeting/defaults — for clarification turns whose protocol
+        /// lines must not leak into the target run's own finalization meeting.</summary>
+        public ScriptedChatClient WhenMeetingOnce(string script) { _meetingOnce = script; return this; }
         public ScriptedChatClient WhenCompressor(string script) { _compressor = script; return this; }
         public ScriptedChatClient WhenRecommender(string script) { _recommender = script; return this; }
         public ScriptedChatClient WhenCurator(string script) { _curator = script; return this; }
@@ -1917,7 +1978,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
-                return _meeting ?? "完成";
+            {
+                var once = Interlocked.Exchange(ref _meetingOnce, null);
+                return once ?? _meeting ?? "完成";
+            }
             return _worker is { } workerText ? RecordWorker(workerText) : "完成";
         }
 

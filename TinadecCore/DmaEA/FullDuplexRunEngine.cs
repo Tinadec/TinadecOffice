@@ -46,6 +46,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private readonly IAgentModelResolver? _modelResolver;
     private readonly IOperationalTriggerEvaluator? _triggerEvaluator;
     private readonly ILoopGuard? _loopGuard;
+    private readonly IOrchestrationDirectiveValidator? _directiveValidator;
     private readonly ILongTermMemoryService? _longTermMemory;
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
@@ -72,7 +73,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         ILogger<FullDuplexRunEngine> logger,
         IAgentModelResolver? modelResolver = null,
         IOperationalTriggerEvaluator? triggerEvaluator = null,
-        ILoopGuard? loopGuard = null)
+        ILoopGuard? loopGuard = null,
+        IOrchestrationDirectiveValidator? directiveValidator = null)
     {
         _lifecycle = lifecycle;
         _conversations = conversations;
@@ -84,6 +86,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _modelResolver = modelResolver ?? services.GetService(typeof(IAgentModelResolver)) as IAgentModelResolver;
         _triggerEvaluator = triggerEvaluator ?? services.GetService(typeof(IOperationalTriggerEvaluator)) as IOperationalTriggerEvaluator;
         _loopGuard = loopGuard ?? services.GetService(typeof(ILoopGuard)) as ILoopGuard;
+        _directiveValidator = directiveValidator ?? services.GetService(typeof(IOrchestrationDirectiveValidator)) as IOrchestrationDirectiveValidator;
         _longTermMemory = services.GetService(typeof(ILongTermMemoryService)) as ILongTermMemoryService;
         _logger = logger;
     }
@@ -257,6 +260,15 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 if (await ApplyPendingContextPatchesAsync(run, checkpoint, stoppingToken).ConfigureAwait(false))
                 {
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "context-patch", stoppingToken).ConfigureAwait(false);
+                }
+
+                if (configuration.Orchestration.LanesEnabled)
+                {
+                    var directivesApplied = await ApplyPendingOrchestrationDirectivesAsync(run, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
+                    if (directivesApplied)
+                    {
+                        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "orchestration-applied", stoppingToken).ConfigureAwait(false);
+                    }
                 }
 
                 switch (checkpoint.Phase)
@@ -2125,6 +2137,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             + "\n\nYou are the meeting agent, the only user-facing agent. The user sent a follow-up message (interaction kind: "
             + checkpoint.InteractionKind
             + ") while another run may be active. Respond directly and honestly in the user's language: acknowledge the message, state its impact on the active task, and keep it short. Do not claim tools ran.";
+        if (configuration.Orchestration.LanesEnabled && checkpoint.TargetRunId is not null)
+        {
+            instructions += "\n\n" + LaneOpenProtocol;
+        }
         var prompt = $"Interaction kind: {checkpoint.InteractionKind}\nUser message:\n{checkpoint.UserGoal}\n\n{targetSummary}";
         using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
             await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),
@@ -2137,7 +2153,140 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
         if (string.IsNullOrWhiteSpace(response.Text)) throw new InvalidOperationException("Meeting agent returned no output.");
-        return response.Text;
+        return await FinalizeInteractionTextAsync(run, configuration, checkpoint, response.Text, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Protocol contract handed to the meeting agent so a deferred user request
+    /// ("after it finishes, test and commit") can be expressed as one final
+    /// LANE_OPEN line. The engine, not the model, decides whether the lane opens.
+    /// </summary>
+    private const string LaneOpenProtocol =
+        "Orchestration directive protocol: when the user asks for work that must start only after the target run reaches a state, "
+        + "append exactly one final line:\n"
+        + "LANE_OPEN: {\"lane_key\":\"<unique-key>\",\"goal\":\"<what this lane does>\","
+        + "\"tasks\":[{\"task_key\":\"<key>\",\"title\":\"<title>\",\"description\":\"\",\"success_criteria\":[\"<criterion>\"],\"dependencies\":[],\"priority\":1,\"risk\":\"low\"}],"
+        + "\"waits\":[{\"lane\":\"main\",\"predicate\":\"lane_done\",\"required_criteria\":[]}]}\n"
+        + "Rules: task_key must be unique inside the lane; dependencies may reference only this lane's tasks; waits.lane must name an existing lane of the target run; "
+        + "any tool_scope entry must already be authorized for the target run; lanes declaring mutating tools are rejected. "
+        + "Output the line only when the user actually defers work; otherwise output none.";
+
+    private const string LaneOpenMarker = "LANE_OPEN:";
+
+    /// <summary>
+    /// Strips every protocol line from the meeting text and persists the last
+    /// one as a pending orchestration directive on the target run. The line
+    /// never reaches the user stream; the user-visible confirmation is
+    /// generated here, not by the model.
+    /// </summary>
+    private async Task<string> FinalizeInteractionTextAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        var extracted = ExtractLaneOpenLine(text);
+        if (extracted is null) return text;
+        var (cleanText, laneKey, payload) = extracted.Value;
+        var sourceRunId = Guid.Parse(run.RunId);
+        if (checkpoint.TargetRunId is not { } targetRunId)
+        {
+            await AppendEventAsync(sourceRunId, "orchestration.directive.rejected",
+                "A protocol line was dropped because this interaction has no target run.",
+                new { verb = "LANE_OPEN", code = "target_run_required" }, cancellationToken).ConfigureAwait(false);
+            return cleanText;
+        }
+        if (!configuration.Orchestration.LanesEnabled)
+        {
+            await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
+                "A meeting-authored orchestration directive was dropped because lanes are disabled for the target run.",
+                new { verb = "LANE_OPEN", code = "lanes_disabled", source_run_id = sourceRunId, target_run_id = targetRunId }, cancellationToken).ConfigureAwait(false);
+            return cleanText;
+        }
+        if (_directiveValidator is null)
+        {
+            await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
+                "A meeting-authored orchestration directive was dropped because no directive validator is registered.",
+                new { verb = "LANE_OPEN", code = "validator_unavailable", source_run_id = sourceRunId, target_run_id = targetRunId }, cancellationToken).ConfigureAwait(false);
+            return cleanText;
+        }
+
+        // Admission-side validation runs on conservative facts: the persisted
+        // checkpoint projection carries no lane list, so duplicates and budgets
+        // are enforced authoritatively at consumption against the live checkpoint.
+        var knownLanes = new List<string> { "main" };
+        var frozenToolIds = configuration.ToolManifest
+            .Select(entry => entry.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        var mutatingToolIds = configuration.ToolManifest
+            .Where(entry => entry.MutatesWorkspace)
+            .Select(entry => entry.Id)
+            .ToList();
+        var rejection = _directiveValidator.Validate(
+            new OrchestrationDirectiveCandidate("LANE_OPEN", laneKey, payload),
+            new OrchestrationDirectiveRules(
+                configuration.Orchestration.LanesEnabled,
+                1,
+                configuration.Orchestration.MaxLanesPerRun,
+                configuration.Orchestration.MaxTasksPerLane,
+                frozenToolIds,
+                mutatingToolIds,
+                knownLanes));
+        if (rejection is not null)
+        {
+            await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
+                "A meeting-authored orchestration directive failed validation.",
+                new { verb = "LANE_OPEN", code = rejection.Code, reason = rejection.Reason, source_run_id = sourceRunId, target_run_id = targetRunId }, cancellationToken).ConfigureAwait(false);
+            return cleanText + $"\n\nOrchestration request rejected ({rejection.Code}): {rejection.Reason}";
+        }
+
+        var payloadHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        var queued = await _lifecycle.EnqueueRunDirectiveAsync(new RunDirectiveWrite(
+            targetRunId,
+            checkpoint.SessionId,
+            null,
+            "orchestration",
+            payload,
+            $"directive:{targetRunId}:{sourceRunId}:{payloadHash}"), cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(sourceRunId, "orchestration.directive.queued",
+            "A meeting-authored orchestration directive was queued for the target run.",
+            new { directive_id = queued.Id, verb = "LANE_OPEN", lane_key = laneKey, source_run_id = sourceRunId, target_run_id = targetRunId }, cancellationToken).ConfigureAwait(false);
+        return cleanText + $"\n\nOrchestration registered: lane '{laneKey}' will open on the target run once its waits are satisfied.";
+    }
+
+    private static (string CleanText, string LaneKey, string PayloadJson)? ExtractLaneOpenLine(string text)
+    {
+        string? laneKey = null, payload = null;
+        var lines = text.Split('\n');
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var line = lines[index].Trim();
+            if (!line.StartsWith(LaneOpenMarker, StringComparison.Ordinal)) continue;
+            payload = line[LaneOpenMarker.Length..].Trim();
+            laneKey = TryReadLaneKey(payload);
+            lines[index] = string.Empty;
+        }
+        if (payload is null) return null;
+        return (string.Join('\n', lines).TrimEnd(), laneKey ?? string.Empty, payload);
+    }
+
+    private static string? TryReadLaneKey(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("lane_key", out var key)
+                && key.ValueKind == JsonValueKind.String)
+            {
+                return key.GetString()?.Trim();
+            }
+        }
+        catch (JsonException) { }
+        return null;
     }
 
     private async Task<string> BuildStatusResponseAsync(FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken)
@@ -2314,9 +2463,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     /// <summary>
     /// Run-terminal drain of orchestration directives queued while this run held
-    /// the session. Lanes-disabled runs reject every directive; lanes-enabled
-    /// runs accept and mark them consumed for the M4 orchestration port. The
-    /// pending-status filter makes a replayed finalize idempotent.
+    /// the session. Queued interactions keep the M2 semantics; an orchestration
+    /// directive arriving at terminal fails closed (a new lane is meaningless on
+    /// a finished run). The pending-status filter makes a replayed finalize
+    /// idempotent.
     /// </summary>
     private async Task<FullDuplexCheckpointV1> DrainRunDirectivesAsync(
         RunState run,
@@ -2328,6 +2478,15 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
         foreach (var directive in pending)
         {
+            if (string.Equals(directive.Kind, "orchestration", StringComparison.Ordinal))
+            {
+                await AppendEventAsync(runId, "orchestration.directive.rejected",
+                    "An orchestration directive arrived at run terminal and cannot materialize a lane.",
+                    new { directive_id = directive.Id, code = "run_terminal", kind = directive.Kind }, cancellationToken).ConfigureAwait(false);
+                await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], "rejected", cancellationToken).ConfigureAwait(false);
+                checkpoint.DirectiveCursor++;
+                continue;
+            }
             if (!configuration.Orchestration.LanesEnabled)
             {
                 await AppendEventAsync(runId, "orchestration.directive.rejected",
@@ -2349,6 +2508,205 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "directives-drained", cancellationToken).ConfigureAwait(false);
         }
         return checkpoint;
+    }
+
+    /// <summary>
+    /// The M4 orchestration port consumer: the target run's owner drains
+    /// pending meeting-authored directives beside the context-patch pass and
+    /// materializes accepted lanes into the checkpoint. Every failure is
+    /// fail-closed and audited; consumed rows are marked so finalize cannot
+    /// re-see them.
+    /// </summary>
+    private async Task<bool> ApplyPendingOrchestrationDirectivesAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
+        var applied = false;
+        foreach (var directive in pending.Where(item => string.Equals(item.Kind, "orchestration", StringComparison.Ordinal)).ToList())
+        {
+            var rejection = await ConsumeOrchestrationDirectiveAsync(run, configuration, checkpoint, directive, cancellationToken).ConfigureAwait(false);
+            await _lifecycle.DrainRunDirectivesAsync(
+                checkpoint.RunId,
+                [directive.Id],
+                rejection is null ? "consumed" : "rejected",
+                cancellationToken).ConfigureAwait(false);
+            checkpoint.DirectiveCursor++;
+            applied = true;
+        }
+        return applied;
+    }
+
+    private async Task<OrchestrationDirectiveRejection?> ConsumeOrchestrationDirectiveAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        RunDirective directive,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        if (_directiveValidator is null)
+        {
+            await AppendEventAsync(runId, "orchestration.directive.rejected",
+                "An orchestration directive was rejected because no directive validator is registered.",
+                new { directive_id = directive.Id, code = "validator_unavailable" }, cancellationToken).ConfigureAwait(false);
+            return new OrchestrationDirectiveRejection("validator_unavailable", "No directive validator is registered.");
+        }
+
+        OrchestrationDirectiveCandidate candidate;
+        List<LaneWait> waits;
+        List<DurableTaskNode> nodes;
+        try
+        {
+            using var document = JsonDocument.Parse(directive.PayloadJson);
+            var laneKey = document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("lane_key", out var key)
+                && key.ValueKind == JsonValueKind.String
+                    ? key.GetString()?.Trim() ?? string.Empty
+                    : string.Empty;
+            candidate = new OrchestrationDirectiveCandidate("LANE_OPEN", laneKey, directive.PayloadJson);
+            waits = ReadLaneWaits(document.RootElement);
+            nodes = ValidateAndMaterializeGraph(ReadLaneTasks(document.RootElement), configuration.Orchestration.MaxTasksPerLane);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidTaskGraphException)
+        {
+            await AppendEventAsync(runId, "orchestration.directive.rejected",
+                "An orchestration directive failed lane materialization.",
+                new { directive_id = directive.Id, code = "invalid_lane_payload", reason = ex.Message }, cancellationToken).ConfigureAwait(false);
+            return new OrchestrationDirectiveRejection("invalid_lane_payload", ex.Message);
+        }
+
+        var knownLanes = checkpoint.Lanes.Select(lane => lane.LaneKey).ToList();
+        knownLanes.Add("main");
+        var frozenToolIds = configuration.ToolManifest
+            .Select(entry => entry.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        var mutatingToolIds = configuration.ToolManifest
+            .Where(entry => entry.MutatesWorkspace)
+            .Select(entry => entry.Id)
+            .ToList();
+        var rejection = _directiveValidator.Validate(candidate, new OrchestrationDirectiveRules(
+            configuration.Orchestration.LanesEnabled,
+            checkpoint.Lanes.Count,
+            configuration.Orchestration.MaxLanesPerRun,
+            configuration.Orchestration.MaxTasksPerLane,
+            frozenToolIds,
+            mutatingToolIds,
+            knownLanes));
+        if (rejection is not null)
+        {
+            await AppendEventAsync(runId, "orchestration.directive.rejected",
+                "An orchestration directive failed validation at consumption.",
+                new { directive_id = directive.Id, code = rejection.Code, reason = rejection.Reason, lane_key = candidate.LaneKey }, cancellationToken).ConfigureAwait(false);
+            return rejection;
+        }
+
+        foreach (var node in nodes)
+        {
+            node.LaneKey = candidate.LaneKey;
+            if (waits.Count > 0) node.Waits = [.. waits];
+        }
+        checkpoint.Tasks.AddRange(nodes);
+        SyncLanes(checkpoint);
+        // A directive consumed while every earlier lane already finished would
+        // otherwise land on a finalizing checkpoint and never execute.
+        if (checkpoint.Phase is "finalizing" or "done" or "completed")
+        {
+            checkpoint.Phase = "executing";
+            await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        await AppendEventAsync(runId, "orchestration.lane_opened",
+            "A meeting-authored lane was materialized on this run.",
+            new
+            {
+                directive_id = directive.Id,
+                lane_key = candidate.LaneKey,
+                task_count = nodes.Count,
+                task_keys = nodes.Select(node => node.TaskKey).ToArray(),
+                waits = waits.Select(wait => new { lane = wait.LaneKey, predicate = wait.Predicate }).ToArray()
+            }, cancellationToken).ConfigureAwait(false);
+        return null;
+    }
+
+    private static PlannedTask[] ReadLaneTasks(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object
+            || !payload.TryGetProperty("tasks", out var tasksElement)
+            || tasksElement.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidDataException("The directive payload carries no tasks array.");
+        }
+        var laneKey = payload.TryGetProperty("lane_key", out var lane) && lane.ValueKind == JsonValueKind.String
+            ? lane.GetString()
+            : null;
+        var tasks = new List<PlannedTask>();
+        foreach (var task in tasksElement.EnumerateArray())
+        {
+            if (task.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Every directive task must be an object.");
+            tasks.Add(new PlannedTask
+            {
+                TaskKey = task.TryGetProperty("task_key", out var key) && key.ValueKind == JsonValueKind.String ? key.GetString() : null,
+                LaneKey = laneKey,
+                Title = task.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String ? title.GetString() ?? string.Empty : string.Empty,
+                Description = task.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String ? description.GetString() : null,
+                SuccessCriteria = ReadStringArray(task, "success_criteria"),
+                Dependencies = ReadStringArray(task, "dependencies"),
+                RequiredCapabilities = ReadStringArray(task, "required_capabilities"),
+                RequiredTools = ReadStringArray(task, "tool_scope"),
+                Priority = task.TryGetProperty("priority", out var priority) && priority.ValueKind == JsonValueKind.Number && priority.TryGetInt32(out var value) ? value : 1,
+                Risk = task.TryGetProperty("risk", out var risk) && risk.ValueKind == JsonValueKind.String ? risk.GetString() ?? "medium" : "medium"
+            });
+        }
+        return [.. tasks];
+    }
+
+    private static List<LaneWait> ReadLaneWaits(JsonElement payload)
+    {
+        var waits = new List<LaneWait>();
+        if (payload.ValueKind != JsonValueKind.Object
+            || !payload.TryGetProperty("waits", out var waitsElement)
+            || waitsElement.ValueKind != JsonValueKind.Array)
+        {
+            return waits;
+        }
+        foreach (var wait in waitsElement.EnumerateArray())
+        {
+            if (wait.ValueKind != JsonValueKind.Object) continue;
+            var lane = wait.TryGetProperty("lane", out var laneElement) && laneElement.ValueKind == JsonValueKind.String
+                ? laneElement.GetString()?.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(lane)) continue;
+            var predicate = wait.TryGetProperty("predicate", out var predicateElement) && predicateElement.ValueKind == JsonValueKind.String
+                ? predicateElement.GetString()?.Trim()
+                : null;
+            var criteria = wait.TryGetProperty("required_criteria", out var criteriaElement) && criteriaElement.ValueKind == JsonValueKind.Array
+                ? criteriaElement.EnumerateArray()
+                    .Where(item => item.ValueKind == JsonValueKind.String)
+                    .Select(item => item.GetString() ?? string.Empty)
+                    .Where(item => item.Length > 0)
+                    .ToList()
+                : [];
+            waits.Add(new LaneWait(lane, string.IsNullOrWhiteSpace(predicate) ? LaneWait.LaneDone : predicate!, criteria, null));
+        }
+        return waits;
+    }
+
+    private static string[] ReadStringArray(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(name, out var arrayElement)
+            || arrayElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return arrayElement.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString() ?? string.Empty)
+            .Where(item => item.Length > 0)
+            .ToArray();
     }
 
     private async Task FailRunAsync(Guid runId, FullDuplexCheckpointV1 checkpoint, string category, string message, CancellationToken cancellationToken)
