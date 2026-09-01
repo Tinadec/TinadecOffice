@@ -1368,6 +1368,7 @@ export interface TaskNodeDto {
   title: string;
   description: string;
   status: string;
+  lane_key: string;
   priority: number;
   risk: string;
   success_criteria: string[];
@@ -1632,10 +1633,27 @@ export interface AgentLineageEntryDto {
   capabilities?: string[] | null;
 }
 
+export interface OrchestrationLaneWaitDto {
+  waiting_task: string;
+  lane: string;
+  predicate: string;
+  required_criteria: string[];
+  facts_hash?: string | null;
+}
+
+export interface OrchestrationLaneDto {
+  lane_key: string;
+  status: string;
+  escalated: boolean;
+  task_keys: string[];
+  waits: OrchestrationLaneWaitDto[];
+}
+
 export interface OrchestrationSnapshotDto {
   run?: OrchestrationRunDto | null;
   graph?: TaskGraphDto | null;
   nodes: TaskNodeDto[];
+  lanes: OrchestrationLaneDto[];
   assignments: AgentAssignmentDto[];
   step_results: StepResultDto[];
   context_packs: ContextPackDto[];
