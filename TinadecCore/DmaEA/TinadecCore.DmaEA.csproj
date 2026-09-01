@@ -31,6 +31,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="TinadecCore.Api.Tests" />
     <InternalsVisibleTo Include="TinadecCore.AgentFramework.Tests" />
+    <InternalsVisibleTo Include="TinadecCore.AspNetCore" />
   </ItemGroup>
 
 </Project>

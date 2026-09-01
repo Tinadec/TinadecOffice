@@ -298,24 +298,76 @@ public static class DmaeaEndpoints
             {
                 try { parsedFrozen = System.Text.Json.JsonSerializer.Deserialize<FrozenRunConfigurationV1>(frozen.Content); } catch { }
             }
-            var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
-            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e => new
+            var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(runGuid, ct);
+            FullDuplexCheckpointV1? checkpoint = null;
+            if (checkpointRow is not null)
             {
-                id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"),
-                graph_id = PayloadString(e.Payload, "graph_id") ?? "",
-                run_id = runGuid.ToString(),
-                session_id = run.SessionId.ToString(),
-                title = PayloadString(e.Payload, "title") ?? "",
-                description = PayloadString(e.Payload, "description") ?? "",
-                status = e.EventType is "worker.completed" or "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : e.EventType is "worker.failed" ? "failed" : "assigned",
-                priority = 1,
-                risk = PayloadString(e.Payload, "risk") ?? "medium",
-                success_criteria = Array.Empty<string>(),
-                dependencies = PayloadArray(e.Payload, "dependencies"),
-                required_capabilities = Array.Empty<string>(),
-                created_at = e.Timestamp,
-                updated_at = e.Timestamp
+                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content); } catch { }
+            }
+            static string LaneOfTask(DurableTaskNode task) =>
+                string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
+            var taskLaneById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (checkpoint is not null)
+            {
+                foreach (var task in checkpoint.Tasks)
+                {
+                    taskLaneById.TryAdd(task.TaskKey, LaneOfTask(task));
+                    taskLaneById.TryAdd(task.TaskId.ToString(), LaneOfTask(task));
+                }
+            }
+            var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
+            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e =>
+            {
+                var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
+                return new
+                {
+                    id = nodeId,
+                    graph_id = PayloadString(e.Payload, "graph_id") ?? "",
+                    run_id = runGuid.ToString(),
+                    session_id = run.SessionId.ToString(),
+                    title = PayloadString(e.Payload, "title") ?? "",
+                    description = PayloadString(e.Payload, "description") ?? "",
+                    status = e.EventType is "worker.completed" or "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : e.EventType is "worker.failed" ? "failed" : "assigned",
+                    lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
+                    priority = 1,
+                    risk = PayloadString(e.Payload, "risk") ?? "medium",
+                    success_criteria = Array.Empty<string>(),
+                    dependencies = PayloadArray(e.Payload, "dependencies"),
+                    required_capabilities = Array.Empty<string>(),
+                    created_at = e.Timestamp,
+                    updated_at = e.Timestamp
+                };
             }).ToList();
+            var lanes = checkpoint is null
+                ? new List<object>()
+                : (checkpoint.Lanes.Count > 0
+                    ? checkpoint.Lanes.Select(l => (object)new
+                    {
+                        lane_key = l.LaneKey,
+                        status = l.Status,
+                        escalated = l.Escalated,
+                        task_keys = checkpoint.Tasks.Where(t => LaneOfTask(t) == l.LaneKey).Select(t => t.TaskKey).ToList(),
+                        waits = checkpoint.Tasks.Where(t => LaneOfTask(t) == l.LaneKey)
+                            .SelectMany(t => t.Waits.Select(w => new
+                            {
+                                waiting_task = t.TaskKey,
+                                lane = w.LaneKey,
+                                predicate = w.Predicate,
+                                required_criteria = w.RequiredCriteria,
+                                facts_hash = w.ObservedFactsHash
+                            })).ToList()
+                    }).ToList()
+                    : new List<object>
+                    {
+                        new
+                        {
+                            lane_key = "main",
+                            status = checkpoint.Phase,
+                            escalated = false,
+                            task_keys = checkpoint.Tasks.Select(t => t.TaskKey).ToList(),
+                            waits = Array.Empty<object>()
+                        }
+                    });
             var stepResults = events.Where(e => e.EventType is "worker.completed" or "worker.failed" or "step.result.created").Select(e => new
             {
                 id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"),
@@ -390,6 +442,7 @@ public static class DmaeaEndpoints
                 },
                 graph = (object?)null,
                 nodes,
+                lanes,
                 assignments = Array.Empty<object>(),
                 step_results = stepResults,
                 agent_instances = agentInstances,

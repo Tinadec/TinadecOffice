@@ -18,9 +18,22 @@ public interface IRunReplayService
 
 public sealed record RunReplayTask(
     string TaskKey,
+    string LaneKey,
     string Status,
     string Summary,
     IReadOnlyList<string> Evidence);
+
+public sealed record RunReplayLaneWait(
+    string WaitingTaskKey,
+    string Lane,
+    string Predicate);
+
+public sealed record RunReplayLane(
+    string LaneKey,
+    string Status,
+    bool Escalated,
+    IReadOnlyList<string> TaskKeys,
+    IReadOnlyList<RunReplayLaneWait> Waits);
 
 public sealed record RunReplaySupervisionRound(
     int RevisionRound,
@@ -35,6 +48,7 @@ public sealed record RunReplay(
     string RunId,
     string Status,
     IReadOnlyList<RunReplayTask> Tasks,
+    IReadOnlyList<RunReplayLane> Lanes,
     IReadOnlyList<RunReplaySupervisionRound> SupervisionRounds,
     IReadOnlyList<RunReplayMilestone> Milestones);
 
@@ -83,12 +97,34 @@ internal sealed class RunReplayService : IRunReplayService
             .ToList();
         if (events.Count == 0 && run.Status == RunStatus.Planning) return null;
 
+        FullDuplexCheckpointV1? checkpoint = null;
+        try
+        {
+            var checkpointRow = await _lifecycle.GetCurrentRunCheckpointAsync(runId, cancellationToken).ConfigureAwait(false);
+            if (checkpointRow is not null)
+                checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content);
+        }
+        catch
+        {
+            // A missing or unreadable checkpoint must not invalidate the journal-based replay.
+        }
+
+        static string LaneOfTask(DurableTaskNode task) =>
+            string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
+        var laneByTask = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (checkpoint is not null)
+        {
+            foreach (var task in checkpoint.Tasks)
+                laneByTask[task.TaskKey] = LaneOfTask(task);
+        }
+
         var tasks = new Dictionary<string, RunReplayTask>(StringComparer.Ordinal);
         foreach (var item in events.Where(item => item.EventType is "worker.completed" or "worker.failed"))
         {
             var taskKey = PayloadString(item.Payload, "task_key") ?? PayloadString(item.Payload, "task_id") ?? item.EventId;
             tasks[taskKey] = new RunReplayTask(
                 taskKey,
+                laneByTask.TryGetValue(taskKey, out var laneKey) ? laneKey : "main",
                 item.EventType == "worker.failed" ? "failed" : PayloadString(item.Payload, "status") ?? "completed",
                 PayloadString(item.Payload, "summary") ?? string.Empty,
                 PayloadArray(item.Payload, "evidence"));
@@ -107,7 +143,24 @@ internal sealed class RunReplayService : IRunReplayService
             .Select(item => new RunReplayMilestone(item.EventType, item.Timestamp))
             .ToList();
 
-        return new RunReplay(runGuid.ToString(), run.Status.ToString().ToLowerInvariant(), tasks.Values.ToList(), supervisionRounds, milestones);
+        var lanes = checkpoint is null
+            ? new List<RunReplayLane>()
+            : checkpoint.Lanes.Count > 0
+                ? checkpoint.Lanes.Select(lane => new RunReplayLane(
+                        lane.LaneKey,
+                        lane.Status,
+                        lane.Escalated,
+                        checkpoint.Tasks.Where(t => LaneOfTask(t) == lane.LaneKey).Select(t => t.TaskKey).ToList(),
+                        checkpoint.Tasks.Where(t => LaneOfTask(t) == lane.LaneKey)
+                            .SelectMany(t => t.Waits.Select(w => new RunReplayLaneWait(t.TaskKey, w.LaneKey, w.Predicate)))
+                            .ToList()))
+                    .ToList()
+                : new List<RunReplayLane>
+                {
+                    new("main", checkpoint.Phase, false, checkpoint.Tasks.Select(t => t.TaskKey).ToList(), [])
+                };
+
+        return new RunReplay(runGuid.ToString(), run.Status.ToString().ToLowerInvariant(), tasks.Values.ToList(), lanes, supervisionRounds, milestones);
     }
 
     private static JsonElement PayloadRoot(IReadOnlyDictionary<string, object?> payload)

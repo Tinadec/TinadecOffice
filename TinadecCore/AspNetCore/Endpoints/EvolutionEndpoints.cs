@@ -83,9 +83,23 @@ public static class EvolutionEndpoints
                         tasks = sourceReplay.Tasks.Select(task => new
                         {
                             task_key = task.TaskKey,
+                            lane_key = task.LaneKey,
                             status = task.Status,
                             summary = task.Summary,
                             evidence = task.Evidence
+                        }),
+                        lanes = sourceReplay.Lanes.Select(lane => new
+                        {
+                            lane_key = lane.LaneKey,
+                            status = lane.Status,
+                            escalated = lane.Escalated,
+                            task_keys = lane.TaskKeys,
+                            waits = lane.Waits.Select(w => new
+                            {
+                                waiting_task = w.WaitingTaskKey,
+                                lane = w.Lane,
+                                predicate = w.Predicate
+                            })
                         }),
                         supervision_rounds = sourceReplay.SupervisionRounds.Select(round => new
                         {
