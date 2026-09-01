@@ -1810,20 +1810,25 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             + lines;
     }
 
-    private static List<DurableTaskNode> ValidateAndMaterializeGraph(PlannedTask[] tasks, int maxTasks)
+    internal static List<DurableTaskNode> ValidateAndMaterializeGraph(PlannedTask[] tasks, int maxTasks)
     {
         if (tasks.Length == 0) throw new InvalidTaskGraphException("The planner returned no tasks.");
         if (tasks.Length > maxTasks) throw new InvalidTaskGraphException($"The planner returned {tasks.Length} tasks, above the frozen limit of {maxTasks}.");
-        var candidates = new List<(PlannedTask Task, string Key)>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new List<(PlannedTask Task, string Key, string Lane)>();
+        // Task keys are unique within a lane, not globally: two lanes may each
+        // carry their own "test" task. Dependencies still resolve globally so a
+        // lane may dock behind another lane's task.
+        var seen = new HashSet<(string Lane, string Key)>();
         foreach (var task in tasks)
         {
             if (string.IsNullOrWhiteSpace(task.Title)) throw new InvalidTaskGraphException("Every planned task needs a title.");
             var key = NormalizeTaskKey(task.TaskKey, task.Title);
-            if (!seen.Add(key)) throw new InvalidTaskGraphException($"Task key '{key}' is not unique.");
-            candidates.Add((task, key));
+            var lane = string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
+            if (!seen.Add((lane, key))) throw new InvalidTaskGraphException($"Task key '{key}' is not unique within lane '{lane}'.");
+            candidates.Add((task, key, lane));
         }
-        var aliases = candidates.ToDictionary(item => item.Key, item => item.Key, StringComparer.OrdinalIgnoreCase);
+        var aliases = candidates.GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in candidates)
         {
             if (!aliases.ContainsKey(candidate.Task.Title)) aliases[candidate.Task.Title] = candidate.Key;
@@ -1841,25 +1846,31 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             RequiredTools = candidate.Task.RequiredTools.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Priority = candidate.Task.Priority,
             Risk = string.IsNullOrWhiteSpace(candidate.Task.Risk) ? "medium" : candidate.Task.Risk.Trim(),
-            Status = "pending"
+            Status = "pending",
+            LaneKey = candidate.Lane
         }).ToList();
-        var byKey = result.ToDictionary(item => item.TaskKey, StringComparer.OrdinalIgnoreCase);
-        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in result) Visit(node.TaskKey);
+        var byKey = result.GroupBy(item => item.TaskKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        var visiting = new HashSet<(string? Lane, string Key)>();
+        var visited = new HashSet<(string? Lane, string Key)>();
+        foreach (var node in result) Visit(node);
         return result;
 
-        void Visit(string key)
+        void Visit(DurableTaskNode node)
         {
-            if (visited.Contains(key)) return;
-            if (!visiting.Add(key)) throw new InvalidTaskGraphException("The task dependency graph contains a cycle.");
-            foreach (var dependency in byKey[key].Dependencies) Visit(dependency);
-            visiting.Remove(key);
-            visited.Add(key);
+            var identity = (node.LaneKey, node.TaskKey);
+            if (visited.Contains(identity)) return;
+            if (!visiting.Add(identity)) throw new InvalidTaskGraphException("The task dependency graph contains a cycle.");
+            foreach (var dependency in node.Dependencies)
+            {
+                foreach (var target in byKey[dependency]) Visit(target);
+            }
+            visiting.Remove(identity);
+            visited.Add(identity);
         }
     }
 
-    private static List<DurableTaskNode> MergeReplannedGraph(
+    internal static List<DurableTaskNode> MergeReplannedGraph(
         IReadOnlyList<DurableTaskNode> existing,
         IReadOnlyList<DurableTaskNode> replacement)
     {
@@ -1884,6 +1895,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 Risk = item.Risk,
                 Status = prior.Status,
                 Attempt = prior.Attempt,
+                // Tool-round state below was silently dropped on replan until it
+                // was added alongside the lane fields; it is runtime state just
+                // like Status and must survive a replan for completed tasks.
+                ToolRounds = prior.ToolRounds,
+                ToolTurns = prior.ToolTurns,
+                PendingToolExecutionId = prior.PendingToolExecutionId,
+                PendingToolApprovalId = prior.PendingToolApprovalId,
                 WorkerAgentId = prior.WorkerAgentId,
                 WorkerAgentSlug = prior.WorkerAgentSlug,
                 WorkerAgentDefinitionId = prior.WorkerAgentDefinitionId,
@@ -1895,7 +1913,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 ResultSummary = prior.ResultSummary,
                 Evidence = prior.Evidence,
                 StaleEvidence = prior.StaleEvidence,
-                CompletedAt = prior.CompletedAt
+                CompletedAt = prior.CompletedAt,
+                LaneKey = prior.LaneKey,
+                Waits = prior.Waits,
+                CriteriaVerdicts = prior.CriteriaVerdicts
             };
         }).ToList();
     }
@@ -2535,7 +2556,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         return buffer.Count == 0 ? "task" : new string(buffer.ToArray());
     }
 
-    private sealed class InvalidTaskGraphException(string message) : InvalidOperationException(message);
+    internal sealed class InvalidTaskGraphException(string message) : InvalidOperationException(message);
 
     private sealed record TaskExecutionResult(
         Guid TaskId,
@@ -2574,6 +2595,18 @@ internal sealed class FullDuplexCheckpointV1
     public List<RecommendedCapability> RecommendedCapabilities { get; set; } = [];
     public ModelUsage? ModelUsage { get; set; }
     public Guid? AssistantMessageId { get; set; }
+
+    /// <summary>
+    /// Lateral execution lanes (swim lanes) beyond the implicit "main" lane.
+    /// Absent (pre-lane checkpoints) or empty means a single implicit main lane.
+    /// </summary>
+    public List<DurableLane> Lanes { get; set; } = [];
+
+    /// <summary>
+    /// Highest drained run_directives id, so the M2 run-terminal drain resumes
+    /// without replaying or skipping queued interactions after a restart.
+    /// </summary>
+    public long DirectiveCursor { get; set; }
 }
 
 /// <summary>
@@ -2613,6 +2646,34 @@ internal sealed class DurableTaskNode
     public List<string> Evidence { get; set; } = [];
     public List<StaleTaskEvidence> StaleEvidence { get; set; } = [];
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>
+    /// The lane this task belongs to. Null on pre-lane checkpoints and reads as
+    /// the implicit "main" lane everywhere it is consumed.
+    /// </summary>
+    public string? LaneKey { get; set; }
+
+    /// <summary>
+    /// Lane keys this task is docked behind; the M2 main loop keeps the task
+    /// waiting until every listed lane reaches a terminal state.
+    /// </summary>
+    public List<string> Waits { get; set; } = [];
+
+    /// <summary>
+    /// Per-criterion verdicts produced by supervision (M3). Empty means no
+    /// lane-gate review has run for this task yet.
+    /// </summary>
+    public List<CriterionVerdict> CriteriaVerdicts { get; set; } = [];
+}
+
+/// <summary>Per-criterion supervised verdict for a lane-gated task.</summary>
+internal sealed record CriterionVerdict(string Criterion, bool Satisfied, string? Evidence);
+
+/// <summary>A named execution lane recorded in the run checkpoint.</summary>
+internal sealed class DurableLane
+{
+    public string LaneKey { get; set; } = string.Empty;
+    public string Status { get; set; } = "pending";
 }
 
 internal sealed record StaleTaskEvidence(

@@ -96,6 +96,29 @@ public sealed record TriggersPolicy(
     }
 }
 
+/// <summary>
+/// Lateral execution lanes (swim lanes) inside one run. The master switch stays
+/// off until M2 wires the multi-lane main loop; the ceilings below are frozen
+/// into every run configuration so admission can rely on them either way.
+/// </summary>
+public sealed record OrchestrationPolicy(bool LanesEnabled, int MaxLanesPerRun, int MaxTasksPerLane)
+{
+    public static OrchestrationPolicy Disabled => new(false, 4, 6);
+
+    public static void Validate(OrchestrationPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.MaxLanesPerRun is < 1 or > 16)
+        {
+            throw new InvalidDataException("max_lanes_per_run must be between 1 and 16.");
+        }
+        if (policy.MaxTasksPerLane is < 1 or > 64)
+        {
+            throw new InvalidDataException("max_tasks_per_lane must be between 1 and 64.");
+        }
+    }
+}
+
 public sealed record ApplicationModeDefinition(
     string Id,
     string DefaultAgentMode,
@@ -195,6 +218,9 @@ public sealed record AgentRuntimeConfigurationSnapshot(
 {
     /// <summary>Operational-role trigger gates; absent TOML keeps the chain disabled.</summary>
     public TriggersPolicy Triggers { get; init; } = TriggersPolicy.Disabled;
+
+    /// <summary>Lane master switch and ceilings; absent TOML keeps lanes off.</summary>
+    public OrchestrationPolicy Orchestration { get; init; } = OrchestrationPolicy.Disabled;
 
     public (string ApplicationMode, string AgentMode, RuntimeProfileDefinition Profile) Resolve(string? applicationMode, string? agentMode)
     {
@@ -354,6 +380,16 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
                 Boolean(triggers, "curate_on_run_closed"),
                 Boolean(triggers, "git_steward_on_run_closed"));
         TriggersPolicy.Validate(triggersPolicy);
+        // Lanes ride the same opt-in pattern: a baseline without [orchestration]
+        // keeps the lateral channel closed while the ceilings still freeze.
+        var orchestration = OptionalTable(root, "orchestration");
+        var orchestrationPolicy = orchestration is null
+            ? OrchestrationPolicy.Disabled
+            : new OrchestrationPolicy(
+                Boolean(orchestration, "lanes_enabled"),
+                Integer(orchestration, "max_lanes_per_run", 4),
+                Integer(orchestration, "max_tasks_per_lane", 6));
+        OrchestrationPolicy.Validate(orchestrationPolicy);
         return new AgentRuntimeConfigurationSnapshot(
             version,
             hash,
@@ -368,7 +404,8 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             new Dictionary<string, RuntimeProfileDefinition>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase))
         {
-            Triggers = triggersPolicy
+            Triggers = triggersPolicy,
+            Orchestration = orchestrationPolicy
         };
     }
 

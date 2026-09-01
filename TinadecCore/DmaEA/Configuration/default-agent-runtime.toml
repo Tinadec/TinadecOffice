@@ -18,6 +18,14 @@ preserve_partial_results = true
 required_before_final = true
 max_revision_rounds = 2
 
+# Lateral execution lanes (swim lanes) inside one run. The master switch stays
+# off until the multi-lane main loop lands; the ceilings below still freeze
+# into every run configuration so admission can rely on them either way.
+[orchestration]
+lanes_enabled = false
+max_lanes_per_run = 4
+max_tasks_per_lane = 6
+
 [context]
 default_token_budget = 8192
 recent_message_limit = 24

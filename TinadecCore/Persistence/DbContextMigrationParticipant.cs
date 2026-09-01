@@ -29,12 +29,16 @@ public static class DbContextSchemaBootstrapper
 {
     public static async Task EnsureTablesAsync(DbContext db, CancellationToken cancellationToken = default)
     {
+        // Column reconciliation must run before the create script: the script's
+        // index DDL comes from the current model and can reference columns that
+        // a migrations-era table does not have yet, which aborts the whole
+        // script before reconciliation ever gets a chance to add them.
+        await ReconcileModelColumnsAsync(db, cancellationToken).ConfigureAwait(false);
         var script = db.Database.GenerateCreateScript()
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ", StringComparison.Ordinal)
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ", StringComparison.Ordinal);
         if (!string.IsNullOrWhiteSpace(script)) await db.Database.ExecuteSqlRawAsync(script, cancellationToken).ConfigureAwait(false);
-        await ReconcileModelColumnsAsync(db, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

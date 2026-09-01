@@ -21,6 +21,9 @@ public sealed class PlannedTask
 {
     [JsonPropertyName("task_key")]
     public string? TaskKey { get; init; }
+    /// <summary>Lane this task runs in; omitted or empty means the implicit "main" lane.</summary>
+    [JsonPropertyName("lane_key")]
+    public string? LaneKey { get; init; }
     [JsonPropertyName("title")]
     public string Title { get; init; } = string.Empty;
     [JsonPropertyName("category")]

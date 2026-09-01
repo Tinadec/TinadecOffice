@@ -79,6 +79,13 @@ public sealed record FrozenRunConfigurationV1(
     /// </summary>
     public TriggersPolicy Triggers { get; init; } = TriggersPolicy.Disabled;
 
+    /// <summary>
+    /// Lane master switch and ceilings frozen at admission. Runs admitted before
+    /// the orchestration section existed deserialize with lanes disabled, so an
+    /// old checkpoint resumes with the pre-lane single-lane semantics.
+    /// </summary>
+    public OrchestrationPolicy Orchestration { get; init; } = OrchestrationPolicy.Disabled;
+
     public string ToCanonicalJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     [JsonIgnore]
@@ -205,7 +212,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         {
             PolicySnapshotHash = policySnapshot?.SnapshotHash ?? "",
             PolicyBundles = policySnapshot?.Bundles ?? [],
-            Triggers = snapshot.Triggers
+            Triggers = snapshot.Triggers,
+            Orchestration = snapshot.Orchestration
         };
         return frozen;
     }
