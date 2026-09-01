@@ -44,6 +44,30 @@ export interface ApprovalDto {
   decided_at?: string | null;
 }
 
+export interface PreAuthorizationDto {
+  id: string;
+  run_id: string;
+  lane_key?: string | null;
+  tool_scope: string[];
+  parameter_constraint_hash?: string | null;
+  risk_max: string;
+  max_uses: number;
+  use_count: number;
+  expires_at: string;
+  revoked: boolean;
+}
+
+export interface CreatePreAuthorizationInput {
+  run_id: string;
+  lane_key?: string | null;
+  tool_scope: string[];
+  parameter_constraint_hash?: string | null;
+  risk_max?: string;
+  max_uses: number;
+  expires_at?: string | null;
+  summary?: string | null;
+}
+
 export type GovernanceRequestStatus =
   | 'pending'
   | 'awaiting_delegate'
@@ -1883,6 +1907,10 @@ export const api = {
   decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null) => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
     method: 'POST',
     body: JSON.stringify(reason ? { decision, reason } : { decision })
+  }),
+  createPreAuthorization: (input: CreatePreAuthorizationInput) => request<PreAuthorizationDto>('/api/v1/approvals/pre-authorizations', {
+    method: 'POST',
+    body: JSON.stringify(input)
   }),
   listModelProviderTemplates: () => request<ModelProviderTemplateDto[]>('/api/v1/model-provider-templates'),
   listModelProviders: () => request<ModelProviderInstanceDto[]>('/api/v1/model-providers'),

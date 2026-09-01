@@ -5,6 +5,7 @@ import { ShieldCheck, Gavel, Eye } from '@lucide/vue'
 import { api, type ApprovalDto, type PermissionRequestDto, type SupervisionFindingDto } from '@/api'
 import { useUserActionStore } from '@/stores/userAction'
 import UserActionStatusBadge from '@/components/governance/UserActionStatusBadge.vue'
+import PreAuthorizationDialog from '@/components/governance/PreAuthorizationDialog.vue'
 
 /**
  * Three independent state machines, three columns (docs/app-core-ui.md §6):
@@ -23,6 +24,7 @@ const findings = ref<SupervisionFindingDto[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const deciding = ref<string | null>(null)
+const preAuthOpen = ref(false)
 
 const openApprovals = computed(() => approvals.value.filter((a) => a.status === 'pending'))
 const openPermissions = computed(() =>
@@ -100,9 +102,14 @@ onMounted(loadAll)
   <div class="approval-board" data-testid="approval-board">
     <header class="approval-board__header">
       <h1>{{ t('governance.boardTitle', 'Governance decisions') }}</h1>
-      <button type="button" class="detail-dialog__btn" :disabled="loading" @click="loadAll">
-        {{ loading ? t('common.loading', 'Loading…') : t('common.refresh', 'Refresh') }}
-      </button>
+      <div class="approval-board__header-actions">
+        <button type="button" class="detail-dialog__btn" data-testid="open-pre-auth" @click="preAuthOpen = true">
+          {{ t('governance.preAuthorize', 'Pre-authorize') }}
+        </button>
+        <button type="button" class="detail-dialog__btn" :disabled="loading" @click="loadAll">
+          {{ loading ? t('common.loading', 'Loading…') : t('common.refresh', 'Refresh') }}
+        </button>
+      </div>
     </header>
 
     <div v-if="loadError" class="approval-board__error">{{ loadError }}</div>
@@ -158,6 +165,8 @@ onMounted(loadAll)
         </article>
       </section>
     </div>
+
+    <PreAuthorizationDialog v-model:open="preAuthOpen" />
   </div>
 </template>
 
@@ -180,6 +189,11 @@ onMounted(loadAll)
 .approval-board__header h1 {
   font-size: 17px;
   font-weight: 700;
+}
+
+.approval-board__header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .approval-board__error {
