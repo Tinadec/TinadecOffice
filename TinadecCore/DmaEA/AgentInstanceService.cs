@@ -41,7 +41,8 @@ public sealed record RuntimeAgentSeed(
     Guid? TaskId = null,
     Guid? AgentDefinitionId = null,
     Guid? AgentVersionId = null,
-    string VersionContentHash = "");
+    string VersionContentHash = "",
+    string? LaneKey = null);
 
 public enum AgentCreationIntent
 {
@@ -173,6 +174,7 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
             TaskNodeId = seed.TaskId, ProfileId = seed.ProfileId, Layer = seed.Layer, Role = seed.Role, GenerationDepth = 0,
             AgentDefinitionId = binding.DefinitionId, AgentVersionId = binding.VersionId, AgentVersionHash = binding.ContentHash,
             Generated = false, Status = "running", DefinitionReference = stored.Value, DefinitionHash = stored.Sha256, DefinitionLength = stored.Length,
+            LaneKey = seed.LaneKey,
             CreatedAt = now, UpdatedAt = now
         };
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

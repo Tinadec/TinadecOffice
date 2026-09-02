@@ -86,7 +86,7 @@ public sealed class ToolRoundsPolicyTests : IDisposable
         "schema_version = 1",
         "[spawn]",
         "max_depth = 2",
-        "max_agents_per_run = 8",
+        "max_agents_per_run = 16",
         "max_parallel_workers = 4",
         "[scheduling]",
         "max_active_runs_per_session = 2",

@@ -285,7 +285,8 @@ public sealed record PermissionRequestCommand(
     string Risk,
     decimal ExpectedCost,
     string Rationale,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    string? PermissionMode = null);
 
 public sealed record PermissionRequestSnapshot(
     Guid Id,
@@ -406,7 +407,8 @@ public sealed record ToolAuthorizationCommand(
     int RequestedUses,
     TimeSpan RequestedDuration,
     string Rationale,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    string? PermissionMode = null);
 
 /// <summary>Publicly safe result for tool authorization; lease nonce is never returned.</summary>
 public sealed record ToolAuthorizationResult(

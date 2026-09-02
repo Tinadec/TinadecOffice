@@ -86,7 +86,10 @@ public sealed class ApprovalWindowTests : IAsyncLifetime
 
         var start = await ExecutionCoordinator().TryStartAsync(execution.Id);
 
+        // The park flag is the engine's escalation signal: the approval is not
+        // merely waiting for a human, its decision window already elapsed.
         Assert.Equal("awaiting_approval", start.Status);
+        Assert.True(start.ParkExpired);
         await using var verify = await DbFactory().CreateDbContextAsync();
         var parkedApproval = await verify.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
         Assert.Equal("expired", parkedApproval.Status);
@@ -95,6 +98,21 @@ public sealed class ApprovalWindowTests : IAsyncLifetime
 
         var events = await LifecycleManager().ReplayEventsAsync(sessionId, 0);
         Assert.Contains(events, e => e.EventType == "approval.park_expired");
+    }
+
+    [Fact]
+    public async Task PendingApprovalWithinWindow_DoesNotCarryTheParkFlag()
+    {
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("window-pending");
+        var run = await InsertRunAsync(sessionId);
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, "pending:0:0:0");
+
+        var start = await ExecutionCoordinator().TryStartAsync(execution.Id);
+
+        // A live approval is a normal human wait: the engine must keep the lane
+        // parked without escalating it.
+        Assert.Equal("awaiting_approval", start.Status);
+        Assert.False(start.ParkExpired);
     }
 
     [Fact]

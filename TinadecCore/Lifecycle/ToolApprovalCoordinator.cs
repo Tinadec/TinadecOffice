@@ -24,6 +24,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     private readonly ISessionLocator _sessions;
     private readonly INonceMaterialStore _nonceMaterials;
     private readonly ILifecycleManager? _lifecycle;
+    private readonly IToolApprovalAutoPolicy? _autoPolicy;
     private readonly TimeSpan _decisionWindow;
     private readonly TimeSpan _executionWindow;
 
@@ -34,7 +35,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         ISessionLocator sessions,
         INonceMaterialStore? nonceMaterials = null,
         ILifecycleManager? lifecycle = null,
-        IOptions<TinadecApprovalOptions>? approvalOptions = null)
+        IOptions<TinadecApprovalOptions>? approvalOptions = null,
+        IToolApprovalAutoPolicy? autoPolicy = null)
     {
         _factory = factory;
         _tenant = tenant;
@@ -42,6 +44,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         _sessions = sessions;
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
         _lifecycle = lifecycle;
+        _autoPolicy = autoPolicy;
         var options = approvalOptions?.Value ?? new TinadecApprovalOptions();
         _decisionWindow = TimeSpan.FromMinutes(Math.Clamp(options.DecisionWindowMinutes, 1, 1440));
         _executionWindow = TimeSpan.FromMinutes(Math.Clamp(options.ExecutionWindowMinutes, 1, 1440));
@@ -97,6 +100,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             MutatesWorkspace = request.MutatesWorkspace,
             RequiresApproval = needsApproval,
             LeaseUses = request.LeaseUses,
+            LaneKey = request.LaneKey,
             Status = needsApproval && !request.DeferApproval ? "awaiting_approval" : "requested",
             ParametersHash = request.ParametersHash,
             ParametersReference = parameters.Value,
@@ -281,9 +285,12 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
     /// <summary>
     /// Converts this execution's pending approval into an approved one when an
-    /// unattended grant covers it. A grant spends its budget through a CAS on
-    /// use_count; a lane-bound grant never mints until executions carry a lane,
-    /// and wildcard scopes are refused here even if one was ever stored.
+    /// unattended release path covers it. Three paths may release a call, in
+    /// order: a frozen full-access run, a pre-authorization grant, and the
+    /// auto-approve policy. A grant spends its budget through a CAS on
+    /// use_count; wildcard scopes are refused here even if one was ever stored.
+    /// When no path covers the call the approval simply stays pending — this
+    /// method never denies, so a human can still decide the call afterwards.
     /// </summary>
     public async Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default)
     {
@@ -301,6 +308,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
         var frozenMode = await ReadFrozenPermissionModeAsync(execution.RunId, cancellationToken).ConfigureAwait(false);
         PreAuthorizationRecord? spent = null;
+        string? autoPolicyVersion = null;
         if (string.Equals(frozenMode, "full-access", StringComparison.Ordinal))
         {
             // The frozen manifest and per-instance grants are still enforced by
@@ -311,41 +319,86 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             // SQLite cannot translate DateTimeOffset relational comparisons, so
             // expiry stays out of the SQL predicates: candidates are loaded with
             // the translatable CAS state and filtered in memory, mirroring
-            // TryConsumeApprovalAsync.
+            // TryConsumeApprovalAsync. The lane dimension is decided in memory
+            // too — SQL equality against a nullable CLR argument would silently
+            // evaluate to unknown once the execution carries no lane.
             var candidates = await db.PreAuthorizations
                 .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
                     && x.RunId == execution.RunId && !x.Revoked
-                    && x.UseCount < x.MaxUses
-                    && x.LaneKey == null)
+                    && x.UseCount < x.MaxUses)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
-            // SQLite cannot order by DateTimeOffset either, so oldest-grant-first
-            // ordering happens client-side after the translatable load.
+            // A run-level grant (LaneKey null) covers every lane of the run —
+            // before the run starts the user only knows its id, so a main-lane
+            // grant is the only shape that can authorize the deferred lane. A
+            // lane-bound grant matches its own lane exactly and is preferred, so
+            // a scoped grant is never shadowed by a broader one. Within each
+            // group the oldest grant is spent first; SQLite cannot order by
+            // DateTimeOffset, so that ordering happens client-side.
             var matched = candidates
-                .OrderBy(x => x.CreatedAt)
+                .Where(x => x.LaneKey == null || string.Equals(x.LaneKey, execution.LaneKey, StringComparison.Ordinal))
+                .OrderBy(x => x.LaneKey == null ? 1 : 0)
+                .ThenBy(x => x.CreatedAt)
                 .FirstOrDefault(x => x.ExpiresAt > now && MatchesGrant(x, execution));
-            if (matched is null) return null;
-            var cas = await db.PreAuthorizations
-                .Where(x => x.Id == matched.Id && !x.Revoked && x.UseCount < x.MaxUses)
-                .ExecuteUpdateAsync(set => set
-                    .SetProperty(x => x.UseCount, x => x.UseCount + 1)
-                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-            if (cas != 1) return null;
-            spent = matched;
-            var spentRow = await db.PreAuthorizations.AsNoTracking().SingleAsync(x => x.Id == matched.Id, cancellationToken).ConfigureAwait(false);
-            if (spentRow.ExpiresAt <= now)
+            if (matched is not null)
             {
-                // The grant lapsed between load and spend; give the budget back
-                // rather than minting from an expired grant.
-                await db.PreAuthorizations
-                    .Where(x => x.Id == matched.Id && x.UseCount == matched.UseCount + 1)
+                var cas = await db.PreAuthorizations
+                    .Where(x => x.Id == matched.Id && !x.Revoked && x.UseCount < x.MaxUses)
                     .ExecuteUpdateAsync(set => set
-                        .SetProperty(x => x.UseCount, x => x.UseCount - 1)
+                        .SetProperty(x => x.UseCount, x => x.UseCount + 1)
                         .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
-                return null;
+                if (cas == 1)
+                {
+                    var spentRow = await db.PreAuthorizations.AsNoTracking().SingleAsync(x => x.Id == matched.Id, cancellationToken).ConfigureAwait(false);
+                    if (spentRow.ExpiresAt <= now)
+                    {
+                        // The grant lapsed between load and spend; give the
+                        // budget back rather than minting from an expired grant.
+                        await db.PreAuthorizations
+                            .Where(x => x.Id == matched.Id && x.UseCount == matched.UseCount + 1)
+                            .ExecuteUpdateAsync(set => set
+                                .SetProperty(x => x.UseCount, x => x.UseCount - 1)
+                                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        spent = spentRow;
+                    }
+                }
+            }
+
+            // No grant covered the call, so ask the auto-approve policy — the
+            // third release path. A missing port, an abstaining policy, or an
+            // exhausted budget all leave the approval pending rather than
+            // denying it: a denial is terminal and a human could never grant
+            // the call afterwards. The budget counts this store's own durable
+            // auto-policy decisions for the run, so each release path spends
+            // the budget it can actually see.
+            if (spent is null)
+            {
+                var autoPolicyUses = await db.ApprovalDecisions.AsNoTracking()
+                    .Where(decision => decision.Reason == "auto_policy_approved"
+                        && db.ApprovalRequests.Any(approval => approval.Id == decision.ApprovalRequestId
+                            && approval.RunId == execution.RunId))
+                    .CountAsync(cancellationToken).ConfigureAwait(false);
+                var verdict = _autoPolicy is null
+                    ? null
+                    : await _autoPolicy.EvaluateAsync(new ToolApprovalAutoPolicyContext(
+                        execution.ToolId,
+                        execution.Risk,
+                        execution.RunId,
+                        execution.LaneKey,
+                        execution.ParametersHash,
+                        execution.Id,
+                        autoPolicyUses), cancellationToken).ConfigureAwait(false);
+                if (verdict is null || !verdict.Approved) return null;
+                autoPolicyVersion = verdict.PolicyVersion;
             }
         }
 
-        var reason = spent is null ? "full_access_auto_mint" : "pre_authorized";
+        var source = spent is not null ? "pre_authorized"
+            : autoPolicyVersion is not null ? "auto_policy"
+            : "full_access_auto_mint";
+        var reason = source == "auto_policy" ? "auto_policy_approved" : source;
         // The approval can never outlive the grant that backed it.
         var expiry = spent is { } grant && grant.ExpiresAt < now.Add(_decisionWindow) ? grant.ExpiresAt : now.Add(_decisionWindow);
         var upgraded = await db.ApprovalRequests
@@ -366,14 +419,33 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             ApprovalRequestId = approvalId,
             Decision = "approved",
             Reason = reason,
-            DecidedByPrincipalId = spent?.GrantedByPrincipalId ?? run.InitiatedByPrincipalId,
+            // A policy decision has no human behind it; leaving the column empty
+            // keeps the audit trail from attributing it to the run initiator.
+            DecidedByPrincipalId = spent?.GrantedByPrincipalId
+                ?? (source == "auto_policy" ? Guid.Empty : run.InitiatedByPrincipalId),
             CreatedAt = now
         });
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
+        if (source == "auto_policy" && _lifecycle is not null)
+        {
+            await _lifecycle.AppendEventAsync(execution.RunId, "approval.auto_decided",
+                new
+                {
+                    execution_id = executionId,
+                    approval_id = approvalId,
+                    tool_id = execution.ToolId,
+                    lane_key = execution.LaneKey,
+                    policy_version = autoPolicyVersion,
+                    risk = execution.Risk
+                },
+                $"Auto-approve policy {autoPolicyVersion} approved tool '{execution.ToolId}' without a human decision.",
+                "info", taskId: execution.TaskId, approvalId: approvalId, toolId: execution.ToolId, cancellationToken).ConfigureAwait(false);
+        }
+
         var fresh = await db.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == executionId
             && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
-        return new PreAuthorizationMintResult(await ToSnapshotAsync(fresh ?? execution, cancellationToken).ConfigureAwait(false), reason);
+        return new PreAuthorizationMintResult(await ToSnapshotAsync(fresh ?? execution, cancellationToken).ConfigureAwait(false), source);
     }
 
     private async Task<string?> ReadFrozenPermissionModeAsync(Guid runId, CancellationToken cancellationToken)
@@ -497,11 +569,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             if (_lifecycle is not null)
             {
                 await _lifecycle.AppendEventAsync(execution.RunId, "approval.park_expired",
-                    new { execution_id = execution.Id, approval_id = approval.Id, tool_id = execution.ToolId },
+                    new { execution_id = execution.Id, approval_id = approval.Id, tool_id = execution.ToolId, lane_key = execution.LaneKey },
                     "Approval decision window elapsed; execution parked awaiting escalation or re-approval.",
                     "warning", taskId: execution.TaskId, approvalId: approval.Id, toolId: execution.ToolId, cancellationToken).ConfigureAwait(false);
             }
-            return new ToolExecutionStartDecision("awaiting_approval", snapshot, "Decision window elapsed; execution parked awaiting escalation or re-approval.");
+            return new ToolExecutionStartDecision("awaiting_approval", snapshot, "Decision window elapsed; execution parked awaiting escalation or re-approval.", ParkExpired: true);
         }
         if (approval.Status == "approved")
         {
@@ -1015,7 +1087,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.ApprovalId, row.ToolId, row.ToolCallKey, row.Risk, row.MutatesWorkspace, row.RequiresApproval, row.Status, parametersJson,
         row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt,
         row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses,
-        row.WorkspaceSnapshotId, row.WorkspaceSnapshotHash);
+        row.WorkspaceSnapshotId, row.WorkspaceSnapshotHash, row.LaneKey);
 
     // Action approvals carry a server-generated, one-time nonce. Only its hash
     // and a protected-material reference are persisted; the material is never

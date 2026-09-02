@@ -117,7 +117,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             policy.WorkerRetryLimit,
             policy.SerializeWorkspaceWrites,
             frozenManifest.Tools,
-            frozenManifest.ManifestHash);
+            frozenManifest.ManifestHash,
+            policy.PermissionMode);
     }
 
     private static bool IsToolAllowed(IReadOnlyList<string> allowedTools, string toolId) =>
@@ -253,7 +254,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 120, 1, 1800);
             var retries = ReadInt(document.RootElement, "scheduling", "workerRetryLimit", "worker_retry_limit", 0, 0, 10);
             var serialize = ReadBoolean(document.RootElement, "tools", "serializeWorkspaceWrites", "serialize_workspace_writes", true);
-            return new FrozenToolPolicy(timeout, retries, serialize);
+            return new FrozenToolPolicy(permissionMode, timeout, retries, serialize);
         }
         catch (JsonException ex)
         {
@@ -310,7 +311,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         return fallback;
     }
 
-    private sealed record FrozenToolPolicy(int DefaultTimeoutSeconds, int WorkerRetryLimit, bool SerializeWorkspaceWrites);
+    private sealed record FrozenToolPolicy(string? PermissionMode, int DefaultTimeoutSeconds, int WorkerRetryLimit, bool SerializeWorkspaceWrites);
 
     internal sealed record FrozenToolManifestBinding(
         int ProtocolVersion,

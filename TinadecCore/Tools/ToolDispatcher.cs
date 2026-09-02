@@ -97,7 +97,8 @@ public sealed class ToolDispatcher : IToolDispatcher
                 toolCallKey,
                 $"Tool '{descriptor.Entry.Id}' requested by agent {scope.AgentInstanceId}.",
                 DeferApproval: true,
-                LeaseUses: request.LeaseUses), cancellationToken).ConfigureAwait(false);
+                LeaseUses: request.LeaseUses,
+                LaneKey: request.LaneKey), cancellationToken).ConfigureAwait(false);
             var execution = preparation.Execution;
 
             // High-risk writes receive the same pre-write snapshot guard as
@@ -165,7 +166,7 @@ public sealed class ToolDispatcher : IToolDispatcher
                         execution = minted.Snapshot;
                         await AppendEventAsync(scope.RunId, "approval.pre_authorized_minted",
                             $"Tool '{descriptor.Entry.Id}' was approved by {minted.Source}.",
-                            new { execution_id = execution.Id, approval_id = execution.ApprovalId, tool_id = descriptor.Entry.Id, source = minted.Source },
+                            new { execution_id = execution.Id, approval_id = execution.ApprovalId, tool_id = descriptor.Entry.Id, source = minted.Source, lane_key = execution.LaneKey },
                             cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
                     }
                 }
@@ -181,7 +182,8 @@ public sealed class ToolDispatcher : IToolDispatcher
                     tool_id = descriptor.Entry.Id,
                     requires_approval = execution.RequiresApproval,
                     mutates_workspace = execution.MutatesWorkspace,
-                    risk = execution.Risk
+                    risk = execution.Risk,
+                    lane_key = execution.LaneKey
                 }, cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
 
                 if (execution.RequiresApproval)
@@ -192,7 +194,8 @@ public sealed class ToolDispatcher : IToolDispatcher
                         execution_id = execution.Id,
                         task_id = scope.TaskId,
                         tool_id = descriptor.Entry.Id,
-                        risk = execution.Risk
+                        risk = execution.Risk,
+                        lane_key = execution.LaneKey
                     }, cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
                 }
             }
@@ -301,7 +304,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         switch (start.Status)
         {
             case "awaiting_approval":
-                return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingApproval, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message };
+                return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingApproval, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message, ParkExpired = start.ParkExpired };
             case "awaiting_resume":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingResume, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message };
             case "outcome_unknown":
@@ -613,7 +616,8 @@ public sealed class ToolDispatcher : IToolDispatcher
             Math.Clamp(execution.LeaseUses, 1, 32),
             TimeSpan.FromMinutes(30),
             $"Tool '{descriptor.Id}' requested by agent {scope.AgentInstanceId}.",
-            $"tool-auth:{execution.Id:N}"), cancellationToken).ConfigureAwait(false);
+            $"tool-auth:{execution.Id:N}",
+            scope.PermissionMode), cancellationToken).ConfigureAwait(false);
         var status = result.Status switch
         {
             "awaiting_delegate" => ToolDispatchStatus.AwaitingDelegate,

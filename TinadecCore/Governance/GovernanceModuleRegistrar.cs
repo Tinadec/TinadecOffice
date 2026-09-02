@@ -22,6 +22,10 @@ public sealed class GovernanceModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IPolicyDecisionPoint>(sp => sp.GetRequiredService<GovernanceService>());
         builder.Services.AddSingleton<IAuthorizationService>(sp => sp.GetRequiredService<GovernanceService>());
         builder.Services.AddSingleton<IPolicySnapshotProvider>(sp => sp.GetRequiredService<GovernanceService>());
+        // Third release path for durable tool approvals. The lifecycle module
+        // consumes it through the abstractions port, so governance stays the
+        // policy owner without lifecycle depending on this assembly.
+        builder.Services.AddSingleton<IToolApprovalAutoPolicy, ToolApprovalAutoPolicy>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,

@@ -804,7 +804,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     /// </summary>
     private static string RuntimeTomlWith(string triggersSection) =>
         "schema_version = 1\n\n"
-        + "[spawn]\nmax_depth = 2\nmax_agents_per_run = 8\nmax_parallel_workers = 4\n\n"
+        + "[spawn]\nmax_depth = 2\nmax_agents_per_run = 16\nmax_parallel_workers = 4\n\n"
         + "[scheduling]\nmax_active_runs_per_session = 2\nworker_retry_limit = 2\npreserve_partial_results = true\n\n"
         + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n\n"
         + "[context]\ndefault_token_budget = 8192\nrecent_message_limit = 24\noptimistic_revision = true\n\n"
@@ -1465,6 +1465,128 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         // The opened lane really executed its deferred task under the same run
         // and lease: the main worker ran once, then the l2 worker ran once.
         Assert.Equal(2, script.WorkerCalls);
+    }
+
+    [Fact]
+    public async Task GoalOnlyLaneOpen_PlansThroughItsOwnPlannerInstance()
+    {
+        // The user's deferred instruction carries only a goal. The lane must be
+        // planned by its own planning agent instance — literally a second
+        // parallel task-planning agent inside the same run lease.
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"main-a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenPlanner("l2", "[{\"task_key\":\"l2-test\",\"title\":\"测试并提交\",\"description\":\"\",\"success_criteria\":[\"通过\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeetingOnce("收到。已登记延后执行。\nLANE_OPEN: {\"lane_key\":\"l2\",\"goal\":\"完成后测试并提交\",\"waits\":[{\"lane\":\"main\"}]}")
+            .WhenMeeting("全部完成。");
+        script.BeforeWorker = workerGate.Task;
+        script.WorkerStarted = workerStarted;
+        var factory = CreateFactory(script, runtimeToml: LanesEnabledToml());
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var target = StartStreamingInvoke(client, sessionId, new { content = "开发功能 X", client_message_id = "goal-lane-target" });
+        var runId = RunIdOf(await target.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var clarification = await StreamInvokeAsync(client, sessionId, new
+        {
+            content = "完成后测试并提交",
+            client_message_id = "goal-lane-1",
+            target_run_id = runId
+        });
+        Assert.Contains("Orchestration registered", string.Concat(clarification
+            .Where(chunk => KindOf(chunk) == "delta")
+            .Select(chunk => chunk.GetProperty("delta").GetString())), StringComparison.Ordinal);
+
+        workerGate.SetResult();
+        var chunks = await target.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = (await manager.ReplayEventsAsync(sessionId, 0)).Where(e => e.RunId == runId.ToString()).ToList();
+
+        // The lane passed through planning on its own instance and then planned.
+        var planning = Assert.Single(events, e => e.EventType == "orchestration.lane_planning");
+        Assert.Equal("l2", ((JsonElement)planning.Payload["payload"]!).GetProperty("lane_key").GetString());
+        var planned = Assert.Single(events, e => e.EventType == "orchestration.lane_planned");
+        var plannedPayload = (JsonElement)planned.Payload["payload"]!;
+        Assert.Equal("l2", plannedPayload.GetProperty("lane_key").GetString());
+        Assert.Equal(1, plannedPayload.GetProperty("task_count").GetInt32());
+        Assert.NotEqual(Guid.Empty, plannedPayload.GetProperty("planner_instance_id").GetGuid());
+
+        // The lane's planner instance is a distinct root instance tagged with the lane.
+        var created = Assert.Single(events, e =>
+        {
+            if (e.EventType != "agent.created") return false;
+            var payload = (JsonElement)e.Payload["payload"]!;
+            return payload.TryGetProperty("lane_key", out var laneKey) && laneKey.GetString() == "l2";
+        });
+        var createdPayload = (JsonElement)created.Payload["payload"]!;
+        Assert.Equal(plannedPayload.GetProperty("planner_instance_id").GetGuid(), createdPayload.GetProperty("agent_instance_id").GetGuid());
+        Assert.Equal("l2", createdPayload.GetProperty("lane_key").GetString());
+
+        // The opened lane really executed its deferred task: main once, l2 once.
+        var opened = Assert.Single(events, e => e.EventType == "orchestration.lane_opened");
+        Assert.Equal(1, ((JsonElement)opened.Payload["payload"]!).GetProperty("task_count").GetInt32());
+        Assert.Equal(2, script.WorkerCalls);
+        Assert.Equal(1, script.PlannerLaneCalls["l2"]);
+    }
+
+    [Fact]
+    public async Task GoalOnlyLane_GateReviewRoutesToItsOwnPlannerInstance()
+    {
+        // Main carries two serial tasks: the run loop is blocked inside the
+        // first worker round, so the directive is consumed between rounds while
+        // main's second task is still pending. The goal-only lane therefore
+        // parks on its unmet wait, and once main finishes it must pass a gate
+        // that is reviewed by the lane's own planning agent instance.
+        var workerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[\"a\"],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenPlanner("l2", "[{\"task_key\":\"c\",\"title\":\"任务C\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[],\"criteria_verdicts\":[{\"task_key\":\"a\",\"criterion\":\"完成\",\"satisfied\":true,\"evidence\":\"worker 输出含完成标记\"},{\"task_key\":\"b\",\"criterion\":\"完成\",\"satisfied\":true,\"evidence\":\"worker 输出含完成标记\"}]}")
+            .WhenMeetingOnce("收到。已登记延后执行。\nLANE_OPEN: {\"lane_key\":\"l2\",\"goal\":\"收尾验证\",\"waits\":[{\"lane\":\"main\"}]}")
+            .WhenMeeting("全部完成。")
+            .WhenGate("{\"decision\":\"proceed\",\"reasons\":[\"事实与裁决一致\"]}");
+        script.BeforeWorker = workerGate.Task;
+        script.WorkerStarted = workerStarted;
+        var runtimeToml = LanesEnabledToml() + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n";
+        var factory = CreateFactory(script, runtimeToml: runtimeToml);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+        var target = StartStreamingInvoke(client, sessionId, new { content = "开发功能 X", client_message_id = "goal-gate-target" });
+        var runId = RunIdOf(await target.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)));
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // The directive lands while the run loop is blocked inside main's first
+        // worker round, so the lane's wait is unmet when it is consumed.
+        await StreamInvokeAsync(client, sessionId, new
+        {
+            content = "收尾验证",
+            client_message_id = "goal-gate-1",
+            target_run_id = runId
+        });
+        workerGate.SetResult();
+        var chunks = await target.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
+
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = (await manager.ReplayEventsAsync(sessionId, 0)).Where(e => e.RunId == runId.ToString()).ToList();
+        Assert.Contains(events, e => e.EventType == "orchestration.lane_planning");
+        Assert.Contains(events, e => e.EventType == "orchestration.lane_waiting");
+
+        // The gate for a lane with its own planner is reviewed by that planner.
+        Assert.Equal(1, script.GateCalls);
+        var gatePrompt = Assert.Single(script.GatePrompts);
+        Assert.Contains("Lane: l2", gatePrompt, StringComparison.Ordinal);
+        Assert.Equal(1, script.PlannerLaneCalls["l2"]);
+        Assert.Equal(1, script.PlannerLaneCalls["main"]);
+        Assert.Equal(3, script.WorkerCalls);
     }
 
     [Fact]

@@ -14,14 +14,16 @@ public class OrchestrationDirectiveValidatorTests
         int currentLanes = 1,
         int maxLanes = 4,
         int maxTasks = 6,
-        string[]? knownLanes = null) => new(
+        string[]? knownLanes = null,
+        string? permissionMode = null) => new(
         lanesEnabled,
         currentLanes,
         maxLanes,
         maxTasks,
         FrozenTools,
         MutatingTools,
-        knownLanes ?? ["main"]);
+        knownLanes ?? ["main"],
+        permissionMode);
 
     private static string Payload(string json) => json;
 
@@ -109,13 +111,65 @@ public class OrchestrationDirectiveValidatorTests
         var wildcard = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["*"],"tasks":[{"task_key":"t1"}]}""");
         Assert.Equal("tool_scope_widening", validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", wildcard), Rules())?.Code);
 
-        // A mutating declaration without a pre-authorization reference fails closed;
-        // M5 will replace the second rejection with real consumption.
+        // A mutating declaration without a pre-authorization reference and
+        // without an unattended run still fails closed.
         var mutating = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["shell"],"tasks":[{"task_key":"t1"}]}""");
         Assert.Equal("lane_requires_preauthorization", validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", mutating), Rules())?.Code);
 
+        // A pre-authorization reference admits the declaration. The reference is
+        // only consumed by the approval minting layer, so a grant that does not
+        // match parks the lane instead of widening authority.
         var withReference = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["shell"],"pre_authorization":"pre-1","tasks":[{"task_key":"t1"}]}""");
-        Assert.Equal("preauthorization_unavailable", validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", withReference), Rules())?.Code);
+        Assert.Null(validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", withReference), Rules()));
+    }
+
+    [Fact]
+    public void DirectiveValidator_AdmitsMutatingLanes_OnUnattendedRuns_AndKeepsRejectingOtherwise()
+    {
+        var validator = new OrchestrationDirectiveValidator();
+        var mutating = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["shell"],"tasks":[{"task_key":"t1"}]}""");
+
+        Assert.Null(validator.Validate(
+            new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", mutating),
+            Rules(permissionMode: "full-access")));
+
+        // A wildcard scope must still resolve against the frozen manifest: an
+        // unattended permission mode does not license escaping the manifest check.
+        var wildcardOnUnattended = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["*"],"tasks":[{"task_key":"t1"}]}""");
+        Assert.Equal("tool_scope_widening", validator.Validate(
+            new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", wildcardOnUnattended),
+            Rules(permissionMode: "full-access"))?.Code);
+
+        // Any other permission mode keeps requiring an explicit grant reference.
+        foreach (var mode in new[] { "default", "accept-edits", "plan", null })
+        {
+            Assert.Equal("lane_requires_preauthorization", validator.Validate(
+                new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", mutating),
+                Rules(permissionMode: mode))?.Code);
+        }
+    }
+
+    [Fact]
+    public void AcceptsGoalOnlyLaneOpen_WithoutTasks()
+    {
+        var validator = new OrchestrationDirectiveValidator();
+
+        // A goal-only directive defers the task graph to the lane's own
+        // planning agent, so no task-level validation applies here.
+        var goalOnly = Payload("""{"lane_key":"l2","goal":"完成后测试并提交"}""");
+        Assert.Null(validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", goalOnly), Rules()));
+
+        // A title still satisfies the goal-or-title rule, and declared tool
+        // scopes on a goal-only lane are still checked against the manifest.
+        var titleOnly = Payload("""{"lane_key":"l2","title":"收尾"}""");
+        Assert.Null(validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", titleOnly), Rules()));
+
+        var goalWithScope = Payload("""{"lane_key":"l2","goal":"g","tool_scope":["net_new_tool"]}""");
+        var rejection = validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", goalWithScope), Rules());
+        Assert.Equal("tool_scope_widening", rejection?.Code);
+
+        var emptyTasks = Payload("""{"lane_key":"l2","goal":"g","tasks":[]}""");
+        Assert.Equal("invalid_lane_payload", validator.Validate(new OrchestrationDirectiveCandidate("LANE_OPEN", "l2", emptyTasks), Rules())?.Code);
     }
 
     [Fact]

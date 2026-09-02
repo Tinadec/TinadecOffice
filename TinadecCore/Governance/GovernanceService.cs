@@ -351,7 +351,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             command.Risk,
             command.ExpectedCost,
             command.Rationale,
-            command.IdempotencyKey), cancellationToken).ConfigureAwait(false);
+            command.IdempotencyKey,
+            command.PermissionMode), cancellationToken).ConfigureAwait(false);
         var status = resolution.Decision.Outcome switch
         {
             GovernanceOutcomes.Allowed => "allowed",
@@ -515,7 +516,10 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 // when a caller requests a duration longer than the remaining
                 // grant TTL: the source grant remains the hard upper bound.
                 var leaseExpiresAt = grant.ExpiresAt < expiresAt ? grant.ExpiresAt : expiresAt;
-                var (lease, nonce) = NewLease(scope, grant, record.Id, claim, command.RunId, command.TaskId,
+                // The lease binds to the requesting subject even when the matched
+                // grant is a broader envelope (agent-null grants cover every
+                // agent of the principal), so consumption's subject check holds.
+                var (lease, nonce) = NewLease(scope, grant, record.Id, command.SubjectAgentInstanceId, claim, command.RunId, command.TaskId,
                     command.RequestedUses, now, leaseExpiresAt, boundaryResult.Hash);
                 await PersistLeaseNonceAsync(lease, nonce, cancellationToken).ConfigureAwait(false);
                 db.CapabilityLeases.Add(lease);
@@ -534,17 +538,56 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             }
             else
             {
-                var delegated = await HasEligibleDelegationAsync(db, scope, claim, command.RunId, risk,
-                    command.ExpectedCost, now, cancellationToken).ConfigureAwait(false);
-                record.Status = delegated ? PermissionRequestStatuses.AwaitingDelegate : PermissionRequestStatuses.AwaitingUser;
-                var decision = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
-                    delegated ? GovernanceOutcomes.PermissionRequired : GovernanceOutcomes.UserRequired,
-                    delegated ? "delegated_approval_available" : "user_approval_required",
-                    delegated ? "An active delegation may decide this request." : "No eligible delegation can decide this request.",
-                    "pdp", boundaryResult.Hash, command.RunId, command.TaskId, permissionRequestId: record.Id);
-                db.AuthorizationDecisions.Add(decision);
-                record.AuthorizationDecisionId = decision.Id;
-                resolutionDecision = decision;
+                // The unattended release paths (a frozen full-access run, or an
+                // auto-approve policy that engages on this tool and risk) mint
+                // the grant here so the call reaches the durable approval layer,
+                // where the same envelope is consumed once. The release never
+                // widens authority: every boundary rule above has already passed,
+                // and the approval layer re-checks risk ceilings and budgets.
+                var unattendedReason = UnattendedPermissionReleaseReason(command);
+                if (unattendedReason is not null)
+                {
+                    var releaseGrant = NewGrant(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
+                        claim, command.RunId, command.TaskId, null, null, transferable: false,
+                        Math.Max(1, command.RequestedUses), now, expiresAt, Guid.Empty, null,
+                        $"Unattended release under a matching unattended envelope.");
+                    db.CapabilityGrants.Add(releaseGrant);
+                    var (releaseLease, releaseNonce) = NewLease(scope, releaseGrant, record.Id, command.SubjectAgentInstanceId, claim,
+                        command.RunId, command.TaskId, command.RequestedUses, now, expiresAt, boundaryResult.Hash);
+                    await PersistLeaseNonceAsync(releaseLease, releaseNonce, cancellationToken).ConfigureAwait(false);
+                    db.CapabilityLeases.Add(releaseLease);
+                    record.Status = PermissionRequestStatuses.Granted;
+                    record.CapabilityGrantId = releaseGrant.Id;
+                    record.CapabilityLeaseId = releaseLease.Id;
+                    var released = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
+                        GovernanceOutcomes.Allowed, unattendedReason,
+                        $"The unattended release path '{unattendedReason}' issued a scoped capability lease without a human decision.",
+                        "pdp", boundaryResult.Hash, command.RunId, command.TaskId, record.Id, releaseGrant.Id, releaseLease.Id);
+                    // A policy/mode release has no human behind it; leaving the
+                    // column empty keeps the audit trail from attributing it to
+                    // the ambient principal.
+                    released.DecidedByPrincipalId = Guid.Empty;
+                    db.AuthorizationDecisions.Add(released);
+                    record.AuthorizationDecisionId = released.Id;
+                    resolutionDecision = released;
+                    resolutionGrant = releaseGrant;
+                    resolutionLease = releaseLease;
+                    issuedNonce = releaseNonce;
+                }
+                else
+                {
+                    var delegated = await HasEligibleDelegationAsync(db, scope, claim, command.RunId, risk,
+                        command.ExpectedCost, now, cancellationToken).ConfigureAwait(false);
+                    record.Status = delegated ? PermissionRequestStatuses.AwaitingDelegate : PermissionRequestStatuses.AwaitingUser;
+                    var decision = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
+                        delegated ? GovernanceOutcomes.PermissionRequired : GovernanceOutcomes.UserRequired,
+                        delegated ? "delegated_approval_available" : "user_approval_required",
+                        delegated ? "An active delegation may decide this request." : "No eligible delegation can decide this request.",
+                        "pdp", boundaryResult.Hash, command.RunId, command.TaskId, permissionRequestId: record.Id);
+                    db.AuthorizationDecisions.Add(decision);
+                    record.AuthorizationDecisionId = decision.Id;
+                    resolutionDecision = decision;
+                }
             }
         }
 
@@ -747,7 +790,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         // usable while the grant record becomes exhausted and cannot mint another lease.
         grant.UseCount = grant.MaxUses;
         grant.Status = "exhausted";
-        var (lease, nonce) = NewLease(scope, grant, request.Id, claim, request.RunId, request.TaskId,
+        var (lease, nonce) = NewLease(scope, grant, request.Id, request.SubjectAgentInstanceId, claim, request.RunId, request.TaskId,
             request.RequestedUses, now, delegatedExpiresAt, boundaryResult.Hash);
         await PersistLeaseNonceAsync(lease, nonce, cancellationToken).ConfigureAwait(false);
         db.CapabilityGrants.Add(grant);
@@ -814,9 +857,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     {
         var options = _autoApproveOptions.Value;
         var toolId = ExtractToolId(request.Resource);
-        if (!options.AutoApproveEnabled || !approveIntent) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
-        if (toolId is not null && options.IsHumanOnlyTool(toolId)) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
-        if (RiskRank(request.Risk) > RiskRank(options.AutoApproveRiskMax)) return (AutoPolicyOutcome.NotEngaged, toolId, 0);
+        if (!AutoApprovePolicyRules.Engages(options, approveIntent, toolId, request.Risk))
+            return (AutoPolicyOutcome.NotEngaged, toolId, 0);
         // Run-less requests share the null-run pool so a background flow cannot
         // farm unlimited grants by omitting the run id.
         var used = await db.AuthorizationDecisions.CountAsync(x =>
@@ -1305,6 +1347,34 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         return candidates.FirstOrDefault(x => CapabilityRuleMatcher.Covers(ClaimOf(x), claim));
     }
 
+    /// <summary>
+    /// The unattended release reason for a tool permission request that no
+    /// capability grant covers, or null when the request must park for a human.
+    /// The release keys on the run's frozen permission mode — the user's per-run
+    /// statement of unattended intent: a <c>full-access</c> run releases every
+    /// call, and an <c>auto-approve</c> run releases exactly when the shared
+    /// auto-approve rule engages on this tool and risk. An <c>ask</c> (or
+    /// unmodeled) run always parks, so the decide-path auto policy from M5④
+    /// keeps its original semantics. Pre-authorization envelopes release through
+    /// real capability grants minted at grant time, so they are already matched
+    /// by the grant search above and never appear here. The auto-policy check
+    /// here deliberately consumes no budget — the durable approval layer remains
+    /// the single place that spends it, so an exhausted budget parks the
+    /// approval instead of widening this release.
+    /// </summary>
+    private string? UnattendedPermissionReleaseReason(PermissionRequestCommand command)
+    {
+        if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
+            return "full_access_auto_grant";
+        if (!string.Equals(command.PermissionMode, "auto-approve", StringComparison.Ordinal)) return null;
+        var toolId = command.Claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
+            ? command.Claim.Resource["tool://".Length..]
+            : command.Claim.Resource;
+        return AutoApprovePolicyRules.Engages(_autoApproveOptions.Value, approveIntent: true, toolId, command.Risk)
+            ? "auto_policy_released"
+            : null;
+    }
+
     private static async Task<bool> HasEligibleDelegationAsync(
         GovernanceDbContext db,
         TenantContext scope,
@@ -1569,6 +1639,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         TenantContext scope,
         CapabilityGrantRecord grant,
         Guid? permissionRequestId,
+        Guid? leaseSubjectAgentInstanceId,
         CapabilityClaim claim,
         Guid? runId,
         Guid? taskId,
@@ -1581,7 +1652,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         return (new CapabilityLeaseRecord
         {
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
-            SubjectPrincipalId = grant.SubjectPrincipalId, SubjectAgentInstanceId = grant.SubjectAgentInstanceId,
+            SubjectPrincipalId = grant.SubjectPrincipalId, SubjectAgentInstanceId = leaseSubjectAgentInstanceId,
             CapabilityGrantId = grant.Id, PermissionRequestId = permissionRequestId,
             Capability = claim.Capability, Action = claim.Action, Resource = claim.Resource,
             RunId = runId, TaskId = taskId, NonceHash = CapabilityRuleMatcher.HashNonce(nonce),

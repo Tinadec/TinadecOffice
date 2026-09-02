@@ -202,6 +202,147 @@ public sealed class PreAuthorizationMintTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PreAuthorization_LaneBoundGrant_MintsOnlyItsOwnLane()
+    {
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("preauth-lane-scoped");
+        var run = await InsertRunAsync(sessionId);
+        await InsertGrantAsync(run.Id, grant => grant.LaneKey = "lane-a");
+
+        var inLane = await PrepareExecutionAsync(projectId, sessionId, run.Id, "lane-match:0:0:0", laneKey: "lane-a");
+        var otherLane = await PrepareExecutionAsync(projectId, sessionId, run.Id, "lane-other:0:0:0", laneKey: "lane-b");
+
+        var minted = await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(inLane.Id);
+        Assert.NotNull(minted);
+        Assert.Equal("pre_authorized", minted!.Source);
+        // The grant was scoped to one lane, so a sibling lane cannot spend it.
+        Assert.Null(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(otherLane.Id));
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var other = await db.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == otherLane.ApprovalId);
+        Assert.Equal("pending", other.Status);
+    }
+
+    [Fact]
+    public async Task PreAuthorization_RunLevelGrant_ServesEveryLane()
+    {
+        // The user grants before leaving, when only the run id is known. A
+        // run-level grant must therefore reach the deferred lane too, otherwise
+        // the unattended "test and commit" lane could never be authorized.
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("preauth-run-level");
+        var run = await InsertRunAsync(sessionId);
+        await InsertGrantAsync(run.Id, grant => grant.MaxUses = 2);
+
+        var mainLane = await PrepareExecutionAsync(projectId, sessionId, run.Id, "run-main:0:0:0", laneKey: "main");
+        var deferredLane = await PrepareExecutionAsync(projectId, sessionId, run.Id, "run-deferred:0:0:0", laneKey: "l2");
+
+        Assert.NotNull(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(mainLane.Id));
+        Assert.NotNull(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(deferredLane.Id));
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var rows = await db.ToolExecutions.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync();
+        Assert.Equal("main", Assert.Single(rows, x => x.ToolCallKey == "run-main:0:0:0").LaneKey);
+        Assert.Equal("l2", Assert.Single(rows, x => x.ToolCallKey == "run-deferred:0:0:0").LaneKey);
+    }
+
+    [Fact]
+    public async Task PreAuthorization_LaneScopedGrant_IsPreferredOverRunLevel()
+    {
+        // A scoped grant must not be shadowed by a broader one, or the budget of
+        // the broader grant would be spent where a narrower grant was intended.
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("preauth-lane-preferred");
+        var run = await InsertRunAsync(sessionId);
+        await InsertGrantAsync(run.Id);
+        await InsertGrantAsync(run.Id, grant => grant.LaneKey = "lane-a");
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, "prefer:0:0:0", laneKey: "lane-a");
+
+        Assert.NotNull(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(execution.Id));
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var grants = await db.PreAuthorizations.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync();
+        Assert.Equal(1, Assert.Single(grants, x => x.LaneKey == "lane-a").UseCount);
+        Assert.Equal(0, Assert.Single(grants, x => x.LaneKey == null).UseCount);
+    }
+
+    [Fact]
+    public async Task AutoPolicy_ReleasesToolApproval_WithoutHumanDecision()
+    {
+        UseFactory(new Dictionary<string, string?>
+        {
+            ["TinadecApproval:AutoApproveEnabled"] = "true",
+            // write_file registers as high risk, so the default medium ceiling
+            // would make the policy abstain — exactly the safe default this
+            // test deliberately overrides.
+            ["TinadecApproval:AutoApproveRiskMax"] = "high"
+        });
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("autopol-mint");
+        var run = await InsertRunAsync(sessionId);
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, "autopol:0:0:0", laneKey: "l2");
+
+        var minted = await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(execution.Id);
+
+        Assert.NotNull(minted);
+        Assert.Equal("auto_policy", minted!.Source);
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var approval = await db.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
+        Assert.Equal("approved", approval.Status);
+        Assert.Equal("auto_policy_approved", approval.DecisionReason);
+
+        var decision = await db.ApprovalDecisions.AsNoTracking().SingleAsync(x => x.ApprovalRequestId == execution.ApprovalId);
+        Assert.Equal(Guid.Empty, decision.DecidedByPrincipalId);
+
+        var manager = _factory!.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0);
+        var auto = Assert.Single(events, e => e.EventType == "approval.auto_decided");
+        var payload = Assert.IsType<JsonElement>(auto.Payload["payload"]!);
+        Assert.Equal(execution.Id, payload.GetProperty("execution_id").GetGuid());
+        Assert.Equal("l2", payload.GetProperty("lane_key").GetString());
+        Assert.Equal("auto-approve-v1", payload.GetProperty("policy_version").GetString());
+    }
+
+    [Fact]
+    public async Task AutoPolicy_BudgetExhausted_KeepsApprovalPendingInsteadOfDenying()
+    {
+        UseFactory(new Dictionary<string, string?>
+        {
+            ["TinadecApproval:AutoApproveEnabled"] = "true",
+            ["TinadecApproval:AutoApproveRiskMax"] = "high",
+            ["TinadecApproval:AutoApproveMaxPerRun"] = "1"
+        });
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("autopol-budget");
+        var run = await InsertRunAsync(sessionId);
+        var first = await PrepareExecutionAsync(projectId, sessionId, run.Id, "autopol-b1:0:0:0");
+        var second = await PrepareExecutionAsync(projectId, sessionId, run.Id, "autopol-b2:0:0:0");
+
+        Assert.NotNull(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(first.Id));
+        Assert.Null(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(second.Id));
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var pending = await db.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == second.ApprovalId);
+        // Exhausted budget escalates rather than denies: the request stays
+        // pending so a human can still grant it when they return.
+        Assert.Equal("pending", pending.Status);
+    }
+
+    [Fact]
+    public async Task AutoPolicy_DisabledOrOutOfScope_LeavesApprovalPending()
+    {
+        UseFactory(new Dictionary<string, string?>
+        {
+            ["TinadecApproval:AutoApproveEnabled"] = "false"
+        });
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("autopol-off");
+        var run = await InsertRunAsync(sessionId);
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, "autopol-off:0:0:0");
+
+        Assert.Null(await ExecutionCoordinator().TryMintPreAuthorizedApprovalAsync(execution.Id));
+
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var pending = await db.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
+        Assert.Equal("pending", pending.Status);
+    }
+
+    [Fact]
     public async Task PreAuthorization_ExpiredGrant_NeverMints()
     {
         var (projectId, sessionId) = await CreateProjectAndSessionAsync("preauth-expired");
@@ -356,7 +497,8 @@ public sealed class PreAuthorizationMintTests : IAsyncLifetime
         Guid runId,
         string toolCallKey,
         string toolId = "write_file",
-        string risk = "high")
+        string risk = "high",
+        string? laneKey = null)
     {
         var coordinator = ExecutionCoordinator();
         var scope = TenantAccessor().Current;
@@ -375,13 +517,27 @@ public sealed class PreAuthorizationMintTests : IAsyncLifetime
             Parameters,
             ToolParametersHash.Compute(Parameters),
             toolCallKey,
-            "pre-authorization test");
+            "pre-authorization test",
+            LaneKey: laneKey);
         var preparation = await coordinator.PrepareAsync(request);
         return preparation.Execution;
     }
 
     private IDbContextFactory<LifecycleDbContext> DbFactory() =>
         _factory!.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+
+    /// <summary>
+    /// Rebuilds the host with extra in-memory configuration. Each test runs on a
+    /// fresh instance with a fresh temp root, so at most one host is alive at a
+    /// time and the schema bootstrap can safely reconcile the same database.
+    /// </summary>
+    private WebApplicationFactory<Program> UseFactory(IReadOnlyDictionary<string, string?>? extra)
+    {
+        _factory?.Dispose();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        _factory = new Factory(_root, extra);
+        return _factory;
+    }
 
     private IToolExecutionCoordinator ExecutionCoordinator() =>
         _factory!.Services.GetRequiredService<IToolExecutionCoordinator>();
@@ -392,12 +548,27 @@ public sealed class PreAuthorizationMintTests : IAsyncLifetime
     private sealed class Factory : WebApplicationFactory<Program>
     {
         private readonly string _root;
-        public Factory(string root) => _root = root;
-        protected override void ConfigureWebHost(IWebHostBuilder builder) => builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        private readonly IReadOnlyDictionary<string, string?>? _extra;
+
+        public Factory(string root, IReadOnlyDictionary<string, string?>? extra = null)
         {
-            ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),
-            ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
-            ["Logging:LogLevel:Default"] = "Warning"
-        }));
+            _root = root;
+            _extra = extra;
+        }
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder) => builder.ConfigureAppConfiguration((_, config) =>
+        {
+            var values = new Dictionary<string, string?>
+            {
+                ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),
+                ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
+                ["Logging:LogLevel:Default"] = "Warning"
+            };
+            if (_extra is not null)
+            {
+                foreach (var pair in _extra) values[pair.Key] = pair.Value;
+            }
+            config.AddInMemoryCollection(values);
+        });
     }
 }

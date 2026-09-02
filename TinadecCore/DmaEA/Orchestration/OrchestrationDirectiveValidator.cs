@@ -41,15 +41,30 @@ public sealed class OrchestrationDirectiveValidator : IOrchestrationDirectiveVal
         if ((goal?.Length ?? 0) > 2000 || (title?.Length ?? 0) > 200)
             return new("invalid_lane_payload", "goal/title exceeds the length budget.");
 
-        if (!payload.TryGetProperty("tasks", out var tasksElement) || tasksElement.ValueKind != JsonValueKind.Array || tasksElement.GetArrayLength() == 0)
-            return new("invalid_lane_payload", "tasks must be a non-empty array.");
-        if (tasksElement.GetArrayLength() > rules.MaxTasksPerLane)
+        if (!payload.TryGetProperty("tasks", out var tasksElement))
+        {
+            // A goal-only directive defers the task graph to the lane's own
+            // planning agent. Validation of its output happens when it plans.
+            tasksElement = default;
+        }
+        else if (tasksElement.ValueKind != JsonValueKind.Array)
+        {
+            return new("invalid_lane_payload", "tasks must be an array when present.");
+        }
+        else if (tasksElement.GetArrayLength() == 0)
+        {
+            return new("invalid_lane_payload", "tasks must be a non-empty array when present.");
+        }
+        if (tasksElement.ValueKind == JsonValueKind.Array && tasksElement.GetArrayLength() > rules.MaxTasksPerLane)
             return new("task_budget_exceeded", $"A lane may declare at most {rules.MaxTasksPerLane} tasks.");
 
         var declaredTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         CollectDeclaredTools(payload, declaredTools);
-        foreach (var task in tasksElement.EnumerateArray())
-            CollectDeclaredTools(task, declaredTools);
+        if (tasksElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var task in tasksElement.EnumerateArray())
+                CollectDeclaredTools(task, declaredTools);
+        }
         if (declaredTools.Contains("*") && rules.FrozenToolIds.All(id => !string.Equals(id, "*", StringComparison.Ordinal)))
             return new("tool_scope_widening", "A wildcard tool scope cannot exceed the frozen run manifest.");
         foreach (var tool in declaredTools)
@@ -63,11 +78,20 @@ public sealed class OrchestrationDirectiveValidator : IOrchestrationDirectiveVal
             || (declaredTools.Contains("*") && rules.MutatingToolIds.Count > 0);
         if (declaresMutating)
         {
+            // Admission here is a declaration-level check only. The tool still
+            // stops at the approval minting layer, which releases it against the
+            // frozen manifest, a matching pre-authorization grant, or the auto
+            // policy — and parks the lane when none of them covers the call. A
+            // lane admitted here can therefore never widen authority.
+            var unattendedRun = string.Equals(rules.FrozenPermissionMode, "full-access", StringComparison.Ordinal);
             var preAuthorization = StringProperty(payload, "pre_authorization");
-            if (string.IsNullOrWhiteSpace(preAuthorization))
-                return new("lane_requires_preauthorization", "A lane declaring mutating tools requires a pre_authorization reference.");
-            return new("preauthorization_unavailable", "Pre-authorization consumption lands with the M5 authorization work; mutating lanes cannot open yet.");
+            if (unattendedRun || !string.IsNullOrWhiteSpace(preAuthorization)) return null;
+            return new("lane_requires_preauthorization", "A lane declaring mutating tools requires a pre_authorization reference or an unattended permission mode.");
         }
+
+        // A goal-only directive carries no task graph to validate; the lane's
+        // own planning agent owns that graph and is validated when it plans.
+        if (tasksElement.ValueKind != JsonValueKind.Array) return null;
 
         var taskKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var task in tasksElement.EnumerateArray())

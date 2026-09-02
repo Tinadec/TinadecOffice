@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Governance;
 
@@ -138,6 +139,71 @@ public sealed class AutoApprovePolicyTests
 
         Assert.Equal("blocked", consume.Status);
         Assert.Equal("lease_scope_mismatch", consume.Decision.ReasonCode);
+    }
+
+    [Fact]
+    public async Task ToolApprovalAutoPolicy_DisabledByDefault_Abstains()
+    {
+        var policy = new ToolApprovalAutoPolicy(Options.Create(new AutoApproveOptions()));
+
+        var verdict = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "medium", Guid.NewGuid()));
+
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, verdict.Outcome);
+        Assert.False(verdict.Approved);
+    }
+
+    [Theory]
+    [InlineData("low", "medium", true)]
+    [InlineData("medium", "medium", true)]
+    [InlineData("high", "medium", false)]
+    [InlineData("critical", "critical", true)]
+    [InlineData("elevated", "critical", false)]
+    [InlineData("unknown_risk", "critical", false)]
+    [InlineData("high", null, false)]
+    public async Task ToolApprovalAutoPolicy_EngagesOnlyWithinRiskCeiling(
+        string risk,
+        string? ceiling,
+        bool expectedApproved)
+    {
+        var options = new AutoApproveOptions { AutoApproveEnabled = true, AutoApproveRiskMax = ceiling ?? "medium" };
+        var policy = new ToolApprovalAutoPolicy(Options.Create(options));
+
+        var verdict = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", risk, Guid.NewGuid()));
+
+        Assert.Equal(expectedApproved ? ToolApprovalAutoPolicyOutcome.Approved : ToolApprovalAutoPolicyOutcome.NotEngaged, verdict.Outcome);
+        if (expectedApproved) Assert.Equal(AutoApproveOptions.PolicyVersion, verdict.PolicyVersion);
+    }
+
+    [Fact]
+    public async Task ToolApprovalAutoPolicy_NeverEngagesForHumanOnlyTools()
+    {
+        var options = new AutoApproveOptions { AutoApproveEnabled = true, AutoApproveRiskMax = "critical" };
+        var policy = new ToolApprovalAutoPolicy(Options.Create(options));
+
+        var listed = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("git_push", "low", Guid.NewGuid()));
+        var suffix = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("file_delete", "low", Guid.NewGuid()));
+
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, listed.Outcome);
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, suffix.Outcome);
+    }
+
+    [Fact]
+    public async Task ToolApprovalAutoPolicy_HonorsTheCallerCountedBudget_AndNeverDenies()
+    {
+        var options = new AutoApproveOptions { AutoApproveEnabled = true, AutoApproveRiskMax = "high", AutoApproveMaxPerRun = 2 };
+        var policy = new ToolApprovalAutoPolicy(Options.Create(options));
+        var runId = Guid.NewGuid();
+
+        var first = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "low", runId, AutoPolicyUsesThisRun: 0));
+        var second = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "low", runId, AutoPolicyUsesThisRun: 1));
+        var third = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "low", runId, AutoPolicyUsesThisRun: 2));
+
+        Assert.True(first.Approved);
+        Assert.Equal(1, first.BudgetRemaining);
+        Assert.True(second.Approved);
+        // Exhausted budget is not a denial: the caller keeps the approval pending.
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.BudgetExhausted, third.Outcome);
+        Assert.False(third.Approved);
     }
 
     private static AutoApproveOptions Enabled(int maxPerRun = 5) => new()

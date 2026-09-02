@@ -149,7 +149,8 @@ public sealed record ToolInvocationScope(
     int WorkerRetryLimit,
     bool SerializeWorkspaceWrites,
     IReadOnlyList<FrozenToolManifestEntry>? AuthorizedToolManifest = null,
-    string? FrozenToolManifestHash = null);
+    string? FrozenToolManifestHash = null,
+    string? PermissionMode = null);
 
 /// <summary>
 /// Agent-runtime authorization boundary consumed by the Tools module. DmaEA owns
@@ -245,7 +246,8 @@ public sealed record ToolExecutionPrepareRequest(
     string ToolCallKey,
     string Summary,
     bool DeferApproval = false,
-    int LeaseUses = 1);
+    int LeaseUses = 1,
+    string? LaneKey = null);
 
 /// <param name="Source">Why the approval was minted: pre_authorized or full_access_auto_mint.</param>
 public sealed record PreAuthorizationMintResult(ToolExecutionSnapshot Snapshot, string Source);
@@ -280,7 +282,8 @@ public sealed record ToolExecutionSnapshot(
     Guid? CapabilityLeaseId = null,
     int LeaseUses = 1,
     Guid? WorkspaceSnapshotId = null,
-    string? WorkspaceSnapshotHash = null);
+    string? WorkspaceSnapshotHash = null,
+    string? LaneKey = null);
 
 /// <summary>
 /// Result of durably admitting one logical tool call. Replaying the same
@@ -289,7 +292,16 @@ public sealed record ToolExecutionSnapshot(
 /// </summary>
 public sealed record ToolExecutionPreparation(ToolExecutionSnapshot Execution, bool Existing);
 
-public sealed record ToolExecutionStartDecision(string Status, ToolExecutionSnapshot? Execution, string? Message = null);
+/// <param name="ParkExpired">
+/// True when the approval decision window already elapsed and the execution was
+/// parked rather than failed. The engine consumes this to escalate the owning
+/// lane instead of re-parking it forever.
+/// </param>
+public sealed record ToolExecutionStartDecision(
+    string Status,
+    ToolExecutionSnapshot? Execution,
+    string? Message = null,
+    bool ParkExpired = false);
 
 public sealed record ToolExecutionRecoveryResult(
     string Status,

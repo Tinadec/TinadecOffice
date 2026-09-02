@@ -1010,7 +1010,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         try
         {
             var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
-            var plannerInstanceId = checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
+            // A lane that plans through its own instance is also reviewed by its
+            // own instance, so its gate sees the lane's context and the audit
+            // trail attributes the verdict to the right agent. Lanes without
+            // their own instance — including main — fall back to the shared one.
+            var plannerInstanceId = checkpoint.LanePlannerIds.TryGetValue(lane.LaneKey, out var lanePlannerId)
+                ? lanePlannerId
+                : checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
             var factory = CreateModelFactory(configuration, checkpoint, plannerDefinition, plannerInstanceId, null);
             var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
             if (!resolution.IsAvailable)
@@ -1372,6 +1378,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                         ToolId = pendingTurn.ToolId,
                         ToolCallKey = toolCallKey,
                         LeaseUses = Math.Max(1, roundLimit - task.ToolRounds + 1),
+                        LaneKey = LaneKeyOf(task),
                         Params = parameters
                     }, cancellationToken).ConfigureAwait(false);
 
@@ -1390,6 +1397,27 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
                 dispatch = await dispatcher.ResumeAsync(pendingTurn.ExecutionId!, cancellationToken).ConfigureAwait(false);
                 pendingTurn.DispatchStatus = dispatch.Status;
+                // A parked approval is not the same as one still waiting for a
+                // human: the decision window already elapsed, so leaving the lane
+                // parked would stall it forever in an unattended run. Freeze only
+                // this lane and surface a review request; the other lanes and the
+                // run lease keep going.
+                if (dispatch.Status == ToolDispatchStatus.AwaitingApproval && dispatch.ParkExpired)
+                {
+                    SyncLanes(checkpoint);
+                    var parkedLane = checkpoint.Lanes.FirstOrDefault(lane =>
+                        string.Equals(lane.LaneKey, LaneKeyOf(task), StringComparison.OrdinalIgnoreCase));
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-park-expired", cancellationToken).ConfigureAwait(false);
+                    if (parkedLane is not null)
+                    {
+                        await EscalateLaneAsync(Guid.Parse(run.RunId), run, parkedLane,
+                            $"Approval for tool '{pendingTurn.ToolId}' expired its decision window while the run was unattended.",
+                            cancellationToken).ConfigureAwait(false);
+                        // Return before the generic awaiting handling below can
+                        // overwrite the escalated run status with awaiting_approval.
+                        return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
+                    }
+                }
                 if (dispatch.Status is ToolDispatchStatus.AwaitingApproval or ToolDispatchStatus.AwaitingResume
                     or ToolDispatchStatus.AwaitingDelegate or ToolDispatchStatus.AwaitingUser)
                 {
@@ -2197,7 +2225,27 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 new { verb = "LANE_OPEN", code = "target_run_required" }, cancellationToken).ConfigureAwait(false);
             return cleanText;
         }
-        if (!configuration.Orchestration.LanesEnabled)
+        // Admission validates against the TARGET run's frozen facts: the lane
+        // will execute under the target's frozen manifest and permission mode.
+        // The interaction's own source run never freezes a manifest (only
+        // new_task turns do), so validating against the source configuration
+        // would reject every tool-scoped lane with a widening error even when
+        // the target authorizes every declared tool.
+        var targetFrozen = await _lifecycle.GetFrozenRunConfigurationAsync(targetRunId.ToString(), cancellationToken).ConfigureAwait(false);
+        FrozenRunConfigurationV1? targetConfiguration = null;
+        if (targetFrozen is not null)
+        {
+            try { targetConfiguration = JsonSerializer.Deserialize<FrozenRunConfigurationV1>(targetFrozen.Content, JsonOptions); }
+            catch (JsonException) { }
+        }
+        if (targetConfiguration is null || !string.Equals(targetConfiguration.ContentHash, targetFrozen!.ContentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
+                "A meeting-authored orchestration directive was dropped because the target run's frozen configuration could not be verified.",
+                new { verb = "LANE_OPEN", code = "target_configuration_unavailable", source_run_id = sourceRunId, target_run_id = targetRunId }, cancellationToken).ConfigureAwait(false);
+            return cleanText;
+        }
+        if (!targetConfiguration.Orchestration.LanesEnabled)
         {
             await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
                 "A meeting-authored orchestration directive was dropped because lanes are disabled for the target run.",
@@ -2216,24 +2264,25 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         // checkpoint projection carries no lane list, so duplicates and budgets
         // are enforced authoritatively at consumption against the live checkpoint.
         var knownLanes = new List<string> { "main" };
-        var frozenToolIds = configuration.ToolManifest
+        var frozenToolIds = targetConfiguration.ToolManifest
             .Select(entry => entry.Id)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .ToList();
-        var mutatingToolIds = configuration.ToolManifest
+        var mutatingToolIds = targetConfiguration.ToolManifest
             .Where(entry => entry.MutatesWorkspace)
             .Select(entry => entry.Id)
             .ToList();
         var rejection = _directiveValidator.Validate(
             new OrchestrationDirectiveCandidate("LANE_OPEN", laneKey, payload),
             new OrchestrationDirectiveRules(
-                configuration.Orchestration.LanesEnabled,
+                targetConfiguration.Orchestration.LanesEnabled,
                 1,
-                configuration.Orchestration.MaxLanesPerRun,
-                configuration.Orchestration.MaxTasksPerLane,
+                targetConfiguration.Orchestration.MaxLanesPerRun,
+                targetConfiguration.Orchestration.MaxTasksPerLane,
                 frozenToolIds,
                 mutatingToolIds,
-                knownLanes));
+                knownLanes,
+                targetConfiguration.PermissionMode));
         if (rejection is not null)
         {
             await AppendEventAsync(targetRunId, "orchestration.directive.rejected",
@@ -2558,6 +2607,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         OrchestrationDirectiveCandidate candidate;
         List<LaneWait> waits;
         List<DurableTaskNode> nodes;
+        string? goal = null;
+        string? title = null;
         try
         {
             using var document = JsonDocument.Parse(directive.PayloadJson);
@@ -2567,8 +2618,23 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                     ? key.GetString()?.Trim() ?? string.Empty
                     : string.Empty;
             candidate = new OrchestrationDirectiveCandidate("LANE_OPEN", laneKey, directive.PayloadJson);
+            goal = document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("goal", out var goalElement)
+                && goalElement.ValueKind == JsonValueKind.String
+                    ? goalElement.GetString()?.Trim()
+                    : null;
+            title = document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("title", out var titleElement)
+                && titleElement.ValueKind == JsonValueKind.String
+                    ? titleElement.GetString()?.Trim()
+                    : null;
             waits = ReadLaneWaits(document.RootElement);
-            nodes = ValidateAndMaterializeGraph(ReadLaneTasks(document.RootElement), configuration.Orchestration.MaxTasksPerLane);
+            // A goal-only payload carries no task graph: the lane's own planning
+            // agent materializes it, so there is nothing to validate here.
+            var laneTasks = ReadLaneTasks(document.RootElement);
+            nodes = laneTasks.Length == 0
+                ? []
+                : ValidateAndMaterializeGraph(laneTasks, configuration.Orchestration.MaxTasksPerLane);
         }
         catch (Exception ex) when (ex is JsonException or InvalidTaskGraphException)
         {
@@ -2595,7 +2661,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             configuration.Orchestration.MaxTasksPerLane,
             frozenToolIds,
             mutatingToolIds,
-            knownLanes));
+            knownLanes,
+            configuration.PermissionMode));
         if (rejection is not null)
         {
             await AppendEventAsync(runId, "orchestration.directive.rejected",
@@ -2611,6 +2678,89 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         checkpoint.Tasks.AddRange(nodes);
         SyncLanes(checkpoint);
+
+        // A goal-only directive opens the lane in planning and hands the task
+        // graph to the lane's own planning agent: literally a second, parallel
+        // task-planning agent running inside the same run lease. The lane passes
+        // through the planning phase even though the work happens during this
+        // consumption, so the event sequence is the same for scripted and real
+        // routing.
+        if (nodes.Count == 0)
+        {
+            var lane = checkpoint.Lanes.FirstOrDefault(item =>
+                string.Equals(item.LaneKey, candidate.LaneKey, StringComparison.OrdinalIgnoreCase));
+            var laneGoal = goal ?? title ?? $"Plan and complete lane '{candidate.LaneKey}'.";
+            if (lane is not null) lane.Status = "planning";
+            await AppendEventAsync(runId, "orchestration.lane_planning",
+                "A goal-only lane opened and its own planning agent is deriving the task graph.",
+                new { directive_id = directive.Id, lane_key = candidate.LaneKey, goal = laneGoal },
+                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var lanePlanner = await EnsureLanePlannerAsync(run, configuration, checkpoint, candidate.LaneKey, cancellationToken).ConfigureAwait(false);
+                var planned = await PlanLaneTasksAsync(run, configuration, checkpoint, candidate.LaneKey,
+                    lanePlanner, laneGoal, cancellationToken).ConfigureAwait(false);
+                foreach (var node in planned)
+                {
+                    node.LaneKey = candidate.LaneKey;
+                    if (waits.Count > 0) node.Waits = [.. waits];
+                }
+                checkpoint.Tasks.AddRange(planned);
+                SyncLanes(checkpoint);
+                await AppendEventAsync(runId, "orchestration.lane_planned",
+                    "A lane's own planning agent materialized the lane's task graph.",
+                    new
+                    {
+                        directive_id = directive.Id,
+                        lane_key = candidate.LaneKey,
+                        planner_instance_id = lanePlanner.Id,
+                        task_count = planned.Count,
+                        task_keys = planned.Select(node => node.TaskKey).ToArray()
+                    }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is InvalidTaskGraphException or InvalidOperationException)
+            {
+                // The lane's own plan failed. Escalating keeps the user's intent
+                // durably parked on a review request instead of dropping the
+                // directive or leaving a planning lane that never dispatches.
+                await AppendEventAsync(runId, "orchestration.lane_planning_failed",
+                    "A lane's own planning agent failed to derive the task graph.",
+                    new { directive_id = directive.Id, lane_key = candidate.LaneKey, reason = ex.Message },
+                    cancellationToken).ConfigureAwait(false);
+                if (lane is not null)
+                {
+                    await EscalateLaneAsync(runId, run, lane,
+                        $"Lane planning failed: {ex.Message}", cancellationToken).ConfigureAwait(false);
+                }
+                return null;
+            }
+        }
+
+        // A lane consumed mid-tick would otherwise dispatch in the same tick it
+        // was created, because the classification pass already ran. If its waits
+        // are unmet it must park now, exactly as the classification pass would
+        // have; only a parked lane passes its gate before dispatching.
+        var consumedLane = checkpoint.Lanes.FirstOrDefault(item =>
+            string.Equals(item.LaneKey, candidate.LaneKey, StringComparison.OrdinalIgnoreCase));
+        if (consumedLane is not null && !consumedLane.Escalated && consumedLane.Status is "pending" or "planning")
+        {
+            var unmetWaits = UnmetLaneWaits(checkpoint, candidate.LaneKey);
+            if (unmetWaits.Count > 0)
+            {
+                consumedLane.Status = "waiting";
+                foreach (var task in checkpoint.Tasks.Where(item =>
+                    string.Equals(LaneKeyOf(item), candidate.LaneKey, StringComparison.OrdinalIgnoreCase)
+                    && item.Status is "pending" or "ready"))
+                {
+                    task.Waits = [.. unmetWaits];
+                }
+                await AppendEventAsync(runId, "orchestration.lane_waiting",
+                    $"Lane '{candidate.LaneKey}' is waiting on other lanes.",
+                    new { lane_key = candidate.LaneKey, waits = unmetWaits.Select(wait => new { lane = wait.LaneKey, predicate = wait.Predicate, facts_hash = wait.ObservedFactsHash }) },
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         // A directive consumed while every earlier lane already finished would
         // otherwise land on a finalizing checkpoint and never execute.
         if (checkpoint.Phase is "finalizing" or "done" or "completed")
@@ -2624,20 +2774,111 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             {
                 directive_id = directive.Id,
                 lane_key = candidate.LaneKey,
-                task_count = nodes.Count,
-                task_keys = nodes.Select(node => node.TaskKey).ToArray(),
+                task_count = checkpoint.Tasks.Where(item => string.Equals(LaneKeyOf(item), candidate.LaneKey, StringComparison.OrdinalIgnoreCase)).Count(),
+                task_keys = checkpoint.Tasks
+                    .Where(item => string.Equals(LaneKeyOf(item), candidate.LaneKey, StringComparison.OrdinalIgnoreCase))
+                    .Select(node => node.TaskKey).ToArray(),
                 waits = waits.Select(wait => new { lane = wait.LaneKey, predicate = wait.Predicate }).ToArray()
             }, cancellationToken).ConfigureAwait(false);
         return null;
     }
 
+    /// <summary>
+    /// Spawns the lane's own planning agent instance. It reuses the frozen
+    /// roster authorization chain through CreateRootAsync, so the instance's
+    /// allowed tools and budget come from the run's frozen configuration, and
+    /// carries the lane key so the audit trail can attribute planning calls.
+    /// </summary>
+    private async Task<RuntimeAgentInstance> EnsureLanePlannerAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        string laneKey,
+        CancellationToken cancellationToken)
+    {
+        if (checkpoint.LanePlannerIds.TryGetValue(laneKey, out var existing))
+        {
+            var all = await _instances.ListByRunAsync(Guid.Parse(run.RunId), cancellationToken).ConfigureAwait(false);
+            var found = all.FirstOrDefault(item => item.Id == existing);
+            if (found is not null) return found;
+        }
+        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        var instance = await _instances.CreateRootAsync(new RuntimeAgentSeed(
+            Guid.Parse(run.SessionId), Guid.Parse(run.RunId), plannerDefinition.Id, plannerDefinition.Layer,
+            plannerDefinition.Role, "chat", plannerDefinition.Capabilities, plannerDefinition.AllowedTools,
+            ["workspace"], configuration.Context.DefaultTokenBudget,
+            AgentDefinitionId: plannerDefinition.AgentDefinitionId,
+            AgentVersionId: plannerDefinition.AgentVersionId,
+            VersionContentHash: plannerDefinition.VersionContentHash,
+            LaneKey: laneKey), cancellationToken).ConfigureAwait(false);
+        checkpoint.LanePlannerIds[laneKey] = instance.Id;
+        await AppendEventAsync(Guid.Parse(run.RunId), "agent.created",
+            $"Task planning agent created for lane '{laneKey}'.",
+            new { agent_instance_id = instance.Id, layer = instance.Layer, role = instance.Role, lane_key = laneKey },
+            cancellationToken).ConfigureAwait(false);
+        return instance;
+    }
+
+    /// <summary>
+    /// Plans a lane's task graph through that lane's own planning instance,
+    /// reusing the shared planner's model call, roster, and graph validation.
+    /// The task budget is the frozen per-lane limit rather than the run limit.
+    /// </summary>
+    private async Task<List<DurableTaskNode>> PlanLaneTasksAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        string laneKey,
+        RuntimeAgentInstance lanePlanner,
+        string laneGoal,
+        CancellationToken cancellationToken)
+    {
+        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, laneGoal, cancellationToken).ConfigureAwait(false);
+        var assembly = await AssemblePromptAsync(plannerDefinition, context, cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(Guid.Parse(run.RunId), "context.packed",
+            $"Lane '{laneKey}' planner context assembled.", new
+            {
+                lane_key = laneKey,
+                evidence_count = context.Evidence.Count,
+                estimated_tokens = context.EstimatedTokens,
+                token_budget = context.TokenBudget,
+                context_revision = checkpoint.ContextRevision
+            }, cancellationToken).ConfigureAwait(false);
+
+        Exception? lastError = null;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var contextForPlanner = CreateRunContext(run, checkpoint);
+                var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
+                    lanePlanner.Id, null), _logger);
+                var planned = await planner.PlanAsync(
+                    contextForPlanner,
+                    BuildFrozenPlannerRoster(configuration),
+                    PlannerInstructions(checkpoint, assembly.Instructions, laneKey),
+                    cancellationToken).ConfigureAwait(false);
+                checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
+                return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane);
+            }
+            catch (InvalidTaskGraphException ex)
+            {
+                lastError = ex;
+            }
+        }
+        throw lastError ?? new InvalidTaskGraphException("The lane planner returned no tasks.");
+    }
+
     private static PlannedTask[] ReadLaneTasks(JsonElement payload)
     {
+        // A goal-only directive carries no task graph: the lane's own planning
+        // agent materializes it. An empty plan keeps the lane open without tasks.
         if (payload.ValueKind != JsonValueKind.Object
             || !payload.TryGetProperty("tasks", out var tasksElement)
             || tasksElement.ValueKind != JsonValueKind.Array)
         {
-            throw new InvalidDataException("The directive payload carries no tasks array.");
+            return [];
         }
         var laneKey = payload.TryGetProperty("lane_key", out var lane) && lane.ValueKind == JsonValueKind.String
             ? lane.GetString()
@@ -2922,11 +3163,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         return response.Text;
     }
 
-    private static string PlannerInstructions(FullDuplexCheckpointV1 checkpoint, string baseInstructions)
+    private static string PlannerInstructions(FullDuplexCheckpointV1 checkpoint, string baseInstructions, string laneKey = "main")
     {
         // The Lane line lets scripted and real routing tell which lane a
         // planning or gate call belongs to; the initial plan runs on "main".
-        baseInstructions += "\nLane: main";
+        baseInstructions += $"\nLane: {laneKey}";
         if (checkpoint.RecommendedCapabilities.Count == 0) return baseInstructions;
         var lines = string.Join("\n", checkpoint.RecommendedCapabilities.Select(item =>
             $"- {item.Skill} (confidence: {item.Confidence}): {item.Reason}"));
@@ -3726,6 +3967,14 @@ internal sealed class FullDuplexCheckpointV1
     /// Absent (pre-lane checkpoints) or empty means a single implicit main lane.
     /// </summary>
     public List<DurableLane> Lanes { get; set; } = [];
+
+    /// <summary>
+    /// Each lane's own planning agent instance. A goal-only lane plans through
+    /// its own instance so a deferred instruction literally runs a second
+    /// parallel task-planning agent. Absent (pre-M8 checkpoints) or missing keys
+    /// fall back to the shared run planner.
+    /// </summary>
+    public Dictionary<string, Guid> LanePlannerIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Count of run_directives rows this run has drained. Resume safety comes

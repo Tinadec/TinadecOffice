@@ -137,6 +137,15 @@ public sealed class ToolDispatchRequestDto
 
     [JsonIgnore]
     public int LeaseUses { get; init; } = 1;
+
+    /// <summary>
+    /// Lane the calling task belongs to; null reads as the implicit "main" lane.
+    /// Deliberately not deserializable: lane ownership is decided by the durable
+    /// task graph, and letting a client submit one would let it rewrite the
+    /// audit dimension that lane-scoped pre-authorizations are matched against.
+    /// </summary>
+    [JsonIgnore]
+    public string? LaneKey { get; init; }
 }
 
 /// <summary>
@@ -178,4 +187,12 @@ public sealed class ToolDispatchResultDto
 
     [JsonPropertyName("message")]
     public string? Message { get; init; }
+
+    /// <summary>
+    /// True when the approval decision window elapsed and the execution was
+    /// parked. Deliberately not serializable: it is an engine-internal escalation
+    /// signal, not part of the external dispatch contract.
+    /// </summary>
+    [JsonIgnore]
+    public bool ParkExpired { get; init; }
 }

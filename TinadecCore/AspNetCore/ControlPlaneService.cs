@@ -431,6 +431,32 @@ public sealed class ControlPlaneService
         };
         db.PreAuthorizations.Add(row);
         await db.SaveChangesAsync(ct);
+        // The user's pre-authorization is also a real delegable capability grant
+        // per tool: the deterministic PDP must find a grant to issue the lease
+        // that carries the call to the approval layer, where the pre-authorization
+        // row is consumed once. The grant is an admission envelope, not the
+        // consumption control — the row's max_uses budget is spent by the approval
+        // mint, one per tool call — so the grant's own budget only has to cover
+        // the lease-use reservation the dispatcher asks for (the task's remaining
+        // tool rounds) across every call the row may release. Risk ceilings are
+        // still re-checked by the approval layer before any tool runs.
+        if (run.InitiatedByPrincipalId is { } runPrincipal && runPrincipal != Guid.Empty)
+        {
+            foreach (var tool in tools)
+            {
+                await _authorization.GrantCapabilityAsync(new GrantCapabilityCommand(
+                    runPrincipal,
+                    SubjectAgentInstanceId: null,
+                    new CapabilityClaim("tool.invoke", "*", $"tool://{tool}"),
+                    input.RunId,
+                    TaskId: null,
+                    expiresAt,
+                    Math.Clamp(maxUses * 64, maxUses, 10_000),
+                    Transferable: false,
+                    ParentGrantId: null,
+                    Reason: $"Pre-authorization {row.Id}: {(string.IsNullOrWhiteSpace(input.Summary) ? "unattended tool release" : input.Summary.Trim())}"), ct).ConfigureAwait(false);
+            }
+        }
         return Results.Json(new
         {
             id = row.Id,
