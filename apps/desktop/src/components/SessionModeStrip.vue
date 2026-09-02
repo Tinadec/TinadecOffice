@@ -2,19 +2,18 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Settings } from '@lucide/vue'
-import { UiInput, UiLabel } from '@/components/ui'
+import { UiLabel } from '@/components/ui'
 import { api, type AgentModeTopologyDto } from '@/api'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string | null
-  meetingModel: string
+  narrow?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string | null]
-  'update:meetingModel': [value: string]
 }>()
 
 const modes = ref<AgentModeTopologyDto[]>([])
@@ -25,7 +24,6 @@ async function loadModes() {
   try {
     const list = await api.listAgentModeTopologies()
     modes.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
-    if (!props.modelValue && modes.value[0]) emit('update:modelValue', modes.value[0].id)
   } catch { /* gateway offline */ }
   finally { loading.value = false }
 }
@@ -39,7 +37,7 @@ function onModeChange(e: Event) {
 </script>
 
 <template>
-  <div class="session-mode-strip">
+  <div class="session-mode-strip" :class="{ 'session-mode-strip--narrow': narrow }">
     <div class="session-mode-field">
       <UiLabel class="session-mode-label">
         <Settings :size="11" />
@@ -56,15 +54,6 @@ function onModeChange(e: Event) {
           {{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}
         </option>
       </select>
-    </div>
-    <div class="session-mode-field session-mode-field--model">
-      <UiLabel class="session-mode-label">{{ t('chat.meetingModel') }}</UiLabel>
-      <UiInput
-        :model-value="meetingModel"
-        :placeholder="t('chat.meetingModelPlaceholder')"
-        class="session-mode-input"
-        @update:model-value="emit('update:meetingModel', $event)"
-      />
     </div>
   </div>
 </template>
@@ -103,15 +92,10 @@ function onModeChange(e: Event) {
   max-width: 220px;
   color: inherit;
 }
-.session-mode-field--model {
-  flex: 0 1 200px;
+.session-mode-strip--narrow .session-mode-label span {
+  display: none;
 }
-.session-mode-input {
-  height: 28px;
-  font-size: 12px;
-}
-.session-mode-input :deep(input) {
-  height: 28px;
-  font-size: 12px;
+.session-mode-strip--narrow .session-mode-select {
+  min-width: 120px;
 }
 </style>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, toRef } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
 import ComposerBar from './ComposerBar.vue'
+import SessionModeStrip from './SessionModeStrip.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
@@ -57,6 +58,19 @@ function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'
 const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
+const modeVersionId = ref<string | null>(null)
+watch(
+  () => props.currentSession?.id,
+  () => {
+    modeVersionId.value = props.currentSession?.mode_version_id ?? null
+  },
+  { immediate: true },
+)
+
+function onStripModeChange(value: string | null) {
+  modeVersionId.value = value
+}
+
 const conversationClass = computed(() => ({
   'chat-narrow': chatMode.value === 'narrow' || chatMode.value === 'ultra',
   'chat-ultra': chatMode.value === 'ultra',
@@ -82,6 +96,7 @@ function handleReject(approvalId: string) {
           :projects="props.projects"
           :selected-project-id="selectedProjectId"
           :model-name="modelName"
+          :mode="mode"
           :busy="busy"
           :panel-style="panelStyle"
           :panel-data-attrs="panelDataAttrs"
@@ -103,13 +118,19 @@ function handleReject(approvalId: string) {
             @approve="handleApprove"
             @reject="handleReject"
           />
+          <SessionModeStrip
+            :key="currentSession?.id ?? 'none'"
+            :model-value="modeVersionId"
+            :narrow="chatMode === 'narrow' || chatMode === 'ultra'"
+            @update:model-value="onStripModeChange"
+          />
           <ComposerBar
             :busy="busy"
             :model-value="draft"
             :mode="mode"
             :permission="permission"
             :session-id="currentSession?.id ?? null"
-            :mode-version-id="currentSession?.mode_version_id ?? null"
+            :mode-version-id="modeVersionId"
             :meeting-model-override="currentSession?.meeting_model_override ?? null"
             :runs="runsForComposer"
             @update:model-value="emit('update:draft', $event)"

@@ -29,6 +29,7 @@ const props = defineProps<{
   selectedProjectId: string | null
   modelName: string
   busy: boolean
+  mode: AgentMode
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
 }>()
@@ -47,7 +48,6 @@ const draft = ref('')
 const showPlusMenu = ref(false)
 const showProjectDropdown = ref(false)
 const isChatMode = ref(false)
-const currentMode = ref<AgentMode>('auto')
 const currentPermission = ref<PermissionLevel>('default')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const projectTriggerRef = ref<HTMLElement | null>(null)
@@ -68,7 +68,7 @@ function handleSend() {
   if (!content) return
   draft.value = ''
   resetTextareaHeight()
-  emit('send', { content, agent_mode: currentMode.value, permission_mode: currentPermission.value })
+  emit('send', { content, agent_mode: props.mode, permission_mode: currentPermission.value })
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -126,7 +126,6 @@ function openNewProject() {
 }
 
 function handleModeChange(mode: AgentMode) {
-  currentMode.value = mode
   emit('update:mode', mode)
 }
 
@@ -241,7 +240,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         <div class="welcome-dialog-toolbar">
           <div class="toolbar-left">
             <ModeSelector
-              :model-value="currentMode"
+              :model-value="mode"
               @update:model-value="handleModeChange"
             />
             <PermissionSelector

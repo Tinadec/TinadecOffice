@@ -55,7 +55,21 @@ const busy = ref(false)
 const eventSource = ref<EventSource | null>(null)
 const rightRailCollapsed = ref(false)
 const rightRailWidth = ref(420)
-const currentMode = ref<AgentMode>('auto')
+const AGENT_MODE_KEY = 'tinadec.agent_mode'
+const AGENT_MODES: AgentMode[] = ['plan', 'spec', 'ask', 'vibe', 'auto', 'agent']
+function readStoredMode(): AgentMode {
+  if (typeof localStorage === 'undefined') return 'auto'
+  try {
+    const value = localStorage.getItem(AGENT_MODE_KEY)
+    return value && (AGENT_MODES as string[]).includes(value) ? (value as AgentMode) : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+const currentMode = ref<AgentMode>(readStoredMode())
+watch(currentMode, (mode) => {
+  try { localStorage.setItem(AGENT_MODE_KEY, mode) } catch { /* storage unavailable */ }
+})
 const currentPermission = ref<PermissionLevel>('default')
 const runs = ref<Array<{ id: string; status: string }>>([])
 const queuedMessages = ref<Array<{ id: string; content: string }>>([])
