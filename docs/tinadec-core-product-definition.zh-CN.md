@@ -419,6 +419,8 @@ sequenceDiagram
 | `full_duplex` | 完整治理层 + 并行执行层 | 动态权限、快照与审批 | 长任务、多任务和持续协作 |
 
 `conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 继续存在于通用 TOML fallback 中，用于无正式 ModeVersion 时的开发启动和预算基线；TinadecOffice 的正式 `default-mode` 拓扑则由 `OfficeAgentPack` 发布到关系库。面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
+>
+> **实现收口（2026-09-03）**：`conversation.ask/vibe` 的正式 ModeVersion 按上表拓扑不携带 `supervisor` 节点；run 终态前的监督门现在以冻结 roster 为准——roster 无 supervisor 时以显式 `supervision.skipped` 事件记入审计并以合成 Pass 继续（仅在用户已选择跳过监督的模式内），有 supervisor 的 mode 仍走真实监督裁决。分角色模型计划也按同一 roster 冻结：任一 mode 节点可声明 `model_strategy_override`（`inherit|route|fixed`），`AgentModelResolver` 冻结时以 `mode_node_override` 优先于 `agent_version`，使同一模式内不同角色可指向不同模型与路由（默认 pack 全 `inherit` 共用 `chat` 路由）。
 
 ## 8. 运行、并发与事件契约
 

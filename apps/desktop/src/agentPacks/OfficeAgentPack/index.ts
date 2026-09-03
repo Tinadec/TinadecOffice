@@ -92,13 +92,13 @@ export interface AgentPackEnvelope {
 }
 
 export const OFFICE_AGENT_PACK_ID = 'tinadec.office.agent-pack'
-export const OFFICE_AGENT_PACK_VERSION = '0.2.2'
+export const OFFICE_AGENT_PACK_VERSION = '0.2.3'
 
 export const officeAgentPackManifest = manifestJson as AgentPackManifest
 
 // Filled from the RFC 8785 canonical manifest bytes. A test recalculates this
 // value so any manifest edit must intentionally publish a new digest.
-export const OFFICE_AGENT_PACK_DIGEST = '1d48a50832c2d2c70a5303f8349193547faa0997d41f407d2f598ea88eb9b2b0'
+export const OFFICE_AGENT_PACK_DIGEST = '78dbc5658019159938b829ef166f5d4376239bc1740cf47087dfe8fe644d66cc'
 
 export const officeAgentPackEnvelope: AgentPackEnvelope = {
   manifest: officeAgentPackManifest,

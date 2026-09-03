@@ -168,6 +168,85 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// conversation.ask runs the full pipeline on its own narrowed roster: the run
+    /// is admitted under the ask ModeVersion, the planner's research task lands on
+    /// worker.browser (the only ask-roster worker covering it), and the run completes
+    /// even though the roster carries no supervisor — the review gate is skipped with
+    /// an audit event instead of failing the run (previously InvalidDataException).
+    /// </summary>
+    [Fact]
+    public async Task AskMode_RunsOnNarrowedRoster_BrowserWorkerCompletesWithoutSupervisor()
+    {
+        var workspace = Path.Combine(_root, "workspace-ask");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"ask-research\",\"title\":\"查一下X的定义\",\"description\":\"回答用户的问题\",\"success_criteria\":[\"给出带来源的定义\"],\"dependencies\":[],\"required_capabilities\":[\"tool.search\"],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorkerText("检索结论：X 是一种示例概念（来源：example.com）。")
+            .WhenMeeting("结论：X 是一种示例概念。");
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+        var packDetail = await InstallOfficeAgentPackAsync(client);
+        var askModeVersion = packDetail.GetProperty("resources").EnumerateArray()
+            .Single(resource => resource.GetProperty("kind").GetString() == "mode"
+                && resource.GetProperty("resource_key").GetString() == "conversation.ask")
+            .GetProperty("version_id").GetGuid();
+        var expectedVersions = packDetail.GetProperty("resources").EnumerateArray()
+            .Where(resource => resource.GetProperty("kind").GetString() == "agent")
+            .ToDictionary(
+                resource => resource.GetProperty("resource_key").GetString()!,
+                resource => resource.GetProperty("version_id").GetGuid(),
+                StringComparer.Ordinal);
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "Ask project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "Ask session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        // Mode switching is the interactions endpoint's job: it validates
+        // agent_mode and persists the ask ModeVersion onto the session.
+        // invoke-stream alone only labels the run; the frozen roster always
+        // comes from the session's persisted mode.
+        using var modeSwitch = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "X是什么？", client_message_id = "ask-mode-1", agent_mode = "ask", dispatch_mode = "queued" });
+        Assert.True(modeSwitch.IsSuccessStatusCode, $"ask mode switch failed: {modeSwitch.StatusCode}");
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "X是什么？", client_message_id = "ask-e2e-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        var runId = ack.GetProperty("run_id").GetGuid();
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
+        Assert.Equal(runId, done.GetProperty("run_id").GetGuid());
+
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration").ConfigureAwait(false);
+        Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
+        // Note: run.agent_mode records the invocation label (auto by default);
+        // the executed roster always comes from the session's persisted mode,
+        // which the interactions call above switched to conversation.ask.
+        var decisions = orchestration.GetProperty("supervision_findings").EnumerateArray()
+            .Select(f => f.GetProperty("decision").GetString()).Where(d => d is not null).ToArray();
+        Assert.Equal(new[] { "pass" }, decisions);
+
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        Assert.Single(events, e => e.EventType == "supervision.skipped"
+            && string.Equals(e.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase));
+
+        var sessions = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/sessions").ConfigureAwait(false);
+        var sessionAfter = sessions!.Single(session => session.GetProperty("id").GetGuid() == sessionId);
+        Assert.Equal(askModeVersion, sessionAfter.GetProperty("mode_version_id").GetGuid());
+
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var worker = Assert.Single(lineage!, instance => instance.GetProperty("generated").GetBoolean());
+        Assert.True(HasAgentVersion(worker, expectedVersions["worker.browser"]));
+        Assert.DoesNotContain(lineage!, instance => instance.GetProperty("role").GetString() == "quality_controller");
+        Assert.Contains(lineage!, instance => instance.GetProperty("role").GetString() == "session_coordinator"
+            && HasAgentVersion(instance, expectedVersions["meeting"]));
+    }
+
+    /// <summary>
     /// The dual-layer split must be enforced as permission policy, not as an engine
     /// convention.  The shipped Office pack still publishes "*" for the meeting agent, so
     /// the layer rule is the only authority that can deny a governance-layer tool call;
@@ -554,6 +633,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         private string? _meeting;
         private (string ToolId, Dictionary<string, object?> Arguments)? _firstWorkerTool;
         private string? _workerFollowUp;
+        private string? _workerText;
         public int WorkerCalls;
         public int StewardCalls;
 
@@ -566,6 +646,9 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             return this;
         }
         public ToolScriptedClient WhenWorkerFollowUp(string text) { _workerFollowUp = text; return this; }
+        /// <summary>Every worker turn returns plain text (no tool call), for
+        /// tool-free modes such as conversation.ask.</summary>
+        public ToolScriptedClient WhenWorkerText(string text) { _workerText = text; return this; }
 
         public void Dispose() { }
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
@@ -596,6 +679,8 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _meeting ?? "完成")));
             var isFirstWorkerTurn = Interlocked.Increment(ref WorkerCalls) == 1;
+            if (_workerText is not null)
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _workerText)));
             var contents = isFirstWorkerTurn
                 ? new AIContent[] { new FunctionCallContent(
                     "call-1",

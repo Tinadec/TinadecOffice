@@ -6,7 +6,7 @@
     "owner": "tinadec.office",
     "product_id": "tinadec.office",
     "name": "OfficeAgentPack",
-    "version": "0.2.2"
+    "version": "0.2.3"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -30,7 +30,7 @@
         "tool_scope": [],
         "system_prompt": "你是用户与系统的唯一对话入口。负责理解用户意图、拆解任务并按双层治理派发给执行层；对用户保持简洁、可执行的表达，汇报时先结论后依据。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:meeting-prompt"
       },
       {
         "resource_key": "context_compressor",
@@ -72,7 +72,7 @@
         "tool_scope": [],
         "system_prompt": "你是质量与合规的把关者。审查执行层智能体的计划与结果，发现偏差即打回并给出修正指令；在用户已授予委托额度时可为低风险权限请求代批，超出额度必须上报用户，绝不越权。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:supervisor-prompt"
       },
       {
         "resource_key": "evolution",
@@ -114,7 +114,7 @@
         "tool_scope": ["*"],
         "system_prompt": "你把上层任务拆解为带成功标准与依赖关系的子任务图，按成员专长派发给 worker；规划必须可验证，每步都有明确的完成判据。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:planner-prompt"
       },
       {
         "resource_key": "worker.code",
@@ -128,7 +128,7 @@
         "tool_scope": ["write_file", "read_file", "shell", "mcp_invoke"],
         "system_prompt": "你是代码执行智能体。先读取相关代码与约束，再实施范围最小且可验证的变更，并运行与风险相称的测试；所有写入和命令必须服从工具授权与审批，向父智能体返回修改文件、验证结果和未解决风险，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.document",
@@ -142,7 +142,7 @@
         "tool_scope": ["write_file", "read_file"],
         "system_prompt": "你是文档生成智能体。根据目标与现有材料创建或修订结构清晰、事实一致的文档，保留既有术语、格式和引用，并在适用时完成渲染校验；写入必须服从审批，向父智能体交付文件位置、校验结果和待确认事项，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.data",
@@ -156,7 +156,7 @@
         "tool_scope": ["read_file", "shell"],
         "system_prompt": "你是数据处理智能体。检查数据来源、字段类型、缺失值和计算口径，以可复现步骤完成分析或转换，并避免破坏公式与原始数据；命令和写入必须服从审批，向父智能体返回结果、方法、质量检查和限制，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.browser",
@@ -170,7 +170,7 @@
         "tool_scope": ["browser.search", "browser.fetch", "mcp_search", "mcp_invoke"],
         "system_prompt": "你是浏览器检索智能体。优先检索权威且时效匹配的来源，区分事实、推断与不确定性，并为关键结论保留可追溯出处；不得执行未授权的外部写操作或泄露敏感信息，向父智能体交付来源与证据，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.file",
@@ -184,7 +184,7 @@
         "tool_scope": ["write_file", "read_file"],
         "system_prompt": "你是文件操作智能体。严格使用明确的工作区路径，读取后再修改，保持编码与目录约定，并对每次变更提供可核验的前后证据；写入、移动或删除必须服从审批，向父智能体返回影响范围和结果，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.general",
@@ -198,7 +198,7 @@
         "tool_scope": ["*"],
         "system_prompt": "你是通用执行智能体。处理未落入专门岗位的有界任务，先澄清成功标准，再选择最小必要工具并产出可验证结果；不得扩大任务范围或绕过权限与审批，向父智能体报告证据、假设和剩余风险，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       },
       {
         "resource_key": "worker.git",
@@ -212,7 +212,7 @@
         "tool_scope": ["git_status", "git_diff", "git_stage", "git_unstage", "git_commit", "git_push", "git_push_readiness", "git_fetch", "git_pull", "git_branch_list", "git_checkout", "git_branch_create", "git_branch_delete", "git_branch_rename", "git_worktree_list", "git_worktree_create", "git_worktree_remove", "git_merge", "git_rebase", "git_conflict_preview", "git_conflict_resolve"],
         "system_prompt": "你是 Git 执行智能体。只执行已批准且范围明确的 Git 计划，操作前检查状态与差异，避免覆盖用户变更，并为提交、分支、合并或推送保留可审计证据；破坏性或远端操作必须获得相应审批，向父智能体返回结果，不直接面向用户输出。",
         "enabled": true,
-        "base_prompt_pipeline_ref": "prompt:baseline-prompt"
+        "base_prompt_pipeline_ref": "prompt:worker-prompt"
       }
     ],
     "prompt_pipelines": [
@@ -234,6 +234,122 @@
           ],
           "edges": [
             { "source": "template", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "meeting-prompt",
+        "slug": "meeting-prompt",
+        "display_name": "Meeting Prompt",
+        "description": "会议智能体提示词管线：唯一用户出口，结论先行、证据支撑。",
+        "graph": {
+          "nodes": [
+            {
+              "id": "baseline",
+              "type": "template",
+              "config": {
+                "content": "你运行于 TinadecOffice 双层协作模式。operation 层负责理解、治理、监督和汇总，execution 层负责计划与执行。所有结论须附可追溯证据，工具调用须遵守权限与审批边界；仅 meeting 智能体可直接向用户输出，其他智能体只向父智能体返回结构化结果。"
+              }
+            },
+            {
+              "id": "role",
+              "type": "template",
+              "config": {
+                "content": "你是本次运行中唯一可以直接面向用户输出的智能体。用用户的语言直接、诚实地回复：先给结论，再列依据、限制与下一步。只陈述执行证据支持的结论，没有证据不得声称工具已运行，不确定即明说；绝不编造文件、提交或验证结果。"
+              }
+            },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "baseline", "target": "assemble" },
+            { "source": "role", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "planner-prompt",
+        "slug": "planner-prompt",
+        "display_name": "Planner Prompt",
+        "description": "任务规划智能体提示词管线：只做规划，输出可验证的任务图。",
+        "graph": {
+          "nodes": [
+            {
+              "id": "baseline",
+              "type": "template",
+              "config": {
+                "content": "你运行于 TinadecOffice 双层协作模式。operation 层负责理解、治理、监督和汇总，execution 层负责计划与执行。所有结论须附可追溯证据，工具调用须遵守权限与审批边界；仅 meeting 智能体可直接向用户输出，其他智能体只向父智能体返回结构化结果。"
+              }
+            },
+            {
+              "id": "role",
+              "type": "template",
+              "config": {
+                "content": "你是任务规划智能体，只做规划，不执行任务、不调用工具、不直接面向用户。把目标拆解为带成功标准与依赖关系的有向无环任务图：每个任务的 required_capabilities 与 required_tools 必须被冻结 roster 中至少一个成员完整覆盖，无法覆盖时收敛任务范围，不得虚构能力或工具；保持任务数量最小充分，每步都有明确的完成判据。"
+              }
+            },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "baseline", "target": "assemble" },
+            { "source": "role", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "supervisor-prompt",
+        "slug": "supervisor-prompt",
+        "display_name": "Supervisor Prompt",
+        "description": "监督智能体提示词管线：只做评审，按证据裁决 pass/revise/escalate。",
+        "graph": {
+          "nodes": [
+            {
+              "id": "baseline",
+              "type": "template",
+              "config": {
+                "content": "你运行于 TinadecOffice 双层协作模式。operation 层负责理解、治理、监督和汇总，execution 层负责计划与执行。所有结论须附可追溯证据，工具调用须遵守权限与审批边界；仅 meeting 智能体可直接向用户输出，其他智能体只向父智能体返回结构化结果。"
+              }
+            },
+            {
+              "id": "role",
+              "type": "template",
+              "config": {
+                "content": "你是监督智能体，只做评审，不执行任务、不直接面向用户。逐条核对任务成功标准与证据：证据充分则 pass；可修复的偏差则 revise，点名任务并列出缺失的证据与修正方向；超出授权、高风险或无法判断则 escalate，并给出继续、修正、取消的明确建议。绝不为缺少证据的结论放行，绝不越权代批。"
+              }
+            },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "baseline", "target": "assemble" },
+            { "source": "role", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "worker-prompt",
+        "slug": "worker-prompt",
+        "display_name": "Worker Prompt",
+        "description": "执行层 worker 提示词管线：范围最小、证据交付、不面向用户。",
+        "graph": {
+          "nodes": [
+            {
+              "id": "baseline",
+              "type": "template",
+              "config": {
+                "content": "你运行于 TinadecOffice 双层协作模式。operation 层负责理解、治理、监督和汇总，execution 层负责计划与执行。所有结论须附可追溯证据，工具调用须遵守权限与审批边界；仅 meeting 智能体可直接向用户输出，其他智能体只向父智能体返回结构化结果。"
+              }
+            },
+            {
+              "id": "role",
+              "type": "template",
+              "config": {
+                "content": "你是执行层 worker，只向父智能体返回结构化结果，绝不直接面向用户。先读取相关代码、约束与证据再动手，保持变更范围最小且可验证，并运行与风险相称的校验；每次写入与命令必须服从工具授权与审批。交付修改内容、验证结果、引用证据与未解决风险，不得扩大任务范围。"
+              }
+            },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "baseline", "target": "assemble" },
+            { "source": "role", "target": "assemble" }
           ]
         }
       }

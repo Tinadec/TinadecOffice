@@ -20,7 +20,7 @@ workspace "TinadecOffice 架构（当前态）" "证据来源：仓库源码、s
             localState = container "App 本地状态" "仅体验偏好：settings.json、workbench-layout.json、.tinadec-panel-layout.json、pets/、dynamic-palette 缓存。" "Electron userData / localStorage" {
                 tags "Database"
             }
-            officePack = container "OfficeAgentPack 制品" "静态携带 tinadec.office.agent-pack@0.2.1（14 Agent + baseline-prompt + 7 Mode，治理角色 tool_scope 为空）与硬编码 RFC8785 摘要。" "apps/desktop/src/agentPacks/OfficeAgentPack"
+            officePack = container "OfficeAgentPack 制品" "静态携带 tinadec.office.agent-pack@0.2.3（14 Agent + 5 条提示词管线 + 7 Mode，治理角色 tool_scope 为空，worker 绑定角色管线）与硬编码 RFC8785 摘要。" "apps/desktop/src/agentPacks/OfficeAgentPack"
         }
 
         # ---------- TinadecGateway（产品：API 门面）----------
@@ -57,7 +57,7 @@ workspace "TinadecOffice 架构（当前态）" "证据来源：仓库源码、s
             migrations = container "Storage.Migrations.Sqlite / .PostgreSql" "按 DbContext 提供程序生成迁移；SQLite 本地启动即迁移，PostgreSQL 需显式 ApplyMigrationsOnStartup。" "TinadecCore/Storage.Migrations.*"
 
             dmaea = container "DmaEA 双层协作运行时" "operation/execution 双层：全双工 run 引擎、冻结配置、MAF 1.18 适配器、CLI 聊天后端。唯一允许引用 MAF 包的模块。" "TinadecCore/DmaEA" {
-                engine = component "FullDuplexRunEngine" "幂等准入、context_revision 补丁、治理协调→任务规划→执行→监督→meeting 定稿、spawn/lineage 预算、run 控制、租约式重启恢复（1889 行，最大热点）。" "DmaEA/FullDuplexRunEngine.cs"
+                engine = component "FullDuplexRunEngine" "幂等准入、context_revision 补丁、治理协调→任务规划→执行→监督（roster 缺省时显式跳过）→meeting 定稿、spawn/lineage 预算、run 控制、租约式重启恢复。" "DmaEA/FullDuplexRunEngine.cs"
                 coordinator = component "FullDuplexRunCoordinator" "面向会话的交互受理与有序 SSE 发射（ack→steering/context_conflict→done）。" "DmaEA/FullDuplexRunCoordinator.cs"
                 planAgent = component "PlanningAgent" "任务规划（旧 planning 层语义，公开契约已收敛为 operation）。" "DmaEA/PlanningAgent.cs"
                 execAgent = component "ExecutionAgent" "执行层 worker 的模型回合与工具轮次。" "DmaEA/ExecutionAgent.cs"

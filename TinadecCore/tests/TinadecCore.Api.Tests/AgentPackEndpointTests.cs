@@ -108,6 +108,13 @@ public sealed class AgentPackEndpointTests
         var baselines = pipelines!.Where(pipeline => pipeline.GetProperty("slug").GetString() == "baseline-prompt").ToArray();
         Assert.Equal(2, baselines.Length);
         Assert.All(baselines, baseline => Assert.Equal("published", baseline.GetProperty("status").GetString()));
+        // The pack ships one role-discipline pipeline per responsibility area on
+        // top of the shared baseline graph (0.2.3: meeting/planner/supervisor/worker).
+        foreach (var slug in new[] { "meeting-prompt", "planner-prompt", "supervisor-prompt", "worker-prompt" })
+        {
+            var role = Assert.Single(pipelines!, pipeline => pipeline.GetProperty("slug").GetString() == slug);
+            Assert.Equal("published", role.GetProperty("status").GetString());
+        }
     }
 
     [Fact]
@@ -177,6 +184,80 @@ public sealed class AgentPackEndpointTests
         Assert.Equal(modeVersions["default-mode"], afterExplicit.GetProperty("mode_version_id").GetGuid());
     }
 
+    /// <summary>
+    /// Per-role model plans diverge through mode-node overrides: a fixed
+    /// override on one node resolves with strategy_source mode_node_override
+    /// while the sibling node on the same mode version keeps resolving from
+    /// its agent_version. The frozen plan (not the shared chat route) is what
+    /// differentiates roles at invocation time.
+    /// </summary>
+    [Fact]
+    public async Task ModeNodeOverride_DivergesEffectiveModelPreviewPerRole()
+    {
+        using var factory = new AgentPackFactory();
+        using var client = factory.CreateClient();
+
+        // A fixed strategy needs a real provider row; freezing never calls it.
+        using var providerResponse = await client.PostAsJsonAsync("/api/v1/model-providers",
+            new { driver = "openai", display_name = "E2E Provider", base_url = "http://localhost", model = "e2e-model", api_key = "sk-test" });
+        var providerBody = await providerResponse.Content.ReadAsStringAsync();
+        Assert.True(providerResponse.IsSuccessStatusCode, $"provider save failed: {providerResponse.StatusCode} {providerBody}");
+        var provider = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(providerBody);
+        var providerId = provider.GetProperty("id").GetGuid();
+        // The chat route backs the inherit chain so both sides stay available.
+        using var routeResponse = await client.PutAsJsonAsync("/api/v1/model-routes/chat",
+            new { candidates = new[] { new { provider_instance_id = providerId, model = "e2e-model" } } });
+        Assert.True(routeResponse.IsSuccessStatusCode, $"chat route save failed: {routeResponse.StatusCode}");
+
+        var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+        Assert.NotNull(agents);
+        var meeting = agents!.Single(agent => agent.GetProperty("slug").GetString() == "meeting"
+            && agent.GetProperty("source_kind").GetString() == "bootstrap");
+        var worker = agents!.Single(agent => agent.GetProperty("slug").GetString() == "worker.browser"
+            && agent.GetProperty("source_kind").GetString() == "bootstrap");
+        var meetingId = meeting.GetProperty("id").GetGuid();
+        var workerId = worker.GetProperty("id").GetGuid();
+
+        using var modeResponse = await client.PostAsJsonAsync("/api/v1/agent-modes", new
+        {
+            slug = "e2e-split",
+            display_name = "E2E Split",
+            nodes = new object[]
+            {
+                new
+                {
+                    node_key = "m-meeting",
+                    agent_definition_id = meetingId,
+                    layer = "operation",
+                    label = "meeting",
+                    model_strategy_override = new { kind = "fixed", provider_instance_id = providerId, model = "e2e-model" }
+                },
+                new { node_key = "e-worker", agent_definition_id = workerId, layer = "execution", label = "browser" }
+            },
+            edges = Array.Empty<object>()
+        });
+        Assert.Equal(HttpStatusCode.Created, modeResponse.StatusCode);
+        var mode = await modeResponse.Content.ReadFromJsonAsync<JsonElement>();
+        using var publishResponse = await client.PostAsync($"/api/v1/agent-modes/{mode.GetProperty("id").GetGuid()}/publish", null);
+        Assert.True(publishResponse.IsSuccessStatusCode, $"mode publish failed: {publishResponse.StatusCode}");
+
+        var after = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");
+        Assert.NotNull(after);
+        var meetingAfter = after!.Single(agent => agent.GetProperty("id").GetGuid() == meetingId);
+        var overriddenKey = meetingAfter.GetProperty("effective_previews").EnumerateObject()
+            .Single(property => property.Name.StartsWith("e2e-split:", StringComparison.Ordinal)).Name;
+        var overridden = meetingAfter.GetProperty("effective_previews").GetProperty(overriddenKey);
+        Assert.Equal("mode_node_override", overridden.GetProperty("strategy_source").GetString());
+        Assert.True(overridden.GetProperty("expected_selection").GetProperty("available").GetBoolean());
+        Assert.Equal(providerId, overridden.GetProperty("expected_selection").GetProperty("provider_instance_id").GetGuid());
+
+        var workerAfter = after!.Single(agent => agent.GetProperty("id").GetGuid() == workerId);
+        var workerPreview = workerAfter.GetProperty("effective_previews").EnumerateObject()
+            .Single(property => property.Name.StartsWith("e2e-split:", StringComparison.Ordinal)).Value;
+        Assert.Equal("agent_version", workerPreview.GetProperty("strategy_source").GetString());
+        Assert.True(workerPreview.GetProperty("expected_selection").GetProperty("available").GetBoolean());
+    }
+
     [Fact]
     public async Task OfficePack_InstallsIdempotently_FreezesDefaultsAndProtectsManagedResources()
     {
@@ -189,7 +270,7 @@ public sealed class AgentPackEndpointTests
         var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("install", preview.GetProperty("action").GetString());
         Assert.Equal(14, preview.GetProperty("counts").GetProperty("agents").GetInt32());
-        Assert.Equal(22, preview.GetProperty("resources").GetArrayLength());
+        Assert.Equal(26, preview.GetProperty("resources").GetArrayLength());
         Assert.True(preview.GetProperty("defaults_will_adopt").GetBoolean());
         Assert.Equal($"\"{preview.GetProperty("revision").GetInt64()}\"", previewResponse.Headers.ETag?.Tag);
 
@@ -199,7 +280,7 @@ public sealed class AgentPackEndpointTests
         var installed = await installResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("installed", installed.GetProperty("status").GetString());
         Assert.True(installed.GetProperty("defaults_adopted").GetBoolean());
-        Assert.Equal(22, installed.GetProperty("resources").GetArrayLength());
+        Assert.Equal(26, installed.GetProperty("resources").GetArrayLength());
 
         using var replayResponse = await ApplyAsync(client, envelope, previewId, "office-install-1");
         Assert.Equal(HttpStatusCode.Created, replayResponse.StatusCode);
@@ -213,7 +294,7 @@ public sealed class AgentPackEndpointTests
         Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
         var detail = await detailResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(BundledOfficePackVersion(), detail.GetProperty("active_version").GetString());
-        Assert.Equal(22, detail.GetProperty("resources").GetArrayLength());
+        Assert.Equal(26, detail.GetProperty("resources").GetArrayLength());
 
         var defaults = await client.GetFromJsonAsync<JsonElement>("/api/v1/workspace-defaults");
         var exactModeVersionId = defaults.GetProperty("default_mode_version_id").GetGuid();
@@ -437,8 +518,8 @@ public sealed class AgentPackEndpointTests
         await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
         Assert.Equal(1, await db.AgentPackInstallations.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
         Assert.Equal(1, await db.AgentPackVersions.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
-        Assert.Equal(22, await db.AgentPackManagedResources.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
-        Assert.Equal(22, await db.AgentPackResourceBindings.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
+        Assert.Equal(26, await db.AgentPackManagedResources.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
+        Assert.Equal(26, await db.AgentPackResourceBindings.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
         Assert.Equal(2, await db.AgentPackOperations.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId));
         Assert.Equal(2, await db.AgentPackPreviews.CountAsync(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId && item.Status == "consumed"));
     }

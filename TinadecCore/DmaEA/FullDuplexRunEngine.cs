@@ -2024,15 +2024,33 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         SupervisionVerdict verdict;
         if (configuration.Supervision.RequiredBeforeFinal)
         {
-            var supervisorDefinition = RequiredAgent(configuration.OperationAgents, "supervisor");
-            var supervisorInstance = await EnsureSupervisorAgentAsync(run, configuration, checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
-            checkpoint.SupervisorAgentId = supervisorInstance.Id;
-            var context = await BuildContextAsync(run, configuration, supervisorDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-            var assembly = await AssemblePromptAsync(supervisorDefinition, context, cancellationToken).ConfigureAwait(false);
-            var supervisor = new SupervisionAgent(CreateModelFactory(configuration, checkpoint, supervisorDefinition,
-                supervisorInstance.Id, supervisorInstance.ParentInstanceId), _logger);
-            verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, assembly.Instructions, cancellationToken).ConfigureAwait(false);
-            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
+            // Modes without a supervisor in their frozen roster (e.g.
+            // conversation.ask/vibe) skip the review gate instead of failing:
+            // the roster is the authority for which roles take part in a run.
+            var supervisorDefinition = configuration.OperationAgents
+                .SingleOrDefault(item => string.Equals(item.Id, "supervisor", StringComparison.Ordinal));
+            if (supervisorDefinition is null || !supervisorDefinition.Enabled)
+            {
+                verdict = new SupervisionVerdict(SupervisionDecision.Pass,
+                    ["The frozen roster carries no supervisor; the review gate is skipped for this mode."], []);
+                await AppendEventAsync(runId, "supervision.skipped", "Supervision skipped: no supervisor in the frozen roster.", new
+                {
+                    run_id = run.RunId,
+                    revision_round = checkpoint.SupervisionRound
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                ValidateFrozenAgent(supervisorDefinition, "supervisor");
+                var supervisorInstance = await EnsureSupervisorAgentAsync(run, configuration, checkpoint, supervisorDefinition, cancellationToken).ConfigureAwait(false);
+                checkpoint.SupervisorAgentId = supervisorInstance.Id;
+                var context = await BuildContextAsync(run, configuration, supervisorDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+                var assembly = await AssemblePromptAsync(supervisorDefinition, context, cancellationToken).ConfigureAwait(false);
+                var supervisor = new SupervisionAgent(CreateModelFactory(configuration, checkpoint, supervisorDefinition,
+                    supervisorInstance.Id, supervisorInstance.ParentInstanceId), _logger);
+                verdict = await supervisor.ReviewAsync(checkpoint.UserGoal, plans, results, checkpoint.SupervisionRound, assembly.Instructions, cancellationToken).ConfigureAwait(false);
+                checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, supervisor.LastUsage);
+            }
         }
         else
         {
@@ -2076,13 +2094,29 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         if (verdict.Decision == SupervisionDecision.Revise && checkpoint.SupervisionRound < configuration.Supervision.MaxRevisionRounds)
         {
-            foreach (var index in verdict.ReviseTaskIndexes.Where(index => index >= 0 && index < checkpoint.Tasks.Count))
+            var reviseIndexes = verdict.ReviseTaskIndexes.Where(index => index >= 0 && index < checkpoint.Tasks.Count).ToArray();
+            // A revise verdict is a replan, not a retry: the planner sees the
+            // supervision feedback and returns a revised graph that is merged
+            // over the current one (completed work survives by task_key via
+            // MergeReplannedGraph). Only when the planner cannot produce a
+            // valid graph do we fall back to resetting the flagged nodes.
+            var replanned = await TryReplanFromSupervisionAsync(run, configuration, checkpoint, verdict, reviseIndexes, cancellationToken).ConfigureAwait(false);
+            if (!replanned)
             {
-                var node = checkpoint.Tasks[index];
-                node.Status = "pending";
-                node.ResultStatus = null;
-                node.ResultSummary = null;
-                node.Evidence = [];
+                foreach (var index in reviseIndexes)
+                {
+                    var node = checkpoint.Tasks[index];
+                    node.Status = "pending";
+                    node.ResultStatus = null;
+                    node.ResultSummary = null;
+                    node.Evidence = [];
+                }
+                await AppendEventAsync(runId, "supervision.replan_fallback", "The supervision replan produced no valid graph; flagged tasks were reset for re-execution.", new
+                {
+                    run_id = run.RunId,
+                    revision_round = checkpoint.SupervisionRound,
+                    task_keys = reviseIndexes.Select(index => checkpoint.Tasks[index].TaskKey).ToArray()
+                }, cancellationToken).ConfigureAwait(false);
             }
             checkpoint.SupervisionRound++;
             checkpoint.Phase = "executing";
@@ -2102,6 +2136,134 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.Phase = "finalizing";
         return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "reviewed", cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Runs the planner again with the supervision verdict as feedback and merges
+    /// the revised graph over the current checkpoint. Returns false when no valid
+    /// graph could be produced (or a replan is unsafe), in which case the caller
+    /// keeps the legacy reset-and-retry behavior.
+    /// </summary>
+    private async Task<bool> TryReplanFromSupervisionAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        SupervisionVerdict verdict,
+        int[] reviseIndexes,
+        CancellationToken cancellationToken)
+    {
+        // A replan while a lane escalation awaits a user decision would rewrite
+        // tasks the user is about to judge. Leave those runs on retry semantics.
+        if (checkpoint.Lanes.Any(lane => lane.Escalated)) return false;
+        var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+        checkpoint.MeetingAgentId = agents.Meeting.Id;
+        checkpoint.PlannerAgentId = agents.Planner.Id;
+
+        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
+        var assembly = await AssemblePromptAsync(plannerDefinition, context, cancellationToken).ConfigureAwait(false);
+        var instructions = SupervisionReplanInstructions(checkpoint, assembly.Instructions, verdict, reviseIndexes);
+        // Revise indexes address the pre-replan list, which the merge below
+        // replaces: capture the flagged keys now so they can be forced back to
+        // pending afterwards (merge preserves completed work by task_key).
+        var reviseKeys = new HashSet<string>(
+            reviseIndexes.Select(index => checkpoint.Tasks[index].TaskKey),
+            StringComparer.OrdinalIgnoreCase);
+
+        PlannedTask[] planned = [];
+        Exception? lastError = null;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var contextForPlanner = CreateRunContext(run, checkpoint);
+                var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
+                    checkpoint.PlannerAgentId, null), _logger);
+                planned = await planner.PlanAsync(
+                    contextForPlanner,
+                    BuildFrozenPlannerRoster(configuration),
+                    PlannerInstructions(checkpoint, instructions),
+                    cancellationToken).ConfigureAwait(false);
+                checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
+                checkpoint.Tasks = MergeReplannedGraph(checkpoint.Tasks,
+                    ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun));
+                // A revise verdict explicitly rejects the flagged tasks' results,
+                // so those keys re-execute even when the planner keeps them.
+                foreach (var node in checkpoint.Tasks.Where(node => reviseKeys.Contains(node.TaskKey)))
+                {
+                    node.Status = "pending";
+                    node.ResultStatus = null;
+                    node.ResultSummary = null;
+                    node.Evidence = [];
+                    node.CompletedAt = null;
+                }
+                SyncLanes(checkpoint);
+                lastError = null;
+                break;
+            }
+            catch (InvalidTaskGraphException ex)
+            {
+                lastError = ex;
+            }
+        }
+        if (lastError is not null)
+        {
+            _logger?.LogWarning(lastError, "Supervision replan produced no valid graph for run {RunId}; falling back to task reset.", run.RunId);
+            return false;
+        }
+
+        checkpoint.PlanRevision++;
+        await AppendEventAsync(Guid.Parse(run.RunId), "task_graph.created", $"{checkpoint.Tasks.Count} task(s) replanned from supervision revision.", new
+        {
+            run_id = run.RunId,
+            plan_revision = checkpoint.PlanRevision,
+            supervision_round = checkpoint.SupervisionRound,
+            replan = true,
+            task_count = checkpoint.Tasks.Count,
+            task_keys = checkpoint.Tasks.Select(item => item.TaskKey).ToArray()
+        }, cancellationToken).ConfigureAwait(false);
+        await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskGraphCreated, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private static string SupervisionReplanInstructions(
+        FullDuplexCheckpointV1 checkpoint,
+        string baseInstructions,
+        SupervisionVerdict verdict,
+        int[] reviseIndexes)
+    {
+        var parts = new List<string>
+        {
+            "Supervision rejected the previous execution and requests a revised plan (this is a replan, not a fresh plan).",
+            $"Supervision round: {checkpoint.SupervisionRound}."
+        };
+        var reasons = verdict.Reasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).ToArray();
+        if (reasons.Length != 0)
+        {
+            parts.Add("Supervision reasons:");
+            parts.AddRange(reasons.Select(reason => $"- {reason}"));
+        }
+        if (reviseIndexes.Length != 0)
+        {
+            parts.Add("Flagged tasks and their last outcomes (repair or replace these; keep their task_key when the work continues):");
+            foreach (var index in reviseIndexes)
+            {
+                var node = checkpoint.Tasks[index];
+                parts.Add($"- task_key '{node.TaskKey}' (lane '{node.LaneKey ?? "main"}'): {node.Title}");
+                if (!string.IsNullOrWhiteSpace(node.ResultSummary))
+                    parts.Add($"  last summary: {Truncate(node.ResultSummary, 400)}");
+                var unsatisfied = node.CriteriaVerdicts.Where(item => !item.Satisfied).ToArray();
+                foreach (var item in unsatisfied)
+                    parts.Add($"  unsatisfied criterion '{item.Criterion}': {Truncate(item.Evidence, 300)}");
+                foreach (var evidence in node.Evidence.Where(item => !string.IsNullOrWhiteSpace(item)).Take(3))
+                    parts.Add($"  evidence: {Truncate(evidence, 300)}");
+            }
+        }
+        parts.Add("Completed tasks (by task_key) are preserved automatically; do not rename completed work. Keep the graph within the frozen worker roster and tool manifest.");
+        return baseInstructions + "\n\n" + string.Join("\n", parts);
+    }
+
+    private static string Truncate(string? value, int maxLength) =>
+        string.IsNullOrEmpty(value) ? string.Empty : value.Length <= maxLength ? value : value[..maxLength] + "…";
 
     /// <summary>
     /// Lands the supervision verdict's per-criterion verdicts on the tasks they

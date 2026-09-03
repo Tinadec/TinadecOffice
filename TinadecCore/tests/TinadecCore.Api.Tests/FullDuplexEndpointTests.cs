@@ -1714,6 +1714,73 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             .Select(f => f.GetProperty("decision").GetString()).Where(d => d is not null).ToArray();
         Assert.Equal(new[] { "revise", "pass" }, decisions);
         Assert.Equal(2, script.WorkerCalls);
+        // A revise verdict replans through the planner instead of just retrying.
+        Assert.Equal(2, script.PlannerCalls);
+    }
+
+    [Fact]
+    public async Task Supervision_Revise_ReplansGraphWithNewTask()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .ThenPlanner("[{\"task_key\":\"a\",\"title\":\"任务A-修正\",\"description\":\"按监督意见修正\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"b\",\"title\":\"任务B\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[\"a\"],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("结果")
+            .WhenSupervisor("{\"decision\":\"revise\",\"reasons\":[\"缺任务B\"],\"revise_task_indexes\":[0]}")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已修正。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "目标" });
+
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal(2, script.PlannerCalls);
+        // Round 1 runs A; the replan adds B behind A, so three worker turns run.
+        Assert.Equal(3, script.WorkerCalls);
+        var runId = RunIdOf(chunks[0]);
+        // The replan is journaled as a new task_graph.created event carrying
+        // the revised keys — not a silent retry of the old graph.
+        var manager = factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0);
+        var replans = events
+            .Where(e => e.EventType == "task_graph.created" && string.Equals(e.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
+            .Select(e => (JsonElement)e.Payload["payload"]!)
+            .Where(p => p.TryGetProperty("replan", out var replan) && replan.GetBoolean())
+            .ToArray();
+        var replan = Assert.Single(replans);
+        var keys = replan.GetProperty("task_keys").EnumerateArray().Select(k => k.GetString()).ToArray();
+        Assert.Contains("b", keys);
+    }
+
+    [Fact]
+    public async Task Supervision_Revise_PlannerGarbage_FallsBackToRetry()
+    {
+        // Duplicate task keys fail graph validation on both replan attempts
+        // ("[]" would silently degrade to one task; oversize is unreachable
+        // because PlanningAgent caps output at Take(8)).
+        const string invalidGraph = "[{\"task_key\":\"dup\",\"title\":\"任务X\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"dup\",\"title\":\"任务Y\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]";
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .ThenPlanner(invalidGraph)
+            .ThenPlanner(invalidGraph)
+            .WhenWorker("结果")
+            .WhenSupervisor("{\"decision\":\"revise\",\"reasons\":[\"证据不足\"],\"revise_task_indexes\":[0]}")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已修正。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "目标" });
+
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        // Both replan attempts fail validation, so the run falls back to
+        // resetting the flagged task and re-executes it.
+        Assert.Equal(3, script.PlannerCalls);
+        Assert.Equal(2, script.WorkerCalls);
     }
 
     [Fact]
@@ -1975,6 +2042,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     {
         private readonly Queue<string> _supervisorVerdicts = new();
         private string? _planner;
+        private readonly Queue<string> _plannerFollowUps = new();
         private readonly Dictionary<string, string> _plannerLanes = new(StringComparer.Ordinal);
         private string? _gate;
         private string? _worker;
@@ -2013,6 +2081,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         public ScriptedChatClient WhenPlanner(string script) { _planner = script; return this; }
         public ScriptedChatClient WhenPlanner(string lane, string script) { _plannerLanes[lane] = script; return this; }
+        /// <summary>Planner script consumed by the next replan call (supervision revise),
+        /// then falls back to WhenPlanner. Queued in order for multiple revisions.</summary>
+        public ScriptedChatClient ThenPlanner(string script) { _plannerFollowUps.Enqueue(script); return this; }
         public ScriptedChatClient WhenGate(string script) { _gate = script; return this; }
         public ScriptedChatClient WhenWorker(string script) { _worker = script; return this; }
         public ScriptedChatClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
@@ -2094,8 +2165,13 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
             {
                 if (plannerLane is not null) RecordPlannerLane(plannerLane);
-                return RecordPlanner(
-                    plannerLane is not null && _plannerLanes.TryGetValue(plannerLane, out var laneScript) ? laneScript : _planner ?? "[]");
+                if (plannerLane is not null && _plannerLanes.TryGetValue(plannerLane, out var laneScript))
+                    return RecordPlanner(laneScript);
+                // A supervision replan reuses the main planner call: serve queued
+                // follow-up graphs first so tests can assert true replanning.
+                if (PlannerCalls > 0 && _plannerFollowUps.Count > 0)
+                    return RecordPlanner(_plannerFollowUps.Dequeue());
+                return RecordPlanner(_planner ?? "[]");
             }
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}";

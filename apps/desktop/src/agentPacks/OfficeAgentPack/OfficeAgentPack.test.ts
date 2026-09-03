@@ -12,7 +12,7 @@ describe('OfficeAgentPack', () => {
     expect(officeAgentPackManifest.metadata.pack_id).toBe(OFFICE_AGENT_PACK_ID)
     expect(officeAgentPackManifest.metadata.owner).toBe('tinadec.office')
     expect(officeAgentPackManifest.metadata.product_id).toBe('tinadec.office')
-    expect(officeAgentPackManifest.metadata.version).toBe('0.2.2')
+    expect(officeAgentPackManifest.metadata.version).toBe('0.2.3')
     expect(officeAgentPackManifest.resources.agents).toHaveLength(14)
     expect(officeAgentPackManifest.resources.agents.every((agent) => Boolean(agent.system_prompt?.trim()))).toBe(true)
     // Core denies every tool invocation for an operation-layer instance, so a governance
@@ -49,6 +49,37 @@ describe('OfficeAgentPack', () => {
     for (const agent of officeAgentPackManifest.resources.agents) {
       expect(agent.base_prompt_pipeline_ref).toMatch(/^prompt:/)
       expect(promptKeys.has(agent.base_prompt_pipeline_ref!.slice('prompt:'.length))).toBe(true)
+    }
+    // Role pipelines: meeting/planner/supervisor/worker each assemble a distinct
+    // role-discipline template on top of the shared dual-layer baseline; the four
+    // dormant operation auxiliaries stay on the baseline graph.
+    expect(officeAgentPackManifest.resources.prompt_pipelines).toHaveLength(5)
+    const pipelineByKey = new Map(
+      officeAgentPackManifest.resources.prompt_pipelines.map((pipeline) => [pipeline.resource_key, pipeline] as const),
+    )
+    for (const key of ['meeting-prompt', 'planner-prompt', 'supervisor-prompt', 'worker-prompt'] as const) {
+      const pipeline = pipelineByKey.get(key)!
+      expect(pipeline, `${key} present`).toBeDefined()
+      const templates = pipeline.graph.nodes.filter((node) => node.type === 'template' || node.kind === 'template')
+      expect(templates.length, `${key} carries baseline + role templates`).toBe(2)
+      expect(pipeline.graph.nodes.some((node) => node.type === 'assemble' || node.kind === 'assemble')).toBe(true)
+    }
+    const roleContents = new Set(
+      ['meeting-prompt', 'planner-prompt', 'supervisor-prompt', 'worker-prompt'].map(
+        (key) => JSON.stringify(pipelineByKey.get(key)!.graph.nodes[1]),
+      ),
+    )
+    expect(roleContents.size, 'role templates are distinct graphs').toBe(4)
+    const expectedPipelineByAgent: Record<string, string> = {
+      meeting: 'prompt:meeting-prompt',
+      task_planner: 'prompt:planner-prompt',
+      supervisor: 'prompt:supervisor-prompt',
+    }
+    for (const agent of officeAgentPackManifest.resources.agents) {
+      const expected =
+        expectedPipelineByAgent[agent.resource_key] ??
+        (agent.layer === 'execution' ? 'prompt:worker-prompt' : 'prompt:baseline-prompt')
+      expect(agent.base_prompt_pipeline_ref, `agent '${agent.resource_key}' role pipeline`).toBe(expected)
     }
     expect(resourceKeys.has(officeAgentPackManifest.activation.workspace_defaults.agent_ref.slice('agent:'.length))).toBe(true)
     expect(officeAgentPackManifest.resources.modes.some((mode) => `mode:${mode.resource_key}` === officeAgentPackManifest.activation.workspace_defaults.mode_ref)).toBe(true)

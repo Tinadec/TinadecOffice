@@ -44,7 +44,7 @@
 | N:app.mainProc / preload / localState | Electron 主进程 / 预加载 / userData | L2, runtime | high | `electron/main.cjs:40,126-130,208,262,326,501-544`、`gatewaySettings.cjs:22-99` |
 | N:app.webShim | Web 平台垫片 | L2 | high | `apps/web/vite.config.ts:77-88` 6 条 alias、`:80-84` `/gateway`→48730 |
 | N:app.uie | 共享 UI 组件库 | L2 | high | `apps/TinadecUI/src/index.ts`（vite alias `@tinadec/ui`） |
-| N:app.officePack | Office Agent Pack v0.2.1 | L2 | high | `apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json`，digest `8110547a…962e`，14 Agent + 7 Mode，治理角色 `tool_scope: []`（`AGENTS.md` 2026-08-25/26 与 2026-08-31 条目） |
+| N:app.officePack | Office Agent Pack v0.2.3 | L2 | high | `apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json`，digest `78dbc565…66cc`，14 Agent + 5 prompt pipelines + 7 Mode，治理角色 `tool_scope: []`（`AGENTS.md` 2026-08-25/26/31 与 2026-09-03 条目） |
 | N:gateway.routes / mapping / upstream | Elysia 路由 / 映射 / 上游客户端 | L2, runtime | high | `src/index.ts:1-23,1960-2043`、`src/mappers/*` 12 文件、`src/coreClient.ts`、`src/toolRuntimeClient.ts` |
 | N:core.apiHost | TinadecCore.Api（:48731） | L2, L3, runtime | high | `Api/Program.cs:1-282`、`Api/Properties/launchSettings.json:8` |
 | N:core.runtime | Runtime 组合根 | L3, deps | high | `Runtime/TinadecCoreServiceCollectionExtensions.cs`、`Runtime/TinadecCoreBuilder.cs:11-30` |
