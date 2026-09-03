@@ -51,6 +51,10 @@ describe('user tool action projection', () => {
       branch: 'feature/governance',
       confirm_branch_create: 'desktop:git_branch_create',
     })
+    expect(withGitToolConfirmation('git_discard', { paths: ['a.txt'] })).toEqual({
+      paths: ['a.txt'],
+      confirm_discard: 'desktop:git_discard',
+    })
     expect(withGitToolConfirmation('git_stage', { paths: ['a.txt'] })).toEqual({ paths: ['a.txt'] })
   })
 

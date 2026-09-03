@@ -191,6 +191,8 @@ export function useGitOperation(
   const commitMessage = ref('')
   const selectedPaths = ref<Set<string>>(new Set())
   const selectAll = ref(true)
+  // 拉取策略：后端当前仅支持 ff-only，merge/rebase 在 UI 上预留并禁用，避免静默行为不一致。
+  const pullStrategy = ref<'ff-only' | 'merge' | 'rebase'>('ff-only')
 
   // Approval tracking
   const indexApprovalId = ref<string | null>(null)
@@ -207,6 +209,9 @@ export function useGitOperation(
   const resolveConflictApprovalId = ref<string | null>(null)
   const resolveConflictPath = ref<string | null>(null)
   const resolveConflictStrategy = ref<'ours' | 'theirs' | 'both' | null>(null)
+  const discardApprovalId = ref<string | null>(null)
+  const discardPaths = ref<string[]>([])
+  const discardIncludeUntracked = ref(false)
   const deleteBranchApprovalId = ref<string | null>(null)
   const renameBranchApprovalId = ref<string | null>(null)
   const worktreeApprovalId = ref<string | null>(null)
@@ -278,7 +283,49 @@ export function useGitOperation(
 
   const logCommits = computed<GitLogCommit[]>(() => {
     const data = (logResult.value?.data ?? {}) as { commits?: unknown }
-    return Array.isArray(data.commits) ? (data.commits as GitLogCommit[]) : []
+    if (!Array.isArray(data.commits)) return []
+    const out: GitLogCommit[] = []
+    for (const entry of data.commits as Array<unknown>) {
+      if (typeof entry === 'string') {
+        // 兼容旧 mock： "abc1234 subject..." 字符串形态
+        const text = entry.trim()
+        if (!text) continue
+        const [maybeHash, ...rest] = text.split(/\s+/)
+        const hash = maybeHash ?? ''
+        out.push({
+          hash,
+          short_hash: hash.slice(0, 7),
+          author: '',
+          email: '',
+          date: '',
+          subject: rest.join(' ') || text,
+        })
+        continue
+      }
+      if (entry && typeof entry === 'object') {
+        const raw = entry as Record<string, unknown>
+        const hash = typeof raw.hash === 'string' ? raw.hash : ''
+        if (!hash) continue
+        const shortHash = typeof raw.short_hash === 'string' && raw.short_hash
+          ? raw.short_hash
+          : hash.slice(0, 7)
+        out.push({
+          hash,
+          short_hash: shortHash,
+          author: typeof raw.author === 'string' ? raw.author : '',
+          email: typeof raw.email === 'string'
+            ? raw.email
+            : typeof raw.author_email === 'string' ? raw.author_email : '',
+          date: typeof raw.date === 'string'
+            ? raw.date
+            : typeof raw.author_date === 'string'
+              ? raw.author_date
+              : typeof raw.committer_date === 'string' ? raw.committer_date : '',
+          subject: typeof raw.subject === 'string' ? raw.subject : '',
+        })
+      }
+    }
+    return out
   })
 
   const branches = computed<GitBranch[]>(() => {
@@ -318,6 +365,9 @@ export function useGitOperation(
   const resolveConflictApproval = computed(
     () => allApprovals.value.find((a) => a.id === resolveConflictApprovalId.value) ?? null,
   )
+  const discardApproval = computed(
+    () => allApprovals.value.find((a) => a.id === discardApprovalId.value) ?? null,
+  )
   const deleteBranchApproval = computed(
     () => allApprovals.value.find((a) => a.id === deleteBranchApprovalId.value) ?? null,
   )
@@ -338,6 +388,7 @@ export function useGitOperation(
   const canDecideMergeApproval = computed(() => mergeApproval.value?.status === 'pending')
   const canDecideRebaseApproval = computed(() => rebaseApproval.value?.status === 'pending')
   const canDecideResolveConflictApproval = computed(() => resolveConflictApproval.value?.status === 'pending')
+  const canDecideDiscardApproval = computed(() => discardApproval.value?.status === 'pending')
   const canDecideDeleteBranchApproval = computed(() => deleteBranchApproval.value?.status === 'pending')
   const canDecideRenameBranchApproval = computed(() => renameBranchApproval.value?.status === 'pending')
   const canDecideWorktreeApproval = computed(() => worktreeApproval.value?.status === 'pending')
@@ -349,8 +400,15 @@ export function useGitOperation(
   const canRequestIndexApproval = computed(() =>
     Boolean(cwd.value && sid.value && selectedCommitPaths.value.length > 0),
   )
+  const canRequestDiscardApproval = computed(() =>
+    Boolean(cwd.value && sid.value && selectedCommitPaths.value.length > 0),
+  )
+  // 勾选即提交范围：有已暂存直接提交暂存区；无暂存但有勾选时用 paths 模式一次审批自动暂存勾选文件。
+  const commitUsesSelectedPaths = computed(() =>
+    repoSummary.value.stagedCount === 0 && selectedCommitPaths.value.length > 0,
+  )
   const canRequestCommitApproval = computed(() =>
-    Boolean(cwd.value && sid.value && commitMessage.value.trim() && repoSummary.value.stagedCount > 0),
+    Boolean(cwd.value && sid.value && commitMessage.value.trim() && (repoSummary.value.stagedCount > 0 || selectedCommitPaths.value.length > 0)),
   )
   const canRequestPushApproval = computed(() =>
     Boolean(cwd.value && sid.value && hasPushCandidate.value),
@@ -489,6 +547,7 @@ export function useGitOperation(
     try {
       logResult.value = await api.gitLog(path, limit, ref)
     } catch (err) {
+      logResult.value = null
       notifyOperationError(err, t('context.gitLoadFailed'))
     }
   }
@@ -593,10 +652,16 @@ export function useGitOperation(
     if (!cwd.value || !sid.value || !canRequestCommitApproval.value) return
     operationLoading.value = true
     try {
-      const stagedCount = repoSummary.value.stagedCount
-      const approval = await createGitAction('git_commit', {
-        commit_staged_only: true, message: commitMessage.value.trim(),
-      }, `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'} on ${previewData.value.branch ?? 'HEAD'}`)
+      const branch = previewData.value.branch ?? 'HEAD'
+      const usePaths = commitUsesSelectedPaths.value
+      const paths = [...selectedCommitPaths.value]
+      const approval = usePaths
+        ? await createGitAction('git_commit', {
+            message: commitMessage.value.trim(), paths,
+          }, `Commit ${paths.length} selected file${paths.length === 1 ? '' : 's'} on ${branch} (auto-stage)`)
+        : await createGitAction('git_commit', {
+            commit_staged_only: true, message: commitMessage.value.trim(),
+          }, `Commit ${repoSummary.value.stagedCount} staged file${repoSummary.value.stagedCount === 1 ? '' : 's'} on ${branch}`)
       commitApprovalId.value = approval.id
       notify.info({ message: t('context.gitCommitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -666,9 +731,10 @@ export function useGitOperation(
       const branch = previewData.value.branch ?? 'HEAD'
       const upstream = previewData.value.upstream ?? 'origin'
       const behind = repoSummary.value.behind
+      // 只拉不推：git_pull 仅更新本地，不会把本地提交推到远端。
       const approval = await createGitAction('git_pull', {
         branch, remote: upstream.split('/')[0] ?? 'origin',
-      }, `Pull ${branch} from ${upstream} (${behind} behind)`)
+      }, `Pull ${branch} from ${upstream} (${behind} behind, ${pullStrategy.value}, no push)`)
       pullApprovalId.value = approval.id
       notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
       emitApproval(approval)
@@ -679,7 +745,7 @@ export function useGitOperation(
     }
   }
 
-  async function executeApprovedPull(options?: { rebase?: boolean; ff_only?: boolean }) {
+  async function executeApprovedPull() {
     if (!cwd.value || !pullApproval.value) return
     operationLoading.value = true
     try {
@@ -914,6 +980,48 @@ export function useGitOperation(
     }
   }
 
+  // ---- Discard (destructive, irreversible): explicit paths + opt-in untracked delete ----
+  async function requestDiscardApproval(
+    paths: string[],
+    includeUntracked: boolean,
+    emitApproval: (a: ApprovalDto) => void,
+  ) {
+    const targets = [...new Set(paths.map((p) => p.trim()).filter(Boolean))]
+    if (!cwd.value || !sid.value || targets.length === 0) return
+    operationLoading.value = true
+    try {
+      const approval = await createGitAction('git_discard', {
+        paths: targets, include_untracked: includeUntracked,
+      }, `Discard ${targets.length} file${targets.length === 1 ? '' : 's'}${includeUntracked ? ' (incl. untracked)' : ''} on ${previewData.value.branch ?? 'HEAD'}`)
+      discardApprovalId.value = approval.id
+      discardPaths.value = targets
+      discardIncludeUntracked.value = includeUntracked
+      notify.info({ message: t('context.gitApprovalRequested'), source: 'git' })
+      emitApproval(approval)
+    } catch (err) {
+      notifyOperationError(err, t('context.gitApprovalRequestFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
+  async function executeApprovedDiscard() {
+    if (!cwd.value || !discardApproval.value) return
+    operationLoading.value = true
+    try {
+      const result = await resumeGitAction(discardApproval.value)
+      if (!actionCompleted(result)) return
+      discardApprovalId.value = null
+      discardPaths.value = []
+      discardIncludeUntracked.value = false
+      await loadStatus()
+    } catch (err) {
+      notifyOperationError(err, t('context.gitDiscardFailed'))
+    } finally {
+      operationLoading.value = false
+    }
+  }
+
   async function requestDeleteBranchApproval(branch: string, force: boolean, emitApproval: (a: ApprovalDto) => void) {
     if (!cwd.value || !sid.value || !branch.trim()) return
     operationLoading.value = true
@@ -1120,6 +1228,9 @@ export function useGitOperation(
     resolveConflictApprovalId.value = null
     resolveConflictPath.value = null
     resolveConflictStrategy.value = null
+    discardApprovalId.value = null
+    discardPaths.value = []
+    discardIncludeUntracked.value = false
     deleteBranchApprovalId.value = null
     renameBranchApprovalId.value = null
     worktreeApprovalId.value = null
@@ -1141,6 +1252,9 @@ export function useGitOperation(
     loading,
     operationLoading,
     commitMessage,
+    pullStrategy,
+    discardPaths,
+    discardIncludeUntracked,
     selectedPaths,
     selectAll,
     selectAllIndeterminate,
@@ -1176,6 +1290,7 @@ export function useGitOperation(
     rebaseApproval,
     snapshotOverrideCandidate,
     resolveConflictApproval,
+    discardApproval,
     deleteBranchApproval,
     renameBranchApproval,
     worktreeApproval,
@@ -1189,12 +1304,15 @@ export function useGitOperation(
     canDecideMergeApproval,
     canDecideRebaseApproval,
     canDecideResolveConflictApproval,
+    canDecideDiscardApproval,
     canDecideDeleteBranchApproval,
     canDecideRenameBranchApproval,
     canDecideWorktreeApproval,
     // Computed - validation
     canRequestIndexApproval,
+    canRequestDiscardApproval,
     canRequestCommitApproval,
+    commitUsesSelectedPaths,
     canRequestPushApproval,
     canRequestPullApproval,
     canRequestFetchApproval,
@@ -1228,6 +1346,8 @@ export function useGitOperation(
     executeApprovedRebase,
     requestResolveConflictApproval,
     executeApprovedResolveConflict,
+    requestDiscardApproval,
+    executeApprovedDiscard,
     requestDeleteBranchApproval,
     executeApprovedDeleteBranch,
     requestRenameBranchApproval,

@@ -457,16 +457,16 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           return delay(
             {
               tool_id: toolId,
-              status: 'ok',
+              status: 'completed',
               summary: '返回 5 条提交记录',
               evidence: [],
               data: {
                 commits: [
-                  'a1b2c3d refactor(orchestrator): support dynamic dependency resolution',
-                  'e4f5g6h feat(graph): add cycle detection',
-                  '7i8j9k0 docs: update orchestrator architecture',
-                  '1m2n3o4 chore: bump version to 0.4.2',
-                  '4p5q6r7 fix: resolve memory leak in diff editor',
+                  { hash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', short_hash: 'a1b2c3d', author: 'Lin Cu', email: 'lin@example.com', date: '2026-09-02 10:24:00 +08:00', subject: 'refactor(orchestrator): support dynamic dependency resolution' },
+                  { hash: 'e4f5g6h7e4f5g6h7e4f5g6h7e4f5g6h7e4f5g6h7', short_hash: 'e4f5g6h', author: 'Lin Cu', email: 'lin@example.com', date: '2026-09-01 16:02:00 +08:00', subject: 'feat(graph): add cycle detection' },
+                  { hash: '7i8j9k0l7i8j9k0l7i8j9k0l7i8j9k0l7i8j9k0l', short_hash: '7i8j9k0', author: 'Tinadec Bot', email: 'bot@example.com', date: '2026-08-30 09:41:00 +08:00', subject: 'docs: update orchestrator architecture' },
+                  { hash: '1m2n3o4p1m2n3o4p1m2n3o4p1m2n3o4p1m2n3o4p', short_hash: '1m2n3o4', author: 'Lin Cu', email: 'lin@example.com', date: '2026-08-28 18:12:00 +08:00', subject: 'chore: bump version to 0.4.2' },
+                  { hash: '4p5q6r7s4p5q6r7s4p5q6r7s4p5q6r7s4p5q6r7s', short_hash: '4p5q6r7', author: 'Lin Cu', email: 'lin@example.com', date: '2026-08-27 11:05:00 +08:00', subject: 'fix: resolve memory leak in diff editor' },
                 ],
               },
               requires_approval: false,

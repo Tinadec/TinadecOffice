@@ -140,7 +140,7 @@ const stubs = {
   GitChangesView: {
     name: 'GitChangesView',
     template: '<div class="stub-git-changes" />',
-    props: ['cwd', 'sessionId', 'statusFiles'],
+    props: ['cwd', 'sessionId', 'statusFiles', 'pullStrategy', 'behind', 'stagedCount', 'canRequestFetchApproval', 'pullApproval', 'fetchApproval', 'commitUsesSelectedPaths', 'discardApproval', 'canRequestDiscardApproval', 'canDecideDiscardApproval'],
   },
   GitHistoryView: {
     name: 'GitHistoryView',
@@ -256,6 +256,32 @@ describe('GitPanel', () => {
     expect(changesView.props('cwd')).toBe('D:/repo');
     expect(changesView.props('sessionId')).toBe('session-1');
     expect(changesView.props('statusFiles')).toHaveLength(2);
+  });
+
+  it('passes pull/fetch wiring props to GitChangesView', async () => {
+    const wrapper = mountGitPanel();
+    await flushPromises();
+
+    const changesView = wrapper.findComponent({ name: 'GitChangesView' });
+    expect(changesView.exists()).toBe(true);
+    // 只拉不推三动作 + 勾选即提交范围所需的新增透传
+    expect(changesView.props('pullStrategy')).toBe('ff-only');
+    expect(changesView.props('behind')).toBe(0);
+    expect(changesView.props('stagedCount')).toBeDefined();
+    expect(changesView.props('canRequestFetchApproval')).toBe(true);
+    expect(changesView.props('pullApproval')).toBeNull();
+    expect(changesView.props('fetchApproval')).toBeNull();
+  });
+
+  it('passes discard wiring props to GitChangesView', async () => {
+    const wrapper = mountGitPanel();
+    await flushPromises();
+
+    const changesView = wrapper.findComponent({ name: 'GitChangesView' });
+    expect(changesView.exists()).toBe(true);
+    expect(changesView.props('discardApproval')).toBeNull();
+    expect(changesView.props('canRequestDiscardApproval')).toBe(true);
+    expect(changesView.props('canDecideDiscardApproval')).toBe(false);
   });
 
   it('switches to history tab and loads log', async () => {

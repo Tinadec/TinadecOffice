@@ -431,6 +431,15 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
   border-inline: 1px solid var(--border-card, rgba(0,0,0,.08));
 }
 
+/* 预览宿主固定 560px：历史双列在此宽度下过挤，强制单列避免溢出。 */
+.real-rail-host :deep(.git-history-split) {
+  grid-template-columns: 1fr;
+}
+
+.real-rail-host :deep(.git-history-list-scroll) {
+  max-height: 260px;
+}
+
 .real-page-host {
   flex: 1;
   min-height: 0;

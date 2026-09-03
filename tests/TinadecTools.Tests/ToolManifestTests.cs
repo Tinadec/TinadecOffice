@@ -77,6 +77,7 @@ public sealed class ToolManifestTests
         AssertGitMutation(byId, "git_merge", "confirm_merge");
         AssertGitMutation(byId, "git_rebase", "confirm_rebase");
         AssertGitMutation(byId, "git_conflict_resolve", "confirm_resolve");
+        AssertGitMutation(byId, "git_discard", "confirm_discard");
         AssertGitMutation(byId, "git_worktree_create", "confirm_worktree_create");
         AssertGitMutation(byId, "git_worktree_remove", "confirm_worktree_remove");
         Assert.True(byId["git_stage"].GetProperty("requires_approval").GetBoolean());

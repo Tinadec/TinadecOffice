@@ -15,6 +15,7 @@ const GIT_CONFIRMATION_FIELDS: Readonly<Record<string, string>> = Object.freeze(
   git_merge: 'confirm_merge',
   git_rebase: 'confirm_rebase',
   git_conflict_resolve: 'confirm_resolve',
+  git_discard: 'confirm_discard',
   git_worktree_create: 'confirm_worktree_create',
   git_worktree_remove: 'confirm_worktree_remove',
 })

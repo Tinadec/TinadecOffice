@@ -48,13 +48,15 @@ const detail = computed<CommitDetailData | null>(() => {
 })
 
 async function selectCommit(commit: GitLogCommit) {
+  if (!commit?.hash) return
   selectedHash.value = commit.hash
-  if (!props.cwd) return
+  const shortHash = commit.short_hash || commit.hash.slice(0, 7)
+  if (!props.cwd || !shortHash) return
   loadingDetail.value = true
   try {
     const res = await api.executeCodeTool('git_worktree_manager', {
       cwd: props.cwd,
-      arguments: { action: 'diff_compare', base_ref: `${commit.short_hash}~1`, head_ref: commit.short_hash },
+      arguments: { action: 'diff_compare', base_ref: `${shortHash}~1`, head_ref: shortHash },
     })
     commitDetail.value = res
   } catch (err) {
@@ -64,13 +66,15 @@ async function selectCommit(commit: GitLogCommit) {
   }
 }
 
-// Group commits by date
+// Group commits by date (defensive: skip malformed entries so one bad row never crashes the tab)
 const groupedCommits = computed(() => {
   const groups: Record<string, GitLogCommit[]> = {}
-  for (const commit of props.commits) {
-    const date = commit.date.split(' ')[0] ?? commit.date
-    if (!groups[date]) groups[date] = []
-    groups[date].push(commit)
+  for (const commit of props.commits ?? []) {
+    if (!commit || typeof commit.hash !== 'string' || !commit.hash) continue
+    const rawDate = typeof commit.date === 'string' ? commit.date : ''
+    const dateKey = rawDate.split(' ')[0] || 'unknown'
+    if (!groups[dateKey]) groups[dateKey] = []
+    groups[dateKey].push(commit)
   }
   return Object.entries(groups).slice(0, 30)
 })
@@ -84,8 +88,10 @@ watch(() => props.commits, () => {
 })
 
 function formatDate(dateStr: string): string {
+  if (!dateStr) return ''
   try {
     const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return dateStr.split(' ')[0] ?? dateStr
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   } catch {
     return dateStr.split(' ')[0] ?? dateStr
@@ -93,8 +99,10 @@ function formatDate(dateStr: string): string {
 }
 
 function formatTime(dateStr: string): string {
+  if (!dateStr) return ''
   try {
     const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return ''
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
@@ -525,7 +533,7 @@ defineExpose({
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
 }
 
 .git-detail-file-stats {

@@ -40,6 +40,7 @@ const {
   loading,
   operationLoading,
   commitMessage,
+  pullStrategy,
   selectedPaths,
   selectAll,
   selectAllIndeterminate,
@@ -58,6 +59,7 @@ const {
   commitApproval,
   pushApproval,
   pullApproval,
+  discardApproval,
   checkoutApproval,
   branchApproval,
   fetchApproval,
@@ -71,6 +73,7 @@ const {
   canDecideCommitApproval,
   canDecidePushApproval,
   canDecidePullApproval,
+  canDecideDiscardApproval,
   canDecideCheckoutApproval,
   canDecideBranchApproval,
   canDecideFetchApproval,
@@ -82,7 +85,9 @@ const {
   canDecideWorktreeApproval,
   // Validation
   canRequestIndexApproval,
+  canRequestDiscardApproval,
   canRequestCommitApproval,
+  commitUsesSelectedPaths,
   canRequestPushApproval,
   canRequestPullApproval,
   canRequestFetchApproval,
@@ -95,6 +100,8 @@ const {
   toggleSelectAll,
   requestIndexApproval,
   executeApprovedIndexUpdate,
+  requestDiscardApproval,
+  executeApprovedDiscard,
   requestCommitApproval,
   executeApprovedCommit,
   requestPushApproval,
@@ -193,9 +200,6 @@ function emitApproval(a: ApprovalDto) {
 function decideApproval(a: ApprovalDto | null, decision: 'approved' | 'rejected') {
   decideGitApproval(a, decision, (approval, dec) => emit('decide-approval', approval, dec))
 }
-
-// ---- Sync action (pull + push) ----
-const canSync = computed(() => canRequestPullApproval.value || canRequestPushApproval.value)
 </script>
 
 <template>
@@ -287,19 +291,31 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
           :has-push-candidate="hasPushCandidate"
           :can-request-push-approval="canRequestPushApproval"
           :can-request-pull-approval="canRequestPullApproval"
+          :can-request-fetch-approval="canRequestFetchApproval"
           :behind="repoSummary.behind"
+          :staged-count="repoSummary.stagedCount"
+          :commit-uses-selected-paths="commitUsesSelectedPaths"
+          :pull-strategy="pullStrategy"
           :index-approval="indexApproval"
           :commit-approval="commitApproval"
           :push-approval="pushApproval"
+          :pull-approval="pullApproval"
+          :fetch-approval="fetchApproval"
+          :discard-approval="discardApproval"
           :resolve-conflict-approval="resolveConflictApproval"
           :can-request-index-approval="canRequestIndexApproval"
+          :can-request-discard-approval="canRequestDiscardApproval"
           :can-request-commit-approval="canRequestCommitApproval"
           :can-decide-index-approval="canDecideIndexApproval"
           :can-decide-commit-approval="canDecideCommitApproval"
           :can-decide-push-approval="canDecidePushApproval"
+          :can-decide-pull-approval="canDecidePullApproval"
+          :can-decide-fetch-approval="canDecideFetchApproval"
+          :can-decide-discard-approval="canDecideDiscardApproval"
           :can-decide-resolve-conflict-approval="canDecideResolveConflictApproval"
           :recent-commits="recentCommits"
           @update:commit-message="commitMessage = $event"
+          @update:pull-strategy="pullStrategy = $event"
           @refresh="loadStatus"
           @toggle-path="togglePath"
           @toggle-select-all="toggleSelectAll"
@@ -308,9 +324,14 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
           @execute-index="executeApprovedIndexUpdate"
           @request-commit="requestCommitApproval(emitApproval)"
           @execute-commit="executeApprovedCommit"
+          @request-discard="(paths, includeUntracked) => requestDiscardApproval(paths, includeUntracked, emitApproval)"
+          @execute-discard="executeApprovedDiscard"
           @request-push="requestPushApproval(emitApproval)"
           @execute-push="executeApprovedPush"
           @request-pull="requestPullApproval(emitApproval)"
+          @execute-pull="executeApprovedPull"
+          @request-fetch="requestFetchApproval(emitApproval)"
+          @execute-fetch="executeApprovedFetch"
           @request-resolve-conflict="(path, strategy) => requestResolveConflictApproval(path, strategy, emitApproval)"
           @execute-resolve-conflict="executeApprovedResolveConflict"
           @decide-approval="decideApproval"
@@ -438,7 +459,7 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
   font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -447,7 +468,7 @@ const canSync = computed(() => canRequestPullApproval.value || canRequestPushApp
 .git-branch-upstream {
   font-size: 10px;
   color: var(--text-muted);
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

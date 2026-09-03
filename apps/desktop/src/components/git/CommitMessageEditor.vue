@@ -42,6 +42,8 @@ const subject = ref('')
 const body = ref('')
 const footer = ref('')
 const typeMenuOpen = ref(false)
+const showAdvanced = ref(false)
+const showPreview = ref(false)
 
 const SUBJECT_LIMIT = 50
 const SUBJECT_HARD_LIMIT = 72
@@ -129,96 +131,135 @@ watch(
       subject.value = ''
       body.value = ''
       footer.value = ''
+      return
     }
+    // 外部写入（如 AI 生成的完整消息）时反解析，保持紧凑输入与高级字段同步。
+    parseAndApplySilently(next)
   }
 )
+
+function parseAndApplySilently(message: string) {
+  const lines = message.split(/\r?\n/)
+  const header = lines[0] ?? ''
+  const match = /^(\w+)(?:\(([^)]*)\))?!?\s*:\s*(.*)$/.exec(header)
+  if (match) {
+    const parsedType = match[1] as CommitType
+    if ((COMMIT_TYPES as readonly string[]).includes(parsedType)) {
+      type.value = parsedType
+    }
+    scope.value = match[2] ?? ''
+    subject.value = match[3] ?? ''
+  } else {
+    subject.value = header
+  }
+  const rest = lines.slice(1).join('\n').replace(/^\n+/, '')
+  const footerMatch = /^(BREAKING CHANGE:[\s\S]*|[\w-]+: .*)$/m
+  if (footerMatch.test(rest)) {
+    const idx = rest.search(footerMatch)
+    if (idx >= 0) {
+      body.value = rest.slice(0, idx).replace(/\n+$/, '')
+      footer.value = rest.slice(idx)
+    } else {
+      body.value = rest
+      footer.value = ''
+    }
+  } else {
+    body.value = rest
+    footer.value = ''
+  }
+  if (body.value.trim() || footer.value.trim() || scope.value.trim()) {
+    showAdvanced.value = true
+  }
+}
 
 emitChange()
 </script>
 
 <template>
   <div class="commit-editor">
-    <div class="commit-editor-row">
-      <div class="commit-editor-type">
-        <label>{{ t('context.gitCommitType') }}</label>
-        <div class="commit-editor-type-input">
+    <!-- 紧凑首屏：类型 + 范围 + 标题（VS Code 式单框心智） -->
+    <div class="commit-editor-compact">
+      <div class="commit-editor-type-input">
+        <button
+          type="button"
+          class="commit-editor-type-trigger"
+          :title="t('context.gitCommitType')"
+          @click="typeMenuOpen = !typeMenuOpen"
+        >
+          <span>{{ type }}</span>
+          <small>▾</small>
+        </button>
+        <div v-if="typeMenuOpen" class="commit-editor-type-menu">
           <button
+            v-for="value in COMMIT_TYPES"
+            :key="value"
             type="button"
-            class="commit-editor-type-trigger"
-            @click="typeMenuOpen = !typeMenuOpen"
+            class="commit-editor-type-option"
+            :class="{ active: value === type }"
+            @click="selectType(value)"
           >
-            <span>{{ type }}</span>
-            <small>▾</small>
+            {{ value }}
           </button>
-          <div v-if="typeMenuOpen" class="commit-editor-type-menu">
-            <button
-              v-for="value in COMMIT_TYPES"
-              :key="value"
-              type="button"
-              class="commit-editor-type-option"
-              :class="{ active: value === type }"
-              @click="selectType(value)"
-            >
-              {{ value }}
-            </button>
-          </div>
         </div>
+        <div v-if="typeMenuOpen" class="commit-editor-type-scrim" @click="typeMenuOpen = false" />
       </div>
-
-      <div class="commit-editor-scope">
-        <label>{{ t('context.gitCommitScope') }}</label>
+      <input
+        v-model="scope"
+        type="text"
+        class="commit-editor-scope-input"
+        :placeholder="t('context.gitCommitScope')"
+        :title="t('context.gitCommitScope')"
+      />
+      <div class="commit-editor-subject-wrap">
         <input
-          v-model="scope"
+          v-model="subject"
           type="text"
-          :placeholder="'api'"
+          class="commit-editor-subject-input"
+          :placeholder="t('context.gitCommitMessagePlaceholder')"
+          :title="t('context.gitCommitSubject')"
         />
-      </div>
-    </div>
-
-    <div class="commit-editor-subject">
-      <label>
-        <span>{{ t('context.gitCommitSubject') }}</span>
         <UiBadge
+          class="commit-editor-count"
           :variant="subjectOverHardLimit ? 'destructive' : subjectOverLimit ? 'secondary' : 'outline'"
         >
           {{ subjectLength }}/{{ SUBJECT_LIMIT }}
         </UiBadge>
-      </label>
-      <input
-        v-model="subject"
-        type="text"
-        :placeholder="t('context.gitCommitSubject')"
-      />
-      <small v-if="subjectOverLimit" class="commit-editor-hint">
-        {{ t('context.gitCommitSubjectHint') }}
-      </small>
+      </div>
     </div>
+    <small v-if="subjectOverLimit" class="commit-editor-hint">
+      {{ t('context.gitCommitSubjectHint') }}
+    </small>
 
-    <div class="commit-editor-body">
-      <label>{{ t('context.gitCommitBody') }}</label>
-      <textarea
-        v-model="body"
-        rows="3"
-        :placeholder="t('context.gitCommitBody')"
-      />
-    </div>
+    <!-- 高级 Conventional 字段默认折叠，避免首屏过长 -->
+    <details class="commit-editor-advanced" :open="showAdvanced" @toggle="showAdvanced = ($event.target as HTMLDetailsElement).open">
+      <summary>{{ t('context.gitCommitAdvanced') }}</summary>
+      <div class="commit-editor-advanced-body">
+        <div class="commit-editor-field">
+          <label>{{ t('context.gitCommitBody') }}</label>
+          <textarea
+            v-model="body"
+            rows="2"
+            :placeholder="t('context.gitCommitBody')"
+          />
+        </div>
+        <div class="commit-editor-field">
+          <label>{{ t('context.gitCommitFooter') }}</label>
+          <textarea
+            v-model="footer"
+            rows="1"
+            :placeholder="'BREAKING CHANGE: ...'"
+          />
+        </div>
+      </div>
+    </details>
 
-    <div class="commit-editor-footer">
-      <label>{{ t('context.gitCommitFooter') }}</label>
-      <textarea
-        v-model="footer"
-        rows="2"
-        :placeholder="'BREAKING CHANGE: ...'"
-      />
-    </div>
+    <details class="commit-editor-advanced" :open="showPreview" @toggle="showPreview = ($event.target as HTMLDetailsElement).open">
+      <summary>{{ t('context.gitCommitPreview') }}</summary>
+      <pre class="commit-editor-preview-pre">{{ assembledMessage }}</pre>
+    </details>
 
-    <div class="commit-editor-preview">
-      <label>{{ t('context.gitCommitPreview') }}</label>
-      <pre>{{ assembledMessage }}</pre>
-    </div>
-
-    <div v-if="recentCommits.length > 0" class="commit-editor-history">
-      <label>{{ t('context.gitCommitHistory') }}</label>
+    <details v-if="recentCommits.length > 0" class="commit-editor-advanced">
+      <summary>{{ t('context.gitCommitHistory') }}</summary>
       <div class="commit-editor-history-list">
         <button
           v-for="(commit, index) in recentCommits.slice(0, 5)"
@@ -231,29 +272,81 @@ emitChange()
           <code>{{ commit }}</code>
         </button>
       </div>
-    </div>
+    </details>
   </div>
 </template>
 
 <style scoped>
 .commit-editor {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
-.commit-editor-row {
+.commit-editor-compact {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 8px;
+  grid-template-columns: 96px 110px 1fr;
+  gap: 6px;
+  align-items: start;
 }
 
-.commit-editor-subject,
-.commit-editor-body,
-.commit-editor-footer,
-.commit-editor-preview,
-.commit-editor-history,
-.commit-editor-type,
-.commit-editor-scope {
+.commit-editor-subject-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.commit-editor-subject-input {
+  padding-right: 52px;
+}
+
+.commit-editor-count {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+}
+
+.commit-editor-scope-input,
+.commit-editor-subject-input {
+  min-width: 0;
+}
+
+.commit-editor-advanced {
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  padding: 2px 8px 6px;
+}
+
+.commit-editor-advanced > summary {
+  padding: 6px 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.commit-editor-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.commit-editor-advanced > summary::before {
+  content: '› ';
+  color: var(--text-muted);
+}
+
+.commit-editor-advanced[open] > summary::before {
+  content: '⌄ ';
+}
+
+.commit-editor-advanced-body {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+
+.commit-editor-field {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -276,14 +369,13 @@ emitChange()
   color: var(--text-primary);
   background: var(--surface-input);
   border: 1px solid var(--border-input);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 .commit-editor textarea {
   resize: vertical;
-  font-family: 'Geist Mono', ui-monospace, monospace;
 }
 
 .commit-editor input:focus,
@@ -306,9 +398,8 @@ emitChange()
   color: var(--text-primary);
   background: var(--surface-input);
   border: 1px solid var(--border-input);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
-  font-family: 'Geist Mono', ui-monospace, monospace;
   cursor: pointer;
   text-align: left;
 }
@@ -320,16 +411,22 @@ emitChange()
 .commit-editor-type-menu {
   position: absolute;
   z-index: 50;
-  top: 100%;
+  top: calc(100% + 4px);
   left: 0;
-  right: 0;
+  min-width: 120px;
   max-height: 220px;
   overflow: auto;
   padding: 4px;
   border: 1px solid var(--border-card);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface-raised);
   box-shadow: var(--shadow-elevated);
+}
+
+.commit-editor-type-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
 }
 
 .commit-editor-type-option {
@@ -341,7 +438,6 @@ emitChange()
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  font-family: 'Geist Mono', ui-monospace, monospace;
   text-align: left;
   cursor: pointer;
 }
@@ -357,18 +453,18 @@ emitChange()
   font-size: 10px;
 }
 
-.commit-editor-preview pre {
+.commit-editor-preview-pre {
   margin: 0;
   padding: 8px;
   color: var(--text-primary);
   background: var(--surface-button);
   border: 1px solid var(--border-card);
-  border-radius: 6px;
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  border-radius: 8px;
+  font-family: ui-monospace, 'Geist Mono', monospace;
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 140px;
+  max-height: 120px;
   overflow: auto;
 }
 

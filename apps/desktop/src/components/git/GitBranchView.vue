@@ -847,7 +847,7 @@ defineExpose({ refresh: refreshBranches })
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 .git-branch-row-last {

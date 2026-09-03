@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import {
   AlertTriangle,
+  ArrowDownToLine,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Download,
   FilePlus,
   FileText,
   FileX,
@@ -14,6 +16,7 @@ import {
   Sparkles,
   ShieldCheck,
   ShieldX,
+  Trash2,
   Upload,
   RefreshCw,
 } from '@lucide/vue'
@@ -30,7 +33,7 @@ import { useAiCommitMessage } from '../../composables/useAiCommitMessage'
 import { useAiChangeAnalysis, type AiRiskLevel } from '../../composables/useAiChangeAnalysis'
 import CommitMessageEditor from './CommitMessageEditor.vue'
 import DiffViewer from './DiffViewer.vue'
-import { UiIslandCard } from '../ui'
+import { UiCheckbox, UiIslandCard } from '../ui'
 import { reconstructFromHunks, type DiffFileEntry } from './diffUtils'
 import { parseUnifiedDiff } from '../../gitDiffParser'
 import { buildGitIndexPatch, changeBlockLineIds } from '../../gitIndexPatch'
@@ -73,17 +76,28 @@ interface Props {
   hasPushCandidate: boolean
   canRequestPushApproval: boolean
   canRequestPullApproval: boolean
+  canRequestFetchApproval: boolean
   behind: number
+  stagedCount: number
+  commitUsesSelectedPaths: boolean
+  pullStrategy: 'ff-only' | 'merge' | 'rebase'
   // Approvals
   indexApproval: ApprovalDto | null
   commitApproval: ApprovalDto | null
   pushApproval: ApprovalDto | null
+  pullApproval: ApprovalDto | null
+  fetchApproval: ApprovalDto | null
+  discardApproval: ApprovalDto | null
   resolveConflictApproval: ApprovalDto | null
   canRequestIndexApproval: boolean
+  canRequestDiscardApproval: boolean
   canRequestCommitApproval: boolean
   canDecideIndexApproval: boolean
   canDecideCommitApproval: boolean
   canDecidePushApproval: boolean
+  canDecidePullApproval: boolean
+  canDecideFetchApproval: boolean
+  canDecideDiscardApproval: boolean
   canDecideResolveConflictApproval: boolean
   recentCommits: string[]
 }
@@ -92,6 +106,7 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:commitMessage': [value: string]
+  'update:pullStrategy': [value: 'ff-only' | 'merge' | 'rebase']
   'refresh': []
   'toggle-path': [path: string]
   'toggle-select-all': []
@@ -100,9 +115,14 @@ const emit = defineEmits<{
   'execute-index': []
   'request-commit': []
   'execute-commit': []
+  'request-discard': [paths: string[], includeUntracked: boolean]
+  'execute-discard': []
   'request-push': []
   'execute-push': []
   'request-pull': []
+  'execute-pull': []
+  'request-fetch': []
+  'execute-fetch': []
   'request-resolve-conflict': [path: string, strategy: 'ours' | 'theirs' | 'both']
   'execute-resolve-conflict': []
   'decide-approval': [approval: ApprovalDto, decision: 'approved' | 'rejected']
@@ -328,6 +348,24 @@ const filesExpanded = ref(true)
 const commitExpanded = ref(true)
 const pushExpanded = ref(true)
 
+// ---- Discard inline confirm (second explicit step before approval) ----
+const discardConfirm = ref<{ paths: string[]; includeUntracked: boolean } | null>(null)
+
+function isUntrackedTarget(path: string): boolean {
+  const file = props.statusFiles.find((item) => item.path === path)
+  return file?.is_untracked === true || (file?.status ?? file?.unstaged_status) === '?'
+}
+
+function openDiscardConfirm(paths: string[]) {
+  const targets = [...new Set(paths.map((p) => p.trim()).filter(Boolean))]
+  if (targets.length === 0 || props.operationLoading) return
+  discardConfirm.value = {
+    paths: targets,
+    // 未跟踪文件必须勾选才会删除：默认按目标是否含未跟踪自动勾选。
+    includeUntracked: targets.some((p) => isUntrackedTarget(p)),
+  }
+}
+
 // ---- Conflict handling ----
 const conflictedFiles = computed(() => props.statusFiles.filter((f) => f.is_conflicted))
 const hasConflicts = computed(() => conflictedFiles.value.length > 0)
@@ -335,6 +373,18 @@ const sortedStatusFiles = computed(() => {
   const conflicts = props.statusFiles.filter((f) => f.is_conflicted)
   const others = props.statusFiles.filter((f) => !f.is_conflicted)
   return [...conflicts, ...others]
+})
+
+// ---- Sync: pull-only never pushes; dirty tree disables pull with an explicit reason ----
+const hasDirtyTree = computed(() => props.statusFiles.length > 0)
+const pullDisabledReason = computed(() => {
+  if (props.operationLoading) return ''
+  if (!props.canRequestPullApproval) {
+    if (hasDirtyTree.value) return t('context.gitPullDirtyHint')
+    if (props.behind <= 0) return t('context.gitPullUpToDate')
+    return t('context.gitPullNeedsSession')
+  }
+  return ''
 })
 </script>
 
@@ -348,14 +398,13 @@ const sortedStatusFiles = computed(() => {
         <span>{{ t('context.gitChanges') }}</span>
         <span class="git-section-count">{{ statusFiles.length }}</span>
         <div class="git-section-actions" @click.stop>
-          <label class="git-select-all-cb">
-            <input
-              type="checkbox"
-              :checked="selectAll"
-              :indeterminate="selectAllIndeterminate"
-              @change="emit('toggle-select-all')"
-            />
-          </label>
+          <UiCheckbox
+            :model-value="selectAll"
+            :indeterminate="selectAllIndeterminate"
+            :aria-label="t('context.gitChanges')"
+            class="git-checkbox"
+            @update:model-value="emit('toggle-select-all')"
+          />
           <button
             class="icon-button git-section-refresh"
             :title="t('context.refreshGitPlan')"
@@ -382,16 +431,28 @@ const sortedStatusFiles = computed(() => {
             class="git-file-row"
             :class="statusColorClass(file.status ?? file.unstaged_status)"
           >
-            <label class="git-file-row-main">
-              <input
-                type="checkbox"
-                :checked="selectedPaths.has(file.path)"
-                @change="emit('toggle-path', file.path)"
+            <div class="git-file-row-main" @click="emit('toggle-path', file.path)">
+              <UiCheckbox
+                :model-value="selectedPaths.has(file.path)"
+                :aria-label="file.path"
+                class="git-checkbox"
+                @click.stop
+                @update:model-value="emit('toggle-path', file.path)"
               />
               <component :is="statusIcon(file.status ?? file.unstaged_status)" :size="13" class="git-file-icon" />
               <span class="git-file-path" :title="file.path">{{ file.path }}</span>
               <span class="git-file-status-badge">{{ statusToLabel(file.status ?? file.unstaged_status) }}</span>
-            </label>
+              <button
+                v-if="!file.is_conflicted"
+                type="button"
+                class="git-file-discard"
+                :title="t('context.gitDiscardFile')"
+                :disabled="operationLoading"
+                @click.stop="openDiscardConfirm([file.path])"
+              >
+                <Trash2 :size="13" />
+              </button>
+            </div>
             <div v-if="file.is_conflicted" class="git-conflict-actions">
               <button
                 class="git-conflict-btn"
@@ -466,6 +527,7 @@ const sortedStatusFiles = computed(() => {
             :enable-hunk-actions="indexMode === 'stage'"
             @update:selected-file-path="selectedDiffFile = $event"
             @stage-hunk="(payload) => requestFileHunks(payload.filePath)"
+            @discard-hunk="(payload) => openDiscardConfirm([payload.filePath])"
           />
           <div v-if="parsedDiff.files.length > 0" class="git-line-shelf">
             <div class="git-line-shelf-head">
@@ -486,30 +548,33 @@ const sortedStatusFiles = computed(() => {
             <div v-for="file in parsedDiff.files" :key="file.id" class="git-line-shelf-file">
               <strong>{{ file.path }}</strong>
               <template v-for="hunk in file.hunks" :key="hunk.id">
-                <label class="git-line-shelf-hunk">
-                  <input
-                    type="checkbox"
-                    :checked="hunk.lines.filter((line) => line.change !== 'context').every((line) => selectedLineIds.has(line.id))"
-                    @change="toggleHunk(hunk.id)"
+                <div class="git-line-shelf-hunk" @click="toggleHunk(hunk.id)">
+                  <UiCheckbox
+                    :model-value="hunk.lines.filter((line) => line.change !== 'context').every((line) => selectedLineIds.has(line.id))"
+                    :aria-label="hunk.header"
+                    class="git-checkbox"
+                    @click.stop
+                    @update:model-value="toggleHunk(hunk.id)"
                   />
                   <code>{{ hunk.header }}</code>
-                </label>
-                <label
+                </div>
+                <div
                   v-for="line in hunk.lines.filter((item) => item.change !== 'context')"
                   :key="line.id"
                   class="git-line-shelf-line"
                   :class="`is-${line.change}`"
+                  @click="toggleChangeLine(hunk.id, line.id)"
                 >
-                  <input type="checkbox" :checked="selectedLineIds.has(line.id)" @change="toggleChangeLine(hunk.id, line.id)" />
+                  <UiCheckbox :model-value="selectedLineIds.has(line.id)" :aria-label="line.content" class="git-checkbox" @click.stop @update:model-value="toggleChangeLine(hunk.id, line.id)" />
                   <code>{{ line.change === 'add' ? '+' : '-' }}{{ line.content }}</code>
-                </label>
+                </div>
               </template>
             </div>
           </div>
         </div>
       </div>
       <template #footer>
-        <!-- Stage/Unstage actions -->
+        <!-- Stage/Unstage/Discard actions -->
         <div class="git-stage-actions">
           <button
             class="secondary-button git-action-btn"
@@ -525,6 +590,15 @@ const sortedStatusFiles = computed(() => {
             @click="emit('request-unstage')"
           >
             <span>{{ t('context.gitUnstage') }}</span>
+          </button>
+          <button
+            class="secondary-button git-action-btn git-discard-btn"
+            :disabled="operationLoading || !canRequestDiscardApproval"
+            :title="t('context.gitDiscardSelectedHint')"
+            @click="openDiscardConfirm([...selectedPaths])"
+          >
+            <Trash2 :size="13" />
+            <span>{{ t('context.gitDiscardSelected') }}</span>
           </button>
           <button
             v-if="indexApproval?.status === 'approved'"
@@ -552,6 +626,72 @@ const sortedStatusFiles = computed(() => {
             <CheckCircle2 :size="13" />
             <span>{{ t('context.gitApproveAndExecute') }}</span>
           </button>
+        </div>
+
+        <!-- Discard inline confirm (destructive: explicit second step before any approval) -->
+        <div v-if="discardConfirm" class="git-discard-confirm">
+          <div class="git-discard-confirm-head">
+            <AlertTriangle :size="14" />
+            <span>{{ t('context.gitDiscardConfirmTitle', { count: discardConfirm.paths.length }) }}</span>
+          </div>
+          <div class="git-discard-confirm-files">
+            <code v-for="path in discardConfirm.paths.slice(0, 3)" :key="path" :title="path">{{ path }}</code>
+            <small v-if="discardConfirm.paths.length > 3">+{{ discardConfirm.paths.length - 3 }}</small>
+          </div>
+          <label class="git-discard-confirm-untracked" @click.stop="discardConfirm = { ...discardConfirm!, includeUntracked: !discardConfirm!.includeUntracked }">
+            <UiCheckbox
+              :model-value="discardConfirm.includeUntracked"
+              :aria-label="t('context.gitDiscardIncludeUntracked')"
+              class="git-checkbox"
+              @update:model-value="discardConfirm = { ...discardConfirm!, includeUntracked: $event }"
+            />
+            <span>{{ t('context.gitDiscardIncludeUntracked') }}</span>
+          </label>
+          <small class="git-discard-confirm-warn">{{ t('context.gitDiscardIrreversible') }}</small>
+          <div class="git-discard-confirm-actions">
+            <button
+              class="secondary-button git-action-btn git-discard-execute"
+              :disabled="operationLoading"
+              @click="emit('request-discard', discardConfirm.paths, discardConfirm.includeUntracked); discardConfirm = null"
+            >
+              <Trash2 :size="13" />
+              <span>{{ t('context.gitDiscardConfirm') }}</span>
+            </button>
+            <button
+              class="secondary-button git-action-btn"
+              @click="discardConfirm = null"
+            >
+              <span>{{ t('context.gitCompareCancel') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Discard approval -->
+        <div v-if="discardApproval" class="git-discard-approval">
+          <div class="git-discard-approval-info">
+            <ShieldCheck :size="13" />
+            <span>{{ discardApproval.summary }}</span>
+            <span class="git-discard-approval-status">{{ discardApproval.status }}</span>
+          </div>
+          <div class="git-discard-approval-actions">
+            <div v-if="canDecideDiscardApproval" class="git-approval-decide">
+              <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', discardApproval!, 'approved')">
+                <CheckCircle2 :size="14" />
+              </button>
+              <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', discardApproval!, 'rejected')">
+                <ShieldX :size="14" />
+              </button>
+            </div>
+            <button
+              v-if="discardApproval.status === 'approved'"
+              class="secondary-button git-action-btn git-execute-btn"
+              :disabled="operationLoading"
+              @click="emit('execute-discard')"
+            >
+              <CheckCircle2 :size="13" />
+              <span>{{ t('context.gitExecuteDiscard') }}</span>
+            </button>
+          </div>
         </div>
       </template>
     </UiIslandCard>
@@ -646,6 +786,16 @@ const sortedStatusFiles = computed(() => {
           <span>{{ conventionCheck.message ?? conventionCheck.warning }}</span>
         </div>
 
+        <!-- Commit scope hint: staged vs auto-stage selected -->
+        <div v-if="commitUsesSelectedPaths && selectedPaths.size > 0" class="git-commit-scope-hint">
+          <Plus :size="12" />
+          <span>{{ t('context.gitCommitAutoStageHint', { count: selectedPaths.size }) }}</span>
+        </div>
+        <div v-else-if="stagedCount > 0" class="git-commit-scope-hint is-staged">
+          <CheckCircle2 :size="12" />
+          <span>{{ t('context.gitCommitStagedHint', { count: stagedCount }) }}</span>
+        </div>
+
         <!-- Commit actions -->
         <div class="git-commit-actions">
           <button
@@ -699,6 +849,12 @@ const sortedStatusFiles = computed(() => {
       </button>
 
       <div v-show="pushExpanded" class="git-section-body">
+        <!-- Pull-only notice: remote behind can be pulled without pushing local work -->
+        <div v-if="behind > 0" class="git-pull-notice">
+          <ArrowDownToLine :size="14" />
+          <span>{{ t('context.gitPullOnlyHint', { count: behind }) }}</span>
+        </div>
+
         <!-- Push readiness -->
         <div class="git-push-status" :class="{ ready: pushReady, blocked: !pushReady }">
           <component :is="pushReady ? CheckCircle2 : AlertTriangle" :size="16" />
@@ -712,34 +868,111 @@ const sortedStatusFiles = computed(() => {
           <small v-for="blocker in pushBlockers" :key="blocker">{{ blocker }}</small>
         </div>
 
-        <!-- Sync actions -->
-        <div class="git-sync-actions">
+        <!-- 1) Fetch: safe preview, always available -->
+        <div class="git-sync-group">
+          <div class="git-sync-group-title">{{ t('context.gitFetchTitle') }}</div>
+          <div class="git-sync-actions">
+            <button
+              class="secondary-button git-action-btn"
+              :disabled="operationLoading || !canRequestFetchApproval"
+              :title="t('context.gitFetchHint')"
+              @click="emit('request-fetch')"
+            >
+              <RefreshCw :size="13" />
+              <span>{{ t('context.gitRequestFetchApproval') }}</span>
+            </button>
+            <button
+              v-if="fetchApproval?.status === 'approved'"
+              class="secondary-button git-action-btn git-execute-btn"
+              :disabled="operationLoading"
+              @click="emit('execute-fetch')"
+            >
+              <CheckCircle2 :size="13" />
+              <span>{{ t('context.gitExecuteFetch') }}</span>
+            </button>
+          </div>
+          <div v-if="canDecideFetchApproval" class="git-approval-decide">
+            <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', fetchApproval!, 'approved')">
+              <CheckCircle2 :size="14" />
+            </button>
+            <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', fetchApproval!, 'rejected')">
+              <ShieldX :size="14" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 2) Pull-only: fetch + merge remote, never pushes local commits -->
+        <div class="git-sync-group is-pull">
+          <div class="git-sync-group-title">
+            <span>{{ t('context.gitPullOnlyTitle') }}</span>
+            <small>{{ t('context.gitPullOnlySubtitle') }}</small>
+          </div>
+          <div class="git-sync-actions">
+            <button
+              class="secondary-button git-action-btn git-pull-btn"
+              :disabled="operationLoading || !canRequestPullApproval"
+              :title="pullDisabledReason || t('context.gitPullOnlyHintShort')"
+              @click="emit('request-pull')"
+            >
+              <Download :size="13" />
+              <span>{{ t('context.gitRequestPullApproval') }}</span>
+            </button>
+            <label class="git-strategy-select" :title="t('context.gitPullStrategyHint')">
+              <span>{{ t('context.gitPullStrategy') }}</span>
+              <select
+                :value="pullStrategy"
+                :disabled="operationLoading"
+                @change="emit('update:pullStrategy', (($event.target as HTMLSelectElement).value as 'ff-only' | 'merge' | 'rebase'))"
+              >
+                <option value="ff-only">{{ t('context.gitPullStrategyFfOnly') }}</option>
+                <option value="merge" disabled>{{ t('context.gitPullStrategyMerge') }}</option>
+                <option value="rebase" disabled>{{ t('context.gitPullStrategyRebase') }}</option>
+              </select>
+            </label>
+          </div>
+          <small v-if="pullDisabledReason" class="git-sync-hint">{{ pullDisabledReason }}</small>
+          <small v-else class="git-sync-hint">{{ t('context.gitPullStrategyFfNote') }}</small>
           <button
-            class="secondary-button git-action-btn"
-            :disabled="operationLoading || !canRequestPushApproval"
-            @click="emit('request-push')"
-          >
-            <Upload :size="13" />
-            <span>{{ t('context.gitRequestPushApproval') }}</span>
-          </button>
-          <button
-            v-if="pushApproval?.status === 'approved'"
+            v-if="pullApproval?.status === 'approved'"
             class="secondary-button git-action-btn git-execute-btn"
             :disabled="operationLoading"
-            @click="emit('execute-push')"
+            @click="emit('execute-pull')"
           >
-            <Upload :size="13" />
-            <span>{{ t('context.gitExecutePush') }}</span>
+            <Download :size="13" />
+            <span>{{ t('context.gitExecutePull') }}</span>
           </button>
-          <button
-            v-if="canRequestPullApproval"
-            class="secondary-button git-action-btn"
-            :disabled="operationLoading"
-            @click="emit('request-pull')"
-          >
-            <RefreshCw :size="13" />
-            <span>{{ t('context.gitPull') }}</span>
-          </button>
+          <div v-if="canDecidePullApproval" class="git-approval-decide">
+            <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', pullApproval!, 'approved')">
+              <CheckCircle2 :size="14" />
+            </button>
+            <button class="icon-button reject" :title="t('approval.reject')" @click="emit('decide-approval', pullApproval!, 'rejected')">
+              <ShieldX :size="14" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 3) Push: local -> remote -->
+        <div class="git-sync-group">
+          <div class="git-sync-group-title">{{ t('context.gitPushTitle') }}</div>
+          <div class="git-sync-actions">
+            <button
+              class="secondary-button git-action-btn"
+              :disabled="operationLoading || !canRequestPushApproval"
+              @click="emit('request-push')"
+            >
+              <Upload :size="13" />
+              <span>{{ t('context.gitRequestPushApproval') }}</span>
+            </button>
+            <button
+              v-if="pushApproval?.status === 'approved'"
+              class="secondary-button git-action-btn git-execute-btn"
+              :disabled="operationLoading"
+              @click="emit('execute-push')"
+            >
+              <Upload :size="13" />
+              <span>{{ t('context.gitExecutePush') }}</span>
+            </button>
+          </div>
         </div>
         <div v-if="canDecidePushApproval" class="git-approval-decide">
           <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', pushApproval!, 'approved')">
@@ -816,10 +1049,17 @@ const sortedStatusFiles = computed(() => {
   margin-left: 8px;
 }
 
-.git-select-all-cb {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
+/* Unified rounded-rect checkbox: fixed 16px box, never stretches inside flex rows. */
+.git-checkbox {
+  flex: none;
+}
+
+.git-changes-view input[type='checkbox'] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent-primary);
 }
 
 .git-section-refresh {
@@ -861,8 +1101,10 @@ const sortedStatusFiles = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-height: 28px;
+  justify-content: center;
   padding: 5px 8px;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   transition: background 0.1s;
 }
 
@@ -947,6 +1189,39 @@ const sortedStatusFiles = computed(() => {
   flex-shrink: 0;
 }
 
+/* Per-row discard: quiet until hover, danger on hover. */
+.git-file-discard {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.git-file-row:hover .git-file-discard,
+.git-file-discard:focus-visible {
+  opacity: 1;
+}
+
+.git-file-discard:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-danger) 12%, transparent);
+  color: var(--text-reject);
+}
+
+.git-file-discard:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .git-file-path {
   flex: 1;
   min-width: 0;
@@ -954,8 +1229,8 @@ const sortedStatusFiles = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-family: 'Geist Mono', ui-monospace, monospace;
-  font-size: 11.5px;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 12px;
 }
 
 .git-file-status-badge {
@@ -964,7 +1239,7 @@ const sortedStatusFiles = computed(() => {
   text-align: center;
   font-size: 10px;
   font-weight: 700;
-  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1064,6 +1339,125 @@ const sortedStatusFiles = computed(() => {
   gap: 4px;
 }
 
+/* Discard: destructive entry points share the danger tint. */
+.git-discard-btn {
+  color: var(--text-reject);
+}
+
+.git-discard-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-danger) 10%, var(--surface-button-hover));
+}
+
+.git-discard-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-danger) 40%, var(--border-card));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-danger) 6%, var(--surface-raised));
+}
+
+.git-discard-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-reject);
+}
+
+.git-discard-confirm-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.git-discard-confirm-files code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-button);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.git-discard-confirm-files small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.git-discard-confirm-untracked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.git-discard-confirm-warn {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.git-discard-confirm-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.git-discard-execute {
+  color: #fff;
+  background: var(--accent-danger);
+  border-color: var(--accent-danger);
+}
+
+.git-discard-execute:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-danger) 85%, #000);
+}
+
+.git-discard-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+}
+
+.git-discard-approval-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.git-discard-approval-status {
+  margin-left: auto;
+  padding: 1px 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface-button);
+  border-radius: 4px;
+}
+
+.git-discard-approval-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .git-ai-bar {
   display: flex;
   align-items: center;
@@ -1103,6 +1497,26 @@ const sortedStatusFiles = computed(() => {
 .git-commit-actions {
   display: flex;
   gap: 6px;
+  position: sticky;
+  bottom: 0;
+  padding: 6px 0 2px;
+  background: linear-gradient(transparent, var(--surface-section) 40%);
+}
+
+.git-commit-scope-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+}
+
+.git-commit-scope-hint.is-staged {
+  color: var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 8%, transparent);
 }
 
 .git-push-status {
@@ -1146,6 +1560,73 @@ const sortedStatusFiles = computed(() => {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.git-sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.git-sync-group.is-pull {
+  border-color: color-mix(in srgb, var(--accent-info) 35%, var(--border-muted));
+}
+
+.git-sync-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.git-sync-group-title small {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.git-sync-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.git-pull-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--accent-info);
+  background: color-mix(in srgb, var(--accent-info) 10%, transparent);
+}
+
+.git-pull-btn {
+  border-color: color-mix(in srgb, var(--accent-info) 40%, transparent);
+}
+
+.git-strategy-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.git-strategy-select select {
+  padding: 6px 8px;
+  color: var(--text-primary);
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
+  border-radius: 8px;
+  font-size: 11px;
 }
 
 .git-behind-badge {
