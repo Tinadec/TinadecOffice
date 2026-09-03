@@ -10,15 +10,22 @@ import {
   FileText,
   FileX,
   FileCog,
+  Folder,
+  FolderOpen,
   GitCommitHorizontal,
+  List,
+  FolderTree,
   Loader2,
+  Minus,
   Plus,
+  RotateCcw,
   Sparkles,
   ShieldCheck,
   ShieldX,
   Trash2,
   Upload,
   RefreshCw,
+  ExternalLink,
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -34,7 +41,13 @@ import { useAiChangeAnalysis, type AiRiskLevel } from '../../composables/useAiCh
 import CommitMessageEditor from './CommitMessageEditor.vue'
 import DiffViewer from './DiffViewer.vue'
 import { UiCheckbox, UiIslandCard } from '../ui'
-import { reconstructFromHunks, type DiffFileEntry } from './diffUtils'
+import {
+  reconstructFromHunks,
+  buildFileTree,
+  type DiffFileEntry,
+  type GitTreeNode,
+} from './diffUtils'
+import GitTreeNodeRow from './GitTreeNodeRow.vue'
 import { parseUnifiedDiff } from '../../gitDiffParser'
 import { buildGitIndexPatch, changeBlockLineIds } from '../../gitIndexPatch'
 
@@ -375,6 +388,61 @@ const sortedStatusFiles = computed(() => {
   return [...conflicts, ...others]
 })
 
+function stageSingleFile(path: string) {
+  emit('toggle-path', path)
+  if (!props.selectedPaths.has(path)) {
+    // will be added
+  }
+  emit('request-stage')
+}
+
+function unstageSingleFile(path: string) {
+  emit('toggle-path', path)
+  emit('request-unstage')
+}
+
+function stageAllUnstaged() {
+  unstagedFiles.value.forEach((f) => {
+    if (!props.selectedPaths.has(f.path)) {
+      emit('toggle-path', f.path)
+    }
+  })
+  emit('request-stage')
+}
+
+function unstageAllStaged() {
+  stagedFiles.value.forEach((f) => {
+    if (!props.selectedPaths.has(f.path)) {
+      emit('toggle-path', f.path)
+    }
+  })
+  emit('request-unstage')
+}
+
+function stageFolder(paths: string[]) {
+  paths.forEach((p) => {
+    if (!props.selectedPaths.has(p)) {
+      emit('toggle-path', p)
+    }
+  })
+  emit('request-stage')
+}
+
+function unstageFolder(paths: string[]) {
+  paths.forEach((p) => {
+    if (!props.selectedPaths.has(p)) {
+      emit('toggle-path', p)
+    }
+  })
+  emit('request-unstage')
+}
+
+function selectAndOpenDiff(path: string) {
+  selectedDiffFile.value = path
+  showDiffPreview.value = true
+}
+
+
 // ---- Sync: pull-only never pushes; dirty tree disables pull with an explicit reason ----
 const hasDirtyTree = computed(() => props.statusFiles.length > 0)
 const pullDisabledReason = computed(() => {
@@ -386,6 +454,76 @@ const pullDisabledReason = computed(() => {
   }
   return ''
 })
+
+// ---- View Mode (Tree / Flat) & Sections State ----
+const viewMode = ref<'tree' | 'flat'>((localStorage.getItem('git_changes_view_mode') as 'tree' | 'flat') || 'tree')
+function toggleViewMode() {
+  viewMode.value = viewMode.value === 'tree' ? 'flat' : 'tree'
+  localStorage.setItem('git_changes_view_mode', viewMode.value)
+}
+
+const stagedExpanded = ref(true)
+const unstagedExpanded = ref(true)
+const stagedFiles = computed(() => props.statusFiles.filter((f) => f.is_staged))
+const unstagedFiles = computed(() => props.statusFiles.filter((f) => !f.is_staged))
+
+const stagedTree = computed(() => buildFileTree(stagedFiles.value))
+const unstagedTree = computed(() => buildFileTree(unstagedFiles.value))
+
+const collapsedFolders = ref<Set<string>>(new Set())
+function toggleFolder(path: string) {
+  const next = new Set(collapsedFolders.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  collapsedFolders.value = next
+}
+function collapseAllFolders() {
+  const allFolders = new Set<string>()
+  function collect(nodes: GitTreeNode[]) {
+    for (const node of nodes) {
+      if (node.isFolder) {
+        allFolders.add(node.path)
+        if (node.children) collect(node.children)
+      }
+    }
+  }
+  collect(stagedTree.value)
+  collect(unstagedTree.value)
+  collapsedFolders.value = allFolders
+}
+function expandAllFolders() {
+  collapsedFolders.value = new Set()
+}
+
+// ---- Split Commit Button State ----
+const splitMenuOpen = ref(false)
+function toggleSplitMenu() {
+  splitMenuOpen.value = !splitMenuOpen.value
+}
+function handlePrimaryCommit() {
+  if (props.commitApproval?.status === 'approved') {
+    emit('execute-commit')
+  } else {
+    emit('request-commit')
+  }
+}
+function handleCommitAndPush() {
+  splitMenuOpen.value = false
+  if (props.commitApproval?.status === 'approved') {
+    emit('execute-commit')
+    emit('request-push')
+  } else {
+    emit('request-commit')
+    emit('request-push')
+  }
+}
+function handleCommitKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    handlePrimaryCommit()
+  }
+}
+
 </script>
 
 <template>
@@ -421,63 +559,263 @@ const pullDisabledReason = computed(() => {
           <AlertTriangle :size="14" />
           <span>{{ conflictedFiles.length }} file{{ conflictedFiles.length === 1 ? '' : 's' }} with merge conflicts require resolution.</span>
         </div>
+        <!-- Controls bar: Tree/List toggle + Select All + Refresh -->
+        <div class="git-view-controls-bar">
+          <div class="git-mode-switch-group">
+            <button
+              type="button"
+              class="git-mode-btn"
+              :class="{ active: viewMode === 'tree' }"
+              :title="t('context.gitViewModeTree')"
+              @click="viewMode = 'tree'"
+            >
+              <FolderTree :size="13" />
+              <span>{{ t('context.gitViewModeTree') }}</span>
+            </button>
+            <button
+              type="button"
+              class="git-mode-btn"
+              :class="{ active: viewMode === 'list' }"
+              :title="t('context.gitViewModeList')"
+              @click="viewMode = 'list'"
+            >
+              <List :size="13" />
+              <span>{{ t('context.gitViewModeList') }}</span>
+            </button>
+          </div>
+        </div>
+
         <div v-if="statusFiles.length === 0" class="git-empty-state">
           {{ t('context.gitNoChanges') }}
         </div>
-        <div v-else class="git-file-list">
-          <div
-            v-for="file in sortedStatusFiles"
-            :key="file.path"
-            class="git-file-row"
-            :class="statusColorClass(file.status ?? file.unstaged_status)"
-          >
-            <div class="git-file-row-main" @click="emit('toggle-path', file.path)">
-              <UiCheckbox
-                :model-value="selectedPaths.has(file.path)"
-                :aria-label="file.path"
-                class="git-checkbox"
-                @click.stop
-                @update:model-value="emit('toggle-path', file.path)"
-              />
-              <component :is="statusIcon(file.status ?? file.unstaged_status)" :size="13" class="git-file-icon" />
-              <span class="git-file-path" :title="file.path">{{ file.path }}</span>
-              <span class="git-file-status-badge">{{ statusToLabel(file.status ?? file.unstaged_status) }}</span>
-              <button
-                v-if="!file.is_conflicted"
-                type="button"
-                class="git-file-discard"
-                :title="t('context.gitDiscardFile')"
-                :disabled="operationLoading"
-                @click.stop="openDiscardConfirm([file.path])"
-              >
-                <Trash2 :size="13" />
-              </button>
+        <div v-else class="git-sections-container">
+          <!-- STAGED CHANGES SECTION -->
+          <div class="git-sub-section staged-sub-section">
+            <div class="git-sub-header" @click="stagedExpanded = !stagedExpanded">
+              <component :is="stagedExpanded ? ChevronDown : ChevronRight" :size="13" />
+              <span class="git-sub-title">{{ t('context.gitStagedChanges') }}</span>
+              <span class="git-sub-count">{{ stagedFiles.length }}</span>
+              <div class="git-sub-actions" @click.stop>
+                <button
+                  type="button"
+                  class="git-sub-action-btn"
+                  :title="t('context.gitUnstageAll')"
+                  :disabled="operationLoading || stagedFiles.length === 0"
+                  @click.stop="emit('request-unstage')"
+                >
+                  <Minus :size="12" />
+                </button>
+              </div>
             </div>
-            <div v-if="file.is_conflicted" class="git-conflict-actions">
-              <button
-                class="git-conflict-btn"
-                :disabled="operationLoading"
-                :title="t('context.gitConflictOurs')"
-                @click="emit('request-resolve-conflict', file.path, 'ours')"
-              >
-                {{ t('context.gitConflictOurs') }}
-              </button>
-              <button
-                class="git-conflict-btn"
-                :disabled="operationLoading"
-                :title="t('context.gitConflictTheirs')"
-                @click="emit('request-resolve-conflict', file.path, 'theirs')"
-              >
-                {{ t('context.gitConflictTheirs') }}
-              </button>
-              <button
-                class="git-conflict-btn"
-                :disabled="operationLoading"
-                :title="t('context.gitConflictBoth')"
-                @click="emit('request-resolve-conflict', file.path, 'both')"
-              >
-                {{ t('context.gitConflictBoth') }}
-              </button>
+
+            <div v-show="stagedExpanded" class="git-sub-body">
+              <div v-if="stagedFiles.length === 0" class="git-sub-empty">
+                0 files staged
+              </div>
+              <!-- Staged Tree View -->
+              <div v-else-if="viewMode === 'tree'" class="git-tree-container">
+                <GitTreeNodeRow
+                  v-for="rootNode in stagedTreeRoots"
+                  :key="rootNode.path"
+                  :node="rootNode"
+                  :depth="0"
+                  :selected-paths="selectedPaths"
+                  :active-diff-path="selectedDiffFile?.path"
+                  :operation-loading="operationLoading"
+                  @toggle-select="emit('toggle-path', $event)"
+                  @select-diff="selectAndOpenDiff($event)"
+                  @stage-file="emit('toggle-path', $event); emit('request-stage')"
+                  @unstage-file="emit('toggle-path', $event); emit('request-unstage')"
+                  @discard-file="openDiscardConfirm([$event])"
+                  @stage-folder="stageFolder($event)"
+                  @unstage-folder="unstageFolder($event)"
+                />
+              </div>
+              <!-- Staged Flat List -->
+              <div v-else class="git-file-list">
+                <div
+                  v-for="file in stagedFiles"
+                  :key="file.path"
+                  class="git-file-row"
+                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile?.path === file.path }]"
+                >
+                  <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
+                    <UiCheckbox
+                      :model-value="selectedPaths.has(file.path)"
+                      :aria-label="file.path"
+                      class="git-checkbox"
+                      @click.stop
+                      @update:model-value="emit('toggle-path', file.path)"
+                    />
+                    <component :is="statusIcon(file.status ?? file.unstaged_status)" :size="13" class="git-file-icon" />
+                    <span class="git-file-path" :title="file.path">{{ file.path }}</span>
+                    <span class="git-file-status-badge">{{ statusToLabel(file.status ?? file.unstaged_status) }}</span>
+                    
+                    <div class="git-row-hover-actions" @click.stop>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="t('context.gitUnstageSelected')"
+                        :disabled="operationLoading"
+                        @click.stop="emit('toggle-path', file.path); emit('request-unstage')"
+                      >
+                        <Minus :size="12" />
+                      </button>
+                      <button
+                        v-if="!file.is_conflicted"
+                        type="button"
+                        class="git-hover-btn is-discard"
+                        :title="t('context.gitDiscardFile')"
+                        :disabled="operationLoading"
+                        @click.stop="openDiscardConfirm([file.path])"
+                      >
+                        <RotateCcw :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="t('context.gitQuickDiff')"
+                        @click.stop="selectAndOpenDiff(file.path)"
+                      >
+                        <ExternalLink :size="12" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- UNSTAGED CHANGES SECTION -->
+          <div class="git-sub-section unstaged-sub-section">
+            <div class="git-sub-header" @click="unstagedExpanded = !unstagedExpanded">
+              <component :is="unstagedExpanded ? ChevronDown : ChevronRight" :size="13" />
+              <span class="git-sub-title">{{ t('context.gitUnstagedChanges') }}</span>
+              <span class="git-sub-count">{{ unstagedFiles.length }}</span>
+              <div class="git-sub-actions" @click.stop>
+                <button
+                  type="button"
+                  class="git-sub-action-btn"
+                  :title="t('context.gitStageAll')"
+                  :disabled="operationLoading || unstagedFiles.length === 0"
+                  @click.stop="emit('request-stage')"
+                >
+                  <Plus :size="12" />
+                </button>
+                <button
+                  type="button"
+                  class="git-sub-action-btn is-discard"
+                  :title="t('context.gitDiscardAll')"
+                  :disabled="operationLoading || unstagedFiles.length === 0"
+                  @click.stop="openDiscardConfirm(unstagedFiles.map((f) => f.path))"
+                >
+                  <RotateCcw :size="12" />
+                </button>
+              </div>
+            </div>
+
+            <div v-show="unstagedExpanded" class="git-sub-body">
+              <div v-if="unstagedFiles.length === 0" class="git-sub-empty">
+                0 uncommitted changes
+              </div>
+              <!-- Unstaged Tree View -->
+              <div v-else-if="viewMode === 'tree'" class="git-tree-container">
+                <GitTreeNodeRow
+                  v-for="rootNode in unstagedTreeRoots"
+                  :key="rootNode.path"
+                  :node="rootNode"
+                  :depth="0"
+                  :selected-paths="selectedPaths"
+                  :active-diff-path="selectedDiffFile?.path"
+                  :operation-loading="operationLoading"
+                  @toggle-select="emit('toggle-path', $event)"
+                  @select-diff="selectAndOpenDiff($event)"
+                  @stage-file="emit('toggle-path', $event); emit('request-stage')"
+                  @unstage-file="emit('toggle-path', $event); emit('request-unstage')"
+                  @discard-file="openDiscardConfirm([$event])"
+                  @stage-folder="stageFolder($event)"
+                  @unstage-folder="unstageFolder($event)"
+                />
+              </div>
+              <!-- Unstaged Flat List -->
+              <div v-else class="git-file-list">
+                <div
+                  v-for="file in unstagedFiles"
+                  :key="file.path"
+                  class="git-file-row"
+                  :class="[statusColorClass(file.status ?? file.unstaged_status), { 'is-active-diff': selectedDiffFile?.path === file.path }]"
+                >
+                  <div class="git-file-row-main" @click="selectAndOpenDiff(file.path)">
+                    <UiCheckbox
+                      :model-value="selectedPaths.has(file.path)"
+                      :aria-label="file.path"
+                      class="git-checkbox"
+                      @click.stop
+                      @update:model-value="emit('toggle-path', file.path)"
+                    />
+                    <component :is="statusIcon(file.status ?? file.unstaged_status)" :size="13" class="git-file-icon" />
+                    <span class="git-file-path" :title="file.path">{{ file.path }}</span>
+                    <span class="git-file-status-badge">{{ statusToLabel(file.status ?? file.unstaged_status) }}</span>
+
+                    <div class="git-row-hover-actions" @click.stop>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="t('context.gitStageSelected')"
+                        :disabled="operationLoading"
+                        @click.stop="emit('toggle-path', file.path); emit('request-stage')"
+                      >
+                        <Plus :size="12" />
+                      </button>
+                      <button
+                        v-if="!file.is_conflicted"
+                        type="button"
+                        class="git-hover-btn is-discard"
+                        :title="t('context.gitDiscardFile')"
+                        :disabled="operationLoading"
+                        @click.stop="openDiscardConfirm([file.path])"
+                      >
+                        <RotateCcw :size="12" />
+                      </button>
+                      <button
+                        type="button"
+                        class="git-hover-btn"
+                        :title="t('context.gitQuickDiff')"
+                        @click.stop="selectAndOpenDiff(file.path)"
+                      >
+                        <ExternalLink :size="12" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="file.is_conflicted" class="git-conflict-actions">
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictOurs')"
+                      @click="emit('request-resolve-conflict', file.path, 'ours')"
+                    >
+                      {{ t('context.gitConflictOurs') }}
+                    </button>
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictTheirs')"
+                      @click="emit('request-resolve-conflict', file.path, 'theirs')"
+                    >
+                      {{ t('context.gitConflictTheirs') }}
+                    </button>
+                    <button
+                      class="git-conflict-btn"
+                      :disabled="operationLoading"
+                      :title="t('context.gitConflictBoth')"
+                      @click="emit('request-resolve-conflict', file.path, 'both')"
+                    >
+                      {{ t('context.gitConflictBoth') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -794,6 +1132,50 @@ const pullDisabledReason = computed(() => {
         <div v-else-if="stagedCount > 0" class="git-commit-scope-hint is-staged">
           <CheckCircle2 :size="12" />
           <span>{{ t('context.gitCommitStagedHint', { count: stagedCount }) }}</span>
+        </div>
+
+        <!-- Split Commit Action (VSCode/openchamber/t3code style) -->
+        <div class="git-commit-split-wrapper">
+          <div class="git-split-button-group">
+            <button
+              type="button"
+              class="git-split-main-btn"
+              :disabled="operationLoading || !canRequestCommitApproval"
+              @click="handlePrimaryCommit"
+            >
+              <GitCommitHorizontal :size="13" />
+              <span>{{ t('context.gitCommitStaged') }}</span>
+            </button>
+            <button
+              type="button"
+              class="git-split-menu-btn"
+              :disabled="operationLoading"
+              @click.stop="splitMenuOpen = !splitMenuOpen"
+            >
+              <ChevronDown :size="12" />
+            </button>
+          </div>
+
+          <div v-if="splitMenuOpen" class="git-split-dropdown-menu" @click.stop>
+            <button
+              type="button"
+              class="git-split-menu-item"
+              :disabled="operationLoading || !canRequestCommitApproval"
+              @click="handleCommitAndPush"
+            >
+              <Upload :size="13" />
+              <span>{{ t('context.gitCommitAndPush') }}</span>
+            </button>
+            <button
+              type="button"
+              class="git-split-menu-item"
+              :disabled="operationLoading || !canRequestCommitApproval"
+              @click="handlePrimaryCommit"
+            >
+              <CheckCircle2 :size="13" />
+              <span>{{ t('context.gitCommitAll') }}</span>
+            </button>
+          </div>
         </div>
 
         <!-- Commit actions -->
@@ -1839,4 +2221,265 @@ const pullDisabledReason = computed(() => {
 
 .git-line-shelf-line.is-add { color: var(--text-approve); }
 .git-line-shelf-line.is-delete { color: var(--text-reject); }
+
+/* Controls bar: Tree/List toggle */
+.git-view-controls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+}
+
+.git-mode-switch-group {
+  display: flex;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.git-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.git-mode-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.git-mode-btn.active {
+  color: var(--accent-primary);
+  background: var(--surface-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-weight: 500;
+}
+
+/* Sections container */
+.git-sections-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.git-sub-section {
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  background: var(--surface-card);
+  overflow: hidden;
+}
+
+.git-sub-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.git-sub-header:hover {
+  background: var(--surface-hover);
+}
+
+.git-sub-title {
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.git-sub-count {
+  background: var(--surface-button);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-right: auto;
+}
+
+.git-sub-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-sub-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.git-sub-action-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.git-sub-action-btn.is-discard:hover:not(:disabled) {
+  color: var(--accent-danger);
+}
+
+.git-sub-body {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.git-sub-empty {
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.git-tree-container {
+  padding: 2px 4px;
+}
+
+.git-row-hover-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.git-file-row:hover .git-row-hover-actions {
+  display: flex;
+}
+
+.git-file-row.is-active-diff {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.git-hover-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.git-hover-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.git-hover-btn.is-discard:hover:not(:disabled) {
+  color: var(--accent-danger);
+}
+
+/* Split button styling */
+.git-commit-split-wrapper {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.git-split-button-group {
+  display: flex;
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.git-split-main-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--accent-primary);
+  color: #fff;
+  border: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.git-split-main-btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.git-split-main-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.git-split-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--accent-primary) 85%, #000);
+  color: #fff;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+}
+
+.git-split-menu-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-primary) 75%, #000);
+}
+
+.git-split-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 180px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 50;
+  padding: 4px;
+}
+
+.git-split-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.git-split-menu-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
 </style>
