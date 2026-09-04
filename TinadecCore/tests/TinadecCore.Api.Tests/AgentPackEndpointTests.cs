@@ -205,8 +205,16 @@ public sealed class AgentPackEndpointTests
         var provider = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(providerBody);
         var providerId = provider.GetProperty("id").GetGuid();
         // The chat route backs the inherit chain so both sides stay available.
-        using var routeResponse = await client.PutAsJsonAsync("/api/v1/model-routes/chat",
-            new { candidates = new[] { new { provider_instance_id = providerId, model = "e2e-model" } } });
+        // DevSeed already created a chat route, so the PUT is a conditional update:
+        // read the current revision first and send it as If-Match.
+        var existingRoute = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/model-routes");
+        var chatRoute = existingRoute!.Single(r => r.GetProperty("purpose").GetString() == "chat");
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/model-routes/chat")
+        {
+            Content = JsonContent.Create(new { candidates = new[] { new { provider_instance_id = providerId, model = "e2e-model" } } })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{chatRoute.GetProperty("revision").GetInt64()}\"");
+        using var routeResponse = await client.SendAsync(request);
         Assert.True(routeResponse.IsSuccessStatusCode, $"chat route save failed: {routeResponse.StatusCode}");
 
         var agents = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/agents");

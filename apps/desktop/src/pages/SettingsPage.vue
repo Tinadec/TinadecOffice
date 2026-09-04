@@ -336,8 +336,10 @@ const toolDiscoverySource = ref('all')
 const toolDiscoveryRisk = ref('all')
 const toolDiscoveryLoading = ref(false)
 
-const providerForm = reactive<ProviderForm>({
-  id: '',
+// Set after a confirmed provider_in_use guard so the retry send bypasses the guard once.
+const forceProviderWrite = ref(false)
+
+const providerForm = reactive<ProviderForm>({  id: '',
   driver: 'openai-compatible',
   display_name: 'OpenAI Compatible',
   connection_kind: 'api-key',
@@ -673,12 +675,14 @@ function openAddModal(template?: ProviderTemplate) {
   providerForm.api_key = ''
   providerForm.clear_api_key = false
   providerForm.enabled = true
+  forceProviderWrite.value = false
   showModal.value = true
 }
 
 function openEditModal(provider: ModelProviderInstanceDto) {
   selectedProviderId.value = provider.id
   fillForm(provider)
+  forceProviderWrite.value = false
   showModal.value = true
 }
 
@@ -731,14 +735,42 @@ async function toggleProviderEnabled(provider: ModelProviderInstanceDto) {
       capabilities: provider.capabilities,
       enabled: !provider.enabled
     }
-    await api.saveModelProvider(provider.id, payload)
+    try {
+      await api.saveModelProvider(provider.id, payload, { expected_revision: provider.revision })
+    } catch (error) {
+      const err = error as { code?: string | null; message?: string }
+      if (err.code === 'provider_in_use') {
+        const message = err.message ?? t('settings.providerInUse')
+        if (!await confirm({
+          title: provider.display_name,
+          message,
+          confirmLabel: t('settings.forceAnyway'),
+          cancelLabel: t('settings.cancel'),
+          destructive: true
+        })) return
+        await api.saveModelProvider(provider.id, payload, { expected_revision: provider.revision, force: true })
+      } else {
+        throw error
+      }
+    }
     await Promise.all([loadModelCenter(), loadAgentCenter()])
     notify.success(`${provider.display_name}: ${provider.enabled ? t('settings.disable') : t('settings.enable')}`)
   } catch (error) {
-    notify.error(error, { title: provider.display_name })
+    if (isWriteConflict(error)) {
+      notify.warning({ message: t('settings.configStaleReloading') })
+      await loadModelCenter()
+    } else {
+      notify.error(error, { title: provider.display_name })
+    }
   } finally {
     modelCenterBusy.value = false
   }
+}
+
+/** 412/428 mean another window changed the config between load and save; reload instead of failing. */
+function isWriteConflict(error: unknown): boolean {
+  const err = error as { code?: string | null; status?: number }
+  return err?.code === 'precondition_required' || err?.code === 'invalid_if_match' || err?.status === 412
 }
 
 async function deleteProvider(providerId: string) {
@@ -752,14 +784,36 @@ async function deleteProvider(providerId: string) {
   })) return
   modelCenterBusy.value = true
   try {
-    await api.deleteModelProvider(providerId)
+    try {
+      await api.deleteModelProvider(providerId, { expected_revision: provider?.revision })
+    } catch (error) {
+      const err = error as { code?: string | null; message?: string }
+      if (err.code === 'provider_in_use') {
+        const message = err.message ?? t('settings.providerInUse')
+        if (!await confirm({
+          title: provider?.display_name ?? providerId,
+          message,
+          confirmLabel: t('settings.forceAnyway'),
+          cancelLabel: t('settings.cancel'),
+          destructive: true
+        })) return
+        await api.deleteModelProvider(providerId, { expected_revision: provider?.revision, force: true })
+      } else {
+        throw error
+      }
+    }
     if (selectedProviderDetailId.value === providerId) {
       selectedProviderDetailId.value = ''
     }
     await Promise.all([loadModelCenter(), loadAgentCenter()])
     notify.success(`${provider?.display_name ?? providerId}: ${t('settings.delete')}`)
   } catch (error) {
-    notify.error(error, { title: provider?.display_name ?? providerId })
+    if (isWriteConflict(error)) {
+      notify.warning({ message: t('settings.configStaleReloading') })
+      await loadModelCenter()
+    } else {
+      notify.error(error, { title: provider?.display_name ?? providerId })
+    }
   } finally {
     modelCenterBusy.value = false
   }
@@ -922,11 +976,18 @@ async function putProviderModels(
       capabilities: provider.capabilities,
       enabled: provider.enabled
     }
-    await api.saveModelProvider(provider.id, payload)
+    await api.saveModelProvider(provider.id, payload, {
+      expected_revision: provider.revision ?? undefined,
+    })
     await loadModelCenter()
     notify.success(t('settings.refreshModels'))
   } catch (error) {
-    notify.error(error, { title: provider.display_name })
+    if (isWriteConflict(error)) {
+      notify.warning({ message: t('settings.configStaleReloading') })
+      await loadModelCenter()
+    } else {
+      notify.error(error, { title: provider.display_name })
+    }
   } finally {
     modelCenterBusy.value = false
   }
@@ -1475,17 +1536,23 @@ async function saveRouteCandidates() {
   if (!routeEditorPurpose.value) return
   routeEditorBusy.value = true
   try {
+    const route = routes.value.find((item) => item.purpose === routeEditorPurpose.value)
     await api.saveModelRoute(routeEditorPurpose.value, {
       candidates: routeEditorCandidates.value.map((candidate) => ({
         provider_instance_id: candidate.provider_instance_id,
         model: candidate.model ?? null,
       })),
-    })
+    }, undefined, { expected_revision: route?.revision })
     await loadModelCenter()
     openRouteEditor(routeEditorPurpose.value)
     notify.success(routeEditorPurpose.value)
   } catch (error) {
-    notify.error(error, { title: routeEditorPurpose.value })
+    if (isWriteConflict(error)) {
+      notify.warning({ message: t('settings.configStaleReloading') })
+      await loadModelCenter()
+    } else {
+      notify.error(error, { title: routeEditorPurpose.value })
+    }
   } finally {
     routeEditorBusy.value = false
   }
@@ -1548,7 +1615,10 @@ async function saveProvider() {
     }
 
     const saved = providerForm.id
-      ? await api.saveModelProvider(providerForm.id, payload)
+      ? await api.saveModelProvider(providerForm.id, payload, {
+        expected_revision: selectedProvider.value?.revision,
+        ...(forceProviderWrite.value ? { force: true } : {})
+      })
       : await api.createModelProvider(payload)
 
     selectedProviderId.value = saved.id
@@ -1559,7 +1629,27 @@ async function saveProvider() {
     }
     notify.success(saved.display_name)
   } catch (error) {
-    notify.error(error, { title: providerForm.display_name })
+    const err = error as { code?: string | null; message?: string }
+    if (err.code === 'provider_in_use') {
+      // The form's enabled toggle triggered the guard; ask once and retry with force.
+      const message = err.message ?? t('settings.providerInUse')
+      if (!await confirm({
+        title: providerForm.display_name,
+        message,
+        confirmLabel: t('settings.forceAnyway'),
+        cancelLabel: t('settings.cancel'),
+        destructive: true
+      })) return
+      forceProviderWrite.value = true
+      await saveProvider()
+      return
+    }
+    if (isWriteConflict(error)) {
+      notify.warning({ message: t('settings.configStaleReloading') })
+      await loadModelCenter()
+    } else {
+      notify.error(error, { title: providerForm.display_name })
+    }
   } finally {
     modelCenterBusy.value = false
   }

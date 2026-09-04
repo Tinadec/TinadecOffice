@@ -89,6 +89,7 @@ public static class DbContextSchemaBootstrapper
         }
 
         await DropLegacyCapabilityLeaseNonceAsync(db, isSqlite, cancellationToken).ConfigureAwait(false);
+        await DropLegacyNotNullColumnsAsync(db, expectedByTable, isSqlite, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -109,6 +110,84 @@ public static class DbContextSchemaBootstrapper
         else
         {
             await db.Database.ExecuteSqlRawAsync("ALTER TABLE capability_leases DROP COLUMN IF EXISTS nonce", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Drops columns that a previous schema declared NOT NULL but the current
+    /// model no longer maps (for example <c>model_route_versions.provider_id</c>,
+    /// superseded by <c>model_route_candidates</c>). EF inserts never populate
+    /// such a column, so on upgraded databases every insert dies with a NOT NULL
+    /// constraint violation. Nullable legacy columns are inert and kept; SQLite
+    /// columns still referenced by an index are left in place because dropping
+    /// them would require a table rebuild this bootstrap does not attempt.
+    /// </summary>
+    private static async Task DropLegacyNotNullColumnsAsync(
+        DbContext db,
+        Dictionary<(string TableName, string? Schema), List<IProperty>> expectedByTable,
+        bool isSqlite,
+        CancellationToken cancellationToken)
+    {
+        foreach (var entry in expectedByTable)
+        {
+            var tableName = entry.Key.TableName;
+            var actualColumns = await GetTableColumnsAsync(db, tableName, isSqlite, cancellationToken).ConfigureAwait(false);
+            if (actualColumns is null) continue;
+            var mapped = entry.Value
+                .Select(property => property.GetColumnName(StoreObjectIdentifier.Table(tableName, entry.Key.Schema)))
+                .Where(name => name is not null)
+                .Select(name => name!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var column in actualColumns.ToList())
+            {
+                if (mapped.Contains(column)) continue;
+                var notNull = await IsNotNullColumnAsync(db, tableName, column, isSqlite, cancellationToken).ConfigureAwait(false);
+                if (!notNull) continue; // nullable legacy columns are inert; keep them
+                await DropLegacyColumnAsync(db, tableName, column, isSqlite, cancellationToken).ConfigureAwait(false);
+                actualColumns.Remove(column);
+            }
+        }
+    }
+
+    private static async Task<bool> IsNotNullColumnAsync(DbContext db, string tableName, string columnName, bool isSqlite, CancellationToken cancellationToken)
+    {
+        if (isSqlite)
+        {
+            var notNull = await db.Database
+                .SqlQueryRaw<int>("SELECT \"notnull\" AS \"Value\" FROM pragma_table_info({0}) WHERE \"name\" = {1}", tableName, columnName)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            return notNull.Count > 0 && notNull[0] == 1;
+        }
+        var pgNullable = await db.Database
+            .SqlQueryRaw<string>("SELECT is_nullable AS \"Value\" FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = {0} AND column_name = {1}", tableName, columnName)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return pgNullable.Count > 0 && string.Equals(pgNullable[0], "NO", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task DropLegacyColumnAsync(DbContext db, string tableName, string columnName, bool isSqlite, CancellationToken cancellationToken)
+    {
+        if (isSqlite)
+        {
+            // SQLite refuses DROP COLUMN when any index spans the column. That
+            // case needs a full table rebuild, which this idempotent bootstrap
+            // deliberately does not attempt; the error message names the table
+            // so the database can be repaired manually.
+            var indexes = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM pragma_index_list({0})", tableName)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var indexName in indexes)
+            {
+                var indexInfo = await db.Database
+                    .SqlQueryRaw<string>("SELECT name AS \"Value\" FROM pragma_index_info({0})", indexName)
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                if (indexInfo.Any(c => string.Equals(c, columnName, StringComparison.OrdinalIgnoreCase))) return;
+            }
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"{tableName}\" DROP COLUMN \"{columnName}\"", cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await db.Database.ExecuteSqlRawAsync($"ALTER TABLE {tableName} DROP COLUMN IF EXISTS {columnName}", cancellationToken).ConfigureAwait(false);
         }
     }
 

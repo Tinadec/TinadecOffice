@@ -437,6 +437,7 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
       status: provider.status,
       status_message: provider.status_message,
       cooldown_until: provider.cooldown_until ?? null,
+      revision: provider.revision ?? null,
       created_at: provider.created_at,
       updated_at: provider.updated_at,
       route_purposes: routePurposes,

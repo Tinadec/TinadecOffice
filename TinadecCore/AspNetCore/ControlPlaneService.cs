@@ -58,6 +58,53 @@ public sealed class ControlPlaneService
     { await using var stream = await store.OpenReadAsync(new ContentReference(reference, "", 0, "application/json"), ct); using var reader = new StreamReader(stream); return await reader.ReadToEndAsync(ct); }
     private static bool Matches(long revision, string? match) => string.IsNullOrWhiteSpace(match) || long.TryParse(match, out var value) && value == revision;
 
+    /// <summary>
+    /// Conditional-update gate for mutable control-plane rows (providers, routes).
+    /// A missing If-Match is a hard 428 (blind writes were the root cause of live
+    /// configuration being overwritten by verification scripts); a stale revision is 412.
+    /// </summary>
+    private static IResult? CheckPrecondition(long revision, string? ifMatch)
+    {
+        if (string.IsNullOrWhiteSpace(ifMatch)) return Results.Json(new { code = "precondition_required", message = "If-Match header with the current numeric revision is required for this operation." }, statusCode: 428);
+        var normalized = ifMatch.Trim().Trim('"');
+        if (!long.TryParse(normalized, out var value)) return Results.Json(new { code = "invalid_if_match", message = "If-Match must contain the numeric revision." }, statusCode: 400);
+        return value != revision ? Results.StatusCode(412) : null;
+    }
+
+    /// <summary>Routes whose saved versions still reference the provider, for the provider_in_use guard.</summary>
+    private static async Task<List<string>> ReferencingRoutePurposesAsync(ModelControlDbContext db, Guid providerId, CancellationToken ct)
+    {
+        var purposes = await (
+            from candidate in db.RouteCandidates.AsNoTracking()
+            join version in db.RouteVersions.AsNoTracking() on candidate.RouteVersionId equals version.Id
+            join route in db.Routes.AsNoTracking() on version.RouteId equals route.Id
+            where candidate.ProviderInstanceId == providerId && route.DeletedAt == null
+            select route.Purpose).Distinct().ToListAsync(ct);
+        return purposes;
+    }
+
+    private static IResult ProviderInUse(IEnumerable<string> purposes) => Results.Json(
+        new { code = "provider_in_use", message = $"Provider is still referenced by model route(s): {string.Join(", ", purposes)}. Rebind or delete the route(s) first, or retry with force=true.", routes = purposes.ToArray() },
+        statusCode: 409);
+
+    /// <summary>
+    /// Merges the incoming provider payload onto the persisted current-version config so a
+    /// partial update (e.g. only the model list) keeps unspecified fields such as protocol,
+    /// base_url, binary_path and launch_args. Request body wins; missing keys keep the old
+    /// value; an explicit JSON null clears the key. Secret fields never enter the blob.
+    /// </summary>
+    private static Dictionary<string, JsonElement> MergeProviderConfig(Dictionary<string, JsonElement> current, JsonElement input)
+    {
+        var merged = new Dictionary<string, JsonElement>(current);
+        foreach (var property in input.EnumerateObject())
+        {
+            if (property.Name is "api_key" or "clear_api_key") continue;
+            if (property.Value.ValueKind == JsonValueKind.Null) merged.Remove(property.Name);
+            else merged[property.Name] = property.Value.Clone();
+        }
+        return merged;
+    }
+
     public async Task<IResult> ListProviders(CancellationToken ct)
     { await using var db = await _models.CreateDbContextAsync(ct); var rows = await db.Providers.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null).ToListAsync(ct); return Results.Ok(await Task.WhenAll(rows.Select(ToProvider))); }
     private async Task<object> ToProvider(ModelProviderRecord row)
@@ -188,7 +235,9 @@ public sealed class ControlPlaneService
             launch_args = Get("launch_args") ?? (protocol == ChatProtocols.OpencodeServe ? $"serve --port {port}" : $"--acp-port {port}"),
             enabled = true
         });
-        return await SaveProvider(payload, existing?.Id, null, ct);
+        // Internal system path: the CLI process just spawned is the source of truth, so the
+        // save carries the row's live revision to satisfy the mandatory If-Match gate.
+        return await SaveProvider(payload, existing?.Id, existing?.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
     }
 
     private static string? ResolveCliExecutable(string name, IEnumerable<string>? searchPaths)
@@ -273,13 +322,62 @@ public sealed class ControlPlaneService
         return paths.Distinct().ToList();
     }
 
-    public async Task<IResult> SaveProvider(JsonElement input, Guid? id, string? ifMatch, CancellationToken ct)
-    { var now = DateTimeOffset.UtcNow; await using var db = await _models.CreateDbContextAsync(ct); var row = id.HasValue ? await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct) : null; if (row != null && !Matches(row.Revision, ifMatch)) return Results.StatusCode(412); if (row?.Id is null) { row = new ModelProviderRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now, Revision = 0 }; db.Providers.Add(row); }
-        row.Driver = input.TryGetProperty("driver", out var p) ? p.GetString() ?? "" : row.Driver; row.DisplayName = input.TryGetProperty("display_name", out p) ? p.GetString() ?? row.Driver : row.DisplayName; row.ConnectionKind = input.TryGetProperty("connection_kind", out p) ? p.GetString() ?? "api-key" : row.ConnectionKind; row.Scope = input.TryGetProperty("scope", out p) ? p.GetString() ?? "workspace" : row.Scope; row.Enabled = !input.TryGetProperty("enabled", out p) || p.ValueKind != JsonValueKind.False; row.UpdatedByPrincipalId = Tenant.PrincipalId; row.UpdatedAt = now;
-        if (input.TryGetProperty("api_key", out p) && p.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(p.GetString())) { row.SecretReference ??= "provider-" + row.Id.ToString("N"); await _secrets.PutAsync(row.SecretReference, p.GetString()!, ct); } else if (input.TryGetProperty("clear_api_key", out p) && p.ValueKind == JsonValueKind.True && row.SecretReference != null) { await _secrets.DeleteAsync(row.SecretReference, ct); row.SecretReference = null; }
-        var cfg = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(input.GetRawText()) ?? new(); var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "model-config", cfg, ct); var version = new ModelProviderVersionRecord { Id = Guid.NewGuid(), ProviderId = row.Id, Version = (int)row.Revision + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now }; row.Revision++; row.CurrentVersionId = version.Id; db.ProviderVersions.Add(version); await db.SaveChangesAsync(ct); return Results.Ok(await ToProvider(row)); }
-    public async Task<IResult> DeleteProvider(Guid id, string? ifMatch, CancellationToken ct)
-    { await using var db = await _models.CreateDbContextAsync(ct); var row = await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct); if (row == null) return Results.NotFound(); if (!Matches(row.Revision, ifMatch)) return Results.StatusCode(412); row.DeletedAt = DateTimeOffset.UtcNow; row.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(ct); return Results.NoContent(); }
+    private static void RemoveSecret(Dictionary<string, JsonElement> cfg)
+    { cfg.Remove("api_key"); cfg.Remove("clear_api_key"); }
+
+    public async Task<IResult> SaveProvider(JsonElement input, Guid? id, string? ifMatch, CancellationToken ct, bool force = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var row = id.HasValue ? await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct) : null;
+        if (row != null)
+        {
+            var precondition = CheckPrecondition(row.Revision, ifMatch);
+            if (precondition != null) return precondition;
+            var disabling = input.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.False && row.Enabled;
+            if (disabling && !force)
+            {
+                var disablePurposes = await ReferencingRoutePurposesAsync(db, row.Id, ct);
+                if (disablePurposes.Count > 0) return ProviderInUse(disablePurposes);
+            }
+        }
+        var isNew = row is null;
+        if (isNew) row = new ModelProviderRecord { Id = id ?? Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now, Revision = 0 };
+        var provider = row!;
+        if (isNew) db.Providers.Add(provider);
+        provider.Driver = input.TryGetProperty("driver", out var p) ? p.GetString() ?? "" : provider.Driver; provider.DisplayName = input.TryGetProperty("display_name", out p) ? p.GetString() ?? provider.Driver : provider.DisplayName; provider.ConnectionKind = input.TryGetProperty("connection_kind", out p) ? p.GetString() ?? "api-key" : provider.ConnectionKind; provider.Scope = input.TryGetProperty("scope", out p) ? p.GetString() ?? "workspace" : provider.Scope; provider.Enabled = !input.TryGetProperty("enabled", out p) || p.ValueKind != JsonValueKind.False; provider.UpdatedByPrincipalId = Tenant.PrincipalId; provider.UpdatedAt = now;
+        if (input.TryGetProperty("api_key", out p) && p.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(p.GetString())) { provider.SecretReference ??= "provider-" + provider.Id.ToString("N"); await _secrets.PutAsync(provider.SecretReference, p.GetString()!, ct); } else if (input.TryGetProperty("clear_api_key", out p) && p.ValueKind == JsonValueKind.True && provider.SecretReference != null) { await _secrets.DeleteAsync(provider.SecretReference, ct); provider.SecretReference = null; }
+        var merged = isNew
+            ? MergeProviderConfig(new Dictionary<string, JsonElement>(), input)
+            : MergeProviderConfig(await LoadProviderConfigAsync(db, provider.CurrentVersionId, ct), input);
+        RemoveSecret(merged);
+        var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "model-config", merged, ct);
+        var version = new ModelProviderVersionRecord { Id = Guid.NewGuid(), ProviderId = provider.Id, Version = (int)provider.Revision + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now };
+        provider.Revision++; provider.CurrentVersionId = version.Id; db.ProviderVersions.Add(version); await db.SaveChangesAsync(ct);
+        return Results.Ok(await ToProvider(provider));
+    }
+
+    private async Task<Dictionary<string, JsonElement>> LoadProviderConfigAsync(ModelControlDbContext db, Guid versionId, CancellationToken ct)
+    {
+        var version = await db.ProviderVersions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == versionId, ct);
+        if (version == null) return new Dictionary<string, JsonElement>();
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(await ReadAsync(_content, version.ContentReference, ct)) ?? new Dictionary<string, JsonElement>();
+    }
+
+    public async Task<IResult> DeleteProvider(Guid id, string? ifMatch, CancellationToken ct, bool force = false)
+    {
+        await using var db = await _models.CreateDbContextAsync(ct);
+        var row = await db.Providers.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
+        if (row == null) return Results.NotFound();
+        var precondition = CheckPrecondition(row.Revision, ifMatch);
+        if (precondition != null) return precondition;
+        if (!force)
+        {
+            var purposes = await ReferencingRoutePurposesAsync(db, row.Id, ct);
+            if (purposes.Count > 0) return ProviderInUse(purposes);
+        }
+        row.DeletedAt = DateTimeOffset.UtcNow; row.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(ct); return Results.NoContent();
+    }
     public async Task<IResult> ListRoutes(CancellationToken ct)
     {
         await using var db = await _models.CreateDbContextAsync(ct);
@@ -314,7 +412,11 @@ public sealed class ControlPlaneService
 
         var row = await db.Routes.SingleOrDefaultAsync(x => x.Purpose == purpose && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId && x.DeletedAt == null, ct);
         var now = DateTimeOffset.UtcNow;
-        if (row != null && !Matches(row.Revision, ifMatch)) return Results.StatusCode(412);
+        if (row != null)
+        {
+            var precondition = CheckPrecondition(row.Revision, ifMatch);
+            if (precondition != null) return precondition;
+        }
         if (row == null)
         {
             row = new ModelRouteRecord { Id = Guid.NewGuid(), TenantId = Tenant.TenantId, WorkspaceId = Tenant.WorkspaceId, Purpose = purpose, Scope = "workspace", CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now };

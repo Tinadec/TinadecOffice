@@ -299,6 +299,7 @@ export interface ModelProviderInstanceDto {
   status: string;
   status_message: string;
   cooldown_until?: string | null;
+  revision?: number;
   created_at: string;
   updated_at: string;
 }
@@ -748,6 +749,7 @@ export interface ModelCenterApiConnectionDto {
   status: string;
   status_message: string;
   cooldown_until?: string | null;
+  revision?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
   route_purposes: string[];
@@ -1928,16 +1930,25 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(provider)
   }),
-  saveModelProvider: (providerId: string, provider: SaveModelProviderInstanceInput) => request<ModelProviderInstanceDto>(`/api/v1/model-providers/${encodeURIComponent(providerId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(provider)
-  }),
-  deleteModelProvider: (providerId: string) => request<void>(`/api/v1/model-providers/${encodeURIComponent(providerId)}`, {
-    method: 'DELETE'
-  }),
+  saveModelProvider: (providerId: string, provider: SaveModelProviderInstanceInput, options?: { expected_revision?: number; force?: boolean }) => {
+    const suffix = options?.force ? '?force=true' : ''
+    return request<ModelProviderInstanceDto>(`/api/v1/model-providers/${encodeURIComponent(providerId)}${suffix}`, {
+      method: 'PUT',
+      headers: options?.expected_revision !== undefined ? { 'if-match': `"${options.expected_revision}"` } : undefined,
+      body: JSON.stringify(provider)
+    })
+  },
+  deleteModelProvider: (providerId: string, options?: { expected_revision?: number; force?: boolean }) => {
+    const suffix = options?.force ? '?force=true' : ''
+    return request<void>(`/api/v1/model-providers/${encodeURIComponent(providerId)}${suffix}`, {
+      method: 'DELETE',
+      headers: options?.expected_revision !== undefined ? { 'if-match': `"${options.expected_revision}"` } : undefined
+    })
+  },
   listModelRoutes: () => request<ModelRouteDto[]>('/api/v1/model-routes'),
-  saveModelRoute: (purpose: string, candidates: ModelRouteWriteRequestDto | string, model?: string | null) => request<ModelRouteDto>(`/api/v1/model-routes/${encodeURIComponent(purpose)}`, {
+  saveModelRoute: (purpose: string, candidates: ModelRouteWriteRequestDto | string, model?: string | null, options?: { expected_revision?: number }) => request<ModelRouteDto>(`/api/v1/model-routes/${encodeURIComponent(purpose)}`, {
     method: 'PUT',
+    headers: options?.expected_revision !== undefined ? { 'if-match': `"${options.expected_revision}"` } : undefined,
     body: JSON.stringify(typeof candidates === 'string'
       ? { candidates: [{ provider_instance_id: candidates, model: model ?? null }] }
       : candidates)
