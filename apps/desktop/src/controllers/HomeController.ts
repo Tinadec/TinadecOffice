@@ -182,7 +182,14 @@ async function loadMessagesAndApprovals() {
     api.listToolExecutions(selectedSessionId.value, { limit: 12 }),
     api.listRuns(selectedSessionId.value).catch(() => [] as unknown[]),
   ])
-  messages.value = messageList
+  // Keep optimistic pending sends until the backend echoes them: the
+  // session-select reload races the first POST (new session has no messages
+  // yet), and wiping the optimistic append bounces the composer back to the
+  // hero position mid-dock instead of one immersive sink.
+  const pendingEcho = messages.value.filter(
+    (m) => m.id.startsWith('pending-') && !messageList.some((b) => b.role === 'user' && b.content === m.content),
+  )
+  messages.value = pendingEcho.length ? [...messageList, ...pendingEcho] : messageList
   approvals.value = approvalList
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
@@ -615,7 +622,7 @@ export const homeController = {
     if (!content) return
     await handleSend(content, opts)
   },
-  handleWelcomeSend: (payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel }) => handleSend(payload.content, payload),
+  handleWelcomeSend: (payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id?: string | null }) => handleSend(payload.content, payload),
   requestShellApproval,
   decideApproval,
   recordApproval,

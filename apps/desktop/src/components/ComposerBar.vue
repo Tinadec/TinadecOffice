@@ -1,47 +1,69 @@
 <script setup lang="ts">
-import { ArrowUp, Plus, Image, FileText, Settings } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { UiButton } from '@/components/ui'
+import { UiButton, UiScrollArea } from '@/components/ui'
+import ModeSelector from './ModeSelector.vue'
 import PermissionSelector from './PermissionSelector.vue'
-import type { PermissionLevel } from '@/types/mode'
-import type { MeetingModelOverrideDto } from '@/api'
+import type { AgentMode, PermissionLevel } from '@/types/mode'
+import type { MeetingModelOverrideDto, ProjectDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
+import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
 const { t } = useI18n()
 const router = useRouter()
 
 const props = defineProps<{
+  /** Hero (start page) variant: centered box, welcome-send dispatch, no queued cards. */
+  hero?: boolean
   busy: boolean
   modelValue: string
-  mode?: unknown // deprecated, kept for compat
+  mode?: AgentMode
   permission: PermissionLevel
+  projects?: ProjectDto[]
+  selectedProjectId?: string | null
   sessionId?: string | null
   runs?: Array<{ id: string; status: string }>
   modeVersionId?: string | null
   meetingModelOverride?: MeetingModelOverrideDto | null
+  panelStyle?: Record<string, string>
+  panelDataAttrs?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
+  'update:modeVersionId': [value: string | null]
   'submit': [payload: { dispatch_mode: 'parallel' | 'queued' | 'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }]
+  'welcome-submit': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }]
+  'create-project': []
+  'select-project': [id: string]
   'add-image': []
   'add-file': []
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const plusTriggerRef = ref<HTMLElement | null>(null)
+const sendTriggerRef = ref<HTMLElement | null>(null)
 const showPlusMenu = ref(false)
-const plusMenuStyle = ref<Record<string, string>>({})
+const plusMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
 const showAskMenu = ref(false)
+const askMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
+const projectTriggerRef = ref<HTMLElement | null>(null)
+const showProjectDropdown = ref(false)
+const projectDropdownStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
 
 const queued = homeController.queuedMessages
 const activeRuns = homeController.activeRuns
 const steeringId = ref<string | null>(null)
 const steerTarget = ref('')
+
+const selectedProject = computed(() =>
+  props.projects?.find((p) => p.id === props.selectedProjectId) ?? null
+)
 
 function autoResize() {
   const el = textareaRef.value
@@ -56,24 +78,51 @@ function resetTextareaHeight() {
   el.style.height = 'auto'
 }
 
-function updatePlusMenuPosition() {
-  const trigger = plusTriggerRef.value
+function placeMenu(
+  trigger: HTMLElement | null,
+  target: Ref<DropdownPlacement>,
+  options?: { minWidth?: number; estimatedHeight?: number },
+) {
   if (!trigger) return
   const rect = trigger.getBoundingClientRect()
-  plusMenuStyle.value = {
-    position: 'fixed',
-    bottom: `${window.innerHeight - rect.top + 6}px`,
-    left: `${rect.left}px`,
-    minWidth: `${Math.max(rect.width, 130)}px`,
-  }
+  target.value = computeDropdownPlacement(rect, window.innerWidth, window.innerHeight, {
+    minWidth: options?.minWidth ?? 130,
+    estimatedHeight: options?.estimatedHeight ?? 90,
+  })
 }
 
 async function togglePlusMenu() {
   showPlusMenu.value = !showPlusMenu.value
   if (showPlusMenu.value) {
     await nextTick()
-    updatePlusMenuPosition()
+    placeMenu(plusTriggerRef.value, plusMenuStyle)
   }
+}
+
+async function toggleAskMenu() {
+  showAskMenu.value = !showAskMenu.value
+  if (showAskMenu.value) {
+    await nextTick()
+    placeMenu(sendTriggerRef.value, askMenuStyle, { minWidth: 96, estimatedHeight: 76 })
+  }
+}
+
+async function toggleProjectDropdown() {
+  showProjectDropdown.value = !showProjectDropdown.value
+  if (showProjectDropdown.value) {
+    await nextTick()
+    placeMenu(projectTriggerRef.value, projectDropdownStyle, { minWidth: 220, estimatedHeight: 260 })
+  }
+}
+
+function selectProject(id: string) {
+  emit('select-project', id)
+  showProjectDropdown.value = false
+}
+
+function openNewProject() {
+  emit('create-project')
+  showProjectDropdown.value = false
 }
 
 function handleClickOutside(event: MouseEvent) {
@@ -81,8 +130,11 @@ function handleClickOutside(event: MouseEvent) {
   if (!target.closest('.welcome-dialog-plus-wrapper') && !target.closest('.plus-dropdown-portal')) {
     showPlusMenu.value = false
   }
-  if (!target.closest('.composer-send-wrapper')) {
+  if (!target.closest('.composer-send-wrapper') && !target.closest('.ask-menu')) {
     showAskMenu.value = false
+  }
+  if (!target.closest('.project-dropdown-trigger') && !target.closest('.project-dropdown-portal')) {
+    showProjectDropdown.value = false
   }
 }
 
@@ -92,9 +144,20 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 function submit(pref?: DispatchPref) {
   const content = props.modelValue.trim()
   if (!content) return
+  if (props.hero) {
+    // Start-page send: full welcome payload, no dispatch menu.
+    resetTextareaHeight()
+    emit('welcome-submit', {
+      content,
+      agent_mode: props.mode ?? 'auto',
+      permission_mode: props.permission,
+      mode_version_id: props.modeVersionId ?? null,
+    })
+    return
+  }
   const p = pref ?? getDispatchPref()
   if (p === 'ask') {
-    showAskMenu.value = !showAskMenu.value
+    void toggleAskMenu()
     return
   }
   showAskMenu.value = false
@@ -132,10 +195,15 @@ function confirmSteer(id: string) {
 </script>
 
 <template>
-  <div class="composer">
-    <div class="composer-box welcome-dialog" :data-composer-active="modelValue.trim() ? 'true' : 'false'">
+  <div class="composer" :class="{ 'composer--hero': hero }">
+    <div
+      class="composer-box welcome-dialog"
+      :data-composer-active="modelValue.trim() ? 'true' : 'false'"
+      :style="panelStyle"
+      v-bind="panelDataAttrs"
+    >
       <!-- queued cards sit inside dialog top when items are queued -->
-      <div v-if="queued.length" class="composer-queued">
+      <div v-if="!hero && queued.length" class="composer-queued">
         <div v-for="item in queued" :key="item.id" class="queued-card">
           <div class="queued-content">{{ item.content }}</div>
           <div class="queued-actions">
@@ -193,7 +261,7 @@ function confirmSteer(id: string) {
           @keydown="handleKeydown"
         />
 
-        <div class="composer-send-wrapper">
+        <div ref="sendTriggerRef" class="composer-send-wrapper">
           <UiButton
             variant="ghost"
             size="icon"
@@ -204,19 +272,33 @@ function confirmSteer(id: string) {
             <span v-if="busy" class="composer-send-spinner" role="status" aria-label="sending" />
             <ArrowUp v-else :size="15" />
           </UiButton>
-          <div v-if="showAskMenu" class="ask-menu">
-            <button class="ask-menu-item" @click="submit('queued')">排队发送</button>
-            <button class="ask-menu-item" @click="submit('parallel')">并列发送</button>
-          </div>
         </div>
       </div>
 
       <div class="welcome-dialog-toolbar">
         <div class="toolbar-left">
+          <!-- THE one mode selector: agent-mode fallback + published versions in one dropdown. -->
+          <ModeSelector
+            :model-value="mode ?? 'auto'"
+            :mode-version-id="modeVersionId ?? null"
+            @update:model-value="emit('update:mode', $event)"
+            @update:mode-version-id="emit('update:modeVersionId', $event)"
+          />
           <PermissionSelector
             :model-value="permission"
             @update:model-value="emit('update:permission', $event)"
           />
+          <button
+            ref="projectTriggerRef"
+            class="project-dropdown-trigger"
+            @click="toggleProjectDropdown"
+          >
+            <FolderOpen :size="12" />
+            <span class="project-dropdown-label">
+              {{ selectedProject?.name ?? t('chat.selectProject') }}
+            </span>
+            <ChevronDown :size="11" class="project-dropdown-chevron" />
+          </button>
         </div>
         <div class="toolbar-right">
           <button class="toolbar-agent-config" @click="router.push('/settings')">
@@ -226,6 +308,42 @@ function confirmSteer(id: string) {
         </div>
       </div>
     </div>
+
+    <!-- Docked-only dispatch menu: teleported so the dialog's overflow:hidden never clips it. -->
+    <Teleport v-if="!hero" to="body">
+      <div v-if="showAskMenu" class="ask-menu" :style="askMenuStyle">
+        <button class="ask-menu-item" @click="submit('queued')">排队发送</button>
+        <button class="ask-menu-item" @click="submit('parallel')">并列发送</button>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="showProjectDropdown"
+        class="project-dropdown-portal"
+        :style="projectDropdownStyle"
+      >
+        <UiScrollArea v-if="(projects?.length ?? 0) > 0" class="project-dropdown-scroll">
+          <div class="project-dropdown-section">
+            <div class="project-dropdown-section-title">{{ t('chat.openedProjects') }}</div>
+            <button
+              v-for="project in projects"
+              :key="project.id"
+              class="project-dropdown-item"
+              :class="{ active: project.id === selectedProjectId }"
+              @click="selectProject(project.id)"
+            >
+              <FolderOpen :size="12" />
+              <span>{{ project.name }}</span>
+            </button>
+          </div>
+        </UiScrollArea>
+        <button class="project-dropdown-item project-dropdown-new" @click="openNewProject">
+          <FolderPlus :size="12" />
+          <span>{{ t('chat.openNewProject') }}</span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -262,9 +380,6 @@ function confirmSteer(id: string) {
   to { transform: rotate(360deg); }
 }
 .ask-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 0;
   z-index: 9999;
   display: flex;
   flex-direction: column;
@@ -339,4 +454,3 @@ function confirmSteer(id: string) {
   height: 24px;
 }
 </style>
-

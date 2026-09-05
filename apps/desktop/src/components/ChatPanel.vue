@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, ref, nextTick, watch } from 'vue'
 import ChatHeader from './ChatHeader.vue'
 import MessageList from './MessageList.vue'
 import ComposerBar from './ComposerBar.vue'
-import SessionModeStrip from './SessionModeStrip.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
@@ -38,7 +37,7 @@ const emit = defineEmits<{
   'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
   'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
-  'welcome-send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel }]
+  'welcome-send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }]
   'create-project': []
   'select-project': [id: string]
   'approve': [approvalId: string]
@@ -54,9 +53,15 @@ function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'
   } as never)
 }
 
+function onWelcomeSubmit(payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }) {
+  emit('welcome-send', payload)
+}
+
 // ---- Responsive mode detection for chat area ----
 const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
+
+const hero = computed(() => props.messages.length === 0)
 
 const modeVersionId = ref<string | null>(null)
 watch(
@@ -67,14 +72,35 @@ watch(
   { immediate: true },
 )
 
-function onStripModeChange(value: string | null) {
-  modeVersionId.value = value
-}
-
 const conversationClass = computed(() => ({
   'chat-narrow': chatMode.value === 'narrow' || chatMode.value === 'ultra',
   'chat-ultra': chatMode.value === 'ultra',
+  'composer-hero': hero.value,
 }))
+
+// Immersive dock: the composer box is one persistent element. When the first
+// message flips the panel between hero (centered) and docked (bottom), FLIP it
+// from its previous position so it visibly sinks/rises instead of being
+// swapped for a differently-styled box. Transform goes on the box itself —
+// never on an ancestor of the backdrop-filtered surface.
+watch(hero, async () => {
+  const container = conversationRef.value
+  const before = container?.querySelector<HTMLElement>('.composer-box')
+  const from = before?.getBoundingClientRect()
+  await nextTick()
+  if (!from || !from.width || !from.height) return
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  const after = container?.querySelector<HTMLElement>('.composer-box')
+  if (!after || typeof after.animate !== 'function') return
+  const to = after.getBoundingClientRect()
+  if (!to.width || !to.height) return
+  const dy = from.top - to.top
+  if (Math.abs(dy) < 1) return
+  after.animate(
+    [{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0px)' }],
+    { duration: 350, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  )
+})
 
 function handleApprove(approvalId: string) {
   emit('approve', approvalId)
@@ -86,60 +112,52 @@ function handleReject(approvalId: string) {
 </script>
 
 <template>
-  <!-- Immersive chat zone: transparent background so page background shows through.
-       User's global material setting controls backdrop-filter on inner objects (composer, welcome dialog, bubbles).
-       NO border or shadow here — the card frame and parent stack own the visual boundary. -->
   <section ref="conversationRef" class="conversation" :class="conversationClass">
-    <Transition name="chat-panel" mode="out-in">
-      <template v-if="messages.length === 0">
-        <WelcomeScreen
-          :projects="props.projects"
-          :selected-project-id="selectedProjectId"
-          :model-name="modelName"
-          :mode="mode"
-          :busy="busy"
-          :panel-style="panelStyle"
-          :panel-data-attrs="panelDataAttrs"
-          @send="emit('welcome-send', $event)"
-          @create-project="emit('create-project')"
-          @select-project="emit('select-project', $event)"
-          @update:mode="emit('update:mode', $event)"
-          @update:permission="emit('update:permission', $event)"
+    <!-- Immersive chat zone: transparent background so page background shows through.
+         User's global material setting controls backdrop-filter on inner objects (composer, welcome dialog, bubbles).
+         NO border or shadow here — the card frame and parent stack own the visual boundary. -->
+    <Transition name="chat-panel">
+      <WelcomeScreen
+        v-if="hero"
+        key="welcome"
+      />
+      <!-- Active chat panel: transparent so background layer shows through -->
+      <div v-else key="chat-active" class="chat-active-panel" style="background: transparent !important; border: none !important; box-shadow: none !important;">
+        <ChatHeader :current-session="currentSession" />
+        <MessageList
+          :messages="messages"
+          :thinking-steps="thinkingSteps"
+          :tool-calls="toolCalls"
+          @approve="handleApprove"
+          @reject="handleReject"
         />
-      </template>
-      <template v-else>
-        <!-- Active chat panel: transparent so background layer shows through -->
-        <div class="chat-active-panel" key="chat-active" style="background: transparent !important; border: none !important; box-shadow: none !important;">
-          <ChatHeader :current-session="currentSession" />
-          <MessageList
-            :messages="messages"
-            :thinking-steps="thinkingSteps"
-            :tool-calls="toolCalls"
-            @approve="handleApprove"
-            @reject="handleReject"
-          />
-          <SessionModeStrip
-            :key="currentSession?.id ?? 'none'"
-            :model-value="modeVersionId"
-            :narrow="chatMode === 'narrow' || chatMode === 'ultra'"
-            @update:model-value="onStripModeChange"
-          />
-          <ComposerBar
-            :busy="busy"
-            :model-value="draft"
-            :mode="mode"
-            :permission="permission"
-            :session-id="currentSession?.id ?? null"
-            :mode-version-id="modeVersionId"
-            :meeting-model-override="currentSession?.meeting_model_override ?? null"
-            :runs="runsForComposer"
-            @update:model-value="emit('update:draft', $event)"
-            @update:permission="emit('update:permission', $event)"
-            @submit="onComposerSubmit"
-          />
-        </div>
-      </template>
+      </div>
     </Transition>
+
+    <!-- Persistent composer: mounted once for both hero and docked states so
+         sending the first message sinks the SAME box instead of swapping it. -->
+    <ComposerBar
+      :hero="hero"
+      :busy="busy"
+      :model-value="draft"
+      :mode="mode"
+      :permission="permission"
+      :projects="projects"
+      :selected-project-id="selectedProjectId"
+      :session-id="currentSession?.id ?? null"
+      :mode-version-id="modeVersionId"
+      :meeting-model-override="currentSession?.meeting_model_override ?? null"
+      :runs="runsForComposer"
+      :panel-style="panelStyle"
+      :panel-data-attrs="panelDataAttrs"
+      @update:model-value="emit('update:draft', $event)"
+      @update:mode="emit('update:mode', $event)"
+      @update:permission="emit('update:permission', $event)"
+      @update:mode-version-id="modeVersionId = $event"
+      @welcome-submit="onWelcomeSubmit"
+      @submit="onComposerSubmit"
+      @create-project="emit('create-project')"
+      @select-project="emit('select-project', $event)"
+    />
   </section>
 </template>
-

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import settingsCss from './settings.css?raw'
 import stylesCss from '../styles.css?raw'
+import composerBarSource from '../components/ComposerBar.vue?raw'
 import uieStackSource from '../../../TinadecUI/src/components/UieStack.vue?raw'
 import settingsPageSource from '../pages/SettingsPage.vue?raw'
 import agentEvolutionPanelSource from '../components/AgentEvolutionPanel.vue?raw'
@@ -506,15 +507,14 @@ describe('styles.css extraction contract', () => {
     const panel = assertCssBlock(css, /\.chat-active-panel\s*\{([^}]+)\}/)
     expect(panel).toContain('background: transparent')
 
-    // Composer + welcome dialog follow the material via the denser input token
-    // so they stay readable in translucent/blur modes.
-    const composer = assertCssBlock(css, /\.composer-box\s*\{([^}]+)\}/)
-    expect(composer).toContain('background: var(--surface-input);')
+    // The composer box is ONE element across hero and docked states: it carries
+    // the .welcome-dialog class and inherits the welcome dialog's material
+    // (background, radius, shadow, blur) instead of redeclaring divergent rules.
+    expect(composerBarSource).toMatch(/class="composer-box welcome-dialog"/)
     const welcome = assertCssBlock(css, /\.welcome-dialog\s*\{([^}]+)\}/)
     expect(welcome).toContain('background: var(--surface-input);')
 
-    // Frosted-glass composer under the blur material.
-    expect(css).toMatch(/\[data-panel-effect="blur"\] \.composer-box\s*\{[^}]*backdrop-filter:\s*var\(--material-filter-section[^}]*\}/)
+    // Frosted-glass welcome dialog (the shared composer box) under the blur material.
     expect(css).toMatch(/\[data-panel-effect="blur"\] \.welcome-dialog\s*\{[^}]*backdrop-filter:\s*var\(--material-filter-section[^}]*\}/)
 
     // The welcome dialog stays adaptive to the conversation zone width (not a
@@ -522,6 +522,9 @@ describe('styles.css extraction contract', () => {
     const welcomeBlock = assertCssBlock(css, /\.welcome-dialog\s*\{([^}]+)\}/)
     expect(welcomeBlock).toMatch(/width:\s*100%;/)
     expect(welcomeBlock).toMatch(/max-width:\s*820px;/)
+
+    // styles.css must not re-declare divergent composer-box visuals.
+    expect(css).not.toMatch(/\.composer-box\s*\{/)
   })
 
   it('renders immersive stacks with a transparent material root', () => {

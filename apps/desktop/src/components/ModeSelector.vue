@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChevronDown, Map, FileSearch, HelpCircle, Sparkles, Zap, Network } from '@lucide/vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ChevronDown, FileSearch, HelpCircle, Map, Sparkles, Zap, Network } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { usePanelStyles } from '@/composables/usePanelStyles'
+import { api, type AgentModeTopologyDto } from '@/api'
 import type { AgentMode } from '@/types/mode'
 
 const { t } = useI18n()
@@ -27,10 +28,13 @@ const modes = computed<ModeOption[]>(() => [
 
 const props = defineProps<{
   modelValue: AgentMode
+  /** Explicit published ModeVersion override; null = follow the agent-mode default. */
+  modeVersionId?: string | null
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: AgentMode]
+  'update:modeVersionId': [value: string | null]
 }>()
 
 const showDropdown = ref(false)
@@ -38,6 +42,33 @@ const triggerRef = ref<HTMLElement | null>(null)
 const dropdownStyle = ref<Record<string, string>>({})
 
 const currentMode = computed(() => modes.value.find(m => m.key === props.modelValue) ?? modes.value[0])
+
+// ONE mode selector: the dropdown merges the agent-mode fallback ("follow
+// default") with the workspace's published ModeVersions. When the workspace
+// has no published versions yet (pack not installed), it falls back to the
+// plain agent-mode enum list.
+const modeVersions = ref<AgentModeTopologyDto[]>([])
+const selectedVersion = computed(() =>
+  modeVersions.value.find(v => v.id === props.modeVersionId) ?? null
+)
+const triggerLabel = computed(() => selectedVersion.value?.display_name ?? currentMode.value.label)
+
+async function loadModeVersions() {
+  try {
+    const list = await api.listAgentModeTopologies()
+    modeVersions.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
+  } catch { /* gateway offline */ }
+}
+
+function selectVersion(id: string | null) {
+  emit('update:modeVersionId', id)
+  showDropdown.value = false
+}
+
+function selectMode(key: AgentMode) {
+  emit('update:modelValue', key)
+  showDropdown.value = false
+}
 
 function updateDropdownPosition() {
   const trigger = triggerRef.value
@@ -80,11 +111,6 @@ async function toggleDropdown() {
   }
 }
 
-function selectMode(key: AgentMode) {
-  emit('update:modelValue', key)
-  showDropdown.value = false
-}
-
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
   if (!target.closest('.mode-selector-trigger') && !target.closest('.mode-selector-portal')) {
@@ -92,7 +118,10 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
-onMounted(() => document.addEventListener('click', handleClickOutside))
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+  void loadModeVersions()
+})
 onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 </script>
 
@@ -101,10 +130,11 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
     <button
       ref="triggerRef"
       class="mode-selector-trigger"
+      :title="t('chat.modeVersion')"
       @click="toggleDropdown"
     >
-      <component :is="currentMode.icon" :size="14" />
-      <span class="mode-selector-label">{{ currentMode.label }}</span>
+      <component :is="selectedVersion ? Sparkles : currentMode.icon" :size="14" />
+      <span class="mode-selector-label">{{ triggerLabel }}</span>
       <ChevronDown :size="12" class="mode-selector-chevron" />
     </button>
 
@@ -115,16 +145,39 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :style="[dropdownStyle, panelStyle]"
         v-bind="panelDataAttrs"
       >
-        <button
-          v-for="mode in modes"
-          :key="mode.key"
-          class="mode-selector-item"
-          :class="{ active: mode.key === modelValue }"
-          @click="selectMode(mode.key)"
-        >
-          <component :is="mode.icon" :size="14" />
-          <span>{{ mode.label }}</span>
-        </button>
+        <template v-if="modeVersions.length">
+          <button
+            class="mode-selector-item"
+            :class="{ active: !modeVersionId }"
+            @click="selectVersion(null)"
+          >
+            <component :is="currentMode.icon" :size="14" />
+            <span>{{ t('chat.followDefault') }}</span>
+          </button>
+          <div class="mode-selector-separator" />
+          <button
+            v-for="m in modeVersions"
+            :key="m.id"
+            class="mode-selector-item"
+            :class="{ active: m.id === modeVersionId }"
+            @click="selectVersion(m.id)"
+          >
+            <Sparkles :size="14" />
+            <span>{{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}</span>
+          </button>
+        </template>
+        <template v-else>
+          <button
+            v-for="mode in modes"
+            :key="mode.key"
+            class="mode-selector-item"
+            :class="{ active: mode.key === modelValue }"
+            @click="selectMode(mode.key)"
+          >
+            <component :is="mode.icon" :size="14" />
+            <span>{{ mode.label }}</span>
+          </button>
+        </template>
       </div>
     </Teleport>
   </div>
