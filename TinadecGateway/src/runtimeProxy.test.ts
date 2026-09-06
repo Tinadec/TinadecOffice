@@ -262,7 +262,7 @@ test('governance control routes proxy decisions and grants without local authori
   assert.deepEqual(JSON.parse(requests[2]!.body ?? ''), { approve: true });
 });
 
-test('invoke-stream preserves the full-duplex request envelope and Core SSE response', { concurrency: false }, async () => {
+test('invoke-stream proxy is retired and never reaches Core', { concurrency: false }, async () => {
   let forwarded: { url: string; method: string; body: string | undefined } | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     forwarded = {
@@ -291,14 +291,11 @@ test('invoke-stream preserves the full-duplex request envelope and Core SSE resp
     body: JSON.stringify(envelope)
   }));
 
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/);
-  assert.equal(await response.text(), 'data: {"kind":"ack","seq":1}\n\n');
-  assert.deepEqual(forwarded, {
-    url: 'http://127.0.0.1:48731/api/v1/sessions/session-1/invoke-stream',
-    method: 'POST',
-    body: JSON.stringify(envelope)
-  });
+  // The legacy wire is gone end to end (plan §4.3 item 4): Core deleted the
+  // route, the Gateway proxy is removed with it. Submissions go through
+  // POST /sessions/{id}/interactions + GET /runs/{runId}/stream.
+  assert.notEqual(response.status, 200);
+  assert.equal(forwarded, undefined);
 });
 
 test('tool catalog routes are Core-owned and do not use Gateway risk metadata', { concurrency: false }, async () => {

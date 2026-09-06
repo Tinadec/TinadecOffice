@@ -2286,26 +2286,6 @@
         "tags": [
           "Agents"
         ]
-      },
-      "put": {
-        "operationId": "putApiV1AgentsByAgentId",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "agentId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Update agent",
-        "tags": [
-          "AgentCenter"
-        ]
       }
     },
     "/api/v1/agents/{agentId}/archive": {
@@ -2369,6 +2349,29 @@
           "200": {}
         },
         "summary": "Publish agent",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agentId}/runtime-binding": {
+      "put": {
+        "description": "User-level model/tool override for one agent (inherit or fixed provider+model). Works for pack-managed agents; survives pack reinstalls.",
+        "operationId": "putApiV1AgentsByAgentIdRuntime-binding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Set agent runtime binding",
         "tags": [
           "Agents"
         ]
@@ -2718,7 +2721,7 @@
     },
     "/api/v1/events": {
       "get": {
-        "description": "SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, id=seq, Last-Event-ID / ?cursor resume",
+        "description": "Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume",
         "operationId": "getApiV1Events",
         "responses": {
           "200": {}
@@ -3449,6 +3452,19 @@
         "summary": "Page model invocation audit records",
         "tags": [
           "ModelCenter"
+        ]
+      }
+    },
+    "/api/v1/model-probe": {
+      "post": {
+        "description": "One minimal real completion through the resolved chat route (1 token, 10s timeout, 60s result cache). ?force=true bypasses the cache.",
+        "operationId": "postApiV1Model-probe",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Model connectivity probe",
+        "tags": [
+          "Health"
         ]
       }
     },
@@ -4655,7 +4671,7 @@
     },
     "/api/v1/runs/{runId}/stream": {
       "get": {
-        "description": "Durable SSE with id=seq, Last-Event-ID / ?cursor= & ?after_seq resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update",
+        "description": "Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment \": heartbeat\" that never advances the cursor",
         "operationId": "getApiV1RunsByRunIdStream",
         "parameters": [
           {
@@ -5021,60 +5037,6 @@
         "summary": "Reassign interaction",
         "tags": [
           "Interactions"
-        ]
-      }
-    },
-    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/stream": {
-      "get": {
-        "description": "Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update",
-        "operationId": "getApiV1SessionsBySessionIdInteractionsByInteractionIdStream",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "interactionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Stream interaction SSE",
-        "tags": [
-          "Interactions"
-        ]
-      }
-    },
-    "/api/v1/sessions/{sessionId}/invoke-stream": {
-      "post": {
-        "description": "5 required: content, client_message_id, application_mode, agent_mode, permission_mode + 2 optional: target_run_id, expected_context_revision. SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, fixed fields run_id/turn_id/message_id/seq/kind/occurred_at/payload, id=seq",
-        "operationId": "postApiV1SessionsBySessionIdInvoke-stream",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Full-duplex invoke-stream",
-        "tags": [
-          "Runs"
         ]
       }
     },

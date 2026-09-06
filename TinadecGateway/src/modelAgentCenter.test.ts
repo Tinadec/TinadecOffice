@@ -18,8 +18,11 @@ test('removed BFF routes return 404 (no dual-track)', async () => {
   const res2 = await app.handle(new Request('http://gateway.local/api/v1/agent-center/overview'));
   assert.equal(res2.status, 404);
 
+  // PUT /agents/:id/runtime-binding was a ghost 404 route; it is now a real
+  // thin proxy (plan 配置体验改造 A). With Core unreachable in unit tests the
+  // proxy fails with 502/bad-gateway, not 404 — proving the route exists.
   const res3 = await app.handle(new Request('http://gateway.local/api/v1/agents/agent-1/runtime-binding', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ selection_kind: 'inherit' }) }));
-  assert.equal(res3.status, 404);
+  assert.notEqual(res3.status, 404);
 
   // Deleted model-center refresh alias; canonical path is POST /model-providers/{id}/models/refresh.
   const res4 = await app.handle(new Request('http://gateway.local/api/v1/model-center/provider-instances/p1/models/refresh', { method: 'POST' }));
@@ -148,16 +151,13 @@ test('interactions thin proxy validates dispatch_mode and insert target_run_id b
   assert.equal(proxied, 2);
 });
 
-test('interactions reassign/cancel and SSE stream proxy Last-Event-ID', async () => {
+test('interactions reassign/cancel thin proxy; per-interaction stream route removed', async () => {
   const requests: Array<{ url: string; headers: Record<string,string> }> = [];
   mockFetch((input, init) => {
     const url = typeof input === 'string' ? input : input.toString();
     const headers: Record<string,string> = {};
     if (init?.headers) new Headers(init.headers as HeadersInit).forEach((v,k)=>headers[k]=v);
     requests.push({ url, headers });
-    if (url.includes('/stream')) {
-      return new Response('data: {"kind":"ack"}\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } });
-    }
     return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   });
   const rReassign = await app.handle(new Request('http://gateway.local/api/v1/sessions/sess-1/interactions/inter-1/reassign', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agent_id: 'agent-1' }) }));
@@ -165,10 +165,13 @@ test('interactions reassign/cancel and SSE stream proxy Last-Event-ID', async ()
   assert.ok(requests.some(r => r.url === 'http://127.0.0.1:48731/api/v1/sessions/sess-1/interactions/inter-1/reassign'));
   const rCancel = await app.handle(new Request('http://gateway.local/api/v1/sessions/sess-1/interactions/inter-1/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) }));
   assert.equal(rCancel.status, 200);
+  // The dangling per-interaction stream proxy was removed: Core never implemented
+  // GET /api/v1/sessions/{id}/interactions/{id}/stream. Results stream from
+  // GET /api/v1/runs/{runId}/stream instead, so this path must 404 locally and
+  // never reach Core.
   const rStream = await app.handle(new Request('http://gateway.local/api/v1/sessions/sess-1/interactions/inter-1/stream', { headers: { 'last-event-id': '42' } }));
-  assert.equal(rStream.status, 200);
-  const streamReq = requests.find(r => r.url.includes('/stream'))!;
-  assert.equal(streamReq.headers['last-event-id'], '42');
+  assert.equal(rStream.status, 404);
+  assert.ok(!requests.some(r => r.url.includes('/stream')));
 });
 
 test('model-providers models/refresh thin proxy forwards POST and maps discovery errors', async () => {

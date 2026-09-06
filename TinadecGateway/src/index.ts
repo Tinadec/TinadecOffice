@@ -28,7 +28,6 @@ import { mapReadiness, mapModelReadiness } from './mappers/readinessMapper.js';
 import { mapOrchestration } from './mappers/orchestrationMapper.js';
 import { mapTaskNodes } from './mappers/taskNodeMapper.js';
 import { mapContextVersions } from './mappers/contextVersionMapper.js';
-import { validateInvokeStreamBody, toCoreInvokeStreamBody } from './mappers/invokeStreamMapper.js';
 import { mapCoreErrorToExternal, toProblemDetails } from './mappers/errorMapper.js';
 import {
   agentPackApplyHeaderParameters,
@@ -248,6 +247,15 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapModelReadiness(result.data);
   }, { detail: { summary: 'Model readiness', tags: ['Health'] } })
+  .post('/api/v1/model-probe', async ({ set, request, query }) => {
+    const headers = forwardHeaders(request);
+    const force = (query as Record<string, unknown>).force === true || (query as Record<string, unknown>).force === 'true' ? '?force=true' : '';
+    const result = await proxyJson(`/api/v1/model-probe${force}`, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/model-probe'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Model connectivity probe', tags: ['Health'], description: 'One minimal real completion through the resolved chat route (1 token, 10s timeout, 60s result cache). ?force=true bypasses the cache.' } })
   .get('/api/v1/model-catalog-readiness', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/model-catalog-readiness', { headers });
@@ -529,38 +537,9 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Create message (compat)', tags: ['Messages'] }, body: t.Object({ content: t.String() }) })
-  .post('/api/v1/sessions/:sessionId/invoke-stream', async ({ params, body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const validation = validateInvokeStreamBody(body);
-    if (!validation.ok) {
-      setStatus(set, 400);
-      set.headers['content-type'] = 'application/problem+json';
-      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-      return toProblemDetails(400, 'invalid_request', validation.errors.join('; '), `/api/v1/sessions/${params.sessionId}/invoke-stream`, (headers as Record<string,string>)['x-request-id']);
-    }
-    const coreBody = toCoreInvokeStreamBody(validation.value);
-    const response = await proxySse(`/api/v1/sessions/${params.sessionId}/invoke-stream`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(coreBody)
-    });
-    if (response.status >= 400) {
-      const text = await response.text();
-      let data: unknown = null;
-      try { data = JSON.parse(text); } catch { data = { message: text }; }
-      setStatus(set, response.status);
-      set.headers['content-type'] = 'application/problem+json';
-      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-      return mapCoreErrorToExternal(response.status, data, `/api/v1/sessions/${params.sessionId}/invoke-stream`);
-    }
-    setStatus(set, response.status);
-    set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
-    set.headers['cache-control'] = 'no-cache';
-    set.headers['connection'] = 'keep-alive';
-    set.headers['x-accel-buffering'] = 'no';
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return response.body;
-  }, { detail: { summary: 'Full-duplex invoke-stream', tags: ['Runs'], description: '5 required: content, client_message_id, application_mode, agent_mode, permission_mode + 2 optional: target_run_id, expected_context_revision. SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, fixed fields run_id/turn_id/message_id/seq/kind/occurred_at/payload, id=seq' } })
+  // POST /api/v1/sessions/:sessionId/invoke-stream retired (plan §4.3 item 4):
+  // Desktop now submits via POST /sessions/{id}/interactions and follows
+  // GET /runs/{runId}/stream. The Gateway proxy is removed with the Core route.
   .get('/api/v1/sessions/:sessionId/orchestration', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}/orchestration`, { headers });
@@ -615,7 +594,7 @@ const app = new Elysia()
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return response.body;
-  }, { detail: { summary: 'Run stream (SSE)', tags: ['Runs'], description: 'Durable SSE with id=seq, Last-Event-ID / ?cursor= & ?after_seq resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update' } })
+  }, { detail: { summary: 'Run stream (SSE)', tags: ['Runs'], description: 'Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor' } })
   .get('/api/v1/runs/:runId/task-nodes', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     // Core stores task nodes per session; runId alone insufficient. Try run-scoped first, fallback to session-derived via orchestration.
@@ -785,7 +764,7 @@ const app = new Elysia()
     set.headers['x-accel-buffering'] = 'no';
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return response.body;
-  }, { detail: { summary: 'Session events SSE', tags: ['System'], description: 'SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, id=seq, Last-Event-ID / ?cursor resume' } })
+  }, { detail: { summary: 'Session events SSE', tags: ['System'], description: 'Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume' } })
   .get('/api/v1/approvals', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const params = new URLSearchParams();
@@ -1520,14 +1499,8 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List agents', tags: ['Agents'] } })
-  .put('/api/v1/agents/:agentId', async ({ params, body, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/agents/${params.agentId}`, { method: 'PUT', body: body as Record<string, unknown>, headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Update agent', tags: ['AgentCenter'] } })
+  // PUT /api/v1/agents/:agentId removed — Core only has /draft + /publish;
+  // the phantom route always answered 404 (plan 配置体验改造 A).
   // --- Thin proxy: agents CRUD + draft/publish/archive/versions (snake_case passthrough) ---
   .post('/api/v1/agents', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
@@ -1546,6 +1519,15 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Get agent', tags: ['Agents'] } })
+  // 用户级运行时绑定（plan 配置体验改造 A）：pack 管理的智能体也可写。
+  .put('/api/v1/agents/:agentId/runtime-binding', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/agents/${params.agentId}/runtime-binding`, { method: 'PUT', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/agents/${params.agentId}/runtime-binding`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Set agent runtime binding', tags: ['Agents'], description: 'User-level model/tool override for one agent (inherit or fixed provider+model). Works for pack-managed agents; survives pack reinstalls.' } })
   .put('/api/v1/agents/:agentId/draft', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/agents/${params.agentId}/draft`, { method: 'PUT', body: body as Record<string, unknown>, headers });
@@ -1756,30 +1738,9 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Cancel interaction', tags: ['Interactions'] } })
-  .get('/api/v1/sessions/:sessionId/interactions/:interactionId/stream', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const search = new URL(request.url).search;
-    const cursor = request.headers.get('last-event-id') ?? request.headers.get('Last-Event-ID') ?? new URL(request.url).searchParams.get('cursor') ?? new URL(request.url).searchParams.get('after_seq');
-    const corePath = `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/stream${search}`;
-    const responseHeaders: Record<string,string> = { ...headers } as Record<string,string>;
-    if (cursor) responseHeaders['last-event-id'] = String(cursor);
-    const response = await proxySse(corePath, { headers: responseHeaders });
-    if (response.status >= 400) {
-      const text = await response.text();
-      let data: unknown = null; try { data = JSON.parse(text); } catch { data = { message: text }; }
-      setStatus(set, response.status);
-      set.headers['content-type'] = 'application/problem+json';
-      setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-      return mapCoreErrorToExternal(response.status, data, `/api/v1/sessions/${params.sessionId}/interactions/${params.interactionId}/stream`);
-    }
-    setStatus(set, response.status);
-    set.headers['content-type'] = response.headers.get('content-type') ?? 'text/event-stream';
-    set.headers['cache-control'] = 'no-cache';
-    set.headers['connection'] = 'keep-alive';
-    set.headers['x-accel-buffering'] = 'no';
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return response.body;
-  }, { detail: { summary: 'Stream interaction SSE', tags: ['Interactions'], description: 'Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update' } })
+  // The legacy per-interaction stream proxy was removed: Core never implemented
+  // GET /api/v1/sessions/{id}/interactions/{id}/stream, so this route could only
+  // ever answer 404. Interaction results stream from GET /api/v1/runs/{runId}/stream.
   .get('/api/v1/agent-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
@@ -2142,6 +2103,15 @@ const app = new Elysia()
   }, { detail: { summary: 'Stream session logs', tags: ['System'] } })
   .get('/api/v1/tool-runtime/health', async ({ set, request }) => {
     const headers = forwardHeaders(request);
+    // No standalone Tool Runtime configured: Core's tool provider is the
+    // authority and its tool-layer readiness probe is the health fact.
+    if (!toolRuntimeUrl()) {
+      const core = await proxyJson('/api/v1/tool-layer-readiness', { headers });
+      setStatus(set, core.status);
+      if (core.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(core.status, core.data, '/api/v1/tool-runtime/health'); }
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], core.headers);
+      return core.data;
+    }
     const result = await proxyToolRuntimeJson('/api/v1/health', { headers } as never);
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
@@ -2149,6 +2119,16 @@ const app = new Elysia()
   }, { detail: { summary: 'Tool provider health', tags: ['System'] } })
   .get('/api/v1/tool-runtime/manifest', async ({ set, request }) => {
     const headers = forwardHeaders(request);
+    if (!toolRuntimeUrl()) {
+      // Explicit refusal instead of a silent empty manifest: Core owns the
+      // manifest facts via tool-layer-readiness (hash + unresolved tools).
+      setStatus(set, 501);
+      set.headers['content-type'] = 'application/problem+json';
+      return {
+        code: 'tool_runtime_not_configured',
+        message: 'No standalone Tool Runtime is configured. The Core tool provider owns the manifest: use /api/v1/tool-layer-readiness or /api/v1/tools.',
+      };
+    }
     const result = await proxyToolRuntimeJson('/api/v1/manifest', { headers } as never);
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
@@ -2156,6 +2136,13 @@ const app = new Elysia()
   }, { detail: { summary: 'Tool provider manifest', tags: ['System'] } })
   .get('/api/v1/tool-runtime/tools', async ({ set, request }) => {
     const headers = forwardHeaders(request);
+    if (!toolRuntimeUrl()) {
+      const core = await proxyJson('/api/v1/tools', { headers });
+      setStatus(set, core.status);
+      if (core.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(core.status, core.data, '/api/v1/tool-runtime/tools'); }
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], core.headers);
+      return core.data;
+    }
     const result = await proxyToolRuntimeJson('/api/v1/tools', { headers } as never);
     setStatus(set, result.status);
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
@@ -2179,5 +2166,5 @@ if (import.meta.main) {
   app.listen({ port: config.port, hostname: config.hostname });
   console.log(`TinadecGateway listening on http://${config.hostname}:${config.port} (${config.mode} mode)`);
   console.log(`  Core:         ${coreUrl()}`);
-  console.log(`  Tool Runtime: ${toolRuntimeUrl()}`);
+  console.log(`  Tool Runtime: ${toolRuntimeUrl() || '(not configured; Core tool provider is authoritative)'}`);
 }

@@ -26,7 +26,7 @@ export interface GatewayConfig {
   hostname: string;
   /** Core 服务 URL */
   coreUrl: string;
-  /** Tool Runtime 服务 URL */
+  /** Tool Runtime 服务 URL；空字符串 = 未配置独立工具运行时（Core 工具 provider 为权威入口） */
   toolRuntimeUrl: string;
   /** 认证配置（仅云端模式） */
   auth?: AuthConfig;
@@ -69,7 +69,9 @@ export function loadConfig(): GatewayConfig {
   const port = getEnvNumber('TINADEC_GATEWAY_PORT', 48730);
   const hostname = isCloud ? '0.0.0.0' : '127.0.0.1';
   const coreUrl = getEnv('TINADEC_CORE_URL', 'http://127.0.0.1:48731');
-  const toolRuntimeUrl = getEnv('TINADEC_TOOL_RUNTIME_URL', 'http://127.0.0.1:48732');
+  // No silent default: a standalone Tool Runtime is opt-in. When unset, the
+  // /api/v1/tool-runtime/* read routes fall back to Core's tool provider.
+  const toolRuntimeUrl = getEnv('TINADEC_TOOL_RUNTIME_URL', '');
 
   const authRequired = isCloud && process.env.TINADEC_GATEWAY_AUTH_REQUIRED !== 'false';
   const jwtSecret = process.env.TINADEC_GATEWAY_JWT_SECRET;

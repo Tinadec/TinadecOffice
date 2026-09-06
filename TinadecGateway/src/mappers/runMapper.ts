@@ -1,3 +1,5 @@
+import { normalizeRunStatus, RUN_STATUSES } from '../contracts/runStatuses.js';
+
 export interface ExternalRunDto {
   id: string;
   session_id: string;
@@ -22,7 +24,7 @@ export function mapRun(core: unknown): ExternalRunDto | null {
     id,
     session_id: String(core.session_id ?? core.sessionId ?? ''),
     trigger_message_id: (core.trigger_message_id as string) ?? (core.triggerMessageId as string) ?? null,
-    status: String(core.status ?? 'unknown'),
+    status: normalizeRunStatus(String(core.status ?? 'unknown')),
     summary: (core.summary as string) ?? null,
     task_revision: (core.task_revision as number) ?? (core.taskRevision as number) ?? null,
     latest_event_sequence: (core.latest_event_sequence as number) ?? (core.latestEventSequence as number) ?? null,
@@ -38,11 +40,5 @@ export function mapRuns(core: unknown): ExternalRunDto[] {
   return [];
 }
 
-// 10-state validator
-export const RUN_STATUSES = new Set(['planning','understanding','executing','replanning','awaiting_approval','awaiting_delegate','awaiting_user','paused','reviewing','completed','failed','cancelled']);
+export { normalizeRunStatus, RUN_STATUSES };
 
-export function normalizeRunStatus(status: string): string {
-  const s = status.toLowerCase();
-  if (s === 'planning') return 'planning';
-  return RUN_STATUSES.has(s) ? s : s;
-}
