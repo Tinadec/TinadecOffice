@@ -5,10 +5,9 @@ import MessageList from './MessageList.vue'
 import ComposerBar from './ComposerBar.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
-import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto } from '../api'
+import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto, MeetingModelOverrideDto } from '../api'
 import type { AgentMode, PermissionLevel } from '@/types/mode'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
-import { getMeetingModelPref } from '@/lib/dispatchPref'
 
 const props = defineProps<{
   messages: MessageDto[]
@@ -36,7 +35,7 @@ const emit = defineEmits<{
   'update:draft': [value: string]
   'update:mode': [value: AgentMode]
   'update:permission': [value: PermissionLevel]
-  'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }]
+  'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }]
   'welcome-send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }]
   'create-project': []
   'select-project': [id: string]
@@ -44,13 +43,16 @@ const emit = defineEmits<{
   'reject': [approvalId: string]
 }>()
 
-function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model?: string | null }) {
+// meeting_model_override 原样透传。此前这里把它读成 `payload.meeting_model`（字符串）
+// 再以 `meeting_model` 键 emit，`as never` 压掉了类型错误，HomeController 读
+// `meeting_model_override` 于是永远拿到 undefined —— 会话级会议模型覆写一路被丢。
+function onComposerSubmit(payload: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) {
   emit('send', {
     dispatch_mode: payload.dispatch_mode,
     target_run_id: payload.target_run_id ?? null,
     mode_version_id: payload.mode_version_id ?? null,
-    meeting_model: payload.meeting_model?.trim() || getMeetingModelPref() || null,
-  } as never)
+    meeting_model_override: payload.meeting_model_override ?? null,
+  })
 }
 
 function onWelcomeSubmit(payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }) {

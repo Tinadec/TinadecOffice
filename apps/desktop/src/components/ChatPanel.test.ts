@@ -114,3 +114,40 @@ describe('ChatPanel persistent composer', () => {
     document.body.innerHTML = ''
   })
 })
+
+describe('ChatPanel send payload', () => {
+  /**
+   * 回归护栏：此前这里把 composer 的 `meeting_model_override`（对象）读成
+   * `payload.meeting_model`（字符串）再以 `meeting_model` 键 emit，`as never`
+   * 压掉了类型错误，HomeController 于是永远拿到 undefined。
+   */
+  it('passes the composer meeting_model_override object through verbatim', async () => {
+    const override = { provider_instance_id: 'prov-1', model: 'gpt-x' }
+    const wrapper = mount(ChatPanel, {
+      props: {
+        ...baseProps,
+        messages: [msg('m1')],
+        currentSession: { id: 's1', meeting_model_override: override } as never,
+      },
+      global: { stubs: { ChatHeader: true, MessageList: true } },
+    })
+    await nextTick()
+
+    wrapper.findComponent({ name: 'ComposerBar' }).vm.$emit('submit', {
+      dispatch_mode: 'queued',
+      target_run_id: null,
+      mode_version_id: null,
+      meeting_model_override: override,
+    })
+    await nextTick()
+
+    expect(wrapper.emitted('send')![0]![0]).toEqual({
+      dispatch_mode: 'queued',
+      target_run_id: null,
+      mode_version_id: null,
+      meeting_model_override: override,
+    })
+    wrapper.unmount()
+    document.body.innerHTML = ''
+  })
+})

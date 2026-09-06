@@ -5,13 +5,7 @@ import { Radar, RefreshCw, Save, ShieldCheck } from '@lucide/vue'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
 import { api } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
-import {
-  getDispatchPref,
-  getMeetingModelPref,
-  setDispatchPref,
-  setMeetingModelPref,
-  type DispatchPref,
-} from '@/lib/dispatchPref'
+import { getDispatchPref, setDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 
 /**
  * General section extracted from SettingsPage (D7.2).
@@ -35,7 +29,6 @@ const gatewayUrlDraft = ref(api.gatewayUrl)
 const gatewayConfigBusy = ref(false)
 const gatewayConnectionState = ref<'idle' | 'testing' | 'ready' | 'failed'>('idle')
 const enterPrefDraft = ref<DispatchPref>(getDispatchPref())
-const meetingModelDraft = ref<string>(getMeetingModelPref())
 
 async function loadAppConfig(): Promise<void> {
   appConfig.value = await window.tinadec.getAppConfig()
@@ -161,11 +154,6 @@ function onEnterPrefChange(e: Event): void {
   const v = (e.target as HTMLSelectElement).value as DispatchPref
   enterPrefDraft.value = v
   setDispatchPref(v)
-}
-
-function onMeetingModelChange(v: string): void {
-  meetingModelDraft.value = v
-  setMeetingModelPref(v)
 }
 
 onMounted(() => {
@@ -297,20 +285,6 @@ void dismissConfirm
         <div>
           <h3 id="dispatch-settings-title">{{ t('settings.dispatchBehavior') }}</h3>
           <p>{{ t('settings.dispatchBehaviorHint') }}</p>
-        </div>
-      </div>
-
-      <div class="gateway-config-field">
-        <UiLabel for="meeting-model-pref">{{ t('settings.defaultMeetingModel') }}</UiLabel>
-        <UiInput
-          id="meeting-model-pref"
-          :model-value="meetingModelDraft"
-          :placeholder="t('settings.defaultMeetingModelPlaceholder')"
-          class="settings-input"
-          @update:model-value="onMeetingModelChange"
-        />
-        <div class="gateway-config-meta">
-          <span>{{ t('settings.defaultMeetingModelHint') }}</span>
         </div>
       </div>
 

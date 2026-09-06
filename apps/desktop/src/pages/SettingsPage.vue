@@ -450,7 +450,7 @@ const firstNeedsKeyProvider = computed(() =>
 )
 
 const agentRuntimeBindings = computed(() =>
-  Object.fromEntries(agents.value.map((agent) => [agent.id, bindingFromModelStrategy(agent)]))
+  Object.fromEntries(agents.value.map((agent) => [agent.id, bindingFromModelStrategy(agent, agent.model_binding)]))
 )
 const topologyAgentLabels = computed(() => Object.fromEntries(
   agents.value.map((agent) => [agent.id, agentTypeLabel(agent.agent_type)])
@@ -458,11 +458,10 @@ const topologyAgentLabels = computed(() => Object.fromEntries(
 const topologyCandidateLabels = computed(() => Object.fromEntries(
   agentCandidates.value.map((candidate) => [candidate.id, agentTypeLabel(candidate.agent_type)])
 ))
-const configuringRuntimeBinding = computed(() =>
-  agents.value.find((agent) => agent.id === configuringAgentId.value)
-    ? bindingFromModelStrategy(agents.value.find((agent) => agent.id === configuringAgentId.value)!)
-    : null
-)
+const configuringRuntimeBinding = computed(() => {
+  const agent = agents.value.find((item) => item.id === configuringAgentId.value)
+  return agent ? bindingFromModelStrategy(agent, agent.model_binding) : null
+})
 const configuringLegacyWarning = computed(() => legacyRouteWarning(configuringRuntimeBinding.value))
 const configuringDirectoryItem = computed(() =>
   agentDirectory.value.find((item) => item.id === configuringAgentId.value) ?? null
@@ -487,6 +486,21 @@ function agentPreviewLine(modeSlug: string, nodeKey: string, preview: { expected
     ? `${selection.provider_instance_id ?? '—'}${selection.model ? ` · ${selection.model}` : ''}`
     : '—'
   return `${modeSlug}:${nodeKey} → ${target}`
+}
+
+/**
+ * 「模型来源」摘要。inherit 态也要有证据：Core 的 `effective_previews`
+ * 已经解析出实际 provider+model，这里把它喂给 runtimeSourceSummary，
+ * 免得「跟随默认」永远显示成「尚未解析」。
+ */
+function agentRuntimeSummary(agentId: string | null | undefined): string {
+  if (!agentId) return ''
+  const item = agentDirectory.value.find((entry) => entry.id === agentId)
+  return runtimeSourceSummary(
+    agentRuntimeBindings.value[agentId],
+    item?.effective_previews ?? null,
+    (providerInstanceId) => providers.value.find((provider) => provider.id === providerInstanceId)?.display_name ?? null,
+  )
 }
 
 function agentInvocationLine(invocation: { provider_instance_id: string; model?: string | null; status: string; completed_at?: string | null }): string {
@@ -878,6 +892,23 @@ function modelsForProvider(providerId: string) {
   return (modelCenterOverview.value?.models ?? []).filter((model) => model.provider_instance_id === providerId)
 }
 
+async function setDefaultChatModel(providerInstanceId: string, modelId: string) {
+  modelCenterBusy.value = true
+  try {
+    // “设为默认模型”= 把 chat 路由指向该模型；路由/候选链等工程概念对用户隐藏。
+    const chatRoute = routes.value.find((route: { purpose: string }) => route.purpose === 'chat')
+    await api.saveModelRoute('chat', { candidates: [{ provider_instance_id: providerInstanceId, model: modelId }] },
+      undefined,
+      chatRoute?.revision != null ? { expected_revision: chatRoute.revision } : undefined)
+    notify.success(t('settings.defaultModelSet', { model: modelId }))
+    await loadModelCenter()
+  } catch (error) {
+    notify.error(error instanceof Error ? error : new Error(String(error)))
+  } finally {
+    modelCenterBusy.value = false
+  }
+}
+
 function openAddModelModal(providerId: string) {
   modelModalProviderId.value = providerId
   modelModalManual.value = ''
@@ -1123,6 +1154,9 @@ async function loadAgentCenter() {
           enabled: item.enabled,
           is_built_in: item.managed || item.source_kind !== 'custom' || managedAgentIds.has(item.id),
           model_strategy: item.configured_strategy as unknown as Record<string, unknown>,
+          // 用户级运行时绑定：这才是「在智能体中心设过的模型」。缺了它，保存成功后
+          // 重新 seed 会拿未变的定义策略把选择打回原样（症状：设置成功但立刻回弹）。
+          model_binding: item.model_binding ?? null,
           status: item.status,
           revision: item.revision,
           version: item.version,
@@ -1372,10 +1406,13 @@ function openAgentConfig(agent: AgentViewDto) {
   agentToolQuery.value = ''
   agentToolSourceFilter.value = 'all'
   agentToolRiskFilter.value = 'all'
-  const binding = bindingFromModelStrategy(agent)
+  // 从运行时绑定 seed（而不是 agent 定义策略）：绑定写入不改定义，只读定义会回弹。
+  const binding = bindingFromModelStrategy(agent, agent.model_binding)
   agentRuntimeSelection.value = binding?.selection_kind ?? 'inherit'
-  agentRuntimeModelKey.value = binding?.provider_instance_id && binding.model_id
-    ? modelOptionKey(binding.provider_instance_id, binding.model_id)
+  agentRuntimeModelKey.value = binding?.provider_instance_id
+    // CLI/ACP 运行时的 fixed 绑定没有 model：此时 key 就是裸 provider id
+    // （与 agentModelStrategy() 的 CLI/ACP 分支同一把钥匙）。
+    ? (binding.model_id ? modelOptionKey(binding.provider_instance_id, binding.model_id) : binding.provider_instance_id)
     : runtimeModels.value[0]
       ? modelOptionKey(runtimeModels.value[0].provider_instance_id, runtimeModels.value[0].model_id)
       : ''
@@ -1452,7 +1489,18 @@ async function saveAgentModelStrategy(agent: AgentViewDto) {
   if (!strategy) return
   agentRuntimeBusy.value = true
   try {
-    await publishAgentDraft(agent, { model_strategy: strategy } as Partial<AgentDefinitionDto>, agent.revision, t('settings.agentModelStrategyPublished', { name: agent.name }))
+    // 运行时绑定（配置体验改造 A）：覆盖记录，pack 管理的智能体同样可写，
+    // 不再走 draft/publish，也就没有 412/409 managed_resource_read_only。
+    // 三档原样透传。此前 route 被静默降级成 inherit，用户选「按用途路由」保存后
+    // 会变成「跟随默认」——Core 现已支持 mode='route' + route_purpose。
+    await api.putAgentRuntimeBinding(agent.id, {
+      mode: strategy.kind as 'inherit' | 'route' | 'fixed',
+      provider_instance_id: (strategy as { provider_instance_id?: string }).provider_instance_id ?? null,
+      model: (strategy as { model?: string | null }).model ?? null,
+      route_purpose: (strategy as { route_purpose?: string }).route_purpose ?? null,
+    })
+    notify.success(t('settings.runtimeBindingSaved', { name: agent.name }))
+    await loadAgentCenter()
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {
@@ -2152,6 +2200,15 @@ import '../settings/settings.css'
                   </div>
                   <UiBadge :variant="statusVariant(model.status)">{{ statusLabel(model.status) }}</UiBadge>
                   <UiButton
+                    variant="outline"
+                    size="sm"
+                    :disabled="modelCenterBusy"
+                    :title="t('settings.setDefaultModel')"
+                    @click="setDefaultChatModel(provider.id, model.model_id)"
+                  >
+                    {{ t('settings.setDefaultModel') }}
+                  </UiButton>
+                  <UiButton
                     variant="ghost"
                     size="sm"
                     :disabled="modelReferenceBusy[`${provider.id}:${model.model_id}`]"
@@ -2716,9 +2773,9 @@ import '../settings/settings.css'
                 <button class="agent-card-select" @click="openAgentConfig(agent)">
                   <div class="agent-card-icon"><Workflow :size="17" /></div>
                   <div class="agent-card-main">
-                    <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }} · {{ agent.id }}</span>
-                    <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
+                    <strong>{{ agent.name || agentTypeLabel(agent.agent_type) }}</strong>
+                    <span>{{ agent.description || agentSourceKindLabel(agentSourceKindFor(agent.id)) }}</span>
+                    <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
                     {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
@@ -2744,9 +2801,9 @@ import '../settings/settings.css'
                 <button class="agent-card-select" @click="openAgentConfig(agent)">
                   <div class="agent-card-icon execution"><Cpu :size="17" /></div>
                   <div class="agent-card-main">
-                    <strong>{{ agentTypeLabel(agent.agent_type) }}</strong>
-                    <span>{{ agentSourceKindLabel(agentSourceKindFor(agent.id)) }} · {{ agent.id }}</span>
-                    <small :title="runtimeSourceSummary(agentRuntimeBindings[agent.id])">{{ runtimeSourceSummary(agentRuntimeBindings[agent.id]) || t('settings.runtimeUnresolved') }}</small>
+                    <strong>{{ agent.name || agentTypeLabel(agent.agent_type) }}</strong>
+                    <span>{{ agent.description || agentSourceKindLabel(agentSourceKindFor(agent.id)) }}</span>
+                    <small :title="agentRuntimeSummary(agent.id)">{{ agentRuntimeSummary(agent.id) || t('settings.runtimeUnresolved') }}</small>
                   </div>
                   <UiBadge :variant="agent.enabled ? 'default' : 'secondary'">
                     {{ agent.enabled ? t('settings.defaultEnabled') : t('settings.statusDisabled') }}
@@ -2877,7 +2934,7 @@ import '../settings/settings.css'
                   </div>
                   <div>
                     <span>{{ t('settings.effectiveRuntime') }}</span>
-                    <strong>{{ runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }}</strong>
+                    <strong>{{ agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }}</strong>
                   </div>
                 </div>
 
@@ -2909,14 +2966,14 @@ import '../settings/settings.css'
 
                 <div v-if="agentRuntimeSelection === 'inherit'" class="runtime-source-current">
                   <ShieldCheck :size="16" />
-                  <span>{{ t('settings.runtimeInheritedCurrent', { source: runtimeSourceSummary(configuringRuntimeBinding) || t('settings.runtimeUnresolved') }) }}</span>
+                  <span>{{ t('settings.runtimeInheritedCurrent', { source: agentRuntimeSummary(configuringAgentId) || t('settings.runtimeUnresolved') }) }}</span>
                 </div>
                 <div v-else-if="agentRuntimeSelection === 'route'" class="settings-field runtime-source-picker">
                   <UiLabel>{{ t('settings.routePurpose') }}</UiLabel>
                   <select v-model="agentRuntimeRoutePurpose" class="settings-select">
-                    <option value="" disabled>{{ t('settings.selectRoutePurpose') }}</option>
-                    <option v-for="route in routes" :key="route.id ?? route.purpose" :value="route.purpose">
-                      {{ route.purpose }}
+                    <option value="" disabled>{{ t('settings.routePurpose') }}</option>
+                    <option v-for="route in routes" :key="route.id" :value="route.purpose">
+                      {{ route.purpose }} · {{ route.candidates.length }}
                     </option>
                   </select>
                   <p v-if="routes.length === 0" class="agent-config-hint">{{ t('settings.noRuntimeMatches') }}</p>

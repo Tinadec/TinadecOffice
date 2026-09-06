@@ -914,6 +914,11 @@ export interface AgentViewDto {
   role?: string;
   tool_scope?: string[] | string | null;
   model_strategy?: Record<string, unknown> | string | null;
+  /**
+   * 用户级运行时绑定覆盖（Core `agent_runtime_bindings`）。这才是「智能体中心设的模型」
+   * 的真值 —— `model_strategy` 只是 agent 定义里的策略，运行时绑定写入不会改动它。
+   */
+  model_binding?: AgentModelBindingDto | null;
   status?: string;
   version?: number | null;
 }
@@ -945,6 +950,23 @@ export interface AgentDirectoryItemDto {
   mode_usages: AgentModeUsageDto[];
   effective_previews: Record<string, ModelResolutionPreviewDto>;
   recent_invocation?: ModelInvocationDto | null;
+  updated_at: string;
+  /** 用户级运行时绑定覆盖（null = 未覆盖，跟随定义策略/默认路由）。 */
+  model_binding?: AgentModelBindingDto | null;
+}
+
+/**
+ * Core 的 `agent_runtime_bindings` 覆盖记录（`AgentRuntimeBindingDto`）。
+ * 与本文件里的桌面视图模型 `AgentRuntimeBindingDto` 同名不同形状 —— 那个是渲染用的
+ * 派生结构，这个是服务端真值，别混用。
+ */
+export interface AgentModelBindingDto {
+  mode: 'inherit' | 'route' | 'fixed';
+  provider_instance_id?: string | null;
+  model?: string | null;
+  route_purpose?: string | null;
+  tool_scope_override?: string[] | null;
+  revision: number;
   updated_at: string;
 }
 
@@ -1144,6 +1166,10 @@ export interface AgentModeTopologyWriteDto {
 export interface AgentModeTopologyDto {
   id: string;
   display_name: string;
+  /** 该 mode 最新已发布版本的 id —— 提交 interaction 时作为 mode_version_id 使用。 */
+  latest_published_mode_version_id?: string | null;
+  /** conversation.* 模式推导出的对话模式名（plan/spec/…）；工作区默认模式为 null。 */
+  application_mode?: string | null;
   summary?: string | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
@@ -2027,6 +2053,8 @@ export const api = {
   createAgentDraft: (body: Partial<AgentDefinitionDto>) => request<AgentDefinitionDto>('/api/v1/agents', { method: 'POST', body: JSON.stringify(body) }),
   updateAgentDraft: (id: string, body: Partial<AgentDefinitionDto>, etag?: string | null) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/draft`, { method: 'PUT', headers: etag ? { 'if-match': etag } : {}, body: JSON.stringify(body) }),
   publishAgent: (id: string, etag?: string | null) => request<{ id: string; version: number; revision: number; snapshot: AgentDefinitionDto }>(`/api/v1/agents/${encodeURIComponent(id)}/publish`, { method: 'POST', headers: etag ? { 'if-match': etag } : {} }),
+  // 用户级运行时绑定（配置体验改造 A）：pack 管理的智能体也可写，绕开 draft/publish。
+  putAgentRuntimeBinding: (id: string, body: { mode: 'inherit' | 'route' | 'fixed'; provider_instance_id?: string | null; model?: string | null; route_purpose?: string | null; tool_scope?: string[] | null }) => request<Record<string, unknown>>(`/api/v1/agents/${encodeURIComponent(id)}/runtime-binding`, { method: 'PUT', body: JSON.stringify(body) }),
   archiveAgent: (id: string) => request<AgentDefinitionDto>(`/api/v1/agents/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
   getWorkspaceDefaults: () => request<WorkspaceDefaultsDto>('/api/v1/workspace-defaults'),
   listAgentPacks: () => request<AgentPackDto[]>('/api/v1/agent-packs'),
@@ -2194,6 +2222,10 @@ export const api = {
 
   // --- Streaming Invoke (SSE) — external contract: 5 required + 2 optional, 8 kinds, fixed fields ---
   // Canonical DTO lives in src/generated/client.ts (openapi-typescript target); this file remains compat alias only.
+  // --- Streaming Invoke — compat adapter over the durable protocol (plan §4.3-4):
+  // POST /sessions/{id}/interactions (durable admission receipt) then GET
+  // /runs/{runId}/stream (id=seq, event=kind, occurred_at). Call sites keep their
+  // old signature; the legacy POST /sessions/{id}/invoke-stream wire is retired.
   invokeStreamWithAdmission: (
     sessionId: string,
     body: { content: string; client_message_id: string; application_mode: string; agent_mode: string; permission_mode: string; target_run_id?: string | null; expected_context_revision?: number | null },
@@ -2203,20 +2235,42 @@ export const api = {
     const controller = new AbortController()
     const decoder = new TextDecoder()
     let buffer = ''
+    const agentMode = body.agent_mode && body.agent_mode !== 'auto' ? body.agent_mode : 'auto'
+    const interactionBody: Record<string, unknown> = {
+      content: body.content,
+      client_message_id: body.client_message_id,
+      agent_mode: agentMode,
+      dispatch_mode: 'parallel',
+    }
+    if (body.target_run_id) interactionBody.target_run_id = body.target_run_id
+    if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
     ;(async () => {
       try {
-        const response = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/invoke-stream`, {
+        const admissionResponse = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-          body: JSON.stringify(body),
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(interactionBody),
           signal: controller.signal,
         })
-        if (!response.ok) {
-          const text = await response.text()
+        if (!admissionResponse.ok) {
+          const text = await admissionResponse.text()
           let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
-          throw new Error(extractErrorMessage(parsed, response.statusText) || text || `HTTP ${response.status}`)
+          throw new Error(extractErrorMessage(parsed, admissionResponse.statusText) || text || `HTTP ${admissionResponse.status}`)
         }
-        const reader = response.body?.getReader()
+        const receipt = (await admissionResponse.json()) as { run_id?: string; stream_cursor?: number }
+        if (!receipt.run_id) throw new Error('Interaction admission did not return a run_id.')
+        const cursor = receipt.stream_cursor ?? 0
+
+        const streamResponse = await fetch(`${gatewayUrl}/api/v1/runs/${encodeURIComponent(receipt.run_id)}/stream?after_seq=${encodeURIComponent(String(cursor))}`, {
+          headers: { accept: 'text/event-stream' },
+          signal: controller.signal,
+        })
+        if (!streamResponse.ok) {
+          const text = await streamResponse.text()
+          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
+          throw new Error(extractErrorMessage(parsed, streamResponse.statusText) || text || `HTTP ${streamResponse.status}`)
+        }
+        const reader = streamResponse.body?.getReader()
         if (!reader) throw new Error('No response body for streaming')
         while (true) {
           const { done, value } = await reader.read()
@@ -2236,7 +2290,7 @@ export const api = {
             try {
               const obj = JSON.parse(data) as Record<string, unknown>
               const chunk = {
-                run_id: String((obj.run_id as string) ?? ''),
+                run_id: String((obj.run_id as string) ?? receipt.run_id),
                 turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
                 message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
                 seq: Number((obj.seq as number) ?? id ?? 0),
@@ -2246,6 +2300,7 @@ export const api = {
               }
               if (chunk.kind === 'heartbeat') continue
               onChunk(chunk as never)
+              if (chunk.kind === 'done' || chunk.kind === 'error') return
             } catch {}
           }
         }

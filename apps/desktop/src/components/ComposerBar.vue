@@ -58,6 +58,8 @@ const projectDropdownStyle = ref<DropdownPlacement>({ position: 'fixed', left: '
 
 const queued = homeController.queuedMessages
 const activeRuns = homeController.activeRuns
+// 发送失败可见化（此前 invokeError 被写入但从未渲染，用户看不到失败原因）。
+const invokeError = computed(() => (homeController.invokeError as unknown as { value: string | null } | undefined)?.value ?? null)
 const steeringId = ref<string | null>(null)
 const steerTarget = ref('')
 
@@ -196,6 +198,7 @@ function confirmSteer(id: string) {
 
 <template>
   <div class="composer" :class="{ 'composer--hero': hero }">
+    <div v-if="invokeError" class="composer-error" role="alert">{{ invokeError }}</div>
     <div
       class="composer-box welcome-dialog"
       :data-composer-active="modelValue.trim() ? 'true' : 'false'"
@@ -348,6 +351,18 @@ function confirmSteer(id: string) {
 </template>
 
 <style scoped>
+.composer-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+  font-size: 13px;
+}
 .composer-queued {
   display: flex;
   flex-direction: column;

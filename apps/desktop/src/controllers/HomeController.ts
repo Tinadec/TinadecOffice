@@ -48,7 +48,9 @@ const selectedSessionId = ref<string | null>(null)
 const pendingSessionId = ref<string | null>(null)
 const draft = ref('')
 const modelBaseUrl = ref('https://api.openai.com/v1')
-const modelName = ref('gpt-5.4-mini')
+// 空串 = 未解析。硬编码兜底值会在 readiness 回执缺 model_route 时冒充真实模型名，
+// 让「没配好模型」看起来像「配好了」。UI 在空值时显示「未配置」。
+const modelName = ref('')
 const modelApiKey = ref('')
 const shellCommand = ref('npm test')
 const busy = ref(false)
@@ -77,7 +79,9 @@ const runStreams = new Map<string, RunStreamHandle>()
 const runText = new Map<string, string>()
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
-const activeRuns = computed(() => runs.value.filter((r) => ['running', 'ready', 'pending', 'queued'].includes(r.status)))
+// 活动运行 = 非终态且不驻留人工决策（对齐 Core CountActiveRunsAsync 的口径，
+// 词表以共享 12 态为准，不再使用自造的 running/ready/pending/queued）。
+const activeRuns = computed(() => runs.value.filter((r) => !['completed', 'failed', 'cancelled', 'awaiting_user'].includes(r.status)))
 const currentSession = computed(() => sessions.value.find((s) => s.id === selectedSessionId.value) ?? null)
 const recentEvents = computed(() => events.value.slice(-8).reverse())
 
@@ -118,18 +122,21 @@ async function run(label: string, action: () => Promise<void>) {
 async function loadInitial() {
   busy.value = true
   try {
-    const [projectList, settings, report, readinessReceipt] = await Promise.all([
+    // GET /model-settings 是恒空的旧 stub（ControlPlaneEndpoints 501 家族），
+    // 模型事实一律来自 readiness/model-readiness/model-providers。
+    const [projectList, report, readinessReceipt] = await Promise.all([
       api.listProjects(),
-      api.getModelSettings(),
       api.doctor(),
       api.readiness(),
     ])
     projects.value = projectList
-    modelSettings.value = settings
     doctor.value = report
     readiness.value = readinessReceipt
-    modelBaseUrl.value = settings.base_url
-    modelName.value = settings.model
+    // 头部的模型名/地址改由统一 readiness receipt 供给（model_route/model_provider 项）。
+    const items = (readinessReceipt as { items?: Array<{ id: string; data?: { model?: string; base_url?: string } }> }).items ?? []
+    const routeData = items.find((item) => item.id === 'model_route')?.data
+    if (routeData?.model) modelName.value = routeData.model
+    if (routeData?.base_url) modelBaseUrl.value = routeData.base_url
     selectedProjectId.value = projectList[0]?.id ?? null
     await loadSessions()
     dismissByKey('home-load')
@@ -371,7 +378,8 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         content: snapshotContent,
         client_message_id: clientMessageId,
         mode_version_id: modeVersionId,
-        agent_mode: modeVersionId ? null : requestedMode,
+        // agent_mode 随消息发送以选定 TOML profile；mode_version_id 存在时 Core 优先用它冻结 roster。
+        agent_mode: requestedMode,
         permission_mode: requestedPermission,
         dispatch_mode: dispatchMode,
         target_run_id: targetRunId,
@@ -390,7 +398,8 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
       // (docs/app-core-ui.md §4.1). The legacy invoke-stream / POST messages
       // fallbacks were removed so failures surface visibly instead of
       // silently degrading to a non-durable path.
-      if (code === 'context_conflict') {
+      if (msg.includes('mode_unavailable') || msg.includes('模式不可用')) invokeError.value = '当前对话模式不可用，请在输入框左下角重新选择模式'
+      else if (code === 'context_conflict') {
         // §4.1-4: show revision conflict guidance; user must re-read before resending.
         invokeError.value = '上下文已更新（检测到新的目标修订）。请重新读取当前状态后再发送。'
       } else if (msg.includes('model_not_configured') || msg.includes('No model')) invokeError.value = '模型未配置，请在设置中选择模型后重试'

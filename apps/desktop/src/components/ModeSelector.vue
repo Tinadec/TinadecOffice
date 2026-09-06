@@ -17,14 +17,26 @@ interface ModeOption {
   icon: any
 }
 
-const modes = computed<ModeOption[]>(() => [
-  { key: 'plan', label: t('mode.plan'), icon: Map },
-  { key: 'spec', label: t('mode.spec'), icon: FileSearch },
-  { key: 'ask', label: t('mode.ask'), icon: HelpCircle },
-  { key: 'vibe', label: t('mode.vibe'), icon: Sparkles },
-  { key: 'auto', label: t('mode.auto'), icon: Zap },
-  { key: 'agent', label: t('mode.agent'), icon: Network },
-])
+/** agent_mode 契约固定为这六个词（Core `InteractionsEndpoints`）；图标本地维护。 */
+const MODE_ICONS: Record<AgentMode, any> = {
+  plan: Map,
+  spec: FileSearch,
+  ask: HelpCircle,
+  vibe: Sparkles,
+  auto: Zap,
+  agent: Network,
+}
+const MODE_ORDER: AgentMode[] = ['plan', 'spec', 'ask', 'vibe', 'auto', 'agent']
+
+// 显示名优先取 pack 安装的 conversation.* 模式（`问答 (Ask)` 这类中文名），
+// 网关离线时回退到 i18n 词表。这两者指向同一个 agent_mode，不能各显示一遍。
+const modes = computed<ModeOption[]>(() =>
+  MODE_ORDER.map((key) => ({
+    key,
+    label: conversationModes.value.find((m) => m.application_mode === key)?.display_name ?? t(`mode.${key}`),
+    icon: MODE_ICONS[key],
+  }))
+)
 
 const props = defineProps<{
   modelValue: AgentMode
@@ -43,30 +55,47 @@ const dropdownStyle = ref<Record<string, string>>({})
 
 const currentMode = computed(() => modes.value.find(m => m.key === props.modelValue) ?? modes.value[0])
 
-// ONE mode selector: the dropdown merges the agent-mode fallback ("follow
-// default") with the workspace's published ModeVersions. When the workspace
-// has no published versions yet (pack not installed), it falls back to the
-// plain agent-mode enum list.
+// 模式选择器（配置体验改造 B）：
+//  - 「跟随默认」= 不传 mode_version_id，会话沿用其绑定或工作区默认；
+//  - 「对话模式」= agent_mode 词表（提交 agent_mode，同时清掉 mode_version_id）；
+//  - 「模式拓扑」= 工作区已发布模式（提交 latest_published_mode_version_id）。
+// draft/archived/同 slug 重复项由服务端过滤，这里永不出现；已选值失效时自愈回「跟随默认」。
 const modeVersions = ref<AgentModeTopologyDto[]>([])
-const selectedVersion = computed(() =>
-  modeVersions.value.find(v => v.id === props.modeVersionId) ?? null
+/** conversation.* 模式：application_mode 非空，已经由上面的对话模式组承载。 */
+const conversationModes = computed(() => modeVersions.value.filter(v => !!v.application_mode))
+// 拓扑组只列工作区自建拓扑（application_mode == null）。带 application_mode 的
+// pack 模式会被对话模式组显示，留在这里就是同一批东西显示两遍。
+const publishedVersions = computed(() =>
+  modeVersions.value.filter(v => v.status === 'published' && !!v.latest_published_mode_version_id && !v.application_mode)
 )
+const selectedVersion = computed(() =>
+  publishedVersions.value.find(v => v.latest_published_mode_version_id === props.modeVersionId) ?? null
+)
+// 已选 version 失效（被下架/跨工作区残留）时不再高亮任何拓扑项——由 trigger
+// 显示「跟随默认」，发送时 mode_version_id 会被清空，避免命中 409 mode_unavailable。
+const selectionStale = computed(() => !!props.modeVersionId && !selectedVersion.value)
 const triggerLabel = computed(() => selectedVersion.value?.display_name ?? currentMode.value.label)
 
 async function loadModeVersions() {
   try {
     const list = await api.listAgentModeTopologies()
     modeVersions.value = Array.isArray(list) ? (list as AgentModeTopologyDto[]) : []
-  } catch { /* gateway offline */ }
+  } catch { /* gateway offline：回退 agent_mode 词表 */ }
 }
 
-function selectVersion(id: string | null) {
-  emit('update:modeVersionId', id)
+function selectVersion(versionId: string | null) {
+  if (versionId !== null && !publishedVersions.value.some(v => v.latest_published_mode_version_id === versionId)) {
+    // OpenCode 式防呆：列表里不存在的项根本设置不进去。
+    return
+  }
+  emit('update:modeVersionId', versionId)
   showDropdown.value = false
 }
 
 function selectMode(key: AgentMode) {
+  // 选回对话模式必须同时清掉 mode_version_id，否则旧 version 优先于 agent_mode 生效。
   emit('update:modelValue', key)
+  emit('update:modeVersionId', null)
   showDropdown.value = false
 }
 
@@ -106,6 +135,8 @@ function updateDropdownPosition() {
 async function toggleDropdown() {
   showDropdown.value = !showDropdown.value
   if (showDropdown.value) {
+    // 每次打开都刷新：智能体中心发布新版本 / 安装 pack 后立即可见。
+    void loadModeVersions()
     await nextTick()
     updateDropdownPosition()
   }
@@ -135,6 +166,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
     >
       <component :is="selectedVersion ? Sparkles : currentMode.icon" :size="14" />
       <span class="mode-selector-label">{{ triggerLabel }}</span>
+      <span v-if="selectionStale" class="mode-selector-stale" :title="t('chat.modeUnavailable')">⚠</span>
       <ChevronDown :size="12" class="mode-selector-chevron" />
     </button>
 
@@ -145,37 +177,38 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         :style="[dropdownStyle, panelStyle]"
         v-bind="panelDataAttrs"
       >
-        <template v-if="modeVersions.length">
-          <button
-            class="mode-selector-item"
-            :class="{ active: !modeVersionId }"
-            @click="selectVersion(null)"
-          >
-            <component :is="currentMode.icon" :size="14" />
-            <span>{{ t('chat.followDefault') }}</span>
-          </button>
+        <button
+          class="mode-selector-item"
+          :class="{ active: !modeVersionId || selectionStale }"
+          @click="selectVersion(null)"
+        >
+          <component :is="currentMode.icon" :size="14" />
+          <span>{{ t('chat.followDefault') }}</span>
+        </button>
+        <div class="mode-selector-separator" />
+        <div class="mode-selector-group">{{ t('chat.conversationModeGroup') }}</div>
+        <button
+          v-for="mode in modes"
+          :key="mode.key"
+          class="mode-selector-item"
+          :class="{ active: (!modeVersionId || selectionStale) && mode.key === modelValue }"
+          @click="selectMode(mode.key)"
+        >
+          <component :is="mode.icon" :size="14" />
+          <span>{{ mode.label }}</span>
+        </button>
+        <template v-if="publishedVersions.length">
           <div class="mode-selector-separator" />
+          <div class="mode-selector-group">{{ t('chat.modeTopologyGroup') }}</div>
           <button
-            v-for="m in modeVersions"
+            v-for="m in publishedVersions"
             :key="m.id"
             class="mode-selector-item"
-            :class="{ active: m.id === modeVersionId }"
-            @click="selectVersion(m.id)"
+            :class="{ active: m.latest_published_mode_version_id === modeVersionId }"
+            @click="selectVersion(m.latest_published_mode_version_id!)"
           >
             <Sparkles :size="14" />
-            <span>{{ m.display_name }}{{ m.status === 'published' ? ' · 默认' : '' }}</span>
-          </button>
-        </template>
-        <template v-else>
-          <button
-            v-for="mode in modes"
-            :key="mode.key"
-            class="mode-selector-item"
-            :class="{ active: mode.key === modelValue }"
-            @click="selectMode(mode.key)"
-          >
-            <component :is="mode.icon" :size="14" />
-            <span>{{ mode.label }}</span>
+            <span>{{ m.display_name }}</span>
           </button>
         </template>
       </div>

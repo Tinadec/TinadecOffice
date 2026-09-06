@@ -208,7 +208,7 @@ export interface paths {
   "/api/v1/events": {
     /**
      * Session events SSE
-     * @description SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, id=seq, Last-Event-ID / ?cursor resume
+     * @description Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume
      */
     get: operations["getApiV1Events"];
   };
@@ -357,6 +357,13 @@ export interface paths {
   "/api/v1/model-invocations": {
     /** Page model invocation audit records */
     get: operations["getApiV1Model-invocations"];
+  };
+  "/api/v1/model-probe": {
+    /**
+     * Model connectivity probe
+     * @description One minimal real completion through the resolved chat route (1 token, 10s timeout, 60s result cache). ?force=true bypasses the cache.
+     */
+    post: operations["postApiV1Model-probe"];
   };
   "/api/v1/model-provider-templates": {
     /** List provider templates (incl. protocol) */
@@ -545,7 +552,7 @@ export interface paths {
   "/api/v1/runs/{runId}/stream": {
     /**
      * Run stream (SSE)
-     * @description Durable SSE with id=seq, Last-Event-ID / ?cursor= & ?after_seq resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update
+     * @description Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor
      */
     get: operations["getApiV1RunsByRunIdStream"];
   };
@@ -592,20 +599,6 @@ export interface paths {
   "/api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign": {
     /** Reassign interaction */
     post: operations["postApiV1SessionsBySessionIdInteractionsByInteractionIdReassign"];
-  };
-  "/api/v1/sessions/{sessionId}/interactions/{interactionId}/stream": {
-    /**
-     * Stream interaction SSE
-     * @description Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update
-     */
-    get: operations["getApiV1SessionsBySessionIdInteractionsByInteractionIdStream"];
-  };
-  "/api/v1/sessions/{sessionId}/invoke-stream": {
-    /**
-     * Full-duplex invoke-stream
-     * @description 5 required: content, client_message_id, application_mode, agent_mode, permission_mode + 2 optional: target_run_id, expected_context_revision. SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, fixed fields run_id/turn_id/message_id/seq/kind/occurred_at/payload, id=seq
-     */
-    post: operations["postApiV1SessionsBySessionIdInvoke-stream"];
   };
   "/api/v1/sessions/{sessionId}/logs": {
     /** Session logs */
@@ -1849,7 +1842,7 @@ export interface operations {
   };
   /**
    * Session events SSE
-   * @description SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, id=seq, Last-Event-ID / ?cursor resume
+   * @description Durable event journal feed (EventEnvelope): event: {EventType}, fields event_id/event_type/timestamp/session_id/run_id/payload; 15s heartbeat SSE comment; Last-Event-ID / ?cursor resume
    */
   getApiV1Events: {
     responses: {
@@ -2276,6 +2269,17 @@ export interface operations {
   };
   /** Page model invocation audit records */
   "getApiV1Model-invocations": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /**
+   * Model connectivity probe
+   * @description One minimal real completion through the resolved chat route (1 token, 10s timeout, 60s result cache). ?force=true bypasses the cache.
+   */
+  "postApiV1Model-probe": {
     responses: {
       200: {
         content: never;
@@ -2951,7 +2955,7 @@ export interface operations {
   };
   /**
    * Run stream (SSE)
-   * @description Durable SSE with id=seq, Last-Event-ID / ?cursor= & ?after_seq resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update
+   * @description Durable SSE with id=seq and event=kind, Last-Event-ID / ?cursor= & ?after_seq resume. Kinds: ack/queued/assigned/steering/context_conflict/control/ephemeral_agent/delta/done/error. occurred_at is the durable journal timestamp; idle keep-alive is an SSE comment ": heartbeat" that never advances the cursor
    */
   getApiV1RunsByRunIdStream: {
     parameters: {
@@ -3134,39 +3138,6 @@ export interface operations {
       path: {
         sessionId: string;
         interactionId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /**
-   * Stream interaction SSE
-   * @description Thin SSE proxy with Last-Event-ID / ?cursor resume, kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update
-   */
-  getApiV1SessionsBySessionIdInteractionsByInteractionIdStream: {
-    parameters: {
-      path: {
-        sessionId: string;
-        interactionId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /**
-   * Full-duplex invoke-stream
-   * @description 5 required: content, client_message_id, application_mode, agent_mode, permission_mode + 2 optional: target_run_id, expected_context_revision. SSE kinds: ack/delta/done/error/heartbeat/task_node_update/supervision_update/context_version_update, fixed fields run_id/turn_id/message_id/seq/kind/occurred_at/payload, id=seq
-   */
-  "postApiV1SessionsBySessionIdInvoke-stream": {
-    parameters: {
-      path: {
-        sessionId: string;
       };
     };
     responses: {

@@ -1,6 +1,7 @@
 import type {
   AcpAdapterDto,
   AgentCenterOverviewDto,
+  AgentModelBindingDto,
   AgentRuntimeBindingDto,
   CenterDiagnosticDto,
   ModelCatalogReadinessReceiptDto,
@@ -12,6 +13,7 @@ import type {
   ModelProviderInstanceDto,
   ModelProviderTemplateDto,
   ModelReadinessReceiptDto,
+  ModelResolutionPreviewDto,
   ModelRouteDto
 } from './api'
 import { findTemplate, type ProviderCategory, type ProviderTemplate } from './providerTemplates'
@@ -135,10 +137,18 @@ export function bindingForAgent(overview: AgentCenterOverviewDto | null, agentId
   return overview?.agents.find((agent) => agent.id === agentId)?.runtime_binding ?? null
 }
 
-/** Derive a display binding from the formal inherit|route|fixed strategy. */
+/**
+ * Derive a display binding for an agent.
+ *
+ * 优先级与 Core 的 `FormalModeResolver` 一致：用户级运行时绑定（`model_binding`）
+ * 覆盖 agent 定义里的策略。**必须先看 binding** —— 运行时绑定写入不会改动定义的
+ * `model_strategy`，只读定义会让「保存成功后立刻回弹」。
+ */
 export function bindingFromModelStrategy(
-  agent: { id: string; model_route_purpose?: string | null; model_strategy?: unknown }
+  agent: { id: string; model_route_purpose?: string | null; model_strategy?: unknown },
+  binding?: AgentModelBindingDto | null
 ): AgentRuntimeBindingDto {
+  if (binding) return bindingFromRuntimeOverride(agent, binding)
   const strategy = (agent.model_strategy && typeof agent.model_strategy === 'object')
     ? agent.model_strategy as Record<string, unknown>
     : typeof agent.model_strategy === 'string' ? { kind: agent.model_strategy } : null
@@ -198,8 +208,72 @@ export function bindingFromModelStrategy(
   }
 }
 
-export function runtimeSourceSummary(binding?: AgentRuntimeBindingDto | null) {
-  if (!binding || binding.runtime_kind === 'unresolved') return ''
+/** Project Core's `agent_runtime_bindings` override onto the desktop view model. */
+function bindingFromRuntimeOverride(
+  agent: { model_route_purpose?: string | null },
+  binding: AgentModelBindingDto
+): AgentRuntimeBindingDto {
+  const base = {
+    source: 'agent_binding' as const,
+    writable: true,
+    shared_agent_ids: [] as string[],
+    warnings: [] as AgentRuntimeBindingDto['warnings']
+  }
+  if (binding.mode === 'fixed') {
+    return {
+      ...base,
+      selection_kind: 'fixed_model',
+      route_purpose: agent.model_route_purpose ?? '',
+      runtime_kind: 'model',
+      runtime_id: binding.provider_instance_id ?? null,
+      provider_instance_id: binding.provider_instance_id ?? null,
+      model_id: binding.model ?? null,
+      model_source: binding.model ? 'route_override' : 'unset'
+    }
+  }
+  if (binding.mode === 'route') {
+    return {
+      ...base,
+      selection_kind: 'route',
+      route_purpose: binding.route_purpose ?? agent.model_route_purpose ?? '',
+      runtime_kind: 'model',
+      runtime_id: null,
+      provider_instance_id: null,
+      model_id: null,
+      model_source: 'route_override'
+    }
+  }
+  return {
+    ...base,
+    selection_kind: 'inherit',
+    route_purpose: agent.model_route_purpose ?? '',
+    runtime_kind: 'unresolved',
+    runtime_id: null,
+    provider_instance_id: null,
+    model_id: null,
+    model_source: 'unset'
+  }
+}
+
+/**
+ * 「跟随默认」也有可展示的证据：Core 的 `effective_previews` 里带着解析结果
+ * （`expected_selection`）。传入 previews 时 inherit 态渲染实际生效的 provider+model，
+ * 而不是一个空串（空串会让 UI 退化成「尚未解析」）。
+ */
+export function runtimeSourceSummary(
+  binding?: AgentRuntimeBindingDto | null,
+  previews?: Record<string, ModelResolutionPreviewDto> | null,
+  providerName?: (providerInstanceId: string) => string | null | undefined
+) {
+  if (!binding) return ''
+  if (binding.runtime_kind === 'unresolved') {
+    const selection = Object.values(previews ?? {})
+      .map((preview) => preview?.expected_selection)
+      .find((sel) => sel && sel.available !== false && (sel.model || sel.provider_instance_id))
+    if (!selection) return ''
+    const provider = (selection.provider_instance_id ? providerName?.(selection.provider_instance_id) : null) ?? ''
+    return selection.model ? (provider ? `${provider} · ${selection.model}` : selection.model) : provider
+  }
   const name = binding.provider_display_name ?? binding.runtime_id ?? binding.route_purpose
   return binding.model_id ? `${name} · ${binding.model_id}` : name
 }
@@ -477,7 +551,8 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
       model_catalog_mode: 'configured_only',
       model_discovery_refresh: true,
       live_model_discovery: true,
-      agent_runtime_binding_write: false,
+      // PUT /api/v1/agents/{id}/runtime-binding 是真实端点（Gateway 已代理）。
+      agent_runtime_binding_write: true,
       acp_adapter_read: true,
       acp_probe: true
     },

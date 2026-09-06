@@ -282,4 +282,77 @@ describe('runtime center view', () => {
     expect(bindingFromModelStrategy({ id: 'e', model_strategy: null }).selection_kind).toBe('inherit')
     expect(bindingFromModelStrategy({ id: 'f', model_strategy: 'fixed' })).toMatchObject({ selection_kind: 'fixed_model' })
   })
+
+  it('prefers the user-level runtime binding over the definition strategy', () => {
+    // 定义策略停在 inherit（运行时绑定写入不会改动它）；绑定才是用户在智能体中心设的值。
+    // 只读定义就是「保存成功后立刻回弹」的成因，所以这里必须是绑定赢。
+    const agent = { id: 'a', model_route_purpose: 'chat', model_strategy: { kind: 'inherit' } }
+
+    expect(bindingFromModelStrategy(agent, {
+      mode: 'fixed', provider_instance_id: 'prov-1', model: 'gpt-x', revision: 3, updated_at: '2026-09-06T00:00:00Z'
+    })).toMatchObject({
+      selection_kind: 'fixed_model',
+      source: 'agent_binding',
+      writable: true,
+      runtime_kind: 'model',
+      provider_instance_id: 'prov-1',
+      model_id: 'gpt-x'
+    })
+
+    expect(bindingFromModelStrategy(agent, {
+      mode: 'route', route_purpose: 'search', revision: 4, updated_at: '2026-09-06T00:00:00Z'
+    })).toMatchObject({
+      selection_kind: 'route',
+      source: 'agent_binding',
+      route_purpose: 'search',
+      runtime_kind: 'model',
+      provider_instance_id: null
+    })
+
+    expect(bindingFromModelStrategy(
+      { id: 'a', model_route_purpose: 'chat', model_strategy: { kind: 'fixed', provider_instance_id: 'prov-old', model: 'stale' } },
+      { mode: 'inherit', revision: 5, updated_at: '2026-09-06T00:00:00Z' }
+    )).toMatchObject({ selection_kind: 'inherit', route_purpose: 'chat', runtime_kind: 'unresolved', model_id: null })
+
+    // CLI/ACP 的 fixed 绑定没有 model。
+    expect(bindingFromModelStrategy(agent, {
+      mode: 'fixed', provider_instance_id: 'cli-9', model: null, revision: 6, updated_at: '2026-09-06T00:00:00Z'
+    })).toMatchObject({ selection_kind: 'fixed_model', provider_instance_id: 'cli-9', model_id: null, model_source: 'unset' })
+  })
+
+  it('falls back to the definition strategy when no runtime binding exists', () => {
+    const agent = { id: 'a', model_route_purpose: 'chat', model_strategy: { kind: 'fixed', provider_instance_id: 'prov-1', model: 'gpt-x' } }
+    expect(bindingFromModelStrategy(agent, null)).toMatchObject({ selection_kind: 'fixed_model', model_id: 'gpt-x' })
+    expect(bindingFromModelStrategy(agent, undefined)).toMatchObject({ selection_kind: 'fixed_model', model_id: 'gpt-x' })
+  })
+
+  it('resolves the inherit summary from effective_previews instead of showing nothing', () => {
+    const inherited = {
+      selection_kind: 'inherit' as const,
+      source: 'agent_binding' as const,
+      writable: true,
+      route_purpose: 'chat',
+      runtime_kind: 'unresolved' as const,
+      runtime_id: null,
+      provider_instance_id: null,
+      model_id: null,
+      model_source: 'unset' as const,
+      shared_agent_ids: [],
+      warnings: []
+    }
+    const previews = {
+      'conversation.auto': {
+        strategy_source: 'workspace_default',
+        chain: [],
+        candidates: [],
+        expected_selection: { position: 0, provider_instance_id: 'prov-1', model: 'gpt-x', available: true }
+      }
+    } as never
+
+    expect(runtimeSourceSummary(inherited, previews, () => 'OpenAI')).toBe('OpenAI · gpt-x')
+    // provider 名字查不到时只显示模型，不显示裸 uuid。
+    expect(runtimeSourceSummary(inherited, previews, () => null)).toBe('gpt-x')
+    // 没有可用解析结果时仍然返回空串，交由调用方渲染「尚未解析」。
+    expect(runtimeSourceSummary(inherited, {} as never, () => 'OpenAI')).toBe('')
+  })
 })

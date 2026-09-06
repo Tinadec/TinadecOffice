@@ -23,7 +23,6 @@ const homeMock = vi.hoisted(() => ({
 
 const dispatchMock = vi.hoisted(() => ({
   getDispatchPref: vi.fn(() => 'queued' as 'queued' | 'parallel' | 'ask'),
-  getMeetingModelPref: vi.fn(() => ''),
 }))
 
 const apiMock = vi.hoisted(() => ({
@@ -38,7 +37,6 @@ vi.mock('@/controllers/HomeController', () => ({
 
 vi.mock('@/lib/dispatchPref', () => ({
   getDispatchPref: dispatchMock.getDispatchPref,
-  getMeetingModelPref: dispatchMock.getMeetingModelPref,
 }))
 
 vi.mock('@/api', () => apiMock)
@@ -136,55 +134,115 @@ describe('ComposerBar hero variant (start page)', () => {
   })
 })
 
+/**
+ * pack 安装的 conversation.* 模式带 application_mode，工作区自建拓扑不带。
+ * 前者由「对话模式」组承载（显示名取自这里），后者才进「工作区拓扑」组。
+ */
+const CONVERSATION_MODE = {
+  id: 'am-conv-auto',
+  display_name: '自动 (Auto)',
+  status: 'published',
+  application_mode: 'auto',
+  latest_published_mode_version_id: 'mv-conv-auto',
+  nodes: [],
+  edges: [],
+}
+const WORKSPACE_TOPOLOGY = {
+  id: 'am-custom',
+  display_name: '自建评审流',
+  status: 'published',
+  application_mode: null,
+  latest_published_mode_version_id: 'mv-custom-1',
+  nodes: [],
+  edges: [],
+}
+
 describe('ComposerBar merged mode selector (one dropdown: follow-default + published versions)', () => {
-  it('lists follow-default plus workspace versions instead of the bare enum', async () => {
+  it('shows a conversation mode exactly once and keeps only workspace topologies in the topology group', async () => {
     apiMock.api.listAgentModeTopologies.mockResolvedValue([
-      { id: 'mv-1', display_name: '自动 (Auto)', status: 'published', nodes: [], edges: [] },
-    ])
+      CONVERSATION_MODE,
+      WORKSPACE_TOPOLOGY,
+      { id: 'am-draft', display_name: '草稿模式', status: 'draft', application_mode: null, nodes: [], edges: [] },
+    ] as never)
     const wrapper = mountComposer({})
     await flushPromises()
     await wrapper.find('.mode-selector-trigger').trigger('click')
     await flushPromises()
     const items = [...document.querySelectorAll('.mode-selector-item')].map(b => b.textContent!.trim())
-    // i18n is mocked to echo the key; only the published suffix is literal.
+    // follow-default + 6 个对话模式 + 1 个自建拓扑（draft 与 conversation.* 都不进拓扑组）。
     expect(items[0]).toBe('chat.followDefault')
-    expect(items.some(t => t.includes('自动 (Auto) · 默认'))).toBe(true)
-    expect(items).toHaveLength(2)
+    // 去重判据：`自动 (Auto)` 只出现一次 —— 它是对话模式组里 auto 的显示名，不再另开一项。
+    expect(items.filter(t => t.includes('自动 (Auto)'))).toHaveLength(1)
+    expect(items.some(t => t.includes('自建评审流'))).toBe(true)
+    expect(items.some(t => t.includes('草稿模式'))).toBe(false)
+    expect(items).toHaveLength(8)
     wrapper.unmount()
     document.body.innerHTML = ''
     apiMock.api.listAgentModeTopologies.mockResolvedValue([])
   })
 
-  it('falls back to the bare agent-mode enum when no versions are published', async () => {
+  it('hides the topology group entirely when every published mode is a conversation mode', async () => {
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([CONVERSATION_MODE] as never)
+    const wrapper = mountComposer({})
+    await flushPromises()
+    await wrapper.find('.mode-selector-trigger').trigger('click')
+    await flushPromises()
+    const groups = [...document.querySelectorAll('.mode-selector-group')].map(b => b.textContent!.trim())
+    expect(groups).toEqual(['chat.conversationModeGroup'])
+    expect([...document.querySelectorAll('.mode-selector-item')]).toHaveLength(7)
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([])
+  })
+
+  it('falls back to the i18n enum labels when the gateway is offline', async () => {
+    apiMock.api.listAgentModeTopologies.mockRejectedValue(new Error('offline'))
     const wrapper = mountComposer({ mode: 'plan' })
     await flushPromises()
     await wrapper.find('.mode-selector-trigger').trigger('click')
     await flushPromises()
     const items = [...document.querySelectorAll('.mode-selector-item')].map(b => b.textContent!.trim())
-    expect(items).toHaveLength(6)
-    expect(items.every(t => t.startsWith('mode.'))).toBe(true)
+    expect(items[0]).toBe('chat.followDefault')
+    expect(items.filter(t => t.startsWith('mode.'))).toHaveLength(6)
+    expect(items).toHaveLength(7)
     expect(wrapper.emitted('update:modeVersionId')).toBeUndefined()
     wrapper.unmount()
     document.body.innerHTML = ''
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([])
   })
 
-  it('selecting a version emits update:modeVersionId; follow-default emits null', async () => {
-    apiMock.api.listAgentModeTopologies.mockResolvedValue([
-      { id: 'mv-1', display_name: '自动 (Auto)', status: 'published', nodes: [], edges: [] },
-    ])
+  it('selecting a workspace topology emits its mode_version_id; picking a conversation mode clears it', async () => {
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([WORKSPACE_TOPOLOGY] as never)
     const wrapper = mountComposer({})
     await flushPromises()
     await wrapper.find('.mode-selector-trigger').trigger('click')
     await flushPromises()
     const items = [...document.querySelectorAll('.mode-selector-item')]
-    ;(items.find(b => b.textContent!.includes('自动 (Auto)')) as HTMLElement).click()
+    ;(items.find(b => b.textContent!.includes('自建评审流')) as HTMLElement).click()
     await flushPromises()
-    expect(wrapper.emitted('update:modeVersionId')![0]![0]).toBe('mv-1')
+    expect(wrapper.emitted('update:modeVersionId')![0]![0]).toBe('mv-custom-1')
     await wrapper.find('.mode-selector-trigger').trigger('click')
     await flushPromises()
     ;(document.querySelector('.mode-selector-item') as HTMLElement).click()
     await flushPromises()
     expect(wrapper.emitted('update:modeVersionId')![1]![0]).toBeNull()
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([])
+  })
+
+  it('a stale modeVersionId activates nothing in the topology group (self-healing fallback)', async () => {
+    apiMock.api.listAgentModeTopologies.mockResolvedValue([WORKSPACE_TOPOLOGY] as never)
+    const wrapper = mountComposer({ modeVersionId: 'mv-gone' })
+    await flushPromises()
+    await wrapper.find('.mode-selector-trigger').trigger('click')
+    await flushPromises()
+    const active = [...document.querySelectorAll('.mode-selector-item.active')].map(b => b.textContent!.trim())
+    // 自愈态：跟随默认 与 当前枚举（auto）同属一个有效状态，二者同时高亮；
+    // 失效的 topology 项不得出现在激活集合里。
+    expect(active).toContain('chat.followDefault')
+    expect(active).toContain('mode.auto')
+    expect(active.some(t => t.includes('自建评审流'))).toBe(false)
     wrapper.unmount()
     document.body.innerHTML = ''
     apiMock.api.listAgentModeTopologies.mockResolvedValue([])
