@@ -1,46 +1,23 @@
 module TinadecCore.Strategies.StateTransition
 
 open System
+open TinadecCore.Abstractions
 
 /// <summary>
-/// Validates whether a state transition is allowed.
-/// Returns (isValid, reason).
-/// Pure function; no side effects.
+/// Validates whether a run status transition is allowed.
+/// Returns (isValid, reason). Pure function; no side effects.
+///
+/// Delegates to the shared RunStatusMachine in TinadecCore.Abstractions (plan §3.3
+/// item 3): one transition table for the C# lifecycle services and the F# strategy
+/// layer. The legacy local table (terminal revival via failed/cancelled → pending,
+/// pending/running aliases, missing awaiting_* rules, wildcard → paused) is retired.
 /// </summary>
 let validateTransition (currentState: string) (targetState: string) : bool * string =
-    match currentState, targetState with
-    | _, _ when String.IsNullOrEmpty(currentState) || String.IsNullOrEmpty(targetState) ->
+    if String.IsNullOrEmpty(currentState) || String.IsNullOrEmpty(targetState) then
         (false, "State cannot be null or empty")
-    | a, b when a = b ->
+    elif currentState.Equals(targetState, StringComparison.OrdinalIgnoreCase) then
         (false, "Target state is the same as current state")
-    | "planning", "understanding"
-    | "planning", "executing"
-    | "understanding", "executing"
-    | "understanding", "replanning"
-    | "understanding", "awaiting_approval"
-    | "executing", "replanning"
-    | "executing", "awaiting_approval"
-    | "executing", "reviewing"
-    | "executing", "completed"
-    | "reviewing", "executing"
-    | "reviewing", "completed"
-    | "replanning", "executing"
-    | "awaiting_approval", "executing"
-    | "awaiting_approval", "replanning"
-    | "paused", "executing"
-    // Bulk storage compat: some raw rows still store "pending"/"running" alias.
-    | "planning", "pending"
-    | "pending", "planning"
-    | "pending", "running"
-    | "running", "completed"
-    | "running", "failed"
-    | "running", "cancelled"
-    | "pending", "cancelled"
-    | "failed", "pending"
-    | "cancelled", "pending"
-    | _, "paused"
-    | _, "failed"
-    | _, "cancelled" ->
+    elif RunStatusMachine.CanTransition(currentState, targetState) then
         (true, "")
-    | _ ->
+    else
         (false, $"Transition from '{currentState}' to '{targetState}' is not allowed")

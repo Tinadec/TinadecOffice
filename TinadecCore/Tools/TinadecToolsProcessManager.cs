@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -309,7 +310,7 @@ public sealed class TinadecToolsProcessManager : IToolProcessManager, IHostedSer
 
     private void RemoveFailedProcess(ManagedProcess process, Exception exception)
     {
-        _logger.LogWarning(exception, "TinadecTools manifest handshake failed for workspace root {Root}", process.Root);
+        _logger.TryLogWarning(exception, "TinadecTools manifest handshake failed for workspace root {Root}", process.Root);
         lock (_stateLock)
         {
             if (_processes.TryGetValue(process.Root, out var current) && ReferenceEquals(current, process))

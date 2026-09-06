@@ -89,61 +89,32 @@ public static class CoreDiagnosticsEndpoints
         }).WithSummary("Harness manifest");
 
         // ============================================================
-        // GET /api/v1/readiness — MAF assemblies loadable = ready; unconfigured modules use warning
+        // GET /api/v1/readiness — unified readiness receipt (plan §5.3 item 1).
+        // status: ready | degraded | blocked; items carry per-check
+        // ready|degraded|blocked|unavailable plus reason/action. Gateway appends
+        // its own items; Core never emits them.
         // ============================================================
-        app.MapGet("/api/v1/readiness", async (
-            ITinadecCoreBuilder coreBuilder,
-            IDatabaseReadiness databaseReadiness,
-            TinadecCore.DmaEA.IAgentRuntimeConfiguration agentRuntime,
-            CancellationToken cancellationToken) =>
+        app.MapGet("/api/v1/readiness", async (TinadecCore.Runtime.ReadinessService readiness, CancellationToken cancellationToken) =>
         {
-            var modules = coreBuilder.GetRegisteredModules();
-            var storageProbe = await databaseReadiness.ProbeAsync(cancellationToken).ConfigureAwait(false);
-            var storage = new ReadinessStorageDto
-            {
-                Provider = storageProbe.Provider,
-                State = storageProbe.StateName,
-                Detail = storageProbe.Detail
-            };
-            var runtimeDiagnostic = agentRuntime.Diagnostic;
+            var receipt = await readiness.GetReceiptAsync(cancellationToken).ConfigureAwait(false);
+            return Results.Ok(receipt);
+        }).WithSummary("Readiness receipt").WithDescription(
+            "Unified readiness receipt: overall ready|degraded|blocked plus fixed items " +
+            "(database, core_storage, agent_pack, default_mode, model_provider, model_secret, " +
+            "model_route, model_probe, tool_provider, manifest_hash), each with reason/action.");
 
-            var hasModuleWarnings = modules.Any(m => m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured);
-            var hasStorageWarning = storageProbe.State != DatabaseReadinessState.Ready;
-            var hasRuntimeWarning = runtimeDiagnostic.State != "ready";
-            var status = hasModuleWarnings || hasStorageWarning || hasRuntimeWarning ? "warning" : "ready";
-
-            var response = new ReadinessResponseDto
-            {
-                Status = status,
-                FrameworkReady = true,
-                FrameworkName = "Microsoft Agent Framework",
-                FrameworkVersion = "1.18.0",
-                Storage = storage,
-                AgentRuntime = new ReadinessAgentRuntimeDto
-                {
-                    State = runtimeDiagnostic.State,
-                    Detail = runtimeDiagnostic.Detail,
-                    SourcePath = runtimeDiagnostic.SourcePath,
-                    CheckedAt = runtimeDiagnostic.CheckedAt
-                },
-                Modules = modules.Select(m => new ReadinessModuleDto
-                {
-                    ModuleId = m.ModuleId,
-                    ModuleState = m.RegistrationStatus switch
-                    {
-                        ModuleRegistrationStatus.Registered => "registered",
-                        ModuleRegistrationStatus.NotConfigured => "not_configured",
-                        ModuleRegistrationStatus.Disabled => "disabled",
-                        _ => "unknown"
-                    },
-                    Detail = m.RegistrationStatus == ModuleRegistrationStatus.NotConfigured
-                        ? $"Module '{m.ModuleId}' is registered but not configured with real providers."
-                        : null
-                }).ToList()
-            };
-
-            return Results.Ok(response);
-        }).WithSummary("Readiness probe");
+        // ============================================================
+        // POST /api/v1/model-probe — run the model connectivity probe
+        // (1 output token, 10s timeout, 60s result cache). ?force=true bypasses
+        // and replaces the cached result. Returns the model_probe readiness item.
+        // ============================================================
+        app.MapPost("/api/v1/model-probe", async (TinadecCore.Runtime.ModelProbeService probe, bool? force, CancellationToken cancellationToken) =>
+        {
+            var item = await probe.ProbeAsync(force == true, cancellationToken).ConfigureAwait(false);
+            return Results.Ok(item);
+        }).WithSummary("Model connectivity probe").WithDescription(
+            "Resolves the chat route and sends one minimal completion (max_tokens=1, 10s timeout) " +
+            "through the production chat client construction path. Honors TINADEC_MODEL_BASE_URL_OVERRIDE.");
 
         return app;
     }

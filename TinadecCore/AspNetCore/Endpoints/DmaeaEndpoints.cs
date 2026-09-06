@@ -23,65 +23,9 @@ public static class DmaeaEndpoints
 {
     public static IEndpointRouteBuilder MapDmaeaEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/v1/sessions/{sessionId}/invoke-stream", async (HttpContext context, string sessionId, InvokeStreamRequest request, IFullDuplexRunCoordinator coordinator, CancellationToken ct) =>
-        {
-            if (!Guid.TryParse(sessionId, out var sessionGuid))
-            {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsync("{\"code\":\"INVALID_SESSION_ID\"}", ct);
-                return;
-            }
-            if (request is null || string.IsNullOrWhiteSpace(request.Content))
-            {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsync("{\"code\":\"INVALID_MESSAGE\"}", ct);
-                return;
-            }
-
-            try
-            {
-                var invocationOverride = request.MeetingModelOverride is null
-                    ? null
-                    : new SessionModelOverride(request.MeetingModelOverride.ProviderInstanceId, request.MeetingModelOverride.Model);
-                var admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionGuid, request.Content, request.ClientMessageId, request.ApplicationMode, request.AgentMode, request.PermissionMode, request.TargetRunId, request.ExpectedContextRevision, invocationOverride), ct);
-                context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType = "text/event-stream";
-                context.Response.Headers.CacheControl = "no-cache";
-                await foreach (var chunk in coordinator.FollowAsync(admission.RunId, admission.TurnId, 0, CancellationToken.None))
-                {
-                    await WriteChunkAsync(context, chunk.Seq, new
-                    {
-                        run_id = chunk.RunId,
-                        session_id = sessionId,
-                        turn_id = chunk.TurnId,
-                        message_id = chunk.MessageId,
-                        seq = chunk.Seq,
-                        purpose = "dual_layer",
-                        kind = chunk.Kind,
-                        delta = chunk.Delta,
-                        usage = chunk.Usage,
-                        finish_reason = chunk.FinishReason,
-                        error_category = chunk.ErrorCategory,
-                        safe_error_message = chunk.SafeErrorMessage
-                    }, context.RequestAborted);
-                    await context.Response.Body.FlushAsync(context.RequestAborted);
-                }
-            }
-            catch (RunAdmissionException ex)
-            {
-                context.Response.StatusCode = ex.Code is "CONTEXT_REVISION_CONFLICT" or "ACTIVE_RUN_LIMIT" or "IDEMPOTENCY_KEY_REUSE" ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsJsonAsync(new { code = ex.Code, message = ex.Message }, ct);
-            }
-            catch (KeyNotFoundException)
-            {
-                context.Response.StatusCode = StatusCodes.Status404NotFound;
-                await context.Response.WriteAsJsonAsync(new { code = "NOT_FOUND", message = "Session was not found." }, ct);
-            }
-            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-            {
-                // The subscriber disconnected. The coordinator continues independently.
-            }
-        });
+        // POST /sessions/{sessionId}/invoke-stream was retired (plan §4.3 item 4):
+        // the durable admission path is POST /sessions/{id}/interactions followed by
+        // GET /runs/{runId}/stream; no Desktop consumer remains on the legacy wire.
 
         app.MapGet("/api/v1/runs/{runId}/stream", async (HttpContext context, string runId, Guid? turn_id, long? after_seq, IFullDuplexRunCoordinator coordinator, CancellationToken ct) =>
         {
@@ -108,7 +52,17 @@ public static class DmaeaEndpoints
             {
                 await foreach (var chunk in coordinator.FollowAsync(runGuid, turn_id, cursor, CancellationToken.None))
                 {
-                    await WriteChunkAsync(context, chunk.Seq, new
+                    if (chunk.Kind is "heartbeat")
+                    {
+                        // Idle keep-alive as an SSE comment: never advances the
+                        // client cursor and every parser ignores it by spec.
+                        await context.Response.WriteAsync(": heartbeat\n\n", context.RequestAborted);
+                        await context.Response.Body.FlushAsync(context.RequestAborted);
+                        continue;
+                    }
+                    await WriteChunkAsync(context, chunk.Seq, chunk.Kind, chunk.OccurredAt == default
+                        ? DateTimeOffset.UtcNow
+                        : chunk.OccurredAt, new
                     {
                         run_id = chunk.RunId,
                         turn_id = chunk.TurnId,
@@ -116,6 +70,7 @@ public static class DmaeaEndpoints
                         seq = chunk.Seq,
                         purpose = "dual_layer",
                         kind = chunk.Kind,
+                        occurred_at = (chunk.OccurredAt == default ? DateTimeOffset.UtcNow : chunk.OccurredAt).ToString("o"),
                         delta = chunk.Delta,
                         usage = chunk.Usage,
                         finish_reason = chunk.FinishReason,
@@ -340,7 +295,7 @@ public static class DmaeaEndpoints
             }
         });
 
-        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, CancellationToken ct) =>
+        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, IDbContextFactory<AgentConfigurationDbContext> agentConfigFactory, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
             var run = await lifecycle.FindRunAsync(runGuid, ct);
@@ -369,9 +324,33 @@ public static class DmaeaEndpoints
                 }
             }
             var events = (await lifecycle.ReplayEventsAsync(run.SessionId, 0, ct)).Where(e => e.RunId == runGuid.ToString()).ToList();
+            // Agent display names for the run's instances (plan 配置体验改造 B)：
+            // 前端不再显示 role/slug/GUID 兜底。
+            var agentInstanceRows = await instances.ListByRunAsync(runGuid, ct);
+            Guid[] instanceDefinitionIds = agentInstanceRows.Select(a => a.AgentDefinitionId).Distinct().ToArray();
+            Dictionary<Guid, string> agentDisplayNames;
+            if (instanceDefinitionIds.Length > 0)
+            {
+                await using var agentCfg = await agentConfigFactory.CreateDbContextAsync(ct);
+                var nameRows = await agentCfg.AgentDefinitions.AsNoTracking()
+                    .Where(x => instanceDefinitionIds.Contains(x.Id))
+                    .Select(x => new { x.Id, x.DisplayName })
+                    .ToListAsync(ct);
+                agentDisplayNames = nameRows.ToDictionary(x => x.Id, x => x.DisplayName);
+            }
+            else agentDisplayNames = new Dictionary<Guid, string>();
+            string DisplayNameFor(RuntimeAgentInstance a) =>
+                agentDisplayNames.TryGetValue(a.AgentDefinitionId, out var name) && !string.IsNullOrWhiteSpace(name)
+                    ? name
+                    : a.Role;
+            var instanceNameById = agentInstanceRows.ToDictionary(a => a.Id, DisplayNameFor);
+            var nodeAgentNames = agentInstanceRows.Where(a => a.TaskId is not null)
+                .GroupBy(a => a.TaskId!.Value)
+                .ToDictionary(g => g.Key, g => DisplayNameFor(g.First()));
             var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e =>
             {
                 var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
+                var nodeAgentName = Guid.TryParse(nodeId, out var nodeGuid) && nodeAgentNames.TryGetValue(nodeGuid, out var dn) ? dn : null;
                 return new
                 {
                     id = nodeId,
@@ -382,6 +361,7 @@ public static class DmaeaEndpoints
                     description = PayloadString(e.Payload, "description") ?? "",
                     status = e.EventType is "worker.completed" or "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : e.EventType is "worker.failed" ? "failed" : "assigned",
                     lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
+                    agent_display_name = nodeAgentName,
                     priority = 1,
                     risk = PayloadString(e.Payload, "risk") ?? "medium",
                     success_criteria = Array.Empty<string>(),
@@ -441,7 +421,15 @@ public static class DmaeaEndpoints
                 reason = PayloadString(e.Payload, "reason"),
                 created_at = e.Timestamp
             }).ToList();
-            var agentInstances = (await instances.ListByRunAsync(runGuid, ct)).Select(a => new
+            var assignments = agentInstanceRows.Where(a => a.TaskId is not null).Select(a => new
+            {
+                task_node_id = a.TaskId!.Value,
+                agent_instance_id = a.Id,
+                agent_display_name = DisplayNameFor(a),
+                role = a.Role,
+                status = a.Status
+            }).ToList();
+            var agentInstancesProjection = agentInstanceRows.Select(a => new
             {
                 id = a.Id,
                 run_id = a.RunId,
@@ -449,6 +437,7 @@ public static class DmaeaEndpoints
                 task_id = a.TaskId,
                 layer = a.Layer,
                 role = a.Role,
+                agent_display_name = DisplayNameFor(a),
                 generation_depth = a.GenerationDepth,
                 generated = a.Generated,
                 status = a.Status,
@@ -496,9 +485,9 @@ public static class DmaeaEndpoints
                 graph = (object?)null,
                 nodes,
                 lanes,
-                assignments = Array.Empty<object>(),
+                assignments,
                 step_results = stepResults,
-                agent_instances = agentInstances,
+                agent_instances = agentInstancesProjection,
                 supervision_findings = supervision,
                 context_packs = events.Where(e => e.EventType == "context.packed").Select(e => new
                 {
@@ -601,9 +590,11 @@ public static class DmaeaEndpoints
         return app;
     }
 
-    private static async Task WriteChunkAsync(HttpContext context, long sequence, object chunk, CancellationToken ct)
+    private static async Task WriteChunkAsync(HttpContext context, long sequence, string kind, DateTimeOffset occurredAt, object chunk, CancellationToken ct)
     {
-        await context.Response.WriteAsync($"id: {sequence}\ndata: {JsonSerializer.Serialize(chunk)}\n\n", ct);
+        // Envelope contract (plan §4.3 item 2): the SSE event: line carries the
+        // kind, occurred_at is the durable journal timestamp, and id === seq.
+        await context.Response.WriteAsync($"id: {sequence}\nevent: {kind}\ndata: {JsonSerializer.Serialize(chunk)}\n\n", ct);
     }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using Tomlyn;
 using Tomlyn.Model;
@@ -318,12 +319,12 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
                 var next = LoadSnapshot(_path, Interlocked.Increment(ref _version));
                 Volatile.Write(ref _current, next);
                 Volatile.Write(ref _diagnostic, new RuntimeConfigurationDiagnostic("ready", $"Loaded runtime configuration v{next.Version} ({next.ContentHash[..12]}).", _path, DateTimeOffset.UtcNow));
-                _logger.LogInformation("Loaded agent runtime configuration version {Version} from {Path}", next.Version, _path);
+                _logger.TryLogInformation("Loaded agent runtime configuration version {Version} from {Path}", next.Version, _path);
             }
             catch (Exception ex)
             {
                 Volatile.Write(ref _diagnostic, new RuntimeConfigurationDiagnostic("warning", ex.Message, _path, DateTimeOffset.UtcNow));
-                _logger.LogWarning(ex, "Agent runtime configuration reload failed; keeping version {Version}", Current.Version);
+                _logger.TryLogWarning(ex, "Agent runtime configuration reload failed; keeping version {Version}", Current.Version);
             }
         }
     }

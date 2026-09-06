@@ -557,15 +557,26 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             try
             {
                 var chunks = new List<JsonElement>();
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/invoke-stream")
+                using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/interactions")
                 {
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
+                using var admissionResponse = await client.SendAsync(admissionRequest, HttpCompletionOption.ResponseHeadersRead);
+                if (admissionResponse.StatusCode != HttpStatusCode.Created)
+                {
+                    var admissionBody = await admissionResponse.Content.ReadAsStringAsync();
+                    throw new InvalidDataException($"Interaction admission rejected with {(int)admissionResponse.StatusCode}: {admissionBody}");
+                }
+                var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
+                var runId = receipt.GetProperty("run_id").GetString();
+                var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
+                var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
                     var body = await response.Content.ReadAsStringAsync();
-                    throw new InvalidDataException($"Invoke stream rejected with {(int)response.StatusCode}: {body}");
+                    throw new InvalidDataException($"Run stream rejected with {(int)response.StatusCode}: {body}");
                 }
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 using var stream = await response.Content.ReadAsStreamAsync();

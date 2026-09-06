@@ -24,10 +24,9 @@ public sealed class LifecycleModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IWorkspaceSnapshotService, WorkspaceSnapshotService>();
         builder.Services.AddSingleton<IStorageMigrationParticipant>(sp => sp.GetRequiredService<StorageLifecycleService>());
         builder.Services.AddSingleton<ILifecycleManager, LifecycleManager>();
-        // Recover durable runs left without an in-memory owner after a host restart.
-        // Waiting authorization states remain paused; other non-terminal runs are
-        // marked failed with an auditable recovery event.
-        builder.Services.AddHostedService<RunRecoveryHostedService>();
+        // Startup orphan recovery moved to Runtime.RecoveryCoordinator (plan §4.3
+        // item 5), which runs the pass under the shared RecoveryPolicy awaiting-*
+        // protection; the engine lease scan consumes the same policy in steady state.
         builder.Services.AddOptions<TinadecApprovalOptions>().BindConfiguration(TinadecApprovalOptions.SectionName);
         builder.Services.AddSingleton<ToolApprovalCoordinator>();
         builder.Services.AddSingleton<IToolApprovalCoordinator>(sp => sp.GetRequiredService<ToolApprovalCoordinator>());
@@ -111,11 +110,12 @@ internal sealed class LifecycleManager : ILifecycleManager
         Guid? taskId = null,
         Guid? approvalId = null,
         string? toolId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? idempotencyKey = null)
     {
         var storage = TryStorage();
         if (storage is null) return 0L;
-        var index = await storage.AppendEventAsync(runId, eventType, payload, summary, severity, taskId: taskId, approvalId: approvalId, toolId: toolId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var index = await storage.AppendEventAsync(runId, eventType, payload, summary, severity, taskId: taskId, approvalId: approvalId, toolId: toolId, idempotencyKey: idempotencyKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         return index.Sequence;
     }
 

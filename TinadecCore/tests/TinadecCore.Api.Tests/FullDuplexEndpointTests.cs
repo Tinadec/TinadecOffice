@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.DmaEA;
@@ -46,10 +47,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         ScriptedChatClient? client = null,
         bool available = true,
         IPromptAssembler? promptAssembler = null,
-        string? runtimeToml = null)
+        string? runtimeToml = null,
+        bool throwingLogger = false)
     {
         _factory?.Dispose();
-        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available, promptAssembler, runtimeToml);
+        _factory = new FullDuplexFactory(_root, client ?? new ScriptedChatClient(), available, promptAssembler, runtimeToml, throwingLogger);
         return _factory;
     }
 
@@ -255,8 +257,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
     private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
     {
+        // Durable admission (plan §4.3-4) followed by the run stream replay.
+        using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/interactions") { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        using var admissionResponse = await client.SendAsync(admissionRequest);
+        Assert.Equal(HttpStatusCode.Created, admissionResponse.StatusCode);
+        var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var runId = receipt.GetProperty("run_id").GetString();
+        var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
+        var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
+
         var chunks = new List<JsonElement>();
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/invoke-stream") { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var stream = await response.Content.ReadAsStreamAsync();
@@ -293,15 +304,26 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             try
             {
                 var chunks = new List<JsonElement>();
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/invoke-stream")
+                using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/interactions")
                 {
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
+                using var admissionResponse = await client.SendAsync(admissionRequest);
+                if (admissionResponse.StatusCode != HttpStatusCode.Created)
+                {
+                    var errorBody = await admissionResponse.Content.ReadAsStringAsync();
+                    Assert.Fail($"Interaction admission returned {(int)admissionResponse.StatusCode} {admissionResponse.StatusCode}: {errorBody}");
+                }
+                var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
+                var runId = receipt.GetProperty("run_id").GetString();
+                var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
+                var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
                     var errorBody = await response.Content.ReadAsStringAsync();
-                    Assert.Fail($"Invoke stream returned {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
+                    Assert.Fail($"Run stream returned {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
                 }
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
@@ -323,7 +345,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 }
                 if (!acknowledgement.Task.IsCompleted)
                 {
-                    acknowledgement.TrySetException(new InvalidDataException("Invoke stream closed before its acknowledgement."));
+                    acknowledgement.TrySetException(new InvalidDataException("Run stream closed before its acknowledgement."));
                 }
                 return chunks;
             }
@@ -560,17 +582,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvokeStream_StaleContextRevision_Returns409()
+    public async Task Interactions_StaleContextRevision_Returns409()
     {
         var factory = CreateFactory();
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "目标", expected_context_revision = 999 });
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new { content = "目标", client_message_id = "stale-rev-1", dispatch_mode = "queued", expected_context_revision = 999 });
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("CONTEXT_REVISION_CONFLICT", body.GetProperty("code").GetString());
+        Assert.Equal("context_conflict", body.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -608,16 +630,17 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             Assert.Equal("ack", KindOf(applied[0]));
             Assert.Equal("context_applied", applied.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
 
-            var stale = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new
+            var stale = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new
             {
                 content = "补充：这条基于过期版本",
                 client_message_id = "meeting-supplement-stale",
+                dispatch_mode = "insert",
                 target_run_id = runId,
                 expected_context_revision = baseContextRevision
             });
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
             var staleBody = await stale.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("CONTEXT_REVISION_CONFLICT", staleBody.GetProperty("code").GetString());
+            Assert.Equal("context_conflict", staleBody.GetProperty("code").GetString());
         }
         finally
         {
@@ -718,7 +741,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("completed", statusChunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
 
         var replay = await StreamRunAsync(client, statusRunId, statusTurnId);
-        Assert.Equal(new[] { "ack", "delta", "done" }, replay.Select(KindOf).ToArray());
+        // The durable stream now records the admission event (queued) alongside
+        // the turn's chunks — replay reflects what actually happened.
+        Assert.Equal(new[] { "ack", "queued", "delta", "done" }, replay.Select(KindOf).ToArray());
         Assert.All(replay, chunk => Assert.Equal(statusRunId, RunIdOf(chunk)));
 
         var runs = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/runs");
@@ -1134,10 +1159,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         }
         Assert.True(script.WorkerGateEntries >= 2, "Both runs should reach the worker gate before the limit probe.");
 
-        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "任务C", client_message_id = "c" });
+        // Parallel submissions are subject to the session's active-run limit: the
+        // third concurrent run is rejected with 409 instead of being queued.
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new { content = "任务C", client_message_id = "c", dispatch_mode = "parallel" });
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("ACTIVE_RUN_LIMIT", body.GetProperty("code").GetString());
+        Assert.Contains(body.GetProperty("code").GetString(), new[] { "conflict", "ACTIVE_RUN_LIMIT" });
 
         gate.SetResult();
         await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
@@ -1158,8 +1185,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "qa" });
-        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "qb" });
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "qa", dispatch_mode = "parallel" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "qb", dispatch_mode = "parallel" });
         await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -1176,6 +1203,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("queued", body.GetProperty("status").GetString());
         Assert.NotEqual(Guid.Empty, body.GetProperty("run_id").GetGuid());
+        // Receipt contract: the submission is confirmable and followable.
+        Assert.Equal("queued-followup", body.GetProperty("client_message_id").GetString());
+        Assert.Equal("queued-followup", body.GetProperty("correlation_id").GetString());
+        Assert.True(body.GetProperty("context_revision").GetInt64() >= 0);
+        Assert.True(body.GetProperty("stream_cursor").GetInt64() >= 0);
 
         await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
         {
@@ -1204,10 +1236,45 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
         var replayBody = await replay.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(body.GetProperty("interaction_id").GetGuid(), replayBody.GetProperty("interaction_id").GetGuid());
+        Assert.Equal("queued-followup", replayBody.GetProperty("correlation_id").GetString());
 
         gate.SetResult();
         await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         await runB.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task Interactions_AdmissionReceipt_CarriesCursorAndIdempotentReplayReturnsSameRun()
+    {
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("完成")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("好了。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "receipt probe", client_message_id = "receipt-1" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.NotEqual(Guid.Empty, body.GetProperty("run_id").GetGuid());
+        Assert.Equal(body.GetProperty("turn_id").GetGuid(), body.GetProperty("interaction_id").GetGuid());
+        Assert.Equal("receipt-1", body.GetProperty("client_message_id").GetString());
+        Assert.Equal("receipt-1", body.GetProperty("correlation_id").GetString());
+        Assert.True(body.GetProperty("context_revision").GetInt64() >= 0);
+        Assert.True(body.GetProperty("stream_cursor").GetInt64() >= 0);
+
+        // Retrying the same client_message_id returns the same run, not a second one.
+        var retry = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "receipt probe", client_message_id = "receipt-1" });
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        var retryBody = await retry.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(body.GetProperty("run_id").GetGuid(), retryBody.GetProperty("run_id").GetGuid());
+        Assert.Equal(body.GetProperty("turn_id").GetGuid(), retryBody.GetProperty("turn_id").GetGuid());
     }
 
     [Fact]
@@ -1784,6 +1851,34 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Supervision_Revise_PlannerGarbage_StillCompletesWhenLoggingProviderThrows()
+    {
+        // Regression: the supervision replan fallback used to call
+        // _logger.LogWarning directly, so a throwing provider (Windows Event Log
+        // without source-creation rights) turned a recoverable replan into a
+        // failed run. Logging must stay a side channel.
+        const string invalidGraph = "[{\"task_key\":\"dup\",\"title\":\"任务X\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"},{\"task_key\":\"dup\",\"title\":\"任务Y\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]";
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .ThenPlanner(invalidGraph)
+            .ThenPlanner(invalidGraph)
+            .WhenWorker("结果")
+            .WhenSupervisor("{\"decision\":\"revise\",\"reasons\":[\"证据不足\"],\"revise_task_indexes\":[0]}")
+            .ThenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已修正。");
+        var factory = CreateFactory(script, throwingLogger: true);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "目标" });
+
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal(3, script.PlannerCalls);
+        Assert.Equal(2, script.WorkerCalls);
+    }
+
+    [Fact]
     public async Task Supervision_Escalate_AwaitsUserDecisionAndContinuesWithoutEscalationFinishReason()
     {
         var script = new ScriptedChatClient()
@@ -1938,14 +2033,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         private readonly bool _available;
         private readonly IPromptAssembler? _promptAssembler;
         private readonly string? _runtimeToml;
+        private readonly bool _throwingLogger;
 
-        public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler, string? runtimeToml = null)
+        public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler, string? runtimeToml = null, bool throwingLogger = false)
         {
             _root = root;
             _client = client;
             _available = available;
             _promptAssembler = promptAssembler;
             _runtimeToml = runtimeToml;
+            _throwingLogger = throwingLogger;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -1971,7 +2068,36 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                 services.AddSingleton<IToolManifestSnapshotResolver, EmptyToolManifestSnapshotResolver>();
                 if (_promptAssembler is not null) services.AddSingleton(_promptAssembler);
             });
+            if (_throwingLogger)
+            {
+                builder.ConfigureLogging(logging => logging.AddProvider(new ThrowingEventLogProvider()));
+            }
         }
+    }
+
+    /// <summary>
+    /// Reproduces the Windows Event Log failure mode: the provider throws when a
+    /// Warning-or-above entry reaches the engine's logger. Runtime logging must
+    /// stay a side channel — the run outcome may not change.
+    /// </summary>
+    private sealed class ThrowingEventLogProvider : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName)
+            => categoryName.Contains("FullDuplexRunEngine", StringComparison.Ordinal)
+                ? new ThrowingWarningLogger()
+                : Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+        public void Dispose() { }
+    }
+
+    private sealed class ThrowingWarningLogger : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => throw new InvalidOperationException("The event source 'TinadecCore' could not be created.");
     }
 
     private sealed class RecordingPromptAssembler : IPromptAssembler

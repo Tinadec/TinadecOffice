@@ -63,7 +63,8 @@ public interface ILifecycleManager
         Guid? taskId = null,
         Guid? approvalId = null,
         string? toolId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? idempotencyKey = null);
 
     Task<string> StartToolExecutionAsync(
         ToolExecutionStart start,

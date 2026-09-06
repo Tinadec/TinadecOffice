@@ -5,6 +5,17 @@ using TinadecCore.Runtime;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Logging is a side channel. Console/Debug by default; the Windows Event Log
+// provider is opt-in — without elevation its first Warning write throws when
+// the event source does not exist, which must never influence run outcomes.
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+if (builder.Configuration.GetValue<bool>("Logging:EventLog:Enabled"))
+{
+    builder.Logging.AddEventLog();
+}
+
 // Shared database abstraction (SQLite default; PostgreSQL optional) before business modules.
 builder.Services.AddTinadecPersistence(builder.Configuration, builder.Environment.ContentRootPath);
 

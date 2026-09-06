@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Persistence;
 
@@ -535,7 +536,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (execution.ApprovalId is not { } approvalId)
         {
             execution.Status = "failed";
-            execution.ErrorCategory = "approval_missing";
+            execution.ErrorCategory = RunErrorTaxonomy.ApprovalMissing;
             execution.SafeErrorMessage = "Approval-gated execution has no approval record.";
             execution.UpdatedAt = DateTimeOffset.UtcNow;
             execution.CompletedAt = execution.UpdatedAt;
@@ -548,7 +549,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (approval is null)
         {
             execution.Status = "failed";
-            execution.ErrorCategory = "approval_missing";
+            execution.ErrorCategory = RunErrorTaxonomy.ApprovalMissing;
             execution.SafeErrorMessage = "Approval record was not found.";
             execution.UpdatedAt = DateTimeOffset.UtcNow;
             execution.CompletedAt = execution.UpdatedAt;
@@ -585,7 +586,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 approval.Status = "expired";
                 approval.UpdatedAt = now;
                 execution.Status = "failed";
-                execution.ErrorCategory = "approval_expired";
+                execution.ErrorCategory = RunErrorTaxonomy.ApprovalExpired;
                 execution.SafeErrorMessage = "Approval expired before execution began.";
                 execution.UpdatedAt = now;
                 execution.CompletedAt = execution.UpdatedAt;
@@ -604,7 +605,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             || string.IsNullOrWhiteSpace(approval.NonceSecretReference))
         {
             execution.Status = "failed";
-            execution.ErrorCategory = "approval_binding_mismatch";
+            execution.ErrorCategory = RunErrorTaxonomy.ApprovalBindingMismatch;
             execution.SafeErrorMessage = "Approval does not match the persisted tool execution.";
             execution.UpdatedAt = now;
             execution.CompletedAt = now;
@@ -615,7 +616,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (approval.Status is "rejected" or "expired" or "cancelled")
         {
             execution.Status = "failed";
-            execution.ErrorCategory = "not_approved";
+            execution.ErrorCategory = RunErrorTaxonomy.NotApproved;
             execution.SafeErrorMessage = $"Approval decision was '{approval.Status}'.";
             execution.UpdatedAt = now;
             execution.CompletedAt = execution.UpdatedAt;
@@ -627,7 +628,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             // A process may have died after consumption but before a result was
             // persisted. Never replay a potentially mutating call automatically.
             execution.Status = "outcome_unknown";
-            execution.ErrorCategory = "approval_consumed_without_outcome";
+            execution.ErrorCategory = RunErrorTaxonomy.ApprovalConsumedWithoutOutcome;
             execution.SafeErrorMessage = "Approval was consumed without a durable tool outcome.";
             execution.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -732,7 +733,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (normalized == "fail")
         {
             source.Status = "failed";
-            source.ErrorCategory = "recovery_failed";
+            source.ErrorCategory = RunErrorTaxonomy.RecoveryFailed;
             source.SafeErrorMessage = "A human selected fail after the tool outcome became unknown.";
             source.UpdatedAt = DateTimeOffset.UtcNow;
             source.CompletedAt = source.UpdatedAt;
@@ -834,7 +835,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         foreach (var execution in executions)
         {
             execution.Status = "cancelled";
-            execution.ErrorCategory = "run_cancelled";
+            execution.ErrorCategory = RunErrorTaxonomy.Cancelled;
             execution.SafeErrorMessage = "Run was cancelled before tool execution began.";
             execution.CompletedAt = execution.UpdatedAt = now;
         }
@@ -1159,7 +1160,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     {
         var now = DateTimeOffset.UtcNow;
         execution.Status = "cancelled";
-        execution.ErrorCategory = "run_cancelled";
+        execution.ErrorCategory = RunErrorTaxonomy.Cancelled;
         execution.SafeErrorMessage = "Run was cancelled before tool execution began.";
         execution.CompletedAt = execution.UpdatedAt = now;
         if (execution.ApprovalId is { } approvalId)

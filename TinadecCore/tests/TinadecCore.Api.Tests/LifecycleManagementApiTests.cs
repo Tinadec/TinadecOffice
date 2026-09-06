@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
+using TinadecCore.Runtime;
 
 namespace TinadecCore.Api.Tests;
 
@@ -112,6 +113,146 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
 
         await _factory.Services.GetRequiredService<StorageLifecycleService>().CompleteRunAsync(run.Id);
         Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsync($"/api/v1/sessions/{sessionId}/trash", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task RunCompletion_IsIdempotentAndKeepsFirstCompletedAt()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "terminal-idempotency-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Terminal idempotency session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Terminal trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+
+        await lifecycle.CompleteRunAsync(run.Id);
+        DateTimeOffset firstCompletedAt;
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var record = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+            Assert.Equal("completed", record.Status);
+            firstCompletedAt = record.CompletedAt!.Value;
+        }
+
+        await Task.Delay(10);
+        await lifecycle.CompleteRunAsync(run.Id);
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var record = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+            Assert.Equal("completed", record.Status);
+            Assert.Equal(firstCompletedAt, record.CompletedAt!.Value);
+        }
+    }
+
+    [Fact]
+    public async Task RunStatusMachine_RepeatedTerminalStatusKeepsOriginalCompletedAt()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "terminal-rewrite-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Terminal rewrite session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Terminal rewrite trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+
+        await lifecycle.SetRunStatusAsync(run.Id, "executing");
+        await lifecycle.SetRunStatusAsync(run.Id, "failed", "first failure");
+        DateTimeOffset firstCompletedAt;
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var record = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+            firstCompletedAt = record.CompletedAt!.Value;
+        }
+
+        await Task.Delay(10);
+        await lifecycle.SetRunStatusAsync(run.Id, "failed", "second failure");
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var record = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+            Assert.Equal("failed", record.Status);
+            Assert.Equal(firstCompletedAt, record.CompletedAt!.Value);
+            // Summary follows the latest transition by design; only the terminal
+            // timestamp is frozen.
+            Assert.Equal("second failure", record.Summary);
+        }
+    }
+
+    [Fact]
+    public async Task AppendEvent_WithIdempotencyKey_PersistsExactlyOnce()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "event-idempotency-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Event idempotency session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "Event idempotency trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+
+        // A keyed terminal event replays the first record instead of appending twice.
+        var first = await lifecycle.AppendEventAsync(run.Id, "run.failed", new { reason = "one" }, "first", "warning", idempotencyKey: $"run:{run.Id}:event:run.failed");
+        var replay = await lifecycle.AppendEventAsync(run.Id, "run.failed", new { reason = "two" }, "second", "warning", idempotencyKey: $"run:{run.Id}:event:run.failed");
+        Assert.Equal(first.Sequence, replay.Sequence);
+
+        // Unkeyed events keep the legacy append-always behavior.
+        await lifecycle.AppendEventAsync(run.Id, "run.failed", new { reason = "three" }, "third", "warning");
+        await lifecycle.AppendEventAsync(run.Id, "run.failed", new { reason = "four" }, "fourth", "warning");
+
+        await using var db = await runs.CreateDbContextAsync();
+        var total = await db.EventIndex.AsNoTracking().CountAsync(x => x.RunId == run.Id);
+        var keyed = await db.EventIndex.AsNoTracking().CountAsync(x => x.RunId == run.Id && x.IdempotencyKey == $"run:{run.Id}:event:run.failed");
+        Assert.Equal(3, total);
+        Assert.Equal(1, keyed);
+    }
+
+    [Fact]
+    public async Task RecoveryCoordinator_FailsOrphans_ProtectsAwaiting_AndIsIdempotent()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "recovery-coordinator-workspace");
+        var projectId = project.GetProperty("id").GetGuid();
+        var session = await CreateSessionAsync(client, projectId, "Recovery session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var coordinator = _factory.Services.GetRequiredService<RecoveryCoordinator>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+
+        // A run parked on a human decision is protected, not orphaned.
+        var awaitingMessage = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "awaiting trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var awaitingRun = await lifecycle.StartRunAsync(sessionId, awaitingMessage.GetProperty("id").GetGuid());
+        await lifecycle.SetRunStatusAsync(awaitingRun.Id, "understanding");
+        await lifecycle.SetRunStatusAsync(awaitingRun.Id, "awaiting_user");
+
+        // A fresh non-terminal run is an orphan for the startup pass.
+        var orphanMessage = await (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "orphan trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var orphanRun = await lifecycle.StartRunAsync(sessionId, orphanMessage.GetProperty("id").GetGuid());
+
+        await coordinator.RunStartupPassesAsync();
+
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var orphan = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == orphanRun.Id);
+            Assert.Equal("failed", orphan.Status);
+            var protectedRun = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == awaitingRun.Id);
+            Assert.Equal("awaiting_user", protectedRun.Status);
+            var recoveredEvents = await db.EventIndex.AsNoTracking().CountAsync(x => x.RunId == orphanRun.Id && x.EventType == "run.recovered");
+            Assert.Equal(1, recoveredEvents);
+        }
+
+        // A second pass must not duplicate the audit event or flip the protected run.
+        await coordinator.RunStartupPassesAsync();
+        await using (var db = await runs.CreateDbContextAsync())
+        {
+            var orphan = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == orphanRun.Id);
+            Assert.Equal("failed", orphan.Status);
+            var protectedRun = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == awaitingRun.Id);
+            Assert.Equal("awaiting_user", protectedRun.Status);
+            var recoveredEvents = await db.EventIndex.AsNoTracking().CountAsync(x => x.RunId == orphanRun.Id && x.EventType == "run.recovered");
+            Assert.Equal(1, recoveredEvents);
+        }
     }
 
     [Fact]

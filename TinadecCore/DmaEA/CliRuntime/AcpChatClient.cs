@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 
 namespace TinadecCore.DmaEA.CliRuntime;
 
@@ -176,7 +177,7 @@ internal sealed class AcpChatClient : IChatClient, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ACP event stream for {ServerUrl} ended unexpectedly.", _serverUrl);
+                _logger.TryLogError(ex, "ACP event stream for {ServerUrl} ended unexpectedly.", _serverUrl);
                 _notifications.Writer.TryComplete(ex);
             }
             finally

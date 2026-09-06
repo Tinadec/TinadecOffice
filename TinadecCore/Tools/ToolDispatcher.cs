@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -117,7 +118,7 @@ public sealed class ToolDispatcher : IToolDispatcher
                 }
                 catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or DirectoryNotFoundException)
                 {
-                    var blocked = await _executions.FailAsync(execution.Id, "failed", "snapshot_failed",
+                    var blocked = await _executions.FailAsync(execution.Id, "failed", RunErrorTaxonomy.SnapshotFailed,
                         SafeMessage(ex.Message), cancellationToken).ConfigureAwait(false);
                     return ResultForFailure(blocked, ToolDispatchStatus.Blocked);
                 }
@@ -307,13 +308,13 @@ public sealed class ToolDispatcher : IToolDispatcher
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingApproval, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message, ParkExpired = start.ParkExpired };
             case "awaiting_resume":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingResume, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message };
-            case "outcome_unknown":
+            case RunErrorTaxonomy.OutcomeUnknown:
                 await PauseForUnknownOutcomeAsync(execution, start.Message, cancellationToken).ConfigureAwait(false);
-                return new ToolDispatchResultDto { Status = ToolDispatchStatus.OutcomeUnknown, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "outcome_unknown", Message = start.Message };
+                return new ToolDispatchResultDto { Status = ToolDispatchStatus.OutcomeUnknown, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.OutcomeUnknown, Message = start.Message };
             case "not_approved":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.NotApproved, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "not_approved", Message = start.Message };
             case "cancelled":
-                return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "run_cancelled", Message = start.Message };
+                return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.Cancelled, Message = start.Message };
             case "completed":
             case "failed":
             case "timed_out":
@@ -408,7 +409,7 @@ public sealed class ToolDispatcher : IToolDispatcher
 
                 last = response;
                 var category = WireErrorCategory(response.Error);
-                var retry = safeReadRetry && (category is "timeout" or "process_exit") && attempt <= retryLimit;
+                var retry = safeReadRetry && (category is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit) && attempt <= retryLimit;
                 await AppendEventAsync(execution.RunId, "tool.execution.failed", $"Tool '{descriptor.Id}' failed ({category}).", new
                 {
                     execution_id = execution.Id,
@@ -419,7 +420,7 @@ public sealed class ToolDispatcher : IToolDispatcher
                     retryable = retry
                 }, cancellationToken, execution.TaskId, descriptor.Id, retry ? "warning" : "error").ConfigureAwait(false);
                 if (!retry) break;
-                _logger.LogWarning("Retrying safe read-only tool {ToolId} after {Category} ({Attempt}/{Max})", descriptor.Id, category, attempt + 1, retryLimit + 1);
+                _logger.TryLogWarning("Retrying safe read-only tool {ToolId} after {Category} ({Attempt}/{Max})", descriptor.Id, category, attempt + 1, retryLimit + 1);
             }
         }
         finally
@@ -430,16 +431,16 @@ public sealed class ToolDispatcher : IToolDispatcher
 
         var finalCategory = WireErrorCategory(last?.Error);
         var message = SafeMessage(last?.Error);
-        if (execution.MutatesWorkspace && finalCategory is "timeout" or "process_exit")
+        if (execution.MutatesWorkspace && finalCategory is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit)
         {
-            var unknown = await _executions.FailAsync(execution.Id, "outcome_unknown", finalCategory, message, cancellationToken).ConfigureAwait(false);
+            var unknown = await _executions.FailAsync(execution.Id, RunErrorTaxonomy.OutcomeUnknown, finalCategory, message, cancellationToken).ConfigureAwait(false);
             await PauseForUnknownOutcomeAsync(unknown, message, cancellationToken).ConfigureAwait(false);
             return ResultForFailure(unknown, ToolDispatchStatus.OutcomeUnknown);
         }
 
-        var failureStatus = finalCategory == "timeout" ? "timed_out" : "failed";
+        var failureStatus = finalCategory == RunErrorTaxonomy.ToolTimeout ? "timed_out" : "failed";
         var failedExecution = await _executions.FailAsync(execution.Id, failureStatus, finalCategory, message, cancellationToken).ConfigureAwait(false);
-        return ResultForFailure(failedExecution, failureStatus == "timed_out" ? ToolDispatchStatus.Timeout : finalCategory == "process_exit" ? ToolDispatchStatus.ProcessExit : ToolDispatchStatus.Failed);
+        return ResultForFailure(failedExecution, failureStatus == "timed_out" ? ToolDispatchStatus.Timeout : finalCategory == RunErrorTaxonomy.ToolProcessExit ? ToolDispatchStatus.ProcessExit : ToolDispatchStatus.Failed);
     }
 
     /// <summary>
@@ -643,7 +644,7 @@ public sealed class ToolDispatcher : IToolDispatcher
             "awaiting_approval" => ToolDispatchStatus.AwaitingApproval,
             "awaiting_delegate" => ToolDispatchStatus.AwaitingDelegate,
             "awaiting_user" => ToolDispatchStatus.AwaitingUser,
-            "outcome_unknown" => ToolDispatchStatus.OutcomeUnknown,
+            RunErrorTaxonomy.OutcomeUnknown => ToolDispatchStatus.OutcomeUnknown,
             "completed" => ToolDispatchStatus.Completed,
             "timed_out" => ToolDispatchStatus.Timeout,
             "failed" => ToolDispatchStatus.Failed,
@@ -747,10 +748,10 @@ public sealed class ToolDispatcher : IToolDispatcher
 
     private static string WireErrorCategory(string? error)
     {
-        if (string.IsNullOrWhiteSpace(error)) return "tool_error";
+        if (string.IsNullOrWhiteSpace(error)) return RunErrorTaxonomy.ToolError;
         var separator = error.IndexOf(':');
         var category = separator > 0 ? error[..separator].Trim().ToLowerInvariant() : error.Trim().ToLowerInvariant();
-        return category is "timeout" or "process_exit" ? category : "tool_error";
+        return category is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit ? category : RunErrorTaxonomy.ToolError;
     }
 
     private static string SafeMessage(string? value) => string.IsNullOrWhiteSpace(value) ? "Tool call failed." : value.Trim()[..Math.Min(value.Trim().Length, 4096)];

@@ -28,4 +28,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Serialization plan §8 Phase 0: WebApplicationFactory hosts contend for
+       CPU/tool child processes; concurrent collections flake timing-based
+       polling windows. Run collections sequentially. -->
+  <ItemGroup>
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

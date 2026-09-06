@@ -163,6 +163,21 @@ public sealed class AgentDirectoryItemDto
     public IReadOnlyDictionary<string, ModelResolutionPreviewDto> EffectivePreviews { get; init; } = new Dictionary<string, ModelResolutionPreviewDto>();
     public ModelInvocationDto? RecentInvocation { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
+    /// <summary>用户级运行时绑定覆盖（null = 未覆盖，跟随 agent 定义/默认路由）。</summary>
+    public AgentRuntimeBindingDto? ModelBinding { get; init; }
+}
+
+public sealed class AgentRuntimeBindingDto
+{
+    /// <summary>inherit | route | fixed</summary>
+    public string Mode { get; init; } = "inherit";
+    public Guid? ProviderInstanceId { get; init; }
+    public string? Model { get; init; }
+    /// <summary>mode == route 时的 model_routes.purpose；其他模式为 null。</summary>
+    public string? RoutePurpose { get; init; }
+    public IReadOnlyList<string>? ToolScopeOverride { get; init; }
+    public long Revision { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
 }
 
 public static class ModelStrategyJson

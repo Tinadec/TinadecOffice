@@ -61,7 +61,8 @@ public sealed record RunStreamChunk(
     object? Usage = null,
     string? FinishReason = null,
     string? ErrorCategory = null,
-    string? SafeErrorMessage = null);
+    string? SafeErrorMessage = null,
+    DateTimeOffset OccurredAt = default);
 
 public sealed class RunAdmissionException : InvalidOperationException
 {
@@ -72,6 +73,7 @@ public sealed class RunAdmissionException : InvalidOperationException
 internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
 {
     private static readonly TimeSpan FollowPollInterval = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
 
     private readonly IConversationStore _conversations;
     private readonly ILifecycleManager _lifecycle;
@@ -491,12 +493,14 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
 
         var cursor = afterSequence;
         DateTimeOffset? terminalObservedAt = null;
+        var lastEmitAt = DateTimeOffset.UtcNow;
         while (!cancellationToken.IsCancellationRequested)
         {
             var chunks = await _lifecycle.ReplayRunStreamAsync(runId.ToString(), turnId, cursor, cancellationToken).ConfigureAwait(false);
             foreach (var chunk in chunks)
             {
                 cursor = Math.Max(cursor, chunk.Sequence);
+                lastEmitAt = DateTimeOffset.UtcNow;
                 yield return ToStreamChunk(chunk);
                 if (chunk.Kind is "done" or "error") yield break;
             }
@@ -512,6 +516,15 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 if (DateTimeOffset.UtcNow - terminalObservedAt >= TimeSpan.FromSeconds(2)) yield break;
             }
             else terminalObservedAt = null;
+
+            if (DateTimeOffset.UtcNow - lastEmitAt >= HeartbeatInterval)
+            {
+                // Idle keep-alive: the endpoint renders this as an SSE comment so
+                // intermediaries see traffic and clients never advance their cursor.
+                lastEmitAt = DateTimeOffset.UtcNow;
+                yield return new RunStreamChunk(runId, turnId ?? Guid.Empty, null, cursor, "heartbeat",
+                    OccurredAt: DateTimeOffset.UtcNow);
+            }
 
             await Task.Delay(FollowPollInterval, cancellationToken).ConfigureAwait(false);
         }
@@ -630,7 +643,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         }
         return new RunStreamChunk(Guid.TryParse(chunk.RunId, out var runId) ? runId : Guid.Empty,
             chunk.TurnId, chunk.MessageId, chunk.Sequence, chunk.Kind, chunk.Delta, usage,
-            chunk.FinishReason, chunk.ErrorCategory, chunk.SafeErrorMessage);
+            chunk.FinishReason, chunk.ErrorCategory, chunk.SafeErrorMessage, chunk.CreatedAt);
     }
 
     private static bool IsTerminal(RunStatus status) => status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled;

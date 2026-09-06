@@ -6,6 +6,7 @@ using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
+using TinadecCore.Models;
 
 namespace TinadecCore.AspNetCore.Endpoints;
 
@@ -17,6 +18,7 @@ public static class AgentConfigurationEndpoints
         app.MapGet("/api/v1/agents", ListAgents);
         app.MapPost("/api/v1/agents", CreateAgent);
         app.MapGet("/api/v1/agents/{id:guid}", GetAgent);
+        app.MapPut("/api/v1/agents/{id:guid}/runtime-binding", PutAgentRuntimeBinding);
         app.MapPut("/api/v1/agents/{id:guid}/draft", UpdateAgentDraft);
         app.MapPost("/api/v1/agents/{id:guid}/publish", PublishAgent);
         app.MapPost("/api/v1/agents/{id:guid}/archive", ArchiveAgent);
@@ -224,6 +226,8 @@ public static class AgentConfigurationEndpoints
         await using var lifecycle = await lifecycleFactory.CreateDbContextAsync(ct);
         var recentInvocations = (await lifecycle.ModelInvocations.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w && x.Status == "succeeded").ToListAsync(ct))
             .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.CompletedAt).First());
+        var bindings = (await db.AgentRuntimeBindings.AsNoTracking().Where(x => x.TenantId == t && x.WorkspaceId == w).ToListAsync(ct))
+            .GroupBy(x => x.AgentDefinitionId).ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.UpdatedAt).First());
 
         var result = new List<AgentDirectoryItemDto>();
         foreach (var definition in definitions)
@@ -263,6 +267,7 @@ public static class AgentConfigurationEndpoints
             ModelStrategyDto configuredStrategy;
             try { configuredStrategy = ModelStrategyJson.Parse(definition.ModelStrategyJson); }
             catch { configuredStrategy = new ModelStrategyDto { Kind = ModelStrategyKinds.Inherit }; }
+            bindings.TryGetValue(definition.Id, out var bindingRecord);
             result.Add(new AgentDirectoryItemDto
             {
                 Id = definition.Id, Slug = definition.Slug, DisplayName = definition.DisplayName,
@@ -271,7 +276,19 @@ public static class AgentConfigurationEndpoints
                 Enabled = definition.Enabled, Status = definition.Status, Revision = definition.Revision, Version = definition.Version,
                 CurrentVersionId = agentVersion?.Id, ConfiguredStrategy = configuredStrategy,
                 ModeUsages = usages, EffectivePreviews = previews,
-                RecentInvocation = invocation is null ? null : ToInvocationDto(invocation), UpdatedAt = definition.UpdatedAt
+                RecentInvocation = invocation is null ? null : ToInvocationDto(invocation), UpdatedAt = definition.UpdatedAt,
+                ModelBinding = bindingRecord is null ? null : new AgentRuntimeBindingDto
+                {
+                    Mode = bindingRecord.Mode,
+                    ProviderInstanceId = bindingRecord.ProviderInstanceId,
+                    Model = bindingRecord.Model,
+                    RoutePurpose = bindingRecord.RoutePurpose,
+                    ToolScopeOverride = string.IsNullOrWhiteSpace(bindingRecord.ToolScopeOverrideJson)
+                        ? null
+                        : JsonSerializer.Deserialize<string[]>(bindingRecord.ToolScopeOverrideJson),
+                    Revision = bindingRecord.Revision,
+                    UpdatedAt = bindingRecord.UpdatedAt
+                }
             });
         }
 
@@ -287,6 +304,95 @@ public static class AgentConfigurationEndpoints
             });
         }
         return Results.Ok(result.OrderBy(x => x.Status == "missing" ? 0 : 1).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// 用户级运行时绑定（配置体验改造 A）：为智能体设置模型来源（inherit=跟随默认 /
+    /// route=按用途路由 / fixed=指定 provider+model）与可选的工具范围覆盖。这是覆盖
+    /// 记录而非定义编辑，pack 管理的智能体同样可写；冻结运行配置时优先生效。
+    /// </summary>
+    static async Task<IResult> PutAgentRuntimeBinding(
+        Guid id,
+        HttpRequest req,
+        IDbContextFactory<AgentConfigurationDbContext> f,
+        IDbContextFactory<ModelControlDbContext> modelFactory,
+        ITenantContextAccessor a,
+        CancellationToken ct)
+    {
+        var (t, w, principal) = Ctx(a);
+        var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
+        if (el.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { code = "invalid_request", message = "A JSON body is required." });
+        var mode = el.TryGetProperty("mode", out var m) ? m.GetString()?.Trim().ToLowerInvariant() : null;
+        if (mode is not ("inherit" or "route" or "fixed")) return Results.BadRequest(new { code = "invalid_request", message = "mode must be inherit, route or fixed" });
+        Guid? providerInstanceId = el.TryGetProperty("provider_instance_id", out var p) && p.ValueKind == JsonValueKind.String && Guid.TryParse(p.GetString(), out var pg) ? pg : null;
+        var model = el.TryGetProperty("model", out var mm) ? mm.GetString()?.Trim() : null;
+        var routePurpose = el.TryGetProperty("route_purpose", out var rp) ? rp.GetString()?.Trim() : null;
+        if (mode == "fixed")
+        {
+            if (providerInstanceId is null) return Results.BadRequest(new { code = "invalid_request", message = "provider_instance_id is required for fixed binding" });
+            if (string.IsNullOrWhiteSpace(model)) return Results.BadRequest(new { code = "invalid_request", message = "model is required for fixed binding" });
+        }
+        if (mode == "route" && string.IsNullOrWhiteSpace(routePurpose))
+            return Results.BadRequest(new { code = "invalid_request", message = "route_purpose is required for route binding" });
+        string? toolScopeJson = null;
+        if (el.TryGetProperty("tool_scope", out var ts) && ts.ValueKind == JsonValueKind.Array)
+        {
+            var tools = ts.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
+            toolScopeJson = JsonSerializer.Serialize(tools);
+        }
+
+        await using var db = await f.CreateDbContextAsync(ct);
+        var definition = await db.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.TenantId == t && x.WorkspaceId == w, ct);
+        if (definition is null) return Results.NotFound(new { code = "not_found", message = "Agent was not found." });
+
+        if (mode == "fixed" && providerInstanceId is { } pid)
+        {
+            await using var modelDb = await modelFactory.CreateDbContextAsync(ct);
+            var provider = await modelDb.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == pid && x.TenantId == t && x.DeletedAt == null, ct);
+            if (provider is null) return Results.NotFound(new { code = "not_found", message = "Model provider was not found." });
+            if (!provider.Enabled) return Results.Conflict(new { code = "provider_disabled", message = "The model provider is disabled." });
+        }
+        if (mode == "route")
+        {
+            // 与 AgentModelResolver.FreezeRouteAsync 同一把尺子：tenant + workspace 内的
+            // 未删除路由。这里挡住不存在的用途，避免绑定保存成功、下一次 run 才炸。
+            await using var modelDb = await modelFactory.CreateDbContextAsync(ct);
+            var routeExists = await modelDb.Routes.AsNoTracking().AnyAsync(
+                x => x.Purpose == routePurpose && x.TenantId == t && x.WorkspaceId == w && x.DeletedAt == null, ct);
+            if (!routeExists) return Results.NotFound(new { code = "not_found", message = $"Model route '{routePurpose}' was not found." });
+        }
+
+        // tenant/workspace 谓词必须带上：ListAgents 与 FormalModeResolver 都按
+        // tenant+workspace 读，缺了会跨工作区读到别人的行并覆盖它。
+        var binding = await db.AgentRuntimeBindings.SingleOrDefaultAsync(
+            x => x.AgentDefinitionId == id && x.TenantId == t && x.WorkspaceId == w, ct);
+        var now = DateTimeOffset.UtcNow;
+        if (binding is null)
+        {
+            binding = new AgentRuntimeBindingRecord { AgentDefinitionId = id, TenantId = t, WorkspaceId = w, Revision = 1 };
+            db.AgentRuntimeBindings.Add(binding);
+        }
+        else binding.Revision++;
+        binding.Mode = mode!;
+        // 三档互斥：切换 mode 时清干净另一档的字段，否则旧值会在下次读取时冒充有效配置。
+        binding.ProviderInstanceId = mode == "fixed" ? providerInstanceId : null;
+        binding.Model = mode == "fixed" ? model : null;
+        binding.RoutePurpose = mode == "route" ? routePurpose : null;
+        binding.ToolScopeOverrideJson = toolScopeJson;
+        binding.UpdatedAt = now;
+        binding.UpdatedByPrincipalId = principal;
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new
+        {
+            agent_definition_id = id,
+            mode = binding.Mode,
+            provider_instance_id = binding.ProviderInstanceId,
+            model = binding.Model,
+            route_purpose = binding.RoutePurpose,
+            tool_scope_override = toolScopeJson is null ? (JsonElement?)null : JsonSerializer.Deserialize<JsonElement>(toolScopeJson),
+            revision = binding.Revision,
+            updated_at = binding.UpdatedAt
+        });
     }
     static async Task<IResult> CreateAgent(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
     {
@@ -426,6 +532,8 @@ public static class AgentConfigurationEndpoints
             return Results.BadRequest(new { code = "UNKNOWN_APPLICATION_MODE", message = $"Application mode '{applicationMode}' is not configured." });
 
         await using var db = await f.CreateDbContextAsync(ct);
+        // 保持原始语义：不带 status 返回全部行（pack 花名册合约依赖完整清单，
+        // 包含 archived 的 bootstrap 行）；可选项的 published 过滤由客户端做。
         var query = db.AgentModes.Where(x => x.TenantId == t && x.WorkspaceId == w
             && (string.IsNullOrEmpty(status) || x.Status == status));
         if (hasApplicationFilter)
@@ -433,7 +541,24 @@ public static class AgentConfigurationEndpoints
                 ? query.Where(x => x.Slug.StartsWith("conversation."))
                 : query.Where(x => !x.Slug.StartsWith("conversation."));
         var list = (await query.ToListAsync(ct)).OrderByDescending(x => x.UpdatedAt).ToList();
-        return Results.Ok(list.Select(ToModeDto));
+
+        // 同 slug 可能存在多行（bootstrap + pack 安装各一条 published）：行全部返回
+        // （智能体中心的 pack 花名册合约依赖完整清单）；"哪个 slug 用哪一行"的解析规则
+        // 与 POST /interactions 一致，由客户端按 slug 分组后自行挑选。
+        var modeIds = list.Select(x => x.Id).ToList();
+        var latestVersions = (await db.ModeVersions.AsNoTracking()
+            .Where(x => modeIds.Contains(x.AgentModeId) && x.TenantId == t && x.WorkspaceId == w && x.Status == "published")
+            .ToListAsync(ct))
+            .GroupBy(x => x.AgentModeId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(v => v.Version).First());
+        return Results.Ok(list.Select(r =>
+        {
+            latestVersions.TryGetValue(r.Id, out var version);
+            var application = r.Slug.StartsWith("conversation.", StringComparison.Ordinal)
+                ? r.Slug["conversation.".Length..]
+                : null;
+            return ToModeDto(r, version?.Id, version?.Version, application);
+        }));
     }
     static async Task<IResult> CreateMode(HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> f, ITenantContextAccessor a, CancellationToken ct)
     {
@@ -978,7 +1103,7 @@ static async Task<IResult> GetMode(Guid id, IDbContextFactory<AgentConfiguration
         SafeErrorMessage=value.SafeErrorMessage, InputTokens=value.InputTokens, OutputTokens=value.OutputTokens,
         TotalTokens=value.TotalTokens, StartedAt=value.StartedAt, CompletedAt=value.CompletedAt
     };
-    static object ToModeDto(AgentModeRecord r) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, description=r.Description, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt };
+    static object ToModeDto(AgentModeRecord r, Guid? latestPublishedVersionId = null, int? latestVersion = null, string? applicationMode = null) => new{ id=r.Id, slug=r.Slug, display_name=r.DisplayName, description=r.Description, status=r.Status, revision=r.Revision, version=r.Version, created_at=r.CreatedAt, updated_at=r.UpdatedAt, archived_at=r.ArchivedAt, latest_published_mode_version_id = latestPublishedVersionId, application_mode = applicationMode };
 
     static IResult ManagedReadOnly(AgentPackManagedResource managed) => throw new AgentPackDomainException(
         StatusCodes.Status409Conflict,

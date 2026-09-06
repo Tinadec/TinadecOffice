@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using TinadecCore.Abstractions;
 
 namespace TinadecCore.Persistence;
 
@@ -62,7 +63,7 @@ internal sealed class DatabaseReadiness : IDatabaseReadiness
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "Database readiness probe failed for {Provider}.", providerName);
+            _logger.TryLogWarning(ex, "Database readiness probe failed for {Provider}.", providerName);
             return new DatabaseReadinessResult
             {
                 Provider = providerName,

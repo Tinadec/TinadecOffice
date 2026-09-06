@@ -56,7 +56,16 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<UserToolActionService>();
         services.AddSingleton<IUserToolActionService>(sp => sp.GetRequiredService<UserToolActionService>());
         services.AddSingleton<IUserToolActionRecovery>(sp => sp.GetRequiredService<UserToolActionService>());
-        services.AddHostedService<UserToolActionRecoveryHostedService>();
+        // Single recovery orchestration point (plan §4.3 item 5): startup orphan scan
+        // + user tool action recovery in one ordered pass, one policy (RecoveryPolicy).
+        services.AddSingleton<RecoveryCoordinator>();
+        services.AddHostedService(sp => sp.GetRequiredService<RecoveryCoordinator>());
+
+        // Phase 3 startup experience: model connectivity probe (60s in-memory cache,
+        // consumed by the readiness receipt's model_probe item) and the unified
+        // readiness receipt aggregator. Both are stateless singletons over ports.
+        services.AddSingleton<ModelProbeService>();
+        services.AddSingleton<ReadinessService>();
 
         // Rebind ToolDispatchOptions from the frozen TOML runtime profile (this factory
         // registration replaces the defaults the Tools module registered; DI resolves

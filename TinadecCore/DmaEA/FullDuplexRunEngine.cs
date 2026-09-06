@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -123,7 +124,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 }
                 catch (Exception ex)
                 {
-                    TryLogWarning(ex, "Durable full-duplex recovery scan failed.");
+                    _logger.TryLogWarning(ex, "Durable full-duplex recovery scan failed.");
                 }
                 nextScan = DateTimeOffset.UtcNow.Add(ScanInterval);
             }
@@ -145,7 +146,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             {
                 try { await running[completed].ConfigureAwait(false); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-                catch (Exception ex) { TryLogError(ex, "Durable engine task {RunId} ended unexpectedly.", completed); }
+                catch (Exception ex) { _logger.TryLogError(ex, "Durable engine task {RunId} ended unexpectedly.", completed); }
                 running.Remove(completed);
                 if (_wakeAfterRun.TryRemove(completed, out _)
                     && !stoppingToken.IsCancellationRequested)
@@ -229,6 +230,26 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
             var checkpoint = await LoadOrCreateCheckpointAsync(runId, run, sessionId, turnId, trigger, stoppingToken).ConfigureAwait(false);
             if (checkpoint is null) return;
+
+            // Lease recovery compensation (plan §4.3 item 5): "running" tasks with
+            // no pending tool execution are orphans of a previous owner's dispatch
+            // (e.g. a host crash mid-call). Reset them for re-execution before the
+            // phase switch, or the persisted graph has no dispatchable task and the
+            // run is failed as invalid. Tasks awaiting an external decision keep
+            // their PendingToolExecutionId and go through the resume path instead.
+            var interrupted = checkpoint.Tasks
+                .Where(item => item.Status == "running" && string.IsNullOrWhiteSpace(item.PendingToolExecutionId))
+                .ToList();
+            if (interrupted.Count > 0)
+            {
+                foreach (var task in interrupted) task.Status = "pending";
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "recovery-interrupted-tasks", stoppingToken).ConfigureAwait(false);
+                await AppendEventAsync(runId, "recovery.interrupted_tasks", "Interrupted running task(s) reset for re-execution after lease recovery.", new
+                {
+                    run_id = runId,
+                    task_keys = interrupted.Select(item => item.TaskKey).ToArray()
+                }, stoppingToken).ConfigureAwait(false);
+            }
 
             // A supervision checkpoint is written before its run status. If a host
             // stops in that small window, repair the status before considering the
@@ -326,36 +347,18 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         {
             // A logging provider failure must not prevent the durable failure
             // transition below from publishing the terminal stream event.
-            TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
+            _logger.TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
             var checkpoint = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
-            var failureCode = ex is WorkerUnavailableException ? "worker_unavailable" : "runtime";
+            var failureCode = ex is WorkerUnavailableException ? RunErrorTaxonomy.WorkerUnavailable : RunErrorTaxonomy.Runtime;
             if (checkpoint is not null) await FailRunAsync(runId, checkpoint, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
             else await FailLegacyRunAsync(runId, run, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
             try { await _lifecycle.ReleaseRunLeaseAsync(runId.ToString(), _ownerId, CancellationToken.None).ConfigureAwait(false); }
-            catch (Exception ex) { TryLogDebug(ex, "Could not release run lease {RunId}.", runId); }
+            catch (Exception ex) { _logger.TryLogDebug(ex, "Could not release run lease {RunId}.", runId); }
         }
-    }
-
-    private void TryLogWarning(Exception exception, string message, params object[] args)
-    {
-        try { _logger.LogWarning(exception, message, args); }
-        catch { /* logging is advisory; durable state remains authoritative */ }
-    }
-
-    private void TryLogError(Exception exception, string message, params object[] args)
-    {
-        try { _logger.LogError(exception, message, args); }
-        catch { /* logging is advisory; durable state remains authoritative */ }
-    }
-
-    private void TryLogDebug(Exception exception, string message, params object[] args)
-    {
-        try { _logger.LogDebug(exception, message, args); }
-        catch { /* logging is advisory; durable state remains authoritative */ }
     }
 
     private async Task<FullDuplexCheckpointV1?> LoadOrCreateCheckpointAsync(
@@ -1391,7 +1394,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
                     if (string.IsNullOrWhiteSpace(dispatch.ExecutionId))
                     {
-                        return FailedToolTask(checkpoint, task, worker, dispatch.ErrorCategory ?? "tool_prepare_failed", dispatch.Message ?? "The tool call could not be prepared.");
+                        return FailedToolTask(checkpoint, task, worker, dispatch.ErrorCategory ?? RunErrorTaxonomy.ToolPrepareFailed, dispatch.Message ?? "The tool call could not be prepared.");
                     }
                 }
 
@@ -2207,7 +2210,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         if (lastError is not null)
         {
-            _logger?.LogWarning(lastError, "Supervision replan produced no valid graph for run {RunId}; falling back to task reset.", run.RunId);
+            _logger.TryLogWarning(lastError, "Supervision replan produced no valid graph for run {RunId}; falling back to task reset.", run.RunId);
             return false;
         }
 
@@ -2662,7 +2665,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
         await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, null, revision, "cancelled", cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "task.cancelled", "The run was cancelled.", new { run_id = runId }, cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "task.cancelled", "The run was cancelled.", new { run_id = runId }, cancellationToken, idempotencyKey: $"run:{runId}:event:task.cancelled").ConfigureAwait(false);
         await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
             checkpoint.TurnId,
             "done",
@@ -3121,7 +3124,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
         await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, null, revision, "failed", cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken, idempotencyKey: $"run:{runId}:event:run.failed").ConfigureAwait(false);
         await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
             checkpoint.TurnId,
             "error",
@@ -3133,7 +3136,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private async Task FailLegacyRunAsync(Guid runId, RunState run, string category, string message, CancellationToken cancellationToken)
     {
         if (!IsTerminal(run.Status)) await _lifecycle.SetRunStatusAsync(runId.ToString(), "failed", message, cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken, idempotencyKey: $"run:{runId}:event:run.failed").ConfigureAwait(false);
         if (Guid.TryParse(run.TurnId, out var turnId))
         {
             await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
@@ -3514,7 +3517,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
         catch (Exception ex)
         {
-            TryLogWarning(ex, "Operational trigger evaluation failed for run {RunId}.", run.RunId);
+            _logger.TryLogWarning(ex, "Operational trigger evaluation failed for run {RunId}.", run.RunId);
             return;
         }
         if (matches.Count == 0) return;
@@ -3533,7 +3536,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             {
                 // Operational roles are advisory bypass calls. A failure records
                 // evidence and continues; it must never fail the run.
-                TryLogWarning(ex, "Operational role '{Agent}' dispatch failed for run {RunId}.", match.Agent.Id, run.RunId);
+                _logger.TryLogWarning(ex, "Operational role '{Agent}' dispatch failed for run {RunId}.", match.Agent.Id, run.RunId);
                 try
                 {
                     await AppendEventAsync(Guid.Parse(run.RunId), "operation.dispatch.failed",
@@ -3547,7 +3550,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 }
                 catch (Exception eventEx)
                 {
-                    TryLogDebug(eventEx, "Could not record operational dispatch failure for run {RunId}.", run.RunId);
+                    _logger.TryLogDebug(eventEx, "Could not record operational dispatch failure for run {RunId}.", run.RunId);
                 }
             }
         }
@@ -4015,8 +4018,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             ? Math.Clamp(value, 0, 1)
             : 0.5;
 
-    private Task AppendEventAsync(Guid runId, string type, string summary, object payload, CancellationToken ct, Guid? taskId = null) =>
-        _lifecycle.AppendEventAsync(runId, type, payload, summary, taskId: taskId, cancellationToken: ct);
+    private Task AppendEventAsync(Guid runId, string type, string summary, object payload, CancellationToken ct, Guid? taskId = null, string? idempotencyKey = null) =>
+        _lifecycle.AppendEventAsync(runId, type, payload, summary, taskId: taskId, idempotencyKey: idempotencyKey, cancellationToken: ct);
 
     private static bool IsTerminal(RunStatus status) => status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled;
     private static string SafeError(Exception ex) =>

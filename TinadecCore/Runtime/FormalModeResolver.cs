@@ -73,6 +73,11 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             if (!string.Equals(mv.Status, "published", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Agent mode version '{modeVersionId}' is not published.");
             var nodes = ParseModeSnapshot(mv);
+            // 用户级运行时绑定（配置体验改造 A）：per-agent 的覆盖记录，优先级
+            // user_binding > mode_node_override > agent_version.model_strategy。
+            var bindings = await cfg.AgentRuntimeBindings.AsNoTracking()
+                .Where(x => x.TenantId == sess.TenantId && x.WorkspaceId == sess.WorkspaceId)
+                .ToDictionaryAsync(x => x.AgentDefinitionId, ct).ConfigureAwait(false);
 
             var versionIds = nodes.Select(node => node.AgentVersionId).Distinct().ToArray();
             var versions = await cfg.AgentVersions.AsNoTracking()
@@ -132,6 +137,27 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 }
 
                 var role = RequiredString(agent, "role");
+                var modelStrategyJson = node.ModelStrategyOverrideJson ?? RawJson(agent, "model_strategy", "{\"kind\":\"inherit\"}");
+                var modelStrategySource = node.ModelStrategyOverrideJson is null ? "agent_version" : "mode_node_override";
+                var effectiveTools = node.EffectiveTools;
+                if (bindings.TryGetValue(node.AgentDefinitionId, out var binding))
+                {
+                    // 用户的覆盖是最近一次显式意图：优先于 mode 节点覆盖与 agent 定义。
+                    if (binding.Mode == "fixed" && binding.ProviderInstanceId is { } bindingProvider && !string.IsNullOrWhiteSpace(binding.Model))
+                    {
+                        modelStrategyJson = $"{{\"kind\":\"fixed\",\"provider_instance_id\":\"{bindingProvider}\",\"model\":{JsonSerializer.Serialize(binding.Model)}}}";
+                        modelStrategySource = "user_binding";
+                    }
+                    else if (binding.Mode == "route" && !string.IsNullOrWhiteSpace(binding.RoutePurpose))
+                    {
+                        modelStrategyJson = $"{{\"kind\":\"route\",\"route_purpose\":{JsonSerializer.Serialize(binding.RoutePurpose)}}}";
+                        modelStrategySource = "user_binding";
+                    }
+                    if (!string.IsNullOrWhiteSpace(binding.ToolScopeOverrideJson))
+                    {
+                        effectiveTools = JsonSerializer.Deserialize<string[]>(binding.ToolScopeOverrideJson) ?? effectiveTools;
+                    }
+                }
                 var entry = new RuntimeAgentRosterEntry(
                     slug,
                     layer,
@@ -140,15 +166,15 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     ReadStringArray(agent, "capabilities"),
                     DirectUserOutput: string.Equals(slug, "meeting", StringComparison.Ordinal),
                     ContextAccess: string.Equals(slug, "meeting", StringComparison.Ordinal) ? "manage" : "read",
-                    node.EffectiveTools,
+                    effectiveTools,
                     slug,
                     node.AgentDefinitionId,
                     node.AgentVersionId,
                     node.AgentVersionHash)
                 {
                     SystemPrompt = OptionalString(agent, "system_prompt") ?? string.Empty,
-                    ModelStrategyJson = node.ModelStrategyOverrideJson ?? RawJson(agent, "model_strategy", "{\"kind\":\"inherit\"}"),
-                    ModelStrategySource = node.ModelStrategyOverrideJson is null ? "agent_version" : "mode_node_override",
+                    ModelStrategyJson = modelStrategyJson,
+                    ModelStrategySource = modelStrategySource,
                     Enabled = OptionalBoolean(agent, "enabled") ?? true,
                     RosterOrder = order,
                     PromptPipelineId = node.PromptPipelineId,

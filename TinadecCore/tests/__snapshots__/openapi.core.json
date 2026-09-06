@@ -1125,64 +1125,6 @@
         },
         "type": "object"
       },
-      "InvokeStreamRequest": {
-        "properties": {
-          "agent_mode": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "application_mode": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "client_message_id": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "expected_context_revision": {
-            "format": "int64",
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ]
-          },
-          "meeting_model_override": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/MeetingModelOverrideDto"
-              }
-            ]
-          },
-          "permission_mode": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "target_run_id": {
-            "format": "uuid",
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        },
-        "type": "object"
-      },
       "JsonElement": {},
       "MeetingModelOverrideDto": {
         "properties": {
@@ -2764,6 +2706,29 @@
         ]
       }
     },
+    "/api/v1/agents/{id}/runtime-binding": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "AgentConfigurationEndpoints"
+        ]
+      }
+    },
     "/api/v1/agents/{id}/versions": {
       "get": {
         "parameters": [
@@ -3940,6 +3905,29 @@
         ]
       }
     },
+    "/api/v1/model-probe": {
+      "post": {
+        "description": "Resolves the chat route and sends one minimal completion (max_tokens=1, 10s timeout) through the production chat client construction path. Honors TINADEC_MODEL_BASE_URL_OVERRIDE.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "force",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "summary": "Model connectivity probe",
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
     "/api/v1/model-provider-templates": {
       "get": {
         "responses": {
@@ -4757,12 +4745,13 @@
     },
     "/api/v1/readiness": {
       "get": {
+        "description": "Unified readiness receipt: overall ready|degraded|blocked plus fixed items (database, core_storage, agent_pack, default_mode, model_provider, model_secret, model_route, model_probe, tool_provider, manifest_hash), each with reason/action.",
         "responses": {
           "200": {
             "description": "OK"
           }
         },
-        "summary": "Readiness probe",
+        "summary": "Readiness receipt",
         "tags": [
           "TinadecCore.Api"
         ]
@@ -5283,38 +5272,6 @@
         },
         "tags": [
           "InteractionsEndpoints"
-        ]
-      }
-    },
-    "/api/v1/sessions/{sessionId}/invoke-stream": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/InvokeStreamRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
         ]
       }
     },

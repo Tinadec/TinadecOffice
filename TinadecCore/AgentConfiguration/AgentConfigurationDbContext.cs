@@ -20,6 +20,7 @@ public sealed class AgentConfigurationDbContext : DbContext
 
     public DbSet<AgentDefinitionRecord> AgentDefinitions => Set<AgentDefinitionRecord>();
     public DbSet<AgentVersionRecord> AgentVersions => Set<AgentVersionRecord>();
+    public DbSet<AgentRuntimeBindingRecord> AgentRuntimeBindings => Set<AgentRuntimeBindingRecord>();
     public DbSet<AgentModeRecord> AgentModes => Set<AgentModeRecord>();
     public DbSet<ModeVersionRecord> ModeVersions => Set<ModeVersionRecord>();
     public DbSet<ModeNodeRecord> ModeNodes => Set<ModeNodeRecord>();
@@ -74,6 +75,19 @@ public sealed class AgentConfigurationDbContext : DbContext
             entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasIndex(x => new { x.AgentDefinitionId, x.Version }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.AgentDefinitionId, x.CreatedAt });
+        });
+
+        modelBuilder.Entity<AgentRuntimeBindingRecord>(entity =>
+        {
+            entity.ToTable("agent_runtime_bindings");
+            entity.HasKey(x => x.AgentDefinitionId);
+            entity.Property(x => x.Mode).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.ProviderInstanceId).HasColumnName("provider_instance_id");
+            entity.Property(x => x.Model).HasMaxLength(256);
+            entity.Property(x => x.RoutePurpose).HasMaxLength(128);
+            entity.Property(x => x.ToolScopeOverrideJson).HasMaxLength(4096);
+            entity.Property(x => x.UpdatedByPrincipalId).HasColumnName("updated_by_principal_id");
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.UpdatedAt });
         });
 
         modelBuilder.Entity<AgentModeRecord>(entity =>
@@ -309,6 +323,29 @@ public sealed class AgentDefinitionRecord
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? ArchivedAt { get; set; }
     public Guid CreatedByPrincipalId { get; set; }
+    public Guid UpdatedByPrincipalId { get; set; }
+}
+
+/// <summary>
+/// 用户级的智能体运行时绑定（配置体验改造 A）：模型来源（inherit/route/fixed）
+/// 与工具范围的"覆盖记录"。与 agent definition 的 draft/publish 分离——pack 管理
+/// 的智能体也可写，重装 pack 不丢失；冻结运行配置时优先生效。
+/// </summary>
+public sealed class AgentRuntimeBindingRecord
+{
+    public Guid AgentDefinitionId { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    // inherit | route | fixed
+    public string Mode { get; set; } = "inherit";
+    public Guid? ProviderInstanceId { get; set; }
+    public string? Model { get; set; }
+    // mode == route 时的 model_routes.purpose；其他模式为 null。
+    public string? RoutePurpose { get; set; }
+    // json: string[] — 覆盖 agent 定义的 tool_scope；null = 跟随定义
+    public string? ToolScopeOverrideJson { get; set; }
+    public long Revision { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
     public Guid UpdatedByPrincipalId { get; set; }
 }
 

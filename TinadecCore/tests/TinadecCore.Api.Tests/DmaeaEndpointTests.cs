@@ -10,10 +10,10 @@ using TinadecCore.Abstractions.Ports;
 namespace TinadecCore.Api.Tests;
 
 /// <summary>
-/// DmaEA endpoint contract tests: invoke-stream appends the user message itself and
-/// streams a structured SSE chunk; without a stored API key the run fails cleanly and
-/// the chunk is kind=error (never a fabricated done). Orchestration projections return
-/// the documented snapshot keys.
+/// DmaEA endpoint contract tests: interaction admission appends the user message itself and
+/// the durable run stream carries a structured SSE chunk; without a stored API key the run
+/// fails cleanly and the chunk is kind=error (never a fabricated done). Orchestration
+/// projections return the documented snapshot keys. The legacy invoke-stream wire is retired.
 /// </summary>
 public sealed class DmaeaEndpointTests : IAsyncLifetime
 {
@@ -43,19 +43,22 @@ public sealed class DmaeaEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvokeStream_WithoutStoredApiKey_ReturnsErrorChunkAndAppendsMessageOnce()
+    public async Task Interactions_WithoutStoredApiKey_AdmitsThenFailsCleanlyWithErrorMessage()
     {
         var client = _factory!.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "测试目标" });
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new { content = "测试目标", client_message_id = "no-key-1", dispatch_mode = "queued" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var receipt = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var runId = receipt.GetProperty("run_id").GetString();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
-        var body = await response.Content.ReadAsStringAsync();
+        var streamResponse = await client.GetAsync($"/api/v1/runs/{runId}/stream?after_seq=0");
+        Assert.Equal("text/event-stream", streamResponse.Content.Headers.ContentType?.MediaType);
+        var body = await streamResponse.Content.ReadAsStringAsync();
         Assert.Contains("data: ", body);
         Assert.Contains("\"kind\":\"error\"", body);
-        Assert.Contains("\"error_category\":\"runtime\"", body);
+        Assert.Contains("\"error_category\"", body);
 
         var messages = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
         var message = Assert.Single(messages!);
@@ -64,41 +67,40 @@ public sealed class DmaeaEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvokeStream_MissingSession_ReturnsNotFound()
+    public async Task Interactions_MissingSession_ReturnsNotFound()
     {
         var client = _factory!.CreateClient();
         var missing = Guid.NewGuid();
 
-        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{missing}/invoke-stream", new { content = "目标" });
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{missing}/interactions", new { content = "目标", dispatch_mode = "queued" });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("NOT_FOUND", body);
+        Assert.Contains("not_found", body);
     }
 
     [Fact]
-    public async Task InvokeStream_InvalidSessionId_ReturnsBadRequest()
-    {
-        var client = _factory!.CreateClient();
-
-        var response = await client.PostAsJsonAsync("/api/v1/sessions/not-a-guid/invoke-stream", new { content = "目标" });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("INVALID_SESSION_ID", body);
-    }
-
-    [Fact]
-    public async Task InvokeStream_EmptyContent_ReturnsBadRequest()
+    public async Task InvokeStream_RetiredWire_ReturnsNotFound()
     {
         var client = _factory!.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "" });
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "目标" });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Interactions_EmptyContent_ReturnsBadRequest()
+    {
+        var client = _factory!.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new { content = "", dispatch_mode = "queued" });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("INVALID_MESSAGE", body);
+        Assert.Contains("invalid_request", body);
     }
 
     [Fact]
@@ -106,7 +108,7 @@ public sealed class DmaeaEndpointTests : IAsyncLifetime
     {
         var client = _factory!.CreateClient();
         var sessionId = await CreateSessionAsync(client);
-        await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/invoke-stream", new { content = "测试目标" });
+        await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions", new { content = "测试目标", client_message_id = "orch-1", dispatch_mode = "queued" });
 
         var snapshot = await client.GetFromJsonAsync<JsonElement>($"/api/v1/sessions/{sessionId}/orchestration");
 

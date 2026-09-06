@@ -85,12 +85,14 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.ByteOffset).HasColumnName("byte_offset");
             entity.Property(x => x.ByteLength).HasColumnName("byte_length");
             entity.Property(x => x.Timestamp).HasColumnName("timestamp");
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key");
             entity.Property(x => x.EventType).HasMaxLength(256).IsRequired();
             entity.Property(x => x.Severity).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096).IsRequired();
             entity.Property(x => x.SchemaVersion).HasMaxLength(32).IsRequired();
             entity.Property(x => x.PayloadHash).HasMaxLength(128).IsRequired();
             entity.Property(x => x.RelativeFilePath).HasMaxLength(512).IsRequired();
+            entity.HasIndex(x => new { x.RunId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.RunId, x.Sequence }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.Timestamp });
             entity.HasIndex(x => new { x.ProjectId, x.Timestamp });
@@ -289,6 +291,7 @@ public sealed class EventIndexRecord
     public long ByteOffset { get; set; }
     public int ByteLength { get; set; }
     public DateTimeOffset Timestamp { get; set; }
+    public string? IdempotencyKey { get; set; }
 }
 
 public sealed class ApprovalRequestRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid? ProjectId { get; set; } public Guid? SessionId { get; set; } public Guid? RunId { get; set; } public Guid? TaskId { get; set; } public Guid? AgentInstanceId { get; set; } public Guid? ExecutionId { get; set; } public Guid? UserToolActionId { get; set; } public Guid? PolicyVersionId { get; set; } public string Kind { get; set; } = string.Empty; public string ToolId { get; set; } = string.Empty; public string Risk { get; set; } = "low"; public string RequestHash { get; set; } = string.Empty; public string? NonceHash { get; set; } public string? NonceSecretReference { get; set; } public string ParametersReference { get; set; } = string.Empty; public string Summary { get; set; } = string.Empty; public string Status { get; set; } = "pending"; public string? Decision { get; set; } public string? DecisionReason { get; set; } public DateTimeOffset? DecidedAt { get; set; } public DateTimeOffset ExpiresAt { get; set; } public DateTimeOffset? ExecutionWindowExpiresAt { get; set; } public Guid RequestedByPrincipalId { get; set; } public Guid? ConsumedByExecutionId { get; set; } public DateTimeOffset? ConsumedAt { get; set; } [System.ComponentModel.DataAnnotations.Schema.NotMapped] public string Nonce { get; set; } = string.Empty; public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } }

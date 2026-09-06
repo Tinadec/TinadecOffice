@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Events;
 using TinadecCore.Persistence;
@@ -161,6 +162,14 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var run = await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false);
         if (run is null) return;
+        if (RunStatusMachine.IsTerminal(run.Status))
+        {
+            // First terminal fact wins: a repeated or racing completion must not
+            // rewrite the outcome or CompletedAt (terminal is idempotent). This
+            // bypasses CanTransition deliberately — the finalize path may arrive
+            // from states the strict table does not edge to "completed".
+            return;
+        }
         run.Status = "completed";
         run.CompletedAt = DateTimeOffset.UtcNow;
         run.UpdatedAt = run.CompletedAt.Value;
@@ -188,7 +197,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         run.Status = status;
         run.Summary = summary ?? run.Summary;
         run.UpdatedAt = DateTimeOffset.UtcNow;
-        if (RunStatusMachine.IsTerminal(status)) run.CompletedAt = run.UpdatedAt;
+        if (RunStatusMachine.IsTerminal(status)) run.CompletedAt ??= run.UpdatedAt;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -201,7 +210,8 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         Guid? taskId = null,
         Guid? approvalId = null,
         string? toolId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? idempotencyKey = null)
     {
         if (string.IsNullOrWhiteSpace(eventType) || string.IsNullOrWhiteSpace(summary))
         {
@@ -213,6 +223,15 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                // Event idempotency (plan §3.3 item 6): terminal events must be
+                // persisted exactly once, mirroring the run stream's key semantics.
+                var existing = await db.EventIndex.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.RunId == runId && x.IdempotencyKey == idempotencyKey, cancellationToken)
+                    .ConfigureAwait(false);
+                if (existing is not null) return existing;
+            }
             var run = await db.Runs.SingleOrDefaultAsync(x => x.Id == runId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException("Run was not found.");
             var session = await _sessions.FindAsync(run.SessionId, cancellationToken).ConfigureAwait(false)
@@ -246,7 +265,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 ToolId = toolId, Summary = summary, SchemaVersion = record.Version,
                 PayloadHash = Convert.ToHexString(SHA256.HashData(serialized)).ToLowerInvariant(),
                 RelativeFilePath = Path.Combine("events", runId + ".events.jsonl"), ByteOffset = location.Offset,
-                ByteLength = location.Length, Timestamp = timestamp
+                ByteLength = location.Length, Timestamp = timestamp, IdempotencyKey = idempotencyKey
             };
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             db.EventIndex.Add(index);
@@ -347,19 +366,20 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
     public async Task<IReadOnlyList<RunRecord>> ListLeaseEligibleRunsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         var nowUnixMilliseconds = now.ToUnixTimeMilliseconds();
-        var admissionGrace = now.AddSeconds(-AdmissionGracePeriodSeconds);
+        var admissionGrace = now.AddSeconds(-RecoveryPolicy.AdmissionGraceSeconds);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         // ponytail: EF Core SQLite cannot translate DateTimeOffset comparisons, so the admission-grace
         // filter runs in memory; a stored unix-ms column would keep it in SQL when the runs table grows.
         var runs = await db.Runs.AsNoTracking()
-            .Where(x => x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled"
-                && x.Status != "awaiting_delegate" && x.Status != "awaiting_user" && x.Status != "awaiting_approval"
-                && (x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds))
+            .Where(x => x.LeaseOwner == null || x.LeaseExpiresUnixMilliseconds == null || x.LeaseExpiresUnixMilliseconds <= nowUnixMilliseconds)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        return runs.Where(x => x.CreatedAt <= admissionGrace).OrderBy(x => x.UpdatedAt).ToList();
+        // Protection + grace come from the shared RecoveryPolicy (plan §4.3 item 5):
+        // awaiting_* decision states and terminal runs are never lease-eligible.
+        return runs
+            .Where(x => !RunStatusMachine.IsTerminal(x.Status) && !RecoveryPolicy.IsAwaitingDecision(x.Status))
+            .Where(x => RecoveryPolicy.IsAdmissionGraceElapsed(x.CreatedAt, now))
+            .OrderBy(x => x.UpdatedAt).ToList();
     }
-
-    private const int AdmissionGracePeriodSeconds = 30;
 
     /// <summary>
     /// Persists one resolved run configuration as immutable content. Repeating the
@@ -1144,37 +1164,8 @@ public sealed record RunStartOptions(
     string RuntimeProfileId,
     string? InitiatedByPrincipalId = null);
 
-public static class RunStatusMachine
-{
-    private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "planning", "understanding", "executing", "replanning", "awaiting_approval", "awaiting_delegate", "awaiting_user", "paused", "reviewing", "completed", "failed", "cancelled"
-    };
-
-    public static bool IsKnown(string status) => Known.Contains(status);
-    public static bool IsTerminal(string status) => status is "completed" or "failed" or "cancelled";
-    public static bool CanTransition(string from, string to)
-    {
-        if (string.Equals(from, to, StringComparison.OrdinalIgnoreCase)) return true;
-        if (IsTerminal(from)) return false;
-        return to switch
-        {
-            "cancelled" => true,
-            "failed" => true,
-            "planning" => from is "planning",
-            "understanding" => from is "planning",
-            "executing" => from is "planning" or "understanding" or "replanning" or "paused" or "awaiting_approval" or "awaiting_delegate" or "awaiting_user" or "reviewing",
-            "replanning" => from is "understanding" or "executing" or "awaiting_approval" or "reviewing",
-            "awaiting_approval" => from is "understanding" or "executing" or "replanning",
-            "awaiting_delegate" => from is "understanding" or "executing" or "replanning" or "awaiting_approval",
-            "awaiting_user" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "awaiting_delegate" or "reviewing",
-            "reviewing" => from is "executing",
-            "paused" => from is "understanding" or "executing" or "replanning" or "awaiting_approval" or "awaiting_delegate" or "awaiting_user" or "reviewing",
-            "completed" => from is "executing" or "reviewing",
-            _ => false
-        };
-    }
-}
+// RunStatusMachine lives in TinadecCore.Abstractions (shared Contracts/Abstractions
+// layer, plan §3.3 item 3); Lifecycle consumes the shared rules without a local copy.
 
 public sealed class StorageDiagnostics
 {

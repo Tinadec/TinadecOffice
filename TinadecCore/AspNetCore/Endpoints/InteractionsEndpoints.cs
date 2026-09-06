@@ -157,7 +157,8 @@ public static class InteractionsEndpoints
             await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "steering", null, IdempotencyKey: $"run:{targetRunId}:steering:{Guid.NewGuid():N}"), ct);
             var engine = (IFullDuplexRunEngine)req.HttpContext.RequestServices.GetRequiredService(typeof(IFullDuplexRunEngine));
             await engine.EnqueueAsync(targetRunId.Value, ct);
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content });
+            var steeringCursor = await RunStreamCursorAsync(lifecycleDbFactory, targetRunId, ct).ConfigureAwait(false);
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content, client_message_id = clientMessageId, context_revision = patch.CurrentRevision, stream_cursor = steeringCursor, correlation_id = clientMessageId });
         }
 
         // queued / parallel: normal admission via coordinator
@@ -166,14 +167,21 @@ public static class InteractionsEndpoints
         try
         {
             // Composer agent modes belong to the conversation application: selecting one routes
-        // the runtime through the matching TOML conversation.* profile (policy + binding),
-        // while the roster freezes from the resolved relational mode version. No selection
-        // keeps the legacy space/full_duplex admission behavior.
-        var applicationMode = agentMode is null ? "space" : "conversation";
-        var invocationOverride = meetingModelOverride is null
-            ? null
-            : new SessionModelOverride(meetingModelOverride.ProviderInstanceId, meetingModelOverride.Model);
-        admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, applicationMode, agentMode ?? "agent", "default", targetRunId, expectedRev, invocationOverride), ct);
+            // the runtime through the matching TOML conversation.* profile (policy + binding),
+            // while the roster freezes from the resolved relational mode version. No selection
+            // keeps the legacy space/full_duplex admission behavior. Explicit
+            // application_mode/permission_mode fields preserve the retired invoke-stream's
+            // admission surface (e.g. unattended permission policies).
+            var applicationMode = el.TryGetProperty("application_mode", out var am2) && !string.IsNullOrWhiteSpace(am2.GetString())
+                ? am2.GetString()!.Trim().ToLowerInvariant()
+                : agentMode is null ? "space" : "conversation";
+            var permissionMode = el.TryGetProperty("permission_mode", out var pm) && !string.IsNullOrWhiteSpace(pm.GetString())
+                ? pm.GetString()!.Trim().ToLowerInvariant()
+                : "default";
+            var invocationOverride = meetingModelOverride is null
+                ? null
+                : new SessionModelOverride(meetingModelOverride.ProviderInstanceId, meetingModelOverride.Model);
+        admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, applicationMode, agentMode ?? "agent", permissionMode, targetRunId, expectedRev, invocationOverride), ct);
             admissionStatus = dispatchMode == "parallel" ? "assigned" : "queued";
         }
         catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")
@@ -188,7 +196,9 @@ public static class InteractionsEndpoints
                 .FirstOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, ct);
             if (replay is not null)
             {
-                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction" });
+                var replayRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
+                var replayCursor = await RunStreamCursorAsync(lifecycleDbFactory, replay.RunId, ct).ConfigureAwait(false);
+                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction", client_message_id = clientMessageId, context_revision = replayRevision, stream_cursor = replayCursor, correlation_id = clientMessageId });
             }
             var queuedId = Guid.NewGuid();
             var runs = await lifecycle.ListRunsAsync(sessionId, ct);
@@ -214,11 +224,25 @@ public static class InteractionsEndpoints
             {
                 await lifecycle.AppendEventAsync(target.Id, "run.queued", new { interaction_id = queuedId, directive_id = queuedId, message_id = message.Id, content, dispatch_mode = dispatchMode }, "Interaction queued behind the active run", "info", cancellationToken: ct);
             }
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = activeRun?.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message });
+            var overflowRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
+            var overflowCursor = await RunStreamCursorAsync(lifecycleDbFactory, activeRun?.Id, ct).ConfigureAwait(false);
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = activeRun?.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message, client_message_id = clientMessageId, context_revision = overflowRevision, stream_cursor = overflowCursor, correlation_id = clientMessageId });
         }
         catch (RunAdmissionException ex) when (ex.Code == "CONTEXT_REVISION_CONFLICT")
         {
             return Results.Conflict(new { code = "context_conflict", message = ex.Message });
+        }
+        catch (InvalidDataException ex)
+        {
+            // 会话绑定/请求指定的 mode version 不可用（未发布、缺失、跨工作区、快照
+            // 损坏）时，roster 冻结在建 run 之前抛出。给用户结构化 409 与可操作的
+            // 提示，而不是裸 500 internal_error。
+            return Results.Conflict(new
+            {
+                code = "mode_unavailable",
+                message = "当前会话绑定的对话模式不可用，请在输入框左下角重新选择模式后重试。",
+                detail = ex.Message
+            });
         }
         if (admission is null) return Results.Conflict(new { code = "conflict", message = "Admission failed" });
         // if mode_version provided, store it as frozen binding hint (best-effort)
@@ -228,7 +252,24 @@ public static class InteractionsEndpoints
             try { await lifecycle.AppendRunStreamAsync(admission.RunId, new DurableRunStreamAppend(admission.TurnId, dispatchMode == "parallel" ? "assigned" : "queued", admission.MessageId, IdempotencyKey: $"run:{admission.RunId}:turn:{admission.TurnId}:{dispatchMode}"), ct); } catch { }
         }
         var status = admissionStatus;
-        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride });
+        var admissionCursor = await RunStreamCursorAsync(lifecycleDbFactory, admission.RunId, ct).ConfigureAwait(false);
+        return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, client_message_id = clientMessageId, context_revision = admission.ContextRevision, stream_cursor = admissionCursor, correlation_id = clientMessageId });
+    }
+
+    /// <summary>
+    /// The receipt cursor is the last assigned seq of the run's durable stream:
+    /// following from it continues the live stream without duplication; a client
+    /// that wants the full history opens the stream without a cursor.
+    /// </summary>
+    static async Task<long> RunStreamCursorAsync(IDbContextFactory<LifecycleDbContext> factory, Guid? runId, CancellationToken ct)
+    {
+        if (runId is null) return 0;
+        await using var db = await factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var next = await db.RunStreamCursors.AsNoTracking()
+            .Where(x => x.RunId == runId.Value)
+            .Select(x => (long?)x.NextSequence)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        return Math.Max(0, (next ?? 0) - 1);
     }
 
     static async Task<IResult> ReassignInteraction(Guid sessionId, Guid interactionId, HttpRequest req, StorageLifecycleService lifecycle, ITenantContextAccessor tenant, CancellationToken ct)

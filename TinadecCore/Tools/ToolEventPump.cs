@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
@@ -49,7 +50,7 @@ internal sealed class ToolEventPump : IDisposable
         if (_queue.Writer.TryWrite(wireEvent)) return;
         if (Interlocked.Exchange(ref _dropped, 1) == 0)
         {
-            _logger.LogWarning("Dropping further wire events for execution {ExecutionId}: run event backlog exceeded.", _executionId);
+            _logger.TryLogWarning("Dropping further wire events for execution {ExecutionId}: run event backlog exceeded.", _executionId);
         }
     }
 

@@ -126,40 +126,49 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         using var doc = JsonDocument.Parse(content);
         var root = doc.RootElement;
 
-        // Framework ready
-        Assert.True(root.TryGetProperty("framework_ready", out var fwReady));
-        Assert.True(fwReady.GetBoolean());
-
-        Assert.True(root.TryGetProperty("framework_name", out var fwName));
-        Assert.Equal("Microsoft Agent Framework", fwName.GetString());
-
-        Assert.True(root.TryGetProperty("framework_version", out var fwVersion));
-        Assert.Equal("1.18.0", fwVersion.GetString());
-
-        // Status should be "warning" because some modules are not_configured
+        // Unified receipt contract: overall ready|degraded|blocked + fixed items.
         Assert.True(root.TryGetProperty("status", out var status));
-        Assert.Equal("warning", status.GetString());
+        Assert.Contains(status.GetString(), new[] { "ready", "degraded", "blocked" });
+        Assert.True(root.TryGetProperty("checked_at", out _));
 
-        // Storage receipt (shared database abstraction)
-        Assert.True(root.TryGetProperty("storage", out var storage));
-        Assert.True(storage.TryGetProperty("provider", out var storageProvider));
-        Assert.Equal("sqlite", storageProvider.GetString());
-        Assert.True(storage.TryGetProperty("state", out var storageState));
-        Assert.Equal("ready", storageState.GetString());
-
-        // Modules
-        Assert.True(root.TryGetProperty("modules", out var modules));
-        var moduleList = modules.EnumerateArray().ToList();
-        Assert.Equal(13, moduleList.Count);
-
-        // At least some modules should be "not_configured"
-        var notConfiguredCount = moduleList.Count(m =>
+        Assert.True(root.TryGetProperty("items", out var items));
+        var itemList = items.EnumerateArray().ToList();
+        var expectedIds = new[]
         {
-            return m.TryGetProperty("module_state", out var state) &&
-                   state.GetString() == "not_configured";
+            "database", "core_storage", "agent_pack", "default_mode", "model_provider",
+            "model_secret", "model_route", "model_probe", "tool_provider", "manifest_hash"
+        };
+        var ids = itemList.Select(item => item.GetProperty("id").GetString()).ToHashSet();
+        foreach (var expectedId in expectedIds)
+        {
+            Assert.True(ids.Contains(expectedId), $"readiness receipt is missing item '{expectedId}'");
+        }
+
+        // Every item carries status and a timestamp; reason/action are omitted
+        // when null (ready items carry no remediation hint).
+        foreach (var item in itemList)
+        {
+            Assert.True(item.TryGetProperty("status", out _));
+            Assert.True(item.TryGetProperty("checked_at", out _));
+        }
+
+        var database = itemList.Single(item => item.GetProperty("id").GetString() == "database");
+        Assert.Equal("ready", database.GetProperty("status").GetString());
+        var coreStorage = itemList.Single(item => item.GetProperty("id").GetString() == "core_storage");
+        Assert.Equal("ready", coreStorage.GetProperty("status").GetString());
+
+        // Module registration facts stay on the harness manifest.
+        var manifestResponse = await client.GetAsync("/api/v1/harness/manifest");
+        manifestResponse.EnsureSuccessStatusCode();
+        await using var manifestStream = await manifestResponse.Content.ReadAsStreamAsync();
+        using var manifestDoc = await JsonDocument.ParseAsync(manifestStream);
+        var modules = manifestDoc.RootElement.GetProperty("modules").EnumerateArray().ToList();
+        Assert.Equal(13, modules.Count);
+        Assert.All(modules, m =>
+        {
+            Assert.True(m.TryGetProperty("registration_status", out var state));
+            Assert.Contains(state.GetString() ?? "", new[] { "registered", "notconfigured", "not_configured", "disabled" });
         });
-        Assert.True(notConfiguredCount > 0,
-            "Expected at least one module with state 'not_configured'");
     }
 
     [Fact]
@@ -167,7 +176,8 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
     {
         var client = _factory.CreateClient();
 
-        var response = await client.GetAsync("/api/v1/readiness");
+        var response = await client.GetAsync("/api/v1/harness/manifest");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var content = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(content);
 
@@ -175,7 +185,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         var moduleStates = modules.Select(m =>
         {
             m.TryGetProperty("module_id", out var id);
-            m.TryGetProperty("module_state", out var state);
+            m.TryGetProperty("registration_status", out var state);
             return (id.GetString() ?? "", state.GetString() ?? "");
         }).ToDictionary();
 
