@@ -65,9 +65,19 @@ const modeVersions = ref<AgentModeTopologyDto[]>([])
 const conversationModes = computed(() => modeVersions.value.filter(v => !!v.application_mode))
 // 拓扑组只列工作区自建拓扑（application_mode == null）。带 application_mode 的
 // pack 模式会被对话模式组显示，留在这里就是同一批东西显示两遍。
-const publishedVersions = computed(() =>
-  modeVersions.value.filter(v => v.status === 'published' && !!v.latest_published_mode_version_id && !v.application_mode)
-)
+// 同 slug 可能存在多行 published（bootstrap + pack 安装各一条，Core 把去重责任下放给
+// 客户端，见 AgentConfigurationEndpoints.ListModes 注释）；拓扑 DTO 不带 slug，按用户
+// 可见的 display_name 去重，避免拓扑组出现同名重复项。
+const publishedVersions = computed(() => {
+  const seen = new Set<string>()
+  return modeVersions.value.filter((v) => {
+    if (v.status !== 'published' || !v.latest_published_mode_version_id || v.application_mode) return false
+    const key = v.display_name.trim().toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
 const selectedVersion = computed(() =>
   publishedVersions.value.find(v => v.latest_published_mode_version_id === props.modeVersionId) ?? null
 )
@@ -187,6 +197,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         </button>
         <div class="mode-selector-separator" />
         <div class="mode-selector-group">{{ t('chat.conversationModeGroup') }}</div>
+        <p class="mode-selector-group-hint">{{ t('chat.conversationModeHint') }}</p>
         <button
           v-for="mode in modes"
           :key="mode.key"
@@ -200,6 +211,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
         <template v-if="publishedVersions.length">
           <div class="mode-selector-separator" />
           <div class="mode-selector-group">{{ t('chat.modeTopologyGroup') }}</div>
+          <p class="mode-selector-group-hint">{{ t('chat.modeTopologyHint') }}</p>
           <button
             v-for="m in publishedVersions"
             :key="m.id"

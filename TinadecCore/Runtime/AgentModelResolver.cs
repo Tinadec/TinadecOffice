@@ -72,6 +72,19 @@ internal sealed class AgentModelResolver : IAgentModelResolver
 
         Consider("request_strategy", request.Strategy);
 
+        // 用户级运行时绑定（配置体验改造 A）：与 FormalModeResolver.ResolveRosterAsync
+        // 采用同一优先级模型——user_binding > mode_node_override > agent_version。预览路径
+        // 此前缺这一档，导致智能体中心保存绑定后 effective_previews 仍反映保存前的解析链，
+        // 用户读作“设置成功但没生效”。以 AgentDefinitionId 守卫：InteractionsEndpoints 的
+        // meeting-root 预览只传 MeetingModelOverride，不受影响。
+        if (request.AgentDefinitionId is { } bindingAgentId)
+        {
+            await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var binding = await db.AgentRuntimeBindings.AsNoTracking().SingleOrDefaultAsync(x => x.AgentDefinitionId == bindingAgentId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+            Consider("user_binding", BindingToStrategy(binding));
+        }
+
         if (request.ModeVersionId is { } modeVersionId && !string.IsNullOrWhiteSpace(request.NodeKey))
         {
             await using var db = await _agents.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -110,6 +123,21 @@ internal sealed class AgentModelResolver : IAgentModelResolver
             Candidates = candidates,
             ExpectedSelection = candidates.FirstOrDefault(x => x.Available)
         };
+    }
+
+    /// <summary>
+    /// 把用户级运行时绑定映射为模型策略：fixed 带 provider(+可选 model)，route 带用途，
+    /// inherit / 空绑定返回 null 使 Consider 跳过。fixed 的 model 允许为 null（CLI/ACP
+    /// 运行时），与 FormalModeResolver 的解析口径一致。
+    /// </summary>
+    private static ModelStrategyDto? BindingToStrategy(AgentRuntimeBindingRecord? binding)
+    {
+        if (binding is null) return null;
+        if (binding.Mode == "fixed" && binding.ProviderInstanceId is { } provider)
+            return new ModelStrategyDto { Kind = ModelStrategyKinds.Fixed, ProviderInstanceId = provider, Model = binding.Model };
+        if (binding.Mode == "route" && !string.IsNullOrWhiteSpace(binding.RoutePurpose))
+            return new ModelStrategyDto { Kind = ModelStrategyKinds.Route, RoutePurpose = binding.RoutePurpose };
+        return null;
     }
 
     public async Task<FrozenModelPlan> FreezeAsync(AgentModelFreezeRequest request, CancellationToken cancellationToken = default)

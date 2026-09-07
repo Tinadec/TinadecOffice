@@ -23,6 +23,7 @@ import type { DispatchMode, MeetingModelOverrideDto } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
 import { createRunStream, type RunStreamHandle } from '@/composables/useRunStream'
 import { generatedApi } from '@/generated/client'
+import { useRunStore } from '@/stores/run'
 
 // ---------------------------------------------------------------------------
 // HomeController — the single domain controller for the Home page.
@@ -77,6 +78,15 @@ const runs = ref<Array<{ id: string; status: string }>>([])
 const queuedMessages = ref<Array<{ id: string; content: string }>>([])
 const runStreams = new Map<string, RunStreamHandle>()
 const runText = new Map<string, string>()
+// 运行指示（问题 3 修复）：是否有活跃的 run 流。runStreams 是非响应式 Map，computed
+// 无法追踪，故用显式 ref 并在每次 set/delete/clear 后 syncWorking()。用流数量而非
+// activeRuns.length：activeRuns 含 lane_waiting/gate_review 等长驻态，会让指示永久
+// 亮起；流随 done/error 的 disconnect+delete 天然归零。
+const working = ref(false)
+// 最近一次 run stream 活动时间（ack/delta/heartbeat 等任意 chunk）：供 UI 区分
+// 「链路活着但暂无输出」与「链路已断」。
+const lastStreamActivityAt = ref<number | null>(null)
+function syncWorking() { working.value = runStreams.size > 0 }
 
 const currentProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) ?? null)
 // 活动运行 = 非终态且不驻留人工决策（对齐 Core CountActiveRunsAsync 的口径，
@@ -201,6 +211,13 @@ async function loadMessagesAndApprovals() {
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
   runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String((r as Record<string, unknown>).id), status: String((r as Record<string, unknown>).status ?? '') }))
+  // 状态源统一（问题 3 修复）：ChatHeader 的 run-pills 读 Pinia runStore.runs，而
+  // runStore.fetchRuns 此前只在无入口的 WorkbenchPage 调用 → Home 页 pills 恒空。
+  // 把 Home 已拉取的 run 列表（含 session_id，WorkbenchPage.control 依赖）同步进 store。
+  // HomeController 是模块级单例，可能早于 Pinia 安装被求值，故惰性获取 + 兜底。
+  try {
+    useRunStore().runs = (Array.isArray(runList) ? runList : []) as never
+  } catch { /* Pinia 尚未安装：pills 退回空态，不阻断聊天 */ }
   attachActiveRuns()
 }
 
@@ -213,6 +230,19 @@ function attachRun(runId: string) {
   if (runStreams.has(runId)) return
   const handle = createRunStream({
     runId,
+    onActivity: (chunk) => {
+      // 活性信号：任意去重后的 chunk（含 ack/heartbeat）都刷新活动时间，供 UI 区分
+      // 「链路活着但暂无输出」与「链路已断」。
+      lastStreamActivityAt.value = Date.now()
+      // ack 是「智能体已接收」的最早信号：乐观把该 run 置为 planning 并同步进 store，
+      // 让 ChatHeader 的 pill 立即出现，而不必等首个 delta 或 done。
+      if (chunk.kind === 'ack') {
+        runs.value = runs.value.some((r) => r.id === runId)
+          ? runs.value.map((r) => (r.id === runId ? { ...r, status: 'planning' } : r))
+          : [...runs.value, { id: runId, status: 'planning' }]
+        try { useRunStore().runs = runs.value as never } catch { /* Pinia 未就绪 */ }
+      }
+    },
     onChunk: (chunk) => {
       if (chunk.kind === 'delta') {
         const delta = streamDelta(chunk)
@@ -232,6 +262,7 @@ function attachRun(runId: string) {
         void loadMessagesAndApprovals()
         runStreams.get(runId)?.disconnect()
         runStreams.delete(runId)
+        syncWorking()
       }
     },
     onError: (error) => {
@@ -240,6 +271,7 @@ function attachRun(runId: string) {
     },
   })
   runStreams.set(runId, handle)
+  syncWorking()
   handle.connect()
 }
 
@@ -556,6 +588,7 @@ watch(selectedProjectId, () => {
 watch(selectedSessionId, () => {
   for (const stream of runStreams.values()) stream.disconnect()
   runStreams.clear()
+  syncWorking()
   runText.clear()
   streamingText.value = new Map()
   void loadMessagesAndApprovals()
@@ -607,6 +640,8 @@ export const homeController = {
   agentStatesMap,
   agentProgressEvents,
   streamingText,
+  working,
+  lastStreamActivityAt,
   invokeError,
   lastCursor,
   // Methods

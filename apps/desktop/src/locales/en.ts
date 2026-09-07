@@ -108,6 +108,8 @@ export default {
     followDefault: 'Follow default',
     conversationModeGroup: 'Conversation mode',
     modeTopologyGroup: 'Workspace topology',
+    conversationModeHint: 'Preset conversation modes shipped with OfficeAgentPack',
+    modeTopologyHint: 'Mode topologies published in this workspace',
     modeUnavailable: 'This mode is currently unavailable, please pick another',
     meetingModel: 'Meeting model',
     meetingModelPlaceholder: 'Optional',

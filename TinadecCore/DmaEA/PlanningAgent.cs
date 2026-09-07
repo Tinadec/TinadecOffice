@@ -98,18 +98,22 @@ public sealed class PlanningAgent
 
     private static PlannedTask[] TryParseTasks(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return [];
-        var start = text.IndexOf('[');
-        var end = text.LastIndexOf(']');
-        if (start < 0 || end <= start) return [];
-        var json = text.Substring(start, end - start + 1);
-        try
+        // Reasoning models wrap the task array in <think> blocks, prose, and markdown
+        // fences. ExtractJsonCandidates strips reasoning and returns each balanced
+        // top-level array, so we keep the first candidate that actually deserializes
+        // instead of naively spanning the first '[' to the last ']'.
+        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: true))
         {
-            return JsonSerializer.Deserialize<PlannedTask[]>(json, ParseOptions) ?? [];
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<PlannedTask[]>(candidate, ParseOptions);
+                if (parsed is { Length: > 0 }) return parsed;
+            }
+            catch (JsonException)
+            {
+                // Not the payload array; try the next balanced candidate.
+            }
         }
-        catch (JsonException)
-        {
-            return [];
-        }
+        return [];
     }
 }

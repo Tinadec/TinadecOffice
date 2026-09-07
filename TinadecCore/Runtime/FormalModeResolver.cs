@@ -143,9 +143,12 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 if (bindings.TryGetValue(node.AgentDefinitionId, out var binding))
                 {
                     // 用户的覆盖是最近一次显式意图：优先于 mode 节点覆盖与 agent 定义。
-                    if (binding.Mode == "fixed" && binding.ProviderInstanceId is { } bindingProvider && !string.IsNullOrWhiteSpace(binding.Model))
+                    if (binding.Mode == "fixed" && binding.ProviderInstanceId is { } bindingProvider)
                     {
-                        modelStrategyJson = $"{{\"kind\":\"fixed\",\"provider_instance_id\":\"{bindingProvider}\",\"model\":{JsonSerializer.Serialize(binding.Model)}}}";
+                        // CLI/ACP 运行时的 fixed 绑定 model 为 null：省略 model 字段而非静默忽略整个绑定，
+                        // 与 AgentConfigurationEndpoints.PutAgentRuntimeBinding 的写入口径一致。
+                        var modelField = string.IsNullOrWhiteSpace(binding.Model) ? string.Empty : $",\"model\":{JsonSerializer.Serialize(binding.Model)}";
+                        modelStrategyJson = $"{{\"kind\":\"fixed\",\"provider_instance_id\":\"{bindingProvider}\"{modelField}}}";
                         modelStrategySource = "user_binding";
                     }
                     else if (binding.Mode == "route" && !string.IsNullOrWhiteSpace(binding.RoutePurpose))

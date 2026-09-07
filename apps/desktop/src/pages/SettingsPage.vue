@@ -496,11 +496,16 @@ function agentPreviewLine(modeSlug: string, nodeKey: string, preview: { expected
 function agentRuntimeSummary(agentId: string | null | undefined): string {
   if (!agentId) return ''
   const item = agentDirectory.value.find((entry) => entry.id === agentId)
-  return runtimeSourceSummary(
-    agentRuntimeBindings.value[agentId],
-    item?.effective_previews ?? null,
-    (providerInstanceId) => providers.value.find((provider) => provider.id === providerInstanceId)?.display_name ?? null,
-  )
+  const binding = agentRuntimeBindings.value[agentId]
+  const resolveName = (providerInstanceId: string) => providers.value.find((provider) => provider.id === providerInstanceId)?.display_name ?? null
+  // fixed/route 绑定的摘要此前退化成裸 provider GUID：bindingFromRuntimeOverride 不填
+  // provider_display_name，而 runtimeSourceSummary 只在 inherit 分支用 providerName 回调。
+  // 在调用侧 hydrate display_name（不改带钉住测试的 runtimeCenterView.ts），让「指定模型」
+  // 保存后摘要立即显示人类可读的 provider 名，而不是看起来「没变化」的 GUID。
+  const hydrated = binding && !binding.provider_display_name && binding.provider_instance_id
+    ? { ...binding, provider_display_name: resolveName(binding.provider_instance_id) }
+    : binding
+  return runtimeSourceSummary(hydrated, item?.effective_previews ?? null, resolveName)
 }
 
 function agentInvocationLine(invocation: { provider_instance_id: string; model?: string | null; status: string; completed_at?: string | null }): string {
@@ -1413,9 +1418,9 @@ function openAgentConfig(agent: AgentViewDto) {
     // CLI/ACP 运行时的 fixed 绑定没有 model：此时 key 就是裸 provider id
     // （与 agentModelStrategy() 的 CLI/ACP 分支同一把钥匙）。
     ? (binding.model_id ? modelOptionKey(binding.provider_instance_id, binding.model_id) : binding.provider_instance_id)
-    : runtimeModels.value[0]
-      ? modelOptionKey(runtimeModels.value[0].provider_instance_id, runtimeModels.value[0].model_id)
-      : ''
+    // 无绑定（跟随默认）时保持空选择，不再猜 runtimeModels[0]：列表首项是任意模型，
+    // 在 runtimeModels 尚未加载/为空时还会把刚保存的选择打回原样（问题 1 的回弹竞态）。
+    : ''
   agentRuntimeRoutePurpose.value = binding?.route_purpose
     || (agent as AgentViewDto & { model_route_purpose?: string }).model_route_purpose
     || routes.value[0]?.purpose
@@ -1493,14 +1498,21 @@ async function saveAgentModelStrategy(agent: AgentViewDto) {
     // 不再走 draft/publish，也就没有 412/409 managed_resource_read_only。
     // 三档原样透传。此前 route 被静默降级成 inherit，用户选「按用途路由」保存后
     // 会变成「跟随默认」——Core 现已支持 mode='route' + route_purpose。
-    await api.putAgentRuntimeBinding(agent.id, {
+    const saved = await api.putAgentRuntimeBinding(agent.id, {
       mode: strategy.kind as 'inherit' | 'route' | 'fixed',
       provider_instance_id: (strategy as { provider_instance_id?: string }).provider_instance_id ?? null,
       model: (strategy as { model?: string | null }).model ?? null,
       route_purpose: (strategy as { route_purpose?: string }).route_purpose ?? null,
     })
+    // 定向 patch（问题 1 修复）：PUT 响应体已是权威的最新绑定（含 revision/updated_at），
+    // 直接写回 agents 那一行并据其重新 seed 选择，不再 loadAgentCenter() 全量重载——
+    // 后者会触发 ~30 个往返、无条件 openAgentConfig re-seed，并在 runtimeModels 尚未
+    // 加载时把选择打回列表首项（症状：设置成功但立刻回弹）。
+    const patched: AgentViewDto = { ...agent, model_binding: saved as unknown as AgentViewDto['model_binding'] }
+    const index = agents.value.findIndex((item) => item.id === agent.id)
+    if (index >= 0) agents.value[index] = patched
+    openAgentConfig(patched)
     notify.success(t('settings.runtimeBindingSaved', { name: agent.name }))
-    await loadAgentCenter()
   } catch (error) {
     notify.error(new Error(agentSaveErrorMessage(error)), { title: agent.name })
   } finally {

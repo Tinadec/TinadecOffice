@@ -14,7 +14,12 @@ defineProps<{
 const runStore = useRunStore()
 const activeRuns = computed(() =>
   (runStore.runs as unknown as Array<{ id: string; status: string }>)
-    .filter((r) => ['running', 'ready', 'pending', 'queued', 'awaiting_approval', 'awaiting_user', 'awaiting_delegate'].includes(r.status))
+    // 词表以 Core 共享 12 态为准（RunStatusMachine）。pills 是“可见性”口径：所有非终态 run
+    // 都要露出——尤其 awaiting_user（监督升级 / 等待用户决策）必须显示为 waiting pill，否则
+    // 用户看不到“run 在等我决策”的唯一信号（此前误把它排除，导致升级后聊天头部一片空白）。
+    // 与 HomeController.activeRuns 用途不同：那里是“挂 SSE 流 + 引导目标”口径，排除 awaiting_user
+    // 这类长驻空闲态才合理，两者不必同口径。
+    .filter((r) => !['completed', 'failed', 'cancelled'].includes(r.status))
     .slice(0, 4),
 )
 const selectedRunId = computed(() => (runStore.selectedRunId as string | null) ?? null)
@@ -35,8 +40,8 @@ function selectRun(runId: string): void {
         class="run-pill"
         :class="{
           'run-pill--active': selectedRunId === run.id,
-          'run-pill--running': run.status === 'running',
-          'run-pill--waiting': String(run.status).startsWith('awaiting'),
+          'run-pill--running': ['planning', 'understanding', 'executing', 'replanning', 'reviewing'].includes(run.status),
+          'run-pill--waiting': String(run.status).startsWith('awaiting') || run.status === 'paused',
         }"
         :title="`${run.id} · ${run.status}`"
         @click="selectRun(run.id)"

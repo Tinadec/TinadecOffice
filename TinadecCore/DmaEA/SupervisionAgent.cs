@@ -118,36 +118,39 @@ public sealed class SupervisionAgent
 
     private static SupervisionVerdict? TryParseVerdict(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var start = text.IndexOf('{');
-        var end = text.LastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        try
+        // Reasoning models may surround the verdict object with thinking prose or
+        // markdown fences. Try each balanced object candidate until one carries a
+        // decision, rather than spanning the first '{' to the last '}'.
+        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: false))
         {
-            var parsed = JsonSerializer.Deserialize<VerdictBody>(text.Substring(start, end - start + 1), ParseOptions);
-            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Decision)) return null;
-            var decision = parsed.Decision.Trim().ToLowerInvariant() switch
+            try
             {
-                "pass" => SupervisionDecision.Pass,
-                "revise" => SupervisionDecision.Revise,
-                "escalate" => SupervisionDecision.Escalate,
-                _ => SupervisionDecision.Escalate
-            };
-            var indexes = (parsed.ReviseTaskIndexes ?? [])
-                .Where(index => index >= 0 && index < 100)
-                .Distinct()
-                .ToArray();
-            var criterionVerdicts = (parsed.CriterionVerdicts ?? [])
-                .Where(item => !string.IsNullOrWhiteSpace(item.TaskKey) && !string.IsNullOrWhiteSpace(item.Criterion))
-                .Select(item => new LaneCriterionVerdict(item.TaskKey!.Trim(), item.Criterion!.Trim(), item.Satisfied, item.Evidence))
-                .ToList();
-            return new SupervisionVerdict(decision, parsed.Reasons ?? [], decision == SupervisionDecision.Revise ? indexes : [],
-                criterionVerdicts.Count > 0 ? criterionVerdicts : null);
+                var parsed = JsonSerializer.Deserialize<VerdictBody>(candidate, ParseOptions);
+                if (parsed is null || string.IsNullOrWhiteSpace(parsed.Decision)) continue;
+                var decision = parsed.Decision.Trim().ToLowerInvariant() switch
+                {
+                    "pass" => SupervisionDecision.Pass,
+                    "revise" => SupervisionDecision.Revise,
+                    "escalate" => SupervisionDecision.Escalate,
+                    _ => SupervisionDecision.Escalate
+                };
+                var indexes = (parsed.ReviseTaskIndexes ?? [])
+                    .Where(index => index >= 0 && index < 100)
+                    .Distinct()
+                    .ToArray();
+                var criterionVerdicts = (parsed.CriterionVerdicts ?? [])
+                    .Where(item => !string.IsNullOrWhiteSpace(item.TaskKey) && !string.IsNullOrWhiteSpace(item.Criterion))
+                    .Select(item => new LaneCriterionVerdict(item.TaskKey!.Trim(), item.Criterion!.Trim(), item.Satisfied, item.Evidence))
+                    .ToList();
+                return new SupervisionVerdict(decision, parsed.Reasons ?? [], decision == SupervisionDecision.Revise ? indexes : [],
+                    criterionVerdicts.Count > 0 ? criterionVerdicts : null);
+            }
+            catch (JsonException)
+            {
+                // Not the verdict object; try the next balanced candidate.
+            }
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return null;
     }
 
     private sealed class VerdictBody

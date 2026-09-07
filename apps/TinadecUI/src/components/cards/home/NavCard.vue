@@ -37,6 +37,7 @@ function toggleCollapse() {
     @open-project="c.openProject()"
     @go-market="router.push('/market')"
     @go-settings="router.push('/settings')"
+    @go-workbench="router.push('/workbench')"
     @toggle-collapse="toggleCollapse"
     @rename-project="(id, name) => c.renameProject(id, name)"
     @rename-session="(id, title) => c.renameSession(id, title)"

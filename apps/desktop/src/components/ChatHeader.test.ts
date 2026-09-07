@@ -11,8 +11,9 @@ vi.mock('vue-i18n', () => ({
 const runMock = vi.hoisted(() => ({
   runs: [
     { id: 'run-aaaa', status: 'completed' },
-    { id: 'run-bbbb', status: 'running' },
+    { id: 'run-bbbb', status: 'executing' },
     { id: 'run-cccc', status: 'awaiting_approval' },
+    { id: 'run-dddd', status: 'awaiting_user' },
   ] as Array<{ id: string; status: string }>,
   selectedRunId: null as string | null,
   select: vi.fn(),
@@ -29,15 +30,20 @@ function mountHeader() {
 }
 
 describe('ChatHeader run pills', () => {
-  it('shows only active runs and marks the running one', async () => {
+  it('shows non-terminal runs (incl. awaiting_user) and marks running vs waiting', async () => {
     setActivePinia(createPinia())
     const wrapper = mountHeader()
     await flushPromises()
 
+    // completed 被排除；executing / awaiting_approval / awaiting_user 均露出。
+    // awaiting_user（监督升级等待决策）必须可见——回归钉住，避免再次被排除后聊天头部空白。
     const pills = wrapper.findAll('.run-pill')
-    expect(pills.length).toBe(2)
-    expect(pills[0]!.text()).toContain('running')
+    expect(pills.length).toBe(3)
+    expect(pills[0]!.text()).toContain('executing')
+    expect(pills[0]!.classes().join(' ')).toContain('run-pill--running')
     expect(pills[1]!.classes().join(' ')).toContain('run-pill--waiting')
+    expect(pills[2]!.text()).toContain('awaiting user')
+    expect(pills[2]!.classes().join(' ')).toContain('run-pill--waiting')
 
     wrapper.unmount()
   })

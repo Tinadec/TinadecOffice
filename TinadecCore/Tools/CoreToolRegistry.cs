@@ -16,8 +16,20 @@ public sealed class CoreToolRegistry : IToolRegistry
 
     public async Task<IReadOnlyList<ToolManifestEntryDto>> ListToolsAsync(string? workspaceRoot = null, CancellationToken cancellationToken = default)
     {
-        var manifest = await _provider.GetManifestAsync(workspaceRoot ?? string.Empty, cancellationToken).ConfigureAwait(false);
-        return manifest.Tools;
+        try
+        {
+            var manifest = await _provider.GetManifestAsync(workspaceRoot ?? string.Empty, cancellationToken).ConfigureAwait(false);
+            return manifest.Tools;
+        }
+        catch (InvalidOperationException)
+        {
+            // 无工作区根且未配置 TinadecTools:DefaultWorkspaceRoot（本地模式默认如此）时，
+            // ResolveRoot 会抛 InvalidOperationException。清单展示/就绪探测路径按预期
+            // fail-closed 降级为空清单（tool_count=0），而不是冒泡成 /api/v1/tools 的 503
+            // 让前端弹「No workspace root...」错误。工具「执行/派发」路径直接调用
+            // _provider.GetManifestAsync（不经此方法），仍保持抛错 fail-closed。
+            return [];
+        }
     }
 
     public async Task<IReadOnlyList<ToolManifestEntryDto>> SearchToolsAsync(string query, string? workspaceRoot = null, CancellationToken cancellationToken = default)

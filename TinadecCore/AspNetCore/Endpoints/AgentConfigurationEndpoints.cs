@@ -330,7 +330,8 @@ public static class AgentConfigurationEndpoints
         if (mode == "fixed")
         {
             if (providerInstanceId is null) return Results.BadRequest(new { code = "invalid_request", message = "provider_instance_id is required for fixed binding" });
-            if (string.IsNullOrWhiteSpace(model)) return Results.BadRequest(new { code = "invalid_request", message = "model is required for fixed binding" });
+            // model 非空校验下沉到 provider 查询之后：CLI/ACP 运行时的 fixed 绑定
+            // 没有 model（合法契约），需先拿到 provider.Driver 才能判定。
         }
         if (mode == "route" && string.IsNullOrWhiteSpace(routePurpose))
             return Results.BadRequest(new { code = "invalid_request", message = "route_purpose is required for route binding" });
@@ -351,6 +352,13 @@ public static class AgentConfigurationEndpoints
             var provider = await modelDb.Providers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == pid && x.TenantId == t && x.DeletedAt == null, ct);
             if (provider is null) return Results.NotFound(new { code = "not_found", message = "Model provider was not found." });
             if (!provider.Enabled) return Results.Conflict(new { code = "provider_disabled", message = "The model provider is disabled." });
+            // CLI/ACP 运行时（claude-cli/codex-cli/cursor-acp/opencode）的 fixed 绑定没有 model：
+            // 模型身份由 CLI 进程自身决定，这是合法契约（ModelStrategyJson.Parse 的 OptionalString、
+            // runtimeCenterView.test.ts）。其余协议仍要求显式 model，避免绑定保存成功、下一次 run 才炸。
+            var protocol = ChatProtocols.InferFromDriver(provider.Driver);
+            var isCliRuntime = protocol is ChatProtocols.Acp or ChatProtocols.OpencodeServe;
+            if (!isCliRuntime && string.IsNullOrWhiteSpace(model))
+                return Results.BadRequest(new { code = "invalid_request", message = "model is required for fixed binding" });
         }
         if (mode == "route")
         {

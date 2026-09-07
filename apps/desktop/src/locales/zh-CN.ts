@@ -108,6 +108,8 @@ export default {
     followDefault: '跟随默认',
     conversationModeGroup: '对话模式',
     modeTopologyGroup: '工作区拓扑',
+    conversationModeHint: '来自 OfficeAgentPack 的预设对话模式',
+    modeTopologyHint: '本工作区已发布的模式拓扑',
     modeUnavailable: '该模式当前不可用，请重新选择',
     meetingModel: '会议模型',
     meetingModelPlaceholder: '可选',

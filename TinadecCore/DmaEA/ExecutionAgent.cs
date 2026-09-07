@@ -109,12 +109,18 @@ public sealed class ExecutionAgent
             return WorkerModelTurn.Invalid($"The model reused tool call id '{duplicate.Key}' in one response.");
         }
 
-        var text = response.Text;
+        // Reasoning models leak <think> blocks and orphan tags into content; strip them
+        // so the worker's stored answer/evidence (and the AssistantText echoed back
+        // into multi-turn history) never carries thinking markup. Tool calls are
+        // captured separately above, so stripping text cannot lose a function call.
+        var text = ModelOutputText.AnswerText(response.Text);
         if (string.IsNullOrWhiteSpace(text))
         {
-            text = messages.Select(message => message.Text).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            text = messages
+                .Select(message => ModelOutputText.AnswerText(message.Text))
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
         }
-        return new WorkerModelTurn(true, text ?? string.Empty, calls, null, Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
+        return new WorkerModelTurn(true, text, calls, null, Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
     }
 
     private static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(

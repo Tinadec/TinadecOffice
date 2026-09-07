@@ -341,7 +341,21 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                 read += count;
             }
             if (read != bytes.Length) continue;
-            var record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
+            EventFileRecord? record;
+            try
+            {
+                record = JsonSerializer.Deserialize<EventFileRecord>(bytes, JsonOptions);
+            }
+            catch (JsonException)
+            {
+                // 与 ReconcileAsync 同一容错口径：单个损坏/错位的事件行（追加写入途中
+                // 进程被强杀，或 event_index 的 ByteOffset/ByteLength 与文件实际字节错位）
+                // 不得让整个 replay/follow 端点 500——那会打断整条事件流，聊天与运行状态
+                // 全部不可见。文件行本身通常仍合法（ReconcileAsync 启动时按换行重建索引会
+                // 补齐缺失行），这里只跳过索引错位的单行并留痕，保持事件流可用。
+                _diagnostics.Add($"Ignoring malformed JSONL record for run {row.RunId} at byte {row.ByteOffset}.");
+                continue;
+            }
             if (record is null) continue;
             events.Add(new EventEnvelope { Version = record.Version, EventId = record.EventId.ToString(), EventType = record.EventType, Timestamp = record.Timestamp, SessionId = record.SessionId.ToString(), RunId = record.RunId.ToString(), Payload = new Dictionary<string, object?> { ["sequence"] = record.Sequence, ["summary"] = record.Summary, ["severity"] = record.Severity, ["payload"] = record.Payload } });
         }
@@ -1169,7 +1183,14 @@ public sealed record RunStartOptions(
 
 public sealed class StorageDiagnostics
 {
+    private const int MaxMessages = 256;
     private readonly ConcurrentQueue<string> _messages = new();
     public IReadOnlyList<string> Messages => _messages.ToArray();
-    public void Add(string message) => _messages.Enqueue(message);
+    public void Add(string message)
+    {
+        _messages.Enqueue(message);
+        // 有界：MaterializeAsync 可能在 replay/follow 路径反复跳过同一损坏行，
+        // 无界队列会被刷爆；超过上限丢弃最旧消息。
+        while (_messages.Count > MaxMessages && _messages.TryDequeue(out _)) { }
+    }
 }

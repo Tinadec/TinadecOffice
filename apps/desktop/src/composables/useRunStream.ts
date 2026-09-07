@@ -12,6 +12,8 @@ export interface RunStreamOptions {
   runId: string
   cursor?: string | number | null
   onChunk?: (chunk: SseChunk) => void
+  /** 收到所有去重后的 chunk（含 heartbeat/ack 等状态信号），供活性指示；不影响 onChunk 契约。 */
+  onActivity?: (chunk: SseChunk) => void
   onError?: (error: Error) => void
   autoReconnect?: boolean
   fetchImpl?: typeof fetch
@@ -103,6 +105,9 @@ export function createRunStream(options: RunStreamOptions): RunStreamHandle {
     if (seen.has(key)) return false
     seen.add(key)
     if (lastSeq.value == null || chunk.seq > lastSeq.value) lastSeq.value = chunk.seq
+    // onActivity 收到所有去重后的 chunk（含 ack/heartbeat 等状态信号），供上层做
+    // 活性指示；onChunk 仍只收业务 chunk（heartbeat 被过滤），保持既有消费者契约。
+    options.onActivity?.(chunk)
     if (chunk.kind !== 'heartbeat') options.onChunk?.(chunk)
     return true
   }

@@ -5,7 +5,6 @@ import {
   Bug,
   ChevronRight,
   FolderOpen,
-  LayoutGrid,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
@@ -23,7 +22,7 @@ import BrandLogo from '@/components/BrandLogo.vue'
 import TinadecCalligraphy from '@/components/TinadecCalligraphy.vue'
 import InlineRenameInput from '@/components/InlineRenameInput.vue'
 import RowContextMenu, { type RowMenuItem } from '@/components/RowContextMenu.vue'
-import { UiButton, UiDropdownMenu } from '@/components/ui'
+import { UiButton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
 
 const { t } = useI18n()
@@ -47,6 +46,7 @@ const emit = defineEmits<{
   'open-project': []
   'go-settings': []
   'go-market': []
+  'go-workbench': []
   'toggle-collapse': []
   'rename-project': [id: string, name: string]
   'rename-session': [id: string, title: string]
@@ -187,15 +187,6 @@ function handleNewThread() {
 
 const tokenUsage = ref<number[]>([])
 
-// ---- Mode switch (placeholder, no actual functionality) ----
-const modeMenuOpen = ref(false)
-const selectedMode = ref<'im' | 'hub'>('im')
-
-function selectMode(mode: 'im' | 'hub') {
-  selectedMode.value = mode
-  modeMenuOpen.value = false
-}
-
 function openDebugStudio() {
   ;(window as unknown as { tinadec?: { openDebugStudio?: () => Promise<boolean> } }).tinadec?.openDebugStudio?.()
 }
@@ -237,7 +228,7 @@ function openDebugStudio() {
         size="sm"
         class="sidebar-nav-item w-full justify-start"
         :title="t('sidebar.commandCenter')"
-        disabled
+        @click="emit('go-workbench')"
       >
         <Terminal :size="16" class="sidebar-icon" />
         <span class="sidebar-label">{{ t('sidebar.commandCenter') }}</span>
@@ -370,32 +361,6 @@ function openDebugStudio() {
         >
           <Settings :size="16" />
         </UiButton>
-        <UiDropdownMenu v-model:open="modeMenuOpen" placement="top" class="mode-dropdown-menu">
-          <template #trigger>
-            <UiButton
-              variant="ghost"
-              size="icon"
-              class="sidebar-footer-action"
-              title="Mode"
-            >
-              <LayoutGrid :size="16" />
-            </UiButton>
-          </template>
-          <button
-            class="mode-menu-item"
-            :class="{ active: selectedMode === 'im' }"
-            @click="selectMode('im')"
-          >
-            <span>会话模式</span>
-          </button>
-          <button
-            class="mode-menu-item"
-            :class="{ active: selectedMode === 'hub' }"
-            @click="selectMode('hub')"
-          >
-            <span>空间模式</span>
-          </button>
-        </UiDropdownMenu>
         <UiButton
           variant="ghost"
           size="icon"

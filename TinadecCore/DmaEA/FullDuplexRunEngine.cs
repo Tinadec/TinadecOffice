@@ -1081,26 +1081,27 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private static GateDecision? ParseGateDecision(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var start = text.IndexOf('{');
-        var end = text.LastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        try
+        // Tolerate reasoning prose/fences wrapped around the gate verdict object.
+        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: false))
         {
-            var parsed = JsonSerializer.Deserialize<GateDecisionBody>(text.Substring(start, end - start + 1), JsonOptions);
-            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Decision)) return null;
-            var decision = parsed.Decision.Trim().ToLowerInvariant() switch
+            try
             {
-                "proceed" => "proceed",
-                "wait_more" => "wait_more",
-                _ => "escalate"
-            };
-            return new GateDecision(decision, parsed.Reasons ?? []);
+                var parsed = JsonSerializer.Deserialize<GateDecisionBody>(candidate, JsonOptions);
+                if (parsed is null || string.IsNullOrWhiteSpace(parsed.Decision)) continue;
+                var decision = parsed.Decision.Trim().ToLowerInvariant() switch
+                {
+                    "proceed" => "proceed",
+                    "wait_more" => "wait_more",
+                    _ => "escalate"
+                };
+                return new GateDecision(decision, parsed.Reasons ?? []);
+            }
+            catch (JsonException)
+            {
+                // Not the gate object; try the next balanced candidate.
+            }
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return null;
     }
 
     private sealed record GateDecision(string Decision, IReadOnlyList<string> Reasons);
@@ -1553,7 +1554,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         RuntimeAgentInstance worker,
         CancellationToken cancellationToken)
     {
-        if (task.RequiredTools.Count == 0) return [];
         // The declaration surface is the intersection of this instance's grant and the
         // run-frozen manifest.  The live provider manifest is deliberately not consulted:
         // a tool that appeared in a child process after admission is not authority for
@@ -1561,8 +1561,22 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var catalog = _services.GetRequiredService<IFrozenToolManifestCatalog>();
         var authorized = await catalog.ListAuthorizedAsync(
             Guid.Parse(run.RunId), task.TaskId, worker.Id, cancellationToken).ConfigureAwait(false);
-        var byId = authorized.ToDictionary(entry => entry.Id, StringComparer.OrdinalIgnoreCase);
 
+        if (task.RequiredTools.Count == 0)
+        {
+            // Reasoning/loose planners (and the parse-failure fallback task) frequently
+            // emit no required_tools. Handing the worker zero declarations makes the model
+            // improvise shell commands as plain text, which never executes and gets
+            // escalated by supervision. Instead offer the worker's full authorized catalog
+            // (grant ∩ frozen manifest) so it can explore (read_file/list_dir/...). Dispatch
+            // stays policy-, approval-, and loop-guarded: this widens only the declaration
+            // surface, never the authority to act.
+            return authorized
+                .Select(entry => new WorkerToolDescriptor(entry.Id, entry.Description, entry.InputSchema))
+                .ToArray();
+        }
+
+        var byId = authorized.ToDictionary(entry => entry.Id, StringComparer.OrdinalIgnoreCase);
         var entries = new List<WorkerToolDescriptor>(task.RequiredTools.Count);
         foreach (var required in task.RequiredTools)
         {
@@ -1740,6 +1754,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         if (missingManifestTool is not null)
             throw new InvalidDataException($"Task '{task.TaskKey}' requires tool '{missingManifestTool}', which is not in the frozen run manifest.");
 
+        // 冻结 roster 里是否存在启用的通用兜底 worker（worker.general）。问答/规划/规范 等
+        // 精简模式的执行层是 worker 子集、不含 worker.general；无要求任务不能因此直接
+        // fail-closed 让整段对话不可用——此时回退到能覆盖空需求的在册 worker（最小权限优先）。
+        var hasGeneralWorker = configuration.ExecutionAgents.Any(agent =>
+            agent.Enabled && string.Equals(agent.Id, "worker.general", StringComparison.Ordinal));
+        var unclassifiedTask = requiredTools.Count == 0 && requiredCapabilities.Count == 0;
         var candidates = configuration.ExecutionAgents
             .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
             .Where(agent => agent.Id.StartsWith("worker.", StringComparison.Ordinal)
@@ -1753,7 +1773,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 var coversTools = requiredTools.All(tools.Contains);
                 var coversCapabilities = requiredCapabilities.All(capabilities.Contains);
                 var eligible = coversTools && coversCapabilities;
-                if (requiredTools.Count == 0 && requiredCapabilities.Count == 0) eligible = eligible && isGeneral;
+                // 无要求任务优先只交给通用兜底 worker；roster 无 worker.general 时放开到任意在册 worker。
+                if (unclassifiedTask) eligible = eligible && (isGeneral || !hasGeneralWorker);
                 return new WorkerCandidate(agent, tools, capabilities, isGeneral, eligible);
             })
             .Where(candidate => candidate.Eligible)
@@ -1773,7 +1794,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         var winner = candidates[0];
         var reason = winner.IsGeneral
-            ? requiredTools.Count == 0 && requiredCapabilities.Count == 0 ? "general_default" : "general_fallback"
+            ? unclassifiedTask ? "general_default" : "general_fallback"
+            : unclassifiedTask ? "general_unavailable_fallback"
             : requiredCapabilities.Count == 0 ? "specialist_tool_match" : "specialist_capability_and_tool_match";
         return new WorkerSelection(winner.Agent, reason);
     }
@@ -2345,8 +2367,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
-        if (string.IsNullOrWhiteSpace(response.Text)) throw new InvalidOperationException("Meeting agent returned no output.");
-        return await FinalizeInteractionTextAsync(run, configuration, checkpoint, response.Text, cancellationToken).ConfigureAwait(false);
+        // Strip inline reasoning before the user-facing answer and before lane-protocol
+        // line extraction, so thinking markup never reaches the user or the directive parser.
+        var answer = ModelOutputText.AnswerText(response.Text);
+        if (string.IsNullOrWhiteSpace(answer)) throw new InvalidOperationException("Meeting agent returned no output.");
+        return await FinalizeInteractionTextAsync(run, configuration, checkpoint, answer, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -3324,8 +3349,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
-        if (string.IsNullOrWhiteSpace(response.Text)) throw new InvalidOperationException("Meeting agent returned no output.");
-        return response.Text;
+        // Strip inline reasoning so the only user-facing answer never carries thinking markup.
+        var answer = ModelOutputText.AnswerText(response.Text);
+        if (string.IsNullOrWhiteSpace(answer)) throw new InvalidOperationException("Meeting agent returned no output.");
+        return answer;
     }
 
     private static string PlannerInstructions(FullDuplexCheckpointV1 checkpoint, string baseInstructions, string laneKey = "main")
@@ -3637,7 +3664,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
-        var summary = response.Text?.Trim();
+        // Strip inline reasoning so the compressed context patch is clean prose, not thinking markup.
+        var summary = ModelOutputText.AnswerText(response.Text);
         if (string.IsNullOrWhiteSpace(summary)) throw new InvalidOperationException("Context compressor returned no output.");
 
         var baseRevision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
@@ -3742,35 +3770,40 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
     private static IReadOnlyList<RecommendedCapability> ParseRecommendations(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return [];
-        try
+        // The advisor is a reasoning model too: its {"recommendations":[...]} object may
+        // be wrapped in thinking prose or fences, so try each balanced object candidate.
+        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: false))
         {
-            using var document = JsonDocument.Parse(text.Trim());
-            if (document.RootElement.ValueKind != JsonValueKind.Object
-                || !document.RootElement.TryGetProperty("recommendations", out var array)
-                || array.ValueKind != JsonValueKind.Array) return [];
-            var result = new List<RecommendedCapability>();
-            foreach (var item in array.EnumerateArray())
+            try
             {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                var skill = item.TryGetProperty("skill", out var skillNode) && skillNode.ValueKind == JsonValueKind.String
-                    ? skillNode.GetString()?.Trim()
-                    : null;
-                if (string.IsNullOrWhiteSpace(skill)) continue;
-                var reason = item.TryGetProperty("reason", out var reasonNode) && reasonNode.ValueKind == JsonValueKind.String
-                    ? reasonNode.GetString() ?? string.Empty
-                    : string.Empty;
-                var confidence = item.TryGetProperty("confidence", out var confidenceNode) && confidenceNode.ValueKind == JsonValueKind.String
-                    ? confidenceNode.GetString() ?? "medium"
-                    : "medium";
-                result.Add(new RecommendedCapability(skill, reason, confidence));
+                using var document = JsonDocument.Parse(candidate);
+                if (document.RootElement.ValueKind != JsonValueKind.Object
+                    || !document.RootElement.TryGetProperty("recommendations", out var array)
+                    || array.ValueKind != JsonValueKind.Array) continue;
+                var result = new List<RecommendedCapability>();
+                foreach (var item in array.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    var skill = item.TryGetProperty("skill", out var skillNode) && skillNode.ValueKind == JsonValueKind.String
+                        ? skillNode.GetString()?.Trim()
+                        : null;
+                    if (string.IsNullOrWhiteSpace(skill)) continue;
+                    var reason = item.TryGetProperty("reason", out var reasonNode) && reasonNode.ValueKind == JsonValueKind.String
+                        ? reasonNode.GetString() ?? string.Empty
+                        : string.Empty;
+                    var confidence = item.TryGetProperty("confidence", out var confidenceNode) && confidenceNode.ValueKind == JsonValueKind.String
+                        ? confidenceNode.GetString() ?? "medium"
+                        : "medium";
+                    result.Add(new RecommendedCapability(skill, reason, confidence));
+                }
+                return result;
             }
-            return result;
+            catch (JsonException)
+            {
+                // Not the recommendations object; try the next balanced candidate.
+            }
         }
-        catch (JsonException)
-        {
-            return [];
-        }
+        return [];
     }
 
     private async Task DispatchEvolutionAsync(
@@ -3947,7 +3980,8 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(
             checkpoint.ModelUsage,
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
-        var suggestion = string.IsNullOrWhiteSpace(response.Text) ? "No git steward suggestion produced." : response.Text.Trim();
+        var suggestionText = ModelOutputText.AnswerText(response.Text);
+        var suggestion = string.IsNullOrWhiteSpace(suggestionText) ? "No git steward suggestion produced." : suggestionText;
         await AppendEventAsync(runId, "git.steward.reviewed", "Git steward reviewed the run's change scope.", new
         {
             run_id = run.RunId,
@@ -3962,48 +3996,55 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     {
         var memoryCandidates = new List<(string, string, string, double, string?, string?)>();
         var agentCandidates = new List<(string, string, string, double, JsonElement)>();
-        if (string.IsNullOrWhiteSpace(text)) return (memoryCandidates, agentCandidates);
-        JsonDocument document;
-        try
+        // The curator is a reasoning model: its curation object may be wrapped in
+        // thinking prose or fences, so try each balanced object candidate until one
+        // yields candidates. Cloned proposal elements outlive each disposed document.
+        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: false))
         {
-            document = JsonDocument.Parse(text.Trim());
-        }
-        catch (JsonException)
-        {
-            return (memoryCandidates, agentCandidates);
-        }
-
-        using (document)
-        {
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return (memoryCandidates, agentCandidates);
-
-            if (root.TryGetProperty("memory_candidates", out var memoryNode) && memoryNode.ValueKind == JsonValueKind.Array)
+            JsonDocument document;
+            try
             {
-                foreach (var item in memoryNode.EnumerateArray())
+                document = JsonDocument.Parse(candidate);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            using (document)
+            {
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) continue;
+
+                if (root.TryGetProperty("memory_candidates", out var memoryNode) && memoryNode.ValueKind == JsonValueKind.Array)
                 {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    var scope = StringProperty(item, "scope");
-                    var kind = StringProperty(item, "kind");
-                    var content = StringProperty(item, "content");
-                    if (scope is null || kind is null || content is null) continue;
-                    memoryCandidates.Add((scope, kind, content, ConfidenceProperty(item), StringProperty(item, "applicability"), StringProperty(item, "expiry_condition")));
+                    foreach (var item in memoryNode.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object) continue;
+                        var scope = StringProperty(item, "scope");
+                        var kind = StringProperty(item, "kind");
+                        var content = StringProperty(item, "content");
+                        if (scope is null || kind is null || content is null) continue;
+                        memoryCandidates.Add((scope, kind, content, ConfidenceProperty(item), StringProperty(item, "applicability"), StringProperty(item, "expiry_condition")));
+                    }
+                }
+
+                if (root.TryGetProperty("agent_candidates", out var agentNode) && agentNode.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in agentNode.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object) continue;
+                        var name = StringProperty(item, "name");
+                        var layer = StringProperty(item, "layer");
+                        var agentType = StringProperty(item, "agent_type");
+                        if (name is null || layer is null || agentType is null) continue;
+                        if (!item.TryGetProperty("proposal", out var proposalNode) || proposalNode.ValueKind != JsonValueKind.Object) continue;
+                        agentCandidates.Add((name, layer, agentType, ConfidenceProperty(item), proposalNode.Clone()));
+                    }
                 }
             }
 
-            if (root.TryGetProperty("agent_candidates", out var agentNode) && agentNode.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in agentNode.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    var name = StringProperty(item, "name");
-                    var layer = StringProperty(item, "layer");
-                    var agentType = StringProperty(item, "agent_type");
-                    if (name is null || layer is null || agentType is null) continue;
-                    if (!item.TryGetProperty("proposal", out var proposalNode) || proposalNode.ValueKind != JsonValueKind.Object) continue;
-                    agentCandidates.Add((name, layer, agentType, ConfidenceProperty(item), proposalNode.Clone()));
-                }
-            }
+            if (memoryCandidates.Count > 0 || agentCandidates.Count > 0) break;
         }
         return (memoryCandidates, agentCandidates);
     }

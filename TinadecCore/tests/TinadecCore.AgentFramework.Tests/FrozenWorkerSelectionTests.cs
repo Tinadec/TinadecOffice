@@ -74,6 +74,20 @@ public sealed class FrozenWorkerSelectionTests
     }
 
     [Fact]
+    public void SelectWorker_FallsBackToAvailableWorkerWhenRosterHasNoGeneral()
+    {
+        // 问答/规划/规范 模式的执行层是精简 worker 子集、不含 worker.general。
+        // 无要求任务（如通用提问）此前会 fail-closed 抛 WorkerUnavailableException，
+        // 现应回退到在册 worker，避免整段对话不可用。
+        var browser = Agent("worker.browser", "execution", "task_executor", ["tool.search", "tool.browser"], ["browser.fetch"], 4);
+
+        var selection = FullDuplexRunEngine.SelectWorker(Configuration([browser]), Task());
+
+        Assert.Equal("worker.browser", selection.Agent.Id);
+        Assert.Equal("general_unavailable_fallback", selection.Reason);
+    }
+
+    [Fact]
     public void SelectWorker_FailsClosedForUnsupportedCapabilityOrTool()
     {
         var capability = Assert.Throws<WorkerUnavailableException>(() =>

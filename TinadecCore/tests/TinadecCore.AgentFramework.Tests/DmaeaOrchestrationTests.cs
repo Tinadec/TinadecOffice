@@ -80,6 +80,23 @@ public sealed class DmaeaOrchestrationTests
         Assert.Equal("Provider API key is not stored.", ex.Message);
     }
 
+    [Fact]
+    public async Task PlanningAgent_ExtractsTaskArrayFromReasoningWrappedOutput()
+    {
+        // A reasoning model emits a thinking block (with a stray bracket), prose, and a
+        // fenced JSON array. The planner must still recover the real task array instead
+        // of degrading to the tool-less fallback task.
+        var client = new StubChatClient(
+            "让我先想想。\n\n<think>\n用户问这是什么项目，我需要 [分析] 目录结构。\n</think>\n\n好的，计划如下：\n```json\n[{\"title\":\"分析项目结构\",\"success_criteria\":[\"列出关键目录\"],\"dependencies\":[],\"required_capabilities\":[],\"priority\":1,\"risk\":\"low\"}]\n```");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("这是什么项目"), [Planner()], CancellationToken.None);
+
+        var task = Assert.Single(tasks);
+        Assert.Equal("分析项目结构", task.Title);
+        Assert.Equal(new[] { "列出关键目录" }, task.SuccessCriteria);
+    }
+
     // ──────────────────────────────────────────────────────────
     // Execution layer
     // ──────────────────────────────────────────────────────────
@@ -112,6 +129,47 @@ public sealed class DmaeaOrchestrationTests
 
         Assert.Equal("failed", result.Status);
         Assert.Equal("No chat model route is configured for this workspace.", result.Summary);
+    }
+
+    [Fact]
+    public async Task ExecutionAgent_StripsReasoningFromCompletedSummary()
+    {
+        // The worker's stored summary/evidence (also echoed into multi-turn history)
+        // must not carry thinking markup or orphan tags.
+        var client = new StubChatClient("让我处理一下。\n\n<think>\n先读取文件再说。\n</think>\n\n任务A 已完成。");
+        var executor = new ExecutionAgent(new FakeFactory(new FakeChatResolver(true), client));
+        var task = new PlannedTask { Title = "任务A", SuccessCriteria = ["完成"] };
+
+        var result = await executor.ExecuteAsync(Context("用户目标"), Executor(), task, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal("completed", result.Status);
+        Assert.Contains("任务A 已完成。", result.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("先读取文件再说", result.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("<think>", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // Supervision layer
+    // ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SupervisionAgent_ParsesVerdictFromReasoningWrappedOutput()
+    {
+        // The supervisor's verdict object is wrapped in a think block and a fence;
+        // it must still parse to a real decision instead of escalating as unparsable.
+        var client = new StubChatClient(
+            "<think>\n证据充分，可以通过。\n</think>\n\n```json\n{\"decision\":\"pass\",\"reasons\":[\"证据充分\"],\"revise_task_indexes\":[]}\n```");
+        var supervisor = new SupervisionAgent(new FakeFactory(new FakeChatResolver(true), client));
+        var tasks = new[] { new PlannedTask { Title = "任务A", SuccessCriteria = ["完成"] } };
+        var results = new[]
+        {
+            new StepResult { TaskNodeId = Guid.NewGuid(), AgentId = "x", Status = "completed", Summary = "任务A 完成", Evidence = ["任务A 完成"] }
+        };
+
+        var verdict = await supervisor.ReviewAsync("用户目标", tasks, results, 0, CancellationToken.None);
+
+        Assert.Equal(SupervisionDecision.Pass, verdict.Decision);
+        Assert.Contains("证据充分", verdict.Reasons);
     }
 
     // ──────────────────────────────────────────────────────────
