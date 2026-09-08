@@ -47,7 +47,7 @@ Before writing code, follow this decision ladder:
 - Use minimal API patterns
 - Prefer framework built-in logging (ILogger<T>)
 - Use dependency injection, avoid service locators
-- Reuse services from `TinadecCore/<Module>/` (Runtime, Lifecycle, Memory, AgentConfiguration, ...); HTTP endpoints live in `TinadecCore/Api/Endpoints/`
+- Reuse services from `TinadecCore/<Module>/` (Runtime, Lifecycle, Memory, AgentConfiguration, ...); HTTP endpoints live in `TinadecCore/AspNetCore/Endpoints/`
 - Avoid over-abstraction
 
 ## Current Architecture Rules (verified 2026-08-23)

@@ -1,8 +1,9 @@
 # OfficeAgentPack 随装方案 — 本阶段收尾 + 后续待办
 
 **提交:** `3d92404`（首版 0.1.0）/ `9b3d42b`（列表 500 修复）/ 本阶段（v0.2.0 七模式 + 发送框打通）
-**分支:** `main`
-**校验结果:** Core Api 116/116、AgentFramework 56/56、Gateway 40/40、Desktop 276 pass + 14 skipped 全绿
+**分支:** `Astra`（本文写于 `main` 时代，HEAD 已为 `3e8ff30`）
+**校验结果（2026-08-26 当时）:** Core Api 116/116、AgentFramework 56/56、Gateway 40/40、Desktop 276 pass + 14 skipped 全绿
+**当前版本（2026-09-07 核对）:** Pack `0.2.3`（`apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json:9`）；测试基线为 Core Api 194+1 known-flake、AgentFramework 100、Architecture 11、Governance 34、Gateway 44、Desktop 332
 
 本文件记录该方案的落地状态，并把计划中**明确延期**的项登记为后续待办。与 `AGENTS.md`、`docs/tinadec-core-product-definition.zh-CN.md` 相互引用。
 
@@ -24,7 +25,7 @@
 
 | 计划章节 | 落地状态 |
 |----------|----------|
-| **Pack 与公共契约** | `apps/desktop/src/agentPacks/OfficeAgentPack/` 静态 manifest（`tinadec.office.agent-pack@0.1.0`，owner `tinadec.office`，digest `3e2fdbdb…630fe1e`，14 Agent + `baseline-prompt` + `default-mode` + 推荐 defaults）；RFC 8785/JCS + SHA-256；Core 四端点 `GET/POST install-preview/PUT agent-packs*` |
+| **Pack 与公共契约** | `apps/desktop/src/agentPacks/OfficeAgentPack/` 静态 manifest（本节为 **0.1.0 首版**快照；当前已是 `0.2.3`，含 14 Agent + 5 PromptPipeline + 7 Mode + 推荐 defaults）；RFC 8785/JCS + SHA-256；Core 四端点 `GET/POST install-preview/PUT agent-packs*` |
 | **Core 安装与版本治理** | `AgentPackService` + `AgentPackEndpoints`：SemVer / 引用图 / 双层拓扑 / 能力校验；单事务 Prompt→Agent→Mode→defaults；幂等 / hash 冲突 409 / `newer_installed` 防降级 / 默认值保护 / legacy DevSeed 语义采纳 / `managed_resource_read_only`；删除 DevSeed 14 个 Office 正式写入；收口重复 `/api/v1/agents`；SQLite + PostgreSQL 七表迁移 |
 | **运行时闭环** | Mode 发布快照固定 agent_definition / version_id / hash / order / layer / config / effective tools / 模型策略 / PromptVersion；`FormalModeResolver` 只读快照；`FrozenRunConfiguration` 补齐 system prompt / 模型策略 / roster order / tools / prompt binding；统一 Prompt 装配路径；supervisor 真实可审计实例；planner 冻结 specialist roster；frozen execution roster 上稳定 fail-closed 的 worker 选择；`worker.assigned` 首次调用前持久化 + 重启恢复不重选 |
 | **App / Gateway / 验证** | connected-epoch bootstrap；跳过子/pet/debug 窗口；BroadcastChannel + Web Locks 多标签协调；confirm 确认 owner/version/hash；拒绝生命周期内去重、下次启动再询；持久 Retry 且重试重新 preview；Agent Center 紧凑 Pack 状态条；General 移除 localStorage 伪 default topology，统一读 Core WorkspaceDefaults；Gateway 四路径薄代理 + Core/Gateway OpenAPI 与 Desktop typed client 同步 |
@@ -48,7 +49,7 @@
 - [ ] **市场分发** — 目前 Pack 由 App 构建期静态携带；市场分发需引入远程获取、内容信任链与版本分发端点。
 
 ### 2.2 运行时深化（"仅安装冻结"角色的后续触发链）
-> **状态更新（2026-08-29）**：四条触发链已随运营层触发链落地（`[triggers]` 策略 + `DmaEA/Operations/OperationalTriggers.cs` 四锚点旁路分派；详见根 `AGENTS.md` 同日条目与 `withdocs/双层智能体架构现状与差异分析.md`）。剩余子项如下。
+> **状态更新（2026-08-29）**：四条触发链已随运营层触发链落地（`[triggers]` 策略 + `DmaEA/Operations/OperationalTriggers.cs` 四锚点旁路分派；详见根 `AGENTS.md` 同日条目与 `docs/tinadec-core-product-definition.zh-CN.md` §6.4.1。注：早期版本此处引用的 `withdocs/双层智能体架构现状与差异分析.md` **在仓库中不存在**，已移除）。剩余子项如下。
 - [x] **`context_compressor` 事件触发链** — 已实现：`task_closed`/run 收尾触发，token 阈值门 + ToolCallAware 守卫，`kind=compaction` CAS 补丁与 `context.compacted` 事件。剩余：压缩与监督轮次的联动策略仍为基础形态。
 - [x] **`skill_recommender` 事件触发链** — 已实现：`task_graph_created`/`capability_missing` 触发，推荐写 `checkpoint.RecommendedCapabilities` 并注入重规划指令。剩余：`capability_missing` 尚不自动触发重规划（仅建议）。
 - [~] **`evolution` 运行内评测闭环** — 部分实现：run 收尾由 `experience_curator` 主动策展记忆/智能体候选（受 `[memory]` 白名单约束）；`promote` 已解锁为消毒→发布不可变版本→回填；新增 `GET .../proposals/{id}/evaluation`（源 run 回放评测证据）。剩余：canary/灰度与激活阶段未实现。
@@ -56,7 +57,7 @@
 
 ### 2.3 部署与多租户
 - [ ] **Cloud 多租户恢复调度器** — Core 目前恢复扫描仅覆盖 `ITenantContextAccessor.Current`（单工作区）；云端多租户恢复仍需 tenant scheduler + 分布式 claim。Pack 安装的并发收敛目前依赖 Core 单点 revision / 唯一索引 / 幂等 receipt。
-- [ ] **scheduling 与 `tools/shell` 仍为 501 桩** — 与本方案无直接耦合，但后续 full-duplex 深化的调度 / shell 执行路径待实现。
+- [ ] **scheduling 仍为 501 桩**（`tools/shell` 已实现：TinadecTools 的 `shell` 工具，审批门控；注意它**没有沙箱**，直接执行 `cmd.exe /d /s /c`，有沙箱的是 `command_run`）— 与本方案无直接耦合，但后续 full-duplex 深化的调度路径待实现。
 
 ### 2.4 既有遗留（当前阶段已知、非本方案引入）
 - **Desktop 14 个 skipped 测试** — `NotificationIslandHost` 为 Vue 3.6.0-rc.2 Transition + happy-dom 环境问题，当前已 `describe.skip`（非运行中失败）；待根 `vue` / `@vue/compiler-sfc` 升到 ≥3.6 stable 后解掉（见 `apps/desktop/AGENTS.md` NOTES）。

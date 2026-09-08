@@ -1,6 +1,7 @@
 # TinadecOffice 端到端落地重构计划（修订版 v2）
 
 - 版本：v2（2026-09-05）；执行状态更新：v2.4（2026-09-06，见文末"执行状态"）
+- **状态（2026-09-07 复核）**：§8 的 9 个工作项全部标记 ✅ 且与代码一致（invoke-stream 物理退役、RecoveryCoordinator 落地、12 态词表收口）。本文现已是一份"已完成"的收口记录：§1.2 与 §4.1 保留的是**计划初期**的缺口描述，凡与 §8 的 ✅ 行冲突，以 §8 和代码为准。
 - 取代：Downloads 版《TinadecOffice 端到端落地重构计划》（下称 v1）。v1 的阶段框架与验收命令继续有效，本文按 2026-09-05 代码核查事实收窄范围、修正过时判断。
 - 证据基线：TinadecOffice 工作树现状（下文 `file:line` 均相对仓库根）；参考项目取自本地克隆 `C:\git\agent\{opencode, t3code, better-harness, agent-framework}`，行号对应克隆时点。
 - 边界不变：MAF（agent-framework）继续作为运行时；`TinadecOfficePi` 仅作架构参考文档，不进入运行时链路；不清理用户本地文件 `.claude/settings.local.json`。
@@ -11,7 +12,7 @@
 2. v1 有 6 项判断已过时（§1.1），另有一批真实缺口 v1 未覆盖或低估（§1.2）。本 v2 逐项修正。
 3. 交界面一的第一刀仍是**日志旁路**：`FullDuplexRunEngine.cs:2210` 在监督重规划失败回退路径上直呼 `_logger?.LogWarning`，日志 provider 抛异常会把可恢复的运行直接打成 error；TryLog* 安全日志目前只是该文件的私有方法，另有 8 文件 9 处运行时路径直接调用。
 4. 状态机的真实缺口不是"没有状态机"，而是**不收口**：无版本/条件更新、`CompleteRunAsync` 绕过状态机、F# `StateTransition.fs` 是与 C# 规则冲突的死代码、零直接单测。
-5. 交界面二的缺口在**协议面**：interaction receipt 缺 4 个字段；run stream 无 `event:` 类型行、无 `occurred_at`、无心跳；Gateway OpenAPI 虚标 Core 不产生的事件种类（ghost API）；Core invoke-stream 与 Gateway 悬空代理仍未退役。
+5. 交界面二的缺口在**协议面**：interaction receipt 缺 4 个字段；run stream 无 `event:` 类型行、无 `occurred_at`、无心跳；Gateway OpenAPI 虚标 Core 不产生的事件种类（ghost API）；Core invoke-stream 与 Gateway 悬空代理均已物理退役（见 §8 阶段 4 的 ✅ 记录；`DmaeaEndpoints.cs:26-28` 只剩退役注释）。
 6. 交界面三的缺口是**可用性不可见**：无模型连通性探针（key 是否真可用只有运行时才知道）；readiness 只有 ready|warning 两态且不含模型项；TinadecTools.exe 需先手动构建否则 503；无 e2e 脚本、无本地模型 fixture。
 7. 交界面四的缺口是**词表与白名单**：run 状态 12（Gateway）/10（Desktop generated）/13（Core ToolDispatchStatus）三套并存且 `normalizeRunStatus` 是恒等函数；Gateway mapper 白名单丢字段并推导默认值；api.ts 2364 行手写 DTO；OpenAPI drift 门当前处于失败状态（`core-openapi.log`）。
 8. 借鉴优先级：交界面二取 opencode durable seq + t3code afterSequence 续传；交界面一取 opencode fromError 单点分类 + MAF `Lost` 终态 + better-harness 生命周期不变量；交界面三取 t3code 三维探测快照 + opencode "错误信息给可执行修复命令"；交界面四取 t3code epoch 去重 + 三方 OpenAPI 生成管线。
@@ -45,7 +46,7 @@
   - receipt 缺 `client_message_id / context_revision / stream_cursor / correlation_id`（现返回 `interaction_id/session_id/run_id/turn_id/dispatch_mode/status/mode_version_id/meeting_model_override`，`InteractionsEndpoints.cs:231`）。
   - run stream 信封无 `event:` 类型行、无 `occurred_at`、无独立 `interaction_id`（`AspNetCore/Endpoints/DmaeaEndpoints.cs:604-607,111-124`）；run stream 无心跳（15s 心跳只在 `/api/v1/events`，`StorageEndpoints.cs:360`）。
   - Gateway OpenAPI 虚标 Core 不产生的 kinds（`ack/heartbeat/task_node_update/supervision_update/context_version_update`）与 `occurred_at/payload` 字段（`TinadecGateway/src/index.ts:563,618,789`）——ghost API；desktop 旧客户端按虚标字段解析（`api.ts:2200,2244`），`sseMapper.ts:24` 以 `new Date()` 兜底。
-  - Core `POST /sessions/{sessionId}/invoke-stream` 仍在（`TinadecCore/AspNetCore/Endpoints/DmaeaEndpoints.cs:26-84`）；Gateway `GET /sessions/:sessionId/interactions/:interactionId/stream` 悬空代理仍在（`index.ts:1759-1782`，Core 无对应路由，必 404）。
+  - Core `POST /sessions/{sessionId}/invoke-stream` **已退役**：`DmaeaEndpoints.cs:26-28` 是退役注释，无路由注册，请求 404（`DmaeaEndpointTests` 断言）；Gateway 的 `invoke-stream` 代理已删除（`src/index.ts` 中仅剩 `:540` 的历史注释），`GET /sessions/:sessionId/interactions/:interactionId/stream` 悬空代理亦已不存在（`index.ts:1759-1782` 现在是 agent-candidate 代理）。**本节是 v2 计划早期的缺口描述，已由 §8 阶段 4 完成，保留以记录问题来源。**
   - insert/steering 分支的 `interaction_id` 是临时 `Guid.NewGuid()`，不落库为交互实体（`InteractionsEndpoints.cs:152-160`）。
 - **交界面三**：
   - 无任何模型连通性预检/真实调用探针：`CheckReadinessAsync` 只做路由解析（`ModelsModuleRegistrar.cs:70-90`）；"真实调用成功"只在 run 时发生（`IAgentChatClientFactory.cs:82-89`）。
@@ -109,7 +110,7 @@ v1 的九条验收条件全部保留：一条命令启动且失败原因明确�
 4. run stream `GET /api/v1/runs/{runId}/stream`（`AspNetCore/Endpoints/DmaeaEndpoints.cs:86-137`）已支持 `after_seq` + `Last-Event-ID`（取 max，:96-97）、非法 cursor 400 `INVALID_STREAM_CURSOR`、从 RunStream 表按 `Sequence > cursor` 重放（`FullDuplexRunCoordinator.cs:484-518`）、终态 2s 宽限防丢终态对（:505-514）；序号由 `RunStreamCursors` 单调分配无缺口（`StorageLifecycleService.cs:701-724`）。
 5. 信封缺陷：无 `event:` 类型行、无 `occurred_at`、无 interaction_id；实际 kinds 只有 `delta/done/error/control/queued/assigned/steering/context_conflict`，Gateway OpenAPI 却虚标 5 个 ghost kinds（§1.2）。
 6. 无心跳（run stream）；`/api/v1/events` feed 有 15s 心跳与 EventEnvelope（`StorageEndpoints.cs:199-277,360-370`）。
-7. 遗留路径三处并存：Core invoke-stream（`DmaeaEndpoints.cs:26-84`）、Gateway 悬空 interactions stream 代理（`index.ts:1759-1782`）、Desktop `stores/run.ts` invoke-stream 客户端（:85）。
+7. 遗留路径三处并存（**v2 计划初期状态；均已在阶段 4 退役**）：Core invoke-stream（现仅剩 `DmaeaEndpoints.cs:26-28` 退役注释）、Gateway 悬空 interactions stream 代理（已删除）、Desktop `stores/run.ts` invoke-stream 客户端（`run.ts:5-7` 注释确认已移除，提交路径统一到 HomeController 的 `POST /interactions` + `createRunStream`；`api.ts:2229` 的 `invokeStreamWithAdmission` 现为 interactions+run-stream 的内部适配器，不是旧路由客户端）。
 8. Desktop 已有唯一健康流客户端 `useRunStream.ts`（重连/续传/去重/终态停止），HomeController 已使用；`stores/run.ts` 与之并存构成双 runs 记账。
 9. 恢复规则 4 套并存、无统一 RecoveryCoordinator：RunRecoveryHostedService（启动一次性，`RunRecoveryHostedService.cs:14-75`）、引擎 lease 扫描（每 2s，`FullDuplexRunEngine.cs:110-128`）、UserToolActionRecoveryHostedService（`Runtime/UserToolActionRecoveryHostedService.cs:14-35`）、ToolApprovalCoordinator park 过期（`:571,735`）。
 

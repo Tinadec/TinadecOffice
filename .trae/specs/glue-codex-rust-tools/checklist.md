@@ -1,3 +1,6 @@
+> **⚠️ 已归档规格（未实现或已过时）**
+> 本文描述的功能多数**在代码中不存在**（例如 .trae/specs 中标注"已完成 ✅"的能力无任何源码/测试对应）。仅作历史记录，请勿据此判断当前能力。
+
 - [x] `tinadec-code-native.exe` 可在 Windows 上编译成功
 - [x] `tinadec-code-native version` 返回有效 JSON
 - [x] `codeTools.ts` 对所有工具（含审批工具）都尝试 native 路径

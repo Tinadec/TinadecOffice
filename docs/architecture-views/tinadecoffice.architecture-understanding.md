@@ -36,7 +36,7 @@ TinadecOffice 是**四个可独立版本化产品的仓库内集成体**：`Tina
 
 1. **两层命名已收敛**：治理层 `operation`、执行层 `execution`。`planning` 只作为旧输入迁移期接受；`RunStatus` 已无 `finalizing`。
 2. **run 状态**：枚举 12 值（含 `AwaitingApproval`/`AwaitingDelegate`/`AwaitingUser`）。同时存在一份 F# 纯策略 `StateTransition.fs`，它只覆盖 10 个规范态与 `pending/running` 别名，**不含 `awaiting_user`/`awaiting_delegate`**，也未见 run 引擎调用。⇒ 事实上的 run 状态权威是 `RunStatus` 字符串 + 持久层比较逻辑，`validateTransition` 目前是独立可复用策略而非单一真相。这一点在视图中降级为"两套并存"。
-3. **一次交互（14 步）的关键非直觉事实**：`POST /sessions/{id}/interactions` **返回 201 JSON 而不是 SSE**；要看流必须另开 `GET …/runs/{runId}/stream`，或由 `invoke-stream` 走请求内流。受理时写库（幂等键 = client message id、`context_revision` 冲突→409、活跃 run 上限），并**冻结**运行配置：策略快照 + 关系化 roster + 逐 Agent 模型计划 + 工具 manifest 哈希，此后 run 内不再变更。
+3. **一次交互（14 步）的关键非直觉事实**：`POST /sessions/{id}/interactions` **返回 201 JSON 而不是 SSE**；要看流必须另开 `GET …/runs/{runId}/stream`（旧的 `invoke-stream` 已退役并返回 404，不再是入口）。受理时写库（幂等键 = client message id、`context_revision` 冲突→409、活跃 run 上限），并**冻结**运行配置：策略快照 + 关系化 roster + 逐 Agent 模型计划 + 工具 manifest 哈希，此后 run 内不再变更。
 4. **恢复有两套**：run 引擎每 2s 扫 `ListLeaseEligibleRunsAsync`（30s 租约、准入宽限期、排除 `awaiting_*`）重排队；`RunRecoveryHostedService` 只在启动时把孤儿 run 标 `failed` 并写 `run.recovered`，**不续跑**。等审批/等委托/等用户的 run 在两条路径上都被明确豁免，这是"重启不丢审批"的设计落点。
 5. **审批与确认是 AND 关系**：任何 mutating 动作必须过 Core 的 PDP/租约/一次性 `ActionApproval`；工具层再叠 `confirm_*` 字面量闸门（`ToolConfirmations.Require`）。写操作前 `WorkspaceSnapshotService` 捕获文件系统/Git 快照，失败即阻塞。
 6. **用户直连与智能体工具执行是两条路径**（产品定义 §3.3）：用户动作走 `POST /api/v1/user/tool-actions`（Core 建 UserToolAction、快照、PDP、审计）；智能体走 `POST /api/v1/runs/{runId}/tools/{toolId}/execute`（Core 冻结配置 + 调 Tool Provider）；而 `/api/v1/code/tools/{id}/execute` 与 `/api/v1/tool-runtime/*` 是**刻意保留的无状态传输面**，不是旧路由。
@@ -50,7 +50,7 @@ TinadecOffice 是**四个可独立版本化产品的仓库内集成体**：`Tina
 1. **404→归属派生**：Gateway 找不到 session 时会从 run/session 列表反查 owner，并以 `derived_session_owner` 伪造 `x-tinadec-principal` 再试一次。
 2. **白名单投影会静默丢字段**：Core 新增而映射器未跟进的字段到不了前端（`tool_executions` 只保 4 个工具目录字段，`upstream_stream_configured` 被硬编码 `true`，`GET /model-settings/feature-flags` 返回字面 `{}`，4 个 `PUT /model-settings/*` 接受并丢弃写入）。这是"契约漂移"最可能出现的位置。
 3. **`/events` 是渲染层私有 camelCase 重写**，打破了 snake_case 单一规则的例外。
-4. **用户直连工具执行当前不可用**：`/api/v1/code/tools/*`、`/api/v1/tool-runtime/*` 的执行会 1:1 转发到 `:48732`，而仓库里没有这个服务。目录读的是 Core，执行落空——视图中以 `unknown`/虚线表达，未画成已验证的边。
+4. **用户直连工具执行当前不可用**：`/api/v1/code/tools/*`、`/api/v1/tool-runtime/*` 的执行会 1:1 转发到 Gateway 配置的 `TINADEC_TOOL_RUNTIME_URL`（默认 `:48732`），而仓库里没有这个 HTTP 服务——工具宿主是 Core 按 `TinadecTools:ExecutablePath` 自动探测（content root → `TinadecTools/bin/{Debug|Release}/net10.0/`）拉起的子进程，没有固定端口。目录读的是 Core，执行落空——视图中以 `unknown`/虚线表达，未画成已验证的边。
 
 另有两处仓库级事实值得记住：Core `Program.cs` **没有认证中间件**（身份来自 `appsettings.json` 固定 dev 三元组，JWT 校验只在 Gateway）⇒ Core 不可直接暴露公网；`StubEndpoints.cs` 的 44 条桩里 `sessions/{id}/context` 可能与 `ControlPlaneEndpoints.cs` 的已实现路由重名，遮蔽方向尚未运行时验证。
 

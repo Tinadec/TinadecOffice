@@ -19,7 +19,7 @@ Tinadec 是四个独立版本化产品组成的家族：**TinadecCore**（.NET 1
 |---|---|---|
 | 构建独立 | ✅ | 前端 `vite build`，无任何 .NET import，无构建期后端依赖 |
 | 运行时契约通信 | ✅ | 全部经 HTTP/SSE/WS 走 Gateway；`api.ts:1645` `gatewayUrl ?? 'http://127.0.0.1:48730'` |
-| Gateway 薄代理 | ✅ | `TinadecGateway/src` 16 个小型 mapper，无业务状态；旧 BFF 聚合已删（`model-center/overview` 返回 404） |
+| Gateway 薄代理 | ✅ | `TinadecGateway/src` 15 个小型 mapper，无业务状态；旧 BFF 聚合已删（`model-center/overview` 返回 404） |
 | 后端契约单一事实源 + CI 门禁 | ✅ | Gateway `/docs/json` + `openapi.snapshot.test.ts` 快照 drift 门（`git diff --exit-code`） |
 | 渲染器与平台解耦 | ✅ | `apps/web` 经 `webShim.ts` 复用 desktop 渲染器 |
 | **前端 DTO 消费端** | ❌ **唯一缺口** | `api.ts`（2200 行）+ `generated/client.ts`（占位）均为**手写镜像**；`generate:client`/`check:drift` 脚本已就位但**未启用**，注释仍引用 Core 内部 `.cs` 文件，存在知识耦合与漂移风险 |
@@ -31,10 +31,10 @@ Tinadec 是四个独立版本化产品组成的家族：**TinadecCore**（.NET 1
 | 维度 | 现状 | 证据 |
 |---|---|---|
 | 独立服务 | ✅ 已可 | `dotnet publish Api` 独立进程（端口 48731） |
-| 库嵌入设计 | ✅ 就位 | `AddTinadecCore()` / `AddTinadecCoreMinimal()` 公开组合入口（`Runtime/TinadecCoreServiceCollectionExtensions.cs:30,83`）；`Abstractions/Ports` 23 个 DI 端口；Contracts/Abstractions/Runtime 及模块均 `IsPackable=true`+MIT |
+| 库嵌入设计 | ✅ 就位 | `AddTinadecCore()` / `AddTinadecCoreMinimal()` 公开组合入口（`Runtime/TinadecCoreServiceCollectionExtensions.cs:36-48` 与 `:97-100`）；`Abstractions/Ports` 27 个 DI 端口；Contracts/Abstractions/Runtime 及模块均 `IsPackable=true`+MIT |
 | MAF 隔离 | ✅ 框架式引用 | 仅 `DmaEA` 引 4 个 `Microsoft.Agents.AI` 包；唯一接触点 `DmaEA/Maf18RuntimeAdapter.cs`；Architecture.Tests 强制 MAF/EF/ASP.NET 类型不外泄 |
 | 零反向依赖 | ✅ | 对 Desktop/Gateway/Tools 无编译期引用；唯一耦合 `Tools/TinadecToolsProcessManager.cs` 拉子进程，缺失时降级不阻断启动 |
-| **成熟度缺口** | ❌ | ①未发布任何 NuGet feed；②打包文档相对路径在**独立镜像**里损坏（详见第八节，权威源其实是通的）；③HTTP 端点层在**不可打包**的 Api 项目，嵌入者只拿 DI 服务、需自建 HTTP；④无容器镜像、无 OIDC 身份适配器、无多租户调度 |
+| **成熟度缺口** | ❌ | ①未发布任何 NuGet feed；②打包文档相对路径在**独立镜像**里损坏（详见第八节，权威源其实是通的）；③（**已解决，2026-08-29**）HTTP 端点层已抽到**可打包**的 `TinadecCore.AspNetCore` 项目（`AddTinadecCoreHttp()`/`MapTinadecCore()`），嵌入者不再需要自建 HTTP；④无容器镜像、无 OIDC 身份适配器、无多租户调度 |
 
 **形态对标**：
 - **对比原版 MAF**：已很接近——同为「NuGet 库 + `AddXxx()` 组合进宿主 + 附带可独立运行的服务」。差距仅在未发布、无 Hosting/可复用 HTTP 层。
@@ -54,7 +54,7 @@ Tinadec 是四个独立版本化产品组成的家族：**TinadecCore**（.NET 1
    - 影响：Desktop「直连 Core 双轨」**不做**；`electron/serviceDiscovery.cjs` 里 Core 候选维持"仅信息展示"。
    - 冲突点需回写：根 `AGENTS.md` 现有「TinadecApp 可直连 Core，Gateway 可选」表述对 Desktop 场景被本决定覆盖（其它 App 形态仍可直连的产品契约保留，但 Desktop 明确不直连）。
 2. **Gateway 上升为稳定的前端契约边界**：其外部 OpenAPI（`/docs/json`）是 Apps 消费的唯一契约源，这强化了 Gateway 的定位而非弱化。
-3. **事实源已核实（2026-08-28）**：独立仓库 `TinadecCore`（`github.com/Tinadec/TinadecCore`）是 2026-08-23 从 `TinadecOffice` 抽取的开源镜像（`SYNC.md`：GPL→MIT 换证），但此后**已独立提交、与权威源分叉**（关键文件 `TinadecCoreServiceCollectionExtensions.cs` 内容已不同）。**权威且活跃的开发主场是 `TinadecOffice/TinadecCore`**（最新提交 2026-08-28，含模型/智能体控制面重构），且**当前没有自动化 Core 同步脚本**（仅 `sync-tinadec-ui.mjs`）。这是 A 线推进前必须先解决的所有权问题。
+3. **事实源已核实（2026-08-28）**：独立仓库 `TinadecCore`（`github.com/Tinadec/TinadecCore`）是 2026-08-23 从 `TinadecOffice` 抽取的开源镜像（`SYNC.md`：GPL→MIT 换证），但此后**已独立提交、与权威源分叉**（关键文件 `TinadecCoreServiceCollectionExtensions.cs` 内容已不同）。**权威且活跃的开发主场是 `TinadecOffice/TinadecCore`**（截至 2026-09-07 最新提交 `3e8ff30`，含模型/智能体控制面重构与 M1–M8 泳道/审批收口），且**当前没有自动化 Core 同步脚本**（仅 `sync-tinadec-ui.mjs`）。这是 A 线推进前必须先解决的所有权问题。
 
 ---
 

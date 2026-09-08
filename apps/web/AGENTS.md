@@ -70,8 +70,10 @@ apps/web/
 
 ## FEATURE PARITY
 Available: chat, sessions/projects, task graph, approvals, context packs, event SSE,
-Model/Agent Center, OfficeAgentPack bootstrap/status, Market, Settings, Debug Studio,
-Monaco code viewing.
+Model/Agent Center, OfficeAgentPack bootstrap/status, Market, Settings,
+Debug Studio (UI only: the Core debug/trace backend is unimplemented —
+`AspNetCore/Endpoints/StubEndpoints.cs` returns empty arrays/`501`, and Gateway `/ws/debug`
+is a dead stub), Monaco code viewing.
 
 Unavailable by design: terminal (see `docs/web-client.md` stage 2), desktop pets,
 detachable panel windows, native directory picker.

@@ -22,11 +22,11 @@
 | 模块→模块 `ProjectReference` | **0 条** | 逐 csproj 抽取引用：所有业务模块只引用 `Abstractions`（部分加 `Contracts`/`Strategies`/`Persistence`），仅 `Runtime` 聚合 18 个、`Api`→`Runtime` | high |
 | DbContext 数量 | 9 | `Memory/MemoryDbContext.cs:16`、`Lifecycle/LifecycleDbContext.cs:5`、`Tenancy/TenancyDbContext.cs:5`、`Models/ModelControlDbContext.cs:5`、`AgentConfiguration/AgentConfigurationDbContext.cs:17`、`Prompts/PromptControlDbContext.cs:5`、`Skills/IntegrationDbContext.cs:5`、`Governance/GovernanceDbContext.cs:5`、`DmaEA/AgentControlDbContext.cs:5` | high |
 | Abstractions 端口文件 | 23 | `TinadecCore/Abstractions/Ports/*.cs` | high |
-| Core HTTP 路由 | ≈170（13 个端点文件） | AgentConfiguration 29 / ControlPlane 28 / Storage 14 / Governance 11 / Dmaea 10 / MemoryReview 8 / UserToolAction 6 / WorkspaceSnapshot 5 / AgentPack 4 / Evolution 4 / Interactions 4 / ModelAgentControl 3 / Stub 44；`Api/Program.cs:260-272` 13 次 `Map*Endpoints()` | high（逐文件计数） |
-| Core 结构化 501 | 25 处（`statusCode: 501`） | `Api/Endpoints/StubEndpoints.cs` 18 处 + `Api/Endpoints/ControlPlaneEndpoints.cs:27,33,35,36,39,40,41` 7 处；其它端点文件 0 处 | high |
+| Core HTTP 路由 | ≈170（2026-08-27 基线：13 个端点文件） | AgentConfiguration 29 / ControlPlane 28 / Storage 14 / Governance 11 / Dmaea 10 / MemoryReview 8 / UserToolAction 6 / WorkspaceSnapshot 5 / AgentPack 4 / Evolution 4 / Interactions 4 / ModelAgentControl 3 / Stub 44；端点组注册现由 `AspNetCore/TinadecCoreEndpointRouteBuilderExtensions.cs:14-30` 的 17 次 `Map*Endpoints()` 完成（`Api/Program.cs` 只剩 `app.MapTinadecCore()`） | high（逐文件计数） |
+| Core 结构化 501 | 24 处（`statusCode: 501`） | `AspNetCore/Endpoints/StubEndpoints.cs` 17 处 + `AspNetCore/Endpoints/ControlPlaneEndpoints.cs` 7 处；其它端点文件 0 处 | high |
 | Gateway 自建 501 | **0 处** | `grep -c "501" TinadecGateway/src/index.ts` = 0；501 全部来自 Core，Gateway 只转发 | high（并据此改掉了旧断言） |
 | Gateway 路由 | ≈200 声明 / 223 唯一 OpenAPI path，其中 47 条带显式 501 响应样例 | `TinadecGateway/src/index.ts` 单文件 2052 行链式应用；`src/generated/openapi.external.json` | high（数字）/medium（"实际启用 150–160"来自 `apps/desktop/src/api.ts:794` 启发式注释） |
-| Gateway `.ws()` | 3 条且为死桩 | `src/index.ts:1924-1956`：只 `pub/sub`，算出的 `targetUrl` 丢弃；`createWsProxyHandlers` 在 `src/websocket.ts` 内无任何调用点 | high |
+| Gateway `.ws()` | 3 条且为死桩 | `src/index.ts:2016-2063`：只 `pub/sub`，算出的 `targetUrl` 丢弃；`createWsProxyHandlers` 在 `src/websocket.ts` 内无任何调用点 | high |
 | TinadecTools 工具 | 46 个 `[ToolFunction]` id（43 字面量 + 3 个 `TOOL_ID` 常量：`Tools/Git/GitFileHistoryTool.cs:78`、`GitLogDetailTool.cs:75`、`GitLogListTool.cs:55`） | `grep -rn "ToolFunction(" TinadecTools --include=*.cs \| grep -v Generators` = 46 | high |
 | 组合根顺序 | 13 个 registrar：Tenancy→AgentConfiguration→VectorStore→Lifecycle→Governance→Models→Context→Prompts→Memory→Skills→LoopGuard→Tools→DmaEA | `Runtime/TinadecCoreServiceCollectionExtensions.cs:36-48` | high |
 | 组合根后置 Replace/AddSingleton | `IAuthorizationContextResolver→CoreAuthorizationContextResolver`（Replace）、`IFormalModeResolver→FormalModeResolver`、`IAgentModelResolver→AgentModelResolver`、`UserToolActionService` 三重身份、`UserToolActionRecoveryHostedService`、`ToolDispatchOptions` 从 TOML 重绑 | 同文件 `:53-75` | high |
@@ -45,7 +45,7 @@
 | N:app.webShim | Web 平台垫片 | L2 | high | `apps/web/vite.config.ts:77-88` 6 条 alias、`:80-84` `/gateway`→48730 |
 | N:app.uie | 共享 UI 组件库 | L2 | high | `apps/TinadecUI/src/index.ts`（vite alias `@tinadec/ui`） |
 | N:app.officePack | Office Agent Pack v0.2.3 | L2 | high | `apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json`，digest `78dbc565…66cc`，14 Agent + 5 prompt pipelines + 7 Mode，治理角色 `tool_scope: []`（`AGENTS.md` 2026-08-25/26/31 与 2026-09-03 条目） |
-| N:gateway.routes / mapping / upstream | Elysia 路由 / 映射 / 上游客户端 | L2, runtime | high | `src/index.ts:1-23,1960-2043`、`src/mappers/*` 12 文件、`src/coreClient.ts`、`src/toolRuntimeClient.ts` |
+| N:gateway.routes / mapping / upstream | Elysia 路由 / 映射 / 上游客户端 | L2, runtime | high | `src/index.ts:1-23,1960-2043`、`src/mappers/*` 15 文件、`src/coreClient.ts`、`src/toolRuntimeClient.ts` |
 | N:core.apiHost | TinadecCore.Api（:48731） | L2, L3, runtime | high | `Api/Program.cs:1-282`、`Api/Properties/launchSettings.json:8` |
 | N:core.runtime | Runtime 组合根 | L3, deps | high | `Runtime/TinadecCoreServiceCollectionExtensions.cs`、`Runtime/TinadecCoreBuilder.cs:11-30` |
 | N:core.foundation | Contracts + Abstractions | L3, deps | high | 两个 csproj 无任何框架引用；`Strategies` 为 net10.0 F# |
@@ -57,7 +57,7 @@
 | N:llmApi | 远端模型 API | L1, flows | high | `Models/ModelsModuleRegistrar.cs:47`（`ModelProvider : IModelProvider, IChatResolver`）、协议族见 `DmaEA/IAgentChatClientFactory.cs` |
 | N:cliRuntimes | 本机 CLI（ACP / opencode serve） | L1, runtime | high | `DmaEA/CliRuntime`、`GET /api/v1/model-providers/cli/discover`、`POST …/cli/connect` |
 | N:workspaceFs / gitRemote / mcpServers | 工作对象与外部系统 | L1, runtime | high | `TinadecTools/Tools/FileSystem/*`、`Tools/Git/*`、`Tools/Mcp/*` |
-| N:toolRuntime | Tool Runtime 服务 :48732 | L1, runtime [Target] | **unknown** | Gateway 有完整转发（`toolRuntimeClient.ts:1-51`、`config.ts:72`），但全仓库无 `:48732` 监听实现（`grep "48732"` 命中 `apps/TinadecUI/package.json:10` 的 `--port 48732` 是 Vite 端口复用，不是该服务）；`docs/web-client.md` 阶段 2 列为缺口 |
+| N:toolRuntime | Tool Runtime 服务 :48732 | L1, runtime [Target] | **unknown** | Gateway 有完整转发（`toolRuntimeClient.ts:1-51`、`config.ts:74`），但全仓库无 `:48732` 监听实现（`grep "48732"` 命中 `apps/TinadecUI/package.json:10` 的 `--port 48732` 是 Vite 端口复用，不是该服务）；`docs/web-client.md` 阶段 2 列为缺口 |
 
 ## 3. 边（`E:*`）
 
@@ -65,7 +65,7 @@
 | --- | --- | --- | --- |
 | E:app→gw | 渲染层只talk Gateway，基址解析 `TINADEC_RESOLVED_GATEWAY_URL → VITE_ → TINADEC_ → 127.0.0.1:48730` | high | `src/transport/index.ts:52-74`、`src/apiBaseUrl.ts:22-39`；`electron/main.cjs:501-544` 仅在显式 server 模式注入 env |
 | E:gw→core | 转发 `/api/v1/*`，注入 `x-request-id` 与固定 `x-tinadec-principal: dev@local` | high | `src/index.ts:126-135`（`requestId`、本地身份）、`src/coreClient.ts:44-56,98-140` |
-| E:gw→toolRuntime | 用户直连工具传输（`/api/v1/code/tools/*`、`/api/v1/tool-runtime/*`） | **medium** | `src/toolRuntimeClient.ts:13-51` + `src/codeTools.ts:53-86,93-125`：目录从 Core `GET /tool-catalog` 读（`index.ts:903,949`），执行则 `toolRuntimeUrl(...)` 直连——目标服务不存在，路径实际不可用 |
+| E:gw→toolRuntime | 用户直连工具传输（`/api/v1/code/tools/*`、`/api/v1/tool-runtime/*`） | **medium** | `src/toolRuntimeClient.ts:13-51`：目录从 Core `GET /tool-catalog` 读（`index.ts:903,949`），执行则 `toolRuntimeUrl(...)` 直连——目标服务不存在，路径实际不可用 |
 | E:core→tool | 按 workspace 根启动/复用一个子进程，BOM-free UTF-8 行分隔 JSON | high | `Tools/TinadecToolsProcessManager.cs:25` 及 `StartAsync` 为 no-op、首次调用才拉起（medium：no-op 语义读自实现体） |
 | E:dmaea→governance | 执行前 PDP + lease | high | `Abstractions/Ports/IAuthorizationService.cs`、`Governance/GovernanceService.cs:37`（`FailClosedAuthorizationContextResolver`） |
 | E:tools→approval | 一次性 ActionApproval + manifest 哈希校验 | high | `Lifecycle/ToolApprovalCoordinator.cs:16`、`Tools/ToolManifestSnapshotResolver.cs:13`、`ToolInvocationScopeResolver` |
@@ -80,7 +80,7 @@
 | --- | --- | --- | --- |
 | ①-② | 发送框模式 `plan/spec/ask/vibe/auto/agent` → `createInteraction()`；`queued\|insert\|parallel` | high | `apps/desktop/src/pages/HomePage.vue` + `composables/useHome/composerRun.ts`、`src/api.ts` |
 | ③ | Gateway 对 `agent_mode`/`permission_mode` 只做枚举校验后原样转发 | high | `src/index.ts:1606` 附近 interactions 路由 |
-| ④ | Core 解析顺序：显式 `mode_version_id` > `conversation.{agent_mode}` 已发布版本 > 会话既有默认，并持久化到 session | medium | `Api/Endpoints/InteractionsEndpoints.cs:120` + `AGENTS.md` 2026-08-25 条目 |
+| ④ | Core 解析顺序：显式 `mode_version_id` > `conversation.{agent_mode}` 已发布版本 > 会话既有默认，并持久化到 session | medium | `AspNetCore/Endpoints/InteractionsEndpoints.cs:74` + `AGENTS.md` 2026-08-25 条目 |
 | ⑤ | `FullDuplexRunCoordinator.SubmitAsync`：client message id 幂等、`context_revision` 冲突→409、活跃 run 上限 | high/medium | `DmaEA/FullDuplexRunCoordinator.cs:72`（语义读自实现体） |
 | ⑥ | 冻结运行配置 = 策略快照 + 关系化 roster + 逐 Agent 模型计划 + 工具 manifest 哈希 | high | `DmaEA/FrozenRunConfiguration.cs`、`Runtime/FormalModeResolver.cs`、`Runtime/AgentModelResolver.cs`、`Tools/ToolManifestSnapshotResolver.cs:13` |
 | ⑦ | **`POST /interactions` 返回 201 JSON，不是 SSE** | high | `InteractionsEndpoints.cs`；`AGENTS.md` 同条；事件流须另开 `GET /sessions/{id}/runs/{runId}/stream`（`DmaeaEndpoints.cs:190,199`） |
@@ -109,7 +109,7 @@
 | `PromptControlDbContext` / `IntegrationDbContext` 无迁移 | 两个 `Storage.Migrations.*` 项目里无对应 participant，靠 `DbContextSchemaBootstrapper.EnsureTablesAsync`（`GenerateCreateScript` + `IF NOT EXISTS`）兜底 | high |
 | 租户隔离只在应用层 | 全仓库无 `HasQueryFilter` | high |
 | Core 无认证中间件 | `Program.cs` 全文无 `UseAuthentication`/`UseAuthorization`；身份来自 `appsettings.json:24-30` dev 三元组 ⇒ Core 不可直接暴露公网（`AGENTS.md` Gateway 条目同此结论） | high |
-| Stub 与 ControlPlane 路由遮蔽 | `StubEndpoints.cs:225-226` 的 `/api/v1/sessions/{id}/context` 可能与已实现的 `ControlPlaneEndpoints.cs:11,18` 重复；ASP.NET 按注册顺序取首个匹配，而 `MapStubEndpoints()` 在 `Program.cs:265` 晚于 `MapControlPlaneEndpoints()` ⇒ 需运行时验证，未在视图里画成事实 | unknown |
+| Stub 与 ControlPlane 路由遮蔽 | `StubEndpoints.cs:225-226` 的 `/api/v1/sessions/{id}/context` 可能与已实现的 `ControlPlaneEndpoints.cs:11,18` 重复；ASP.NET 按注册顺序取首个匹配，而 `MapStubEndpoints()` 在 `AspNetCore/TinadecCoreEndpointRouteBuilderExtensions.cs:30` 晚于 `MapControlPlaneEndpoints()`（:21） ⇒ 需运行时验证，未在视图里画成事实 | unknown |
 | 会话 404 回退会派生租户 | `src/index.ts` `deriveSessionOwner` 从 run/session 列表反查 `tenant:subject` 并伪造 `x-tinadec-principal`，是"无状态"命题上的一处真实弯曲 | high |
 | Desktop 有损投影 | `GET /events` 经 `eventsMapper` camelCase 重写且硬编码 `cud_type`；`/model-settings` 合成空壳、`GET /model-settings/feature-flags` 返回字面 `{}`；4 个 `PUT /model-settings/*` 静默丢弃写入字段 | high |
 | `/api/v1/permissions/*` | 仅 `POST …/preview` 真实转发，其余 CRUD 为本地 501（`index.ts:1152-1184`）——"仅代理 Core governance"的说法对该前缀只在 preview 上成立 | high |
@@ -129,8 +129,8 @@ cd C:/git/agent/TinadecOffice
 # 模块引用图（替换 DOT 的边集）
 grep -H "ProjectReference" TinadecCore/*/*.csproj
 # 路由与 501 计数
-grep -rhoE '"(GET|POST|PUT|DELETE|PATCH) /api/v1/[^"]*"' TinadecCore/Api/Endpoints | sort | uniq -c | wc -l
-grep -rc "statusCode: 501" TinadecCore/Api/Endpoints/*.cs
+grep -rhoE '"(GET|POST|PUT|DELETE|PATCH) /api/v1/[^"]*"' TinadecCore/AspNetCore/Endpoints | sort | uniq -c | wc -l
+grep -rc "statusCode: 501" TinadecCore/AspNetCore/Endpoints/*.cs
 # 工具数
 grep -rn "ToolFunction(" TinadecTools --include=*.cs | grep -v Generators | wc -l
 # DbContext 清单

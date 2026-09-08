@@ -355,6 +355,8 @@ DmaEA 用“专业化 + 双层治理 + 受控演化”解决这一矛盾：
 
 执行层内部以 **lane（泳道）** 作为横向调度单元：任务节点归属某个 lane（缺省为隐式 `main`），引擎按 lane 并行推进、按 lane 汇聚监督与完成判定。落地面（M1–M3 实现，M6 可观测收口）：
 
+> **出厂开关（必读）**：`DmaEA/Configuration/default-agent-runtime.toml:25` 的 `lanes_enabled = false` 是出厂默认值，且 `FrozenRunConfiguration` 的 workspace override 解析没有 `orchestration` 段——**当前没有受支持的配置路径可以在运行时打开 lane**。本节描述的是已实现的代码路径，不是出厂即可用的行为；只有测试通过自定义 TOML（`TinadecAgent:ProfileConfigPath`）打开它。
+
 - **lane 状态机**：`planning` → `executing` → `waiting` / `gate_review` → `finalizing` → `done`（终态 `failed`）。`waiting` 表示该 lane 的任务在等跨 lane 前置（lane_done / lane_tasks_completed / lane_supervision_pass 三种谓词，记录在 `LaneWait`，含 `required_criteria` 与观测 `facts_hash`）；`gate_review` 表示该 lane 已到达需要跨 lane 门控裁决的检查点。`escalated` 标记 lane 已升级人工/治理层介入。
 - **完成判定命名**：任务图节点的成功判据字段为 `success_criteria`；跨 lane 门控按 `LaneWait.required_criteria` 逐条裁决。两者语义不同——前者是单任务完成的判据，后者是放行下游 lane 的门控条件；不要混用字段名。
 - **可观测投影**（M6）：`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/sessions/{sessionId}/orchestration` 与 `GET /api/v1/runs/{runId}/replay` 均投影 `lanes` 数组（`lane_key`/`status`/`escalated`/`task_keys`/`waits`）与每个节点的 `lane_key`（缺省 `main`）；checkpoint 缺失或不可读时退化为空 lanes / 隐式 main lane，不影响事件账本重建。Gateway 外部 DTO（`Lane`/`LaneWait`/`OrchestrationSnapshot.lanes`）与 Desktop 生成客户端类型同批更新；Desktop Workbench 任务图按 `lane_key` 渲染泳道并以徽标标注 `waiting`/`gate_review`。
@@ -413,9 +415,9 @@ sequenceDiagram
 
 | 产品模式 | 典型拓扑 | 工具策略 | 适用场景 |
 | --- | --- | --- | --- |
-| `simple_qa` | `meeting` -> Core 单任务派发器 -> 检索 worker | 只读、单任务、禁止生成子智能体 | 简单问答、知识检索 |
+| `simple_qa`（目标态 id，当前代码无此模式） | `meeting` -> Core 单任务派发器 -> 检索 worker | 只读、单任务、禁止生成子智能体 | 简单问答、知识检索 |
 | `plan_only` | `meeting` + `task_planner` + 可选 `supervisor` | 禁止副作用 | 方案、规格、评审 |
-| `controlled_execution` | `meeting` + `task_planner` + 少量 worker + `supervisor` | 写操作逐项审批 | 单任务开发和办公自动化 |
+| `controlled_execution`（目标态 id，当前代码无此模式） | `meeting` + `task_planner` + 少量 worker + `supervisor` | 写操作逐项审批 | 单任务开发和办公自动化 |
 | `full_duplex` | 完整治理层 + 并行执行层 | 动态权限、快照与审批 | 长任务、多任务和持续协作 |
 
 `conversation.ask/plan/spec/vibe/auto/agent` 与 `space.full_duplex` 继续存在于通用 TOML fallback 中，用于无正式 ModeVersion 时的开发启动和预算基线；TinadecOffice 的正式 `default-mode` 拓扑则由 `OfficeAgentPack` 发布到关系库。面向用户的模式名称与内部 profile id 应解耦。简单模式仍保留 `operation/execution` 责任边界，但不要求为单次只读检索调用模型规划器。Core 必须创建可审计的单一 TaskNode，由确定性派发器绑定检索 worker；meeting 不得绕过执行层直接调用工具。
@@ -459,7 +461,7 @@ run 创建时必须持久化以下引用和哈希：
 
 ### 8.4 状态机
 
-规范状态为：`planning`、`understanding`、`executing`、`replanning`、`awaiting_approval`、`paused`、`reviewing`、`completed`、`failed`、`cancelled`。这里的 `planning` 是 run 状态，不是智能体层级名称。
+规范状态为 12 个（唯一事实源 `Abstractions/RunStatus/RunStatusMachine.cs:12-17`）：`planning`、`understanding`、`executing`、`replanning`、`awaiting_approval`、`awaiting_delegate`、`awaiting_user`、`paused`、`reviewing`、`completed`、`failed`、`cancelled`。这里的 `planning` 是 run 状态，不是智能体层级名称。
 
 所有状态变化必须通过事件账本，并携带 `tenant_id`、`workspace_id`、`session_id`、`run_id`、`turn_id`、`seq`、`trace_id` 和幂等键。
 
@@ -574,7 +576,7 @@ spec:
 
 ### 9.7 Agent Pack 生命周期
 
-- Agent Pack manifest 使用 Pack 内稳定 key 与 `agent:<key>`、`prompt:<key>`、`mode:<key>` 引用，不携带环境 UUID、secret 或机器路径。首版 schema 是 `tinadec.io/agent-pack/v1alpha1`；TinadecOffice 制品固定为 `tinadec.office.agent-pack` / `tinadec.office` / `0.1.0`，包含 14 个 Agent、`baseline-prompt`、`default-mode` 和推荐 WorkspaceDefaults。
+- Agent Pack manifest 使用 Pack 内稳定 key 与 `agent:<key>`、`prompt:<key>`、`mode:<key>` 引用，不携带环境 UUID、secret 或机器路径。首版 schema 是 `tinadec.io/agent-pack/v1alpha1`；TinadecOffice 制品为 `tinadec.office.agent-pack` / `tinadec.office` / 当前 `0.2.3`，包含 14 个 Agent、5 个 PromptPipeline、7 个 Mode（`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`）和推荐 WorkspaceDefaults。
 - Envelope 对 manifest 执行 RFC 8785/JCS canonicalization 后计算 SHA-256，Core 必须重算。首版信任边界是当前工作区 owner 授权、用户确认 owner/version/hash 与审计；完整性哈希不等同于发布者数字签名。
 - install preview 只在同一 tenant/workspace/principal 下有效 15 分钟，返回 `install|upgrade|up_to_date|newer_installed|conflict`、资源/default 差异、警告和基础 revision。PUT 必须提交同一 envelope、`preview_id` 和 `Idempotency-Key`；upgrade 还必须携带 preview ETag 对应的 `If-Match`。
 - Core 在同一事务中按 Prompt -> Agent -> Mode -> defaults 安装。首装只在 defaults 为空或精确等价于旧 DevSeed 基线时采用推荐值；升级只推进仍指向上一 Pack 版本的 defaults，任何用户自定义值都保留。
@@ -761,10 +763,10 @@ stateDiagram-v2
 
 - 管理面：agents、modes、prompts、agent packs、policies、models、tools、candidates 和 workspace defaults。
 - 运行面：sessions、interactions、runs、controls、events、approvals、permission requests、user tool actions、context versions 和 snapshots。
-- 观测面：readiness、traces、metrics、evaluations 和 audit export。
+- 观测面：readiness 已实现（`GET /api/v1/readiness`、`tool-layer-readiness`）；`traces`/`metrics` 目前是返回空数组的桩（`StubEndpoints.cs:378-381`），`evaluations` 与 `audit export` 尚无任何路由或实现。
 - 所有公开 JSON 使用 `snake_case`、RFC 9457 Problem Details、幂等键和并发 revision。
 - Agent Pack 使用 `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/{pack_id}`、`POST /api/v1/agent-packs/install-preview` 和 `PUT /api/v1/agent-packs/{pack_id}`；Gateway 只能原样代理，App 不能直接写 Core 数据库。
-- 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，也可使用 `invoke-stream` 完成全双工运行；两者都属于当前 `/api/v1` 契约。后续若合并或调整语义，直接更新 `/api/v1`、测试和本文，不保留旧兼容入口。
+- 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，运行输出经 `GET /api/v1/runs/{runId}/stream` 读取；这是唯一的全双工入口。旧 `invoke-stream` 路由**已退役并返回 404**，不再是 `/api/v1` 契约的一部分。
 
 ### 14.2 南向接口
 
@@ -811,29 +813,31 @@ stateDiagram-v2
 
 “多智能体更多”不是成功指标；只有质量或可靠性收益大于额外成本时才启用更多角色。
 
-## 16. 当前实现盘点（2026-08-22）
+## 16. 当前实现盘点（2026-08-22 快照，部分行已过时）
 
-本盘点以当前 MAF `1.18.0` 工作树为准；“已实现”表示代码和测试已存在，不等于已发布的独立产品能力。
+本盘点以 2026-08-22 的 MAF `1.18.0` 工作树为准；“已实现”表示代码和测试已存在，不等于已发布的独立产品能力。
+
+> **注意**：本节是 2026-08-22 的历史快照，2026-08-29 之后的运营层触发链、M5–M8 泳道/审批收口与 Pack 0.2.x 均未回写。与本文其它章节或 `AGENTS.md` 的 M 段记录冲突时，以代码和 M 段记录为准；下表中已核实的错误行已就地更正。
 
 | 能力 | 状态 | 当前事实 | 主要缺口 |
 | --- | --- | --- | --- |
 | .NET/MAF 模块化 Core | 已实现 | .NET 10、MAF 1.18；MAF 特定行为收口于 DmaEA 内部适配器 | 继续保持公开契约和持久状态不泄漏 MAF 类型 |
-| 持久化全双工 run | 已实现 | task planning、动态 worker、meeting 汇总、监督、暂停/恢复/取消、checkpoint 恢复 | 队列超限项尚未持久化 |
-| 正式智能体配置 | 部分实现 | 11 张表、draft/revision、不可变版本、mode/prompt 发布 API | `AgentConfigurationService` 仍是桩；验证逻辑集中于 endpoint |
+| 持久化全双工 run | 已实现 | task planning、动态 worker、meeting 汇总、监督、暂停/恢复/取消、checkpoint 恢复；队列超限交互已持久化为 `RunDirectiveRecord` 并追加 `run.queued` 事件（`InteractionsEndpoints.cs:187-226`） | 完整恢复 UX 与外部副作用补偿 |
+| 正式智能体配置 | 已实现 | `AgentConfigurationDbContext` 的 19 张表、draft/revision、不可变版本、mode/prompt 发布 API；`AgentConfigurationService` 为真实实现（123 行） | 验证逻辑仍较集中在 endpoint 层 |
 | Bundled Agent Pack | 已实现首版 | App-owned manifest 经预览和用户确认安装；Core 持有 workspace-scoped 版本、来源、托管绑定和默认值采用状态 | 数字签名、市场分发、rollback/uninstall 和跨组织信任库 |
 | 每智能体模型策略 | 已实现 | `inherit`、`route`（有序 candidate 链）、`fixed`；`model_invocations` 全量归因（策略来源、fallback 位次、用量） | 能力/评测驱动选择与完整 fallback policy |
 | 工具治理 | 已实现主要部分 | manifest v2 冻结、agent/mode/manifest 交集、PDP/租约/委托、单次审批、恢复和拒绝 fail-closed | 通用远程 provider transport、ACP 权限桥 |
-| 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence | `context_compressor` 尚未作为事件驱动角色进入热路径 |
-| 监督 | 部分实现 | `pass/revise/escalate` 质量门 | 不是委托审批代理；尚无 ApprovalDelegation |
-| 演化 | 部分实现 | 候选生成/晋升/拒绝 API 与临时 agent lineage | 正常 run 不会自动观察并生成候选；缺 eval/canary/revoke 闭环 |
-| Git 智能体 | 已实现基线 | `OfficeAgentPack` 发布 `git_steward` 与 `worker.git`；当前 `worker.git` 可按冻结能力/工具被选择，Desktop 写操作入口和真实 Git commit 治理 E2E 已收口，`git_steward` 本期保持 dormant | Git steward 事件触发、快照智能体调度与远程 provider |
+| 上下文 | 部分实现 | context revision、snapshot、patch 冲突和 stale evidence；`context_compressor` 已由运营层触发链调度（`OperationalTriggers.cs`，发 `context.compacted`） | 向量检索（embedding 路由未配置）、补丁文本未回流进 prompt |
+| 监督 | 部分实现 | `pass/revise/escalate` 质量门；`revise` 已走真实重规划 | 不是委托审批代理；监督修订预算耗尽时静默通过 |
+| 演化 | 部分实现 | 候选生成/晋升/拒绝 API 与临时 agent lineage；run 收口时 `experience_curator` 按 `[memory]` 白名单生成候选 | 缺 eval/canary/revoke 闭环 |
+| Git 智能体 | 已实现基线 | `OfficeAgentPack` 发布 `git_steward` 与 `worker.git`；当前 `worker.git` 可按冻结能力/工具被选择，Desktop 写操作入口和真实 Git commit 治理 E2E 已收口；`git_steward` 自 2026-08-29 起由触发链调度（仅对触碰 `git_*` 工具的 run 发 `git.steward.reviewed`） | 快照智能体调度与远程 provider |
 | 工作区快照 | 已实现主要部分 | 文件系统/Git provider、HEAD/index/worktree 捕获、ContentStore、创建/恢复幂等、冲突检查和高风险写前 guard | 完整 restore plan 展示、外部副作用补偿和快照智能体调度 |
 | 用户工具动作 | 已实现基线 | `UserToolAction`、权限请求、租约、ActionApproval、快照 override、结果/审计引用和 `/api/v1/user/tool-actions` | 更完整的用户动作历史、恢复决定 UI 和远程 provider |
 | 动态权限 | 已实现主要部分 | PermissionRequest、PDP 求交、CapabilityGrant/Delegation/Lease、冻结策略、Agent/用户工具授权闭环、nonce fail-closed | ACP 请求桥接、远程 provider 契约 |
 | 独立交付 | 工作树升级中 | Contracts、Abstractions、Runtime 可从源码打包，Api 可 `dotnet publish` | 尚未发布包源、稳定 SDK、CLI 和容器 |
 | 四产品解耦 | 部分实现 | 代码目录已分离 | Core 直接托管 TinadecTools；独立 Tool HTTP/WS 服务尚不存在 |
 
-当前热路径主要使用 `meeting`、`task_planner`、动态 worker 与 `supervisor`。`context_compressor`、`capability_advisor/skill_recommender` 和 `evolution` 目前主要是配置声明，不应对外描述为完整自治闭环。
+当前热路径使用 `meeting`、`task_planner`、动态 worker 与 `supervisor`，并在四个引擎锚点旁路调度四个运营角色（`context_compressor`、`skill_recommender`、`evolution`、`git_steward`）——它们不进入任务图、不产生用户可见输出。它们已不是“仅配置声明”，但演化评测/canary/revoke 闭环仍未完成，不应对外描述为完整自治闭环。
 
 ## 17. 实施路线图
 

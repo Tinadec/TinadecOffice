@@ -1,3 +1,6 @@
+> **⚠️ 历史文档（不可作为事实源）**
+> 本文档记录的是当时的计划/自述，**未随代码更新**。文中"已完成/已实现/✅"多为目标态，路由名、目录路径、测试命令、数量统计均可能已失效。以源码、测试与 `AGENTS.md` 的 M 段记录为准。归档核对时间：2026-09-07（commit 3e8ff30）。
+
 # TinadecCore：基于 Microsoft Agent Framework 的模块化骨架
 
 > 本文记录最初的模块化骨架方案。TinadecCore 当前产品定位、四产品边界和 DmaEA 目标架构以 [TinadecCore 产品定义与 DmaEA 架构基线](tinadec-core-product-definition.zh-CN.md) 为准。

@@ -1,4 +1,4 @@
-﻿﻿# TinadecOffice Local Startup Guide
+# TinadecOffice Local Startup Guide
 
 This document standardizes the local startup flow for Core, Gateway, and Desktop.
 
@@ -6,7 +6,7 @@ This document standardizes the local startup flow for Core, Gateway, and Desktop
 
 - **Tinadec Core** runs at `http://127.0.0.1:48731`.
   It is the only state authority for projects, sessions, messages, approvals, model routes, extensions, agents, task graphs, context packs, and supervision findings.
-  User chat turns are routed through the built-in Meeting Agent (`agent_meeting`) on the `planner` model route; other planning and execution agents are dispatched by Core rather than addressed directly from the input box.
+  User chat turns are admitted through `POST /api/v1/sessions/{id}/interactions` and answered by the built-in Meeting Agent (`meeting`); other operation and execution agents are dispatched by Core rather than addressed directly from the input box. Note: `DevSeed` seeds **only** a `chat` model route plus an OpenAI provider — the agent roster comes from the bundled Office Agent Pack and `Runtime/Configuration/bootstrap-agent-directory.toml`.
 - **TinadecOffice Gateway** runs at `http://127.0.0.1:48730`.
   It is a thin Elysia proxy/BFF. Desktop and browser-based development clients should call Gateway, not Core directly.
 - **Desktop/Vite UI** runs at `http://127.0.0.1:5173` in development.
@@ -39,14 +39,14 @@ Start Core:
 ```powershell
 Remove-Item Env:Version -ErrorAction SilentlyContinue
 Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
-dotnet run --project src/TinadecCore/TinadecCore.csproj --urls http://127.0.0.1:48731
+dotnet run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731
 ```
 
 Start Gateway:
 
 ```powershell
 $env:TINADEC_GATEWAY_PORT = '48730'
-npm run dev -w @tinadec/gateway
+npm run dev:gateway   # = cd TinadecGateway && bun run dev (TinadecGateway is not an npm workspace member)
 ```
 
 Start Desktop/Vite:
@@ -62,7 +62,8 @@ If Vite is already running and only Core/Gateway changed, restart Core and Gatew
 For local manual debugging, background logs should go under `output/logs`.
 
 ```powershell
-$logDir = 'D:\github\TinadecOffice\output\logs'
+$repo = (Get-Location).Path
+$logDir = Join-Path $repo 'output/logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 Start-Process -FilePath powershell `
@@ -74,7 +75,7 @@ Start-Process -FilePath powershell `
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location 'D:\github\TinadecOffice'; Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet run --project src/TinadecCore/TinadecCore.csproj --urls http://127.0.0.1:48731"
+    "Set-Location '$repo'; Remove-Item Env:Version -ErrorAction SilentlyContinue; Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue; dotnet run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731"
   )
 
 Start-Process -FilePath powershell `
@@ -86,7 +87,7 @@ Start-Process -FilePath powershell `
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    "Set-Location 'D:\github\TinadecOffice'; `$env:TINADEC_GATEWAY_PORT='48730'; npm run dev -w @tinadec/gateway"
+    "Set-Location '$repo'; `$env:TINADEC_GATEWAY_PORT='48730'; npm run dev:gateway"
   )
 ```
 
@@ -111,34 +112,36 @@ Check Gateway health:
 Invoke-RestMethod http://127.0.0.1:48730/api/v1/health
 ```
 
-Check Core-seeded agents through Gateway:
+Check the installed agent roster through Gateway:
 
 ```powershell
 $agents = Invoke-RestMethod http://127.0.0.1:48730/api/v1/agents
 $agents | Select-Object id,name,layer,agent_type,enabled
 ```
 
-Expected built-in planning agents:
+Expected roster (source of truth: `TinadecCore/Runtime/Configuration/bootstrap-agent-directory.toml`, 14 agents):
 
-- `agent_meeting`
-- `agent_tool_assistant`
-- `agent_evolver`
-- `agent_context_compressor`
-- `agent_supervisor`
-- `agent_skill_learner`
+Operation layer (`layer = operation`, `tools = []`):
 
-Expected built-in execution agents:
+- `meeting`
+- `context_compressor`
+- `skill_recommender`
+- `supervisor`
+- `evolution`
+- `git_steward`
 
-- `executor_task_planner`
-- `executor_test_multimodal`
-- `executor_search_specialist`
-- `executor_code_explorer`
-- `executor_file_finder`
-- `executor_git_manager`
-- `executor_code_writer`
-- `executor_designer`
+Execution layer (`layer = execution`):
 
-All built-in agents are seeded by Core as enabled by default. Desktop should render them from Gateway `/api/v1/agents`; the Settings page can open each agent's configuration from the three-dot menu and update its enabled state, orchestration mode, provider, and model route.
+- `task_planner`
+- `worker.code`
+- `worker.document`
+- `worker.data`
+- `worker.browser`
+- `worker.file`
+- `worker.general`
+- `worker.git`
+
+After a fresh workspace the roster is empty until the bundled Office Agent Pack (`tinadec.office.agent-pack`, currently 0.2.3) is confirmed/installed; Desktop renders it from Gateway `/api/v1/agents`.
 
 ## Troubleshooting
 
@@ -146,9 +149,9 @@ If Settings > Agents is empty:
 
 1. Verify Gateway is reachable at `http://127.0.0.1:48730/api/v1/health`.
 2. Verify Gateway can proxy agents with `http://127.0.0.1:48730/api/v1/agents`.
-3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `npm run dev -w @tinadec/gateway`.
+3. If `/api/v1/agents` returns `404`, Gateway is stale. Restart `npm run dev:gateway`.
 4. If Gateway health returns `500`, Core is down or still building. Start or restart Core on port `48731`.
-5. If old names appear, restart Core so `CoreStore.Initialize()` can run the built-in seed normalization.
+5. If old names appear, re-install/upgrade the bundled Agent Pack; there is no `CoreStore` class in the current codebase.
 6. Refresh the Vite/Electron settings page after Core and Gateway are both healthy.
 
 If `dotnet build` fails with `NETSDK1018` and a `V7.24.42SP3` version string, clear these environment variables before running .NET:
@@ -173,7 +176,7 @@ Run Core tests only:
 ```powershell
 Remove-Item Env:Version -ErrorAction SilentlyContinue
 Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
-dotnet test tests/TinadecCore.Tests/TinadecCore.Tests.csproj -v minimal
+dotnet test TinadecCore/TinadecCore.slnx -v minimal
 ```
 
 Run frontend and Gateway tests/builds:

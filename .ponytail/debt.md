@@ -10,7 +10,7 @@ Re-harvest with `/ponytail-debt` after bulk refactors.
 |----------|--------------------|--------------|
 | `TinadecGateway/src/openapi.snapshot.test.ts:8` | CI drift gate is a zero-dep raw file snapshot compare | Fine until snapshots need selective/field-level diffing |
 | `TinadecGateway/src/mappers/agentsMapper.ts:5` | Passthrough mapper, snake_case only | Core validates ownership/lifecycle; add field mapping when external contract diverges from Core DTOs |
-| `TinadecGateway/src/index.ts:120` | Minimal RFC9457 catch-all error handler | Reuse `toProblemDetails`/`CODE_MAP`; keep `X-Request-Id` principal header |
+| `TinadecGateway/src/index.ts:132` | Minimal RFC9457 catch-all error handler | Reuse `toProblemDetails`/`CODE_MAP`; keep `X-Request-Id` principal header |
 
 ## Core (.NET)
 
@@ -19,8 +19,8 @@ Re-harvest with `/ponytail-debt` after bulk refactors.
 | `TinadecCore/Lifecycle/StorageLifecycleService.cs:315` | Admission-grace filter runs in memory because EF Core SQLite cannot translate DateTimeOffset comparisons | Stored unix-ms column keeps the filter in SQL when the runs table grows |
 | `TinadecCore/Lifecycle/StorageLifecycleService.cs:788` | SQLite-only additive column alignment for runtime-owned runs table | Fold into real migrations if PostgreSQL parity is required for these columns |
 | `TinadecCore/Memory/ProjectSessionStore.cs:505` | Dual-provider idempotent column migration: SQLite pragma + PG `ADD COLUMN IF NOT EXISTS` | Replace with generated migrations when the session schema stabilizes |
-| `TinadecCore/Api/Endpoints/InteractionsEndpoints.cs:96` | Interaction with no run yet stays as transient queued interaction, no durable event | Persist a durable queued event when steering needs crash-safe replay |
-| `TinadecCore/Api/Endpoints/AgentConfigurationEndpoints.cs:551` | Strong publish validation requires ≥1 `template` AND ≥1 `assemble`; whitelist + cycle check run separately | Single-pass validator if publish checks multiply |
+| `TinadecCore/AspNetCore/Endpoints/InteractionsEndpoints.cs:187-226` | Queued interactions are now persisted (`RunDirectiveRecord` + `run.queued` event) — this entry is resolved and kept only as history | — |
+| `TinadecCore/AspNetCore/Endpoints/AgentConfigurationEndpoints.cs` | Strong publish validation requires ≥1 `template` AND ≥1 `assemble`; whitelist + cycle check run separately | Single-pass validator if publish checks multiply |
 
 ## TinadecTools
 
