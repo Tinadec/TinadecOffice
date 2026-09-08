@@ -1,5 +1,7 @@
 # TinadecCore 运行时 Agent 健康度端到端验证报告
 
+> **注：本文为 2026-08-29 的验证记录快照；路由与状态词汇以 `RunStatusMachine.cs` 与当前 endpoint 源码为准。**
+
 **日期**：2026-08-29 · **验证提交**：2613bfd (main) · **方式**：真实 HTTP 端到端实测（本地脚本化 OpenAI 端点驱动，零真实 API key）
 
 ---
@@ -52,7 +54,7 @@
 1. **模型 provider 已被本次验证改写**：`bc12683f`（显示名 "Local Fake E2E"）现指向已停止的本地假服务端 `http://127.0.0.1:48799/v1`。下次真实使用前需在模型中心重新指向真实端点。
 2. `data/tinadec.db` 中留有本次验证的 project（e2e-sandbox）/session 记录，可在 UI 中清理。
 3. `TinadecTools:DefaultWorkspaceRoot` 保持 null 是安全的 —— workspace root 来自 project 的 `path` 字段；`tool-layer-readiness` 显示 tool_count=0 属预期 fail-closed 行为。
-4. 已知桩（不影响主链路）：市场/扩展、MCP/ACP 路由、debug、model-settings、prompt 版本操作、`tools/shell` 恒 501 或空数组；`/api/v1/model-readiness` 恒 provider_count=0。
+4. 已知桩（不影响主链路）：市场/扩展、MCP/ACP 路由、debug、model-settings、prompt 版本操作；`tools/shell` 已实现为需审批的受治理 `shell` 工具（`TinadecTools/Tools/Command/ShellTool.cs`，没有沙箱、直接跑 `cmd.exe /d /s /c`；走沙箱的是 `command_run`），不再是 501 桩。`/api/v1/model-readiness` 恒 provider_count=0。
 5. 契约快照落后 Core 5 个提交（memory-items×2、approvals/{id}、recovery-decision 未进 Gateway 快照），且 `check:drift` 只守 Gateway→Desktop 方向 —— 建议补 Core→Gateway 门禁。
 
 ## 六、本次变更清单（未提交）

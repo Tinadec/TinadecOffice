@@ -109,13 +109,13 @@ TinadecOffice 的智能体模型分为两层：
 
 全双工是应用层语义，而不是要求客户端一直占用一个 HTTP 连接。后台 run 必须独立于 SSE 读取连接持续运行；用户可以在其运行时查询状态、补充约束、调整目标、创建另一项任务、暂停、恢复或取消。会议智能体将这些消息分类后绑定已有 run 或创建新 run。
 
-共享会话状态有单调递增的 `context_revision`。每个上下文补丁和目标调整都带基准版本；过期结果不得覆盖较新的目标或约束，必须被拒绝、合并为安全补丁，或触发受影响节点的重规划。run 需要覆盖 `understanding`、`executing`、`replanning`、`awaiting_approval`、`paused`、`reviewing`、`completed`、`failed`、`cancelled` 等可恢复状态。
+共享会话状态有单调递增的 `context_revision`。每个上下文补丁和目标调整都带基准版本；过期结果不得覆盖较新的目标或约束，必须被拒绝、合并为安全补丁，或触发受影响节点的重规划。run 需要覆盖 `RunStatusMachine.cs:12-17` 定义的 12 个可恢复状态：`planning`、`understanding`、`executing`、`replanning`、`awaiting_approval`、`awaiting_delegate`、`awaiting_user`、`paused`、`reviewing`、`completed`、`failed`、`cancelled`。
 
 ### 配置与模式契约
 
 内置、带注释的 TOML 是只读基线；工作区覆盖、人工晋升和不可变版本属于 Core 的关系型控制面。解析优先级是 TOML 基线后叠加工作区版本，且每个 run 必须冻结最终配置版本和内容哈希。有效热重载只影响新 run；无效编辑必须保留上一有效快照，并进入 readiness 诊断。
 
-默认配置规定：`conversation` 开放 `plan`、`spec`、`ask`、`vibe`、`auto`、`agent` 六种 agent mode，默认 `auto`；`space` 仅开放 `agent`，绑定 `space.full_duplex`。`im` 和 `hub` 分别只是 `conversation`、`space` 的兼容别名。默认生成预算为深度 2、每 run 8 个生成实例、4 个并行 worker、每会话 2 个活跃 run；配置可收紧，但子智能体不可突破父级或 run 的上限。
+默认配置规定：`conversation` 开放 `plan`、`spec`、`ask`、`vibe`、`auto`、`agent` 六种 agent mode，默认 `auto`；`space` 仅开放 `agent`，绑定 `space.full_duplex`。`im` 和 `hub` 分别只是 `conversation`、`space` 的兼容别名。默认生成预算为深度 2、每 run 16 个生成实例、4 个并行 worker、每会话 2 个活跃 run；配置可收紧，但子智能体不可突破父级或 run 的上限。
 
 ## 边界规则
 
@@ -148,10 +148,12 @@ TinadecOffice 的智能体模型分为两层：
 
 TinadecOffice 是一个桌面智能体工作台：Core 提供通用 agent harness，Tool layer 提供可执行工具能力，Code 是其中的代码工具套件，Desktop 把编排、工具和风险控制呈现为可操作的 UI。
 
-## 实现状态（2026-08-18）
+## 实现状态（2026-08-18 快照；M1–M8 泳道/审批收口未回写）
+
+> 本节是 2026-08-18 的快照。其后的 M1–M8 记录（泳道调度与门控、审批窗口、auto-approve、无人值守泳道）只在 `AGENTS.md` 与 `docs/tinadec-core-product-definition.zh-CN.md` §6.4.1 中维护；与本节冲突时以后两者和代码为准。
 
 上述章节定义的是产品契约，不把目标能力当作已交付功能。当前工作树中，`TinadecCore/DmaEA/Configuration/default-agent-runtime.toml` 与 `AgentRuntimeConfigurationStore` 已提供带校验的 TOML 基线、`im`/`hub` 别名、`planning` 到 `operation` 的配置层规范化，以及“该 store 被解析后有效快照热重载、无效修改保留旧快照”的进程内基础。`agent_instances`、`agent_candidates` 和 `runtime_profile_overrides` 也已有关系投影。
 
-自 2026-08-18 起全双工契约已实现并由 Core 测试套件覆盖：`POST /api/v1/sessions/{id}/invoke-stream` 运行持久化 `FullDuplexRunEngine`，含 client-message-id 幂等准入、`context_revision` 快照与会议上下文补丁、治理协调→任务规划→执行→监督→meeting 终态化、带预算的 worker spawn/lineage、持久 SSE（ack/delta/done/error）回放/跟随、run 控制（取消/暂停/恢复）、活跃 run 限流与租约检查点重启恢复；`agent-evolution/proposals` GET/generate/promote/reject 提供候选审核。工具链路端到端打通：Core-owned `TinadecToolsProcessManager` 按工作区根托管真实 manifest-v2 子进程，`ToolManifestSnapshotResolver` 每 run 冻结授权 manifest，`ToolDispatcher` prepare/resume 持久化执行并一次性消费审批，真实 run→审批→恢复→`write_file` E2E 测试证明全链路。`GET /api/v1/tool-layer-readiness` 报告真实 manifest 与执行层 agent scopes。
+自 2026-08-18 起全双工契约已实现并由 Core 测试套件覆盖：`POST /api/v1/sessions/{id}/interactions` 准入持久化 `FullDuplexRunEngine`（输出经 `GET /api/v1/runs/{runId}/stream` 读取；旧 `invoke-stream` 路由已退役并返回 404），含 client-message-id 幂等准入、`context_revision` 快照与会议上下文补丁、治理协调→任务规划→执行→监督→meeting 终态化、带预算的 worker spawn/lineage、持久 SSE（ack/delta/done/error）回放/跟随、run 控制（取消/暂停/恢复）、活跃 run 限流与租约检查点重启恢复；`agent-evolution/proposals` GET/generate/promote/reject 提供候选审核。工具链路端到端打通：Core-owned `TinadecToolsProcessManager` 按工作区根托管真实 manifest-v2 子进程，`ToolManifestSnapshotResolver` 每 run 冻结授权 manifest，`ToolDispatcher` prepare/resume 持久化执行并一次性消费审批，真实 run→审批→恢复→`write_file` E2E 测试证明全链路。`GET /api/v1/tool-layer-readiness` 报告真实 manifest 与执行层 agent scopes。
 
-仍待实现：长期检索注入（晋升/撤销、已审核记忆检索）、工作区 runtime-profile 覆盖与 readiness 诊断、scheduling 与 `tools/shell`（501），以及 Gateway/Desktop 尚未将普通聊天切换到此全双工契约。
+仍待实现：长期检索注入（晋升/撤销、已审核记忆检索）、工作区 runtime-profile 覆盖与 readiness 诊断、scheduling（501），以及 Gateway/Desktop 尚未将普通聊天切换到此全双工契约。

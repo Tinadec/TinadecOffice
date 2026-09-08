@@ -1,3 +1,6 @@
+> **⚠️ 已归档规格（未实现或已过时）**
+> 本文描述的功能多数**在代码中不存在**（例如 .trae/specs 中标注"已完成 ✅"的能力无任何源码/测试对应）。仅作历史记录，请勿据此判断当前能力。
+
 - [x] `apps/desktop/scripts/dev.mjs` 存在且使用 Node.js child_process 管理子进程
 - [x] `npm run dev:desktop` 能在 Windows 上启动 Vite 开发服务器
 - [x] Vite 就绪后 Electron 进程自动启动

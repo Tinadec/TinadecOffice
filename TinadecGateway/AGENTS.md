@@ -50,7 +50,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | 请求上下文 | `src/headers.ts`, `src/auth.ts` | 只处理请求 id、认证和租户头；授权事实由 Core 或 Tool Provider 产生 |
 | WebSocket 代理 | `src/websocket.ts` | 路由表，目标 URL 构建，消息透传 |
 | 流式 HTTP 代理 | `src/streaming.ts` | 大文件/日志流式透传 |
-| Model/Agent 配置代理 | `src/index.ts` | 版本化 provider/route/Agent/Mode/Prompt/default 路径；旧 overview/runtime-binding 路由已删除。 |
+| Model/Agent 配置代理 | `src/index.ts` | 版本化 provider/route/Agent/Mode/Prompt/default 路径；旧 overview 路由已删除，`PUT /api/v1/agents/:id/runtime-binding` 仍是当前代理（`src/index.ts:1523` → Core `AspNetCore/Endpoints/AgentConfigurationEndpoints.cs:21`）。 |
 | Agent Pack 代理 | `src/index.ts`, `src/runtimeProxy.test.ts`, `tests/__snapshots__/openapi.external.json` | 四条显式薄代理；保留 ETag、`If-Match`、`Idempotency-Key` 和 Core ProblemDetails code。 |
 | Code tools 传输 | `src/index.ts`, `src/toolRuntimeClient.ts` | Desktop 工具目录代理 Core，用户执行请求原样转发 Tool Provider |
 | MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
@@ -70,7 +70,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | `TINADEC_GATEWAY_MODE` | `local` | 部署模式：`local` 或 `cloud` |
 | `TINADEC_GATEWAY_PORT` | `48730` | 监听端口 |
 | `TINADEC_CORE_URL` | `http://127.0.0.1:48731` | Core 服务 URL |
-| `TINADEC_TOOL_RUNTIME_URL` | `http://127.0.0.1:48732` | Tool Runtime 服务 URL |
+| `TINADEC_TOOL_RUNTIME_URL` | `http://127.0.0.1:48732` | 外部 Tool Runtime 转发地址；本机没有这个 HTTP 服务——工具宿主由 Core 按 `TinadecTools:ExecutablePath` 自动探测（content root → `TinadecTools/bin/{Debug\|Release}/net10.0/`）拉起的子进程承载，没有固定端口 |
 | `TINADEC_GATEWAY_AUTH_REQUIRED` | `true`（云端） | 是否必须认证 |
 | `TINADEC_GATEWAY_JWT_SECRET` | — | JWT 验证密钥 |
 | `TINADEC_GATEWAY_API_KEY` | — | API Key |
@@ -86,7 +86,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 
 ### 全双工运行期代理
 - **终端会话路由 (2026-08-31)**：`GET /api/v1/terminals`、`POST /api/v1/terminals/:terminalSessionId/stdin`、`POST /api/v1/terminals/:terminalSessionId/kill` 是 Core 的纯透传（Tags: Terminal）。终端实时输出走既有 `GET /api/v1/runs/:runId/stream` SSE 代理，不需要单独的 WS 通道；`/ws/terminal` 无效桩仍未启用。openapi.external.json 快照已随新路由再生成（快照测试已修复为「先写后断言」，漂移会重新生成文件并由 `git diff --exit-code` 把关）。
-- `POST /api/v1/sessions/{sessionId}/invoke-stream` 原样转发完整 JSON 请求和 Core 的 SSE 状态/主体；Gateway 不解释 `application_mode`、`agent_mode`、`permission_mode`、`target_run_id` 或 `expected_context_revision`。
+- `POST /api/v1/sessions/{sessionId}/invoke-stream` **已退役**（`src/index.ts:540` 起不再注册，返回 404）；当前入口是 `POST /api/v1/sessions/{sessionId}/interactions`（`interactionsMapper` 只做薄枚举校验），运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。
 - `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model_override`（结构化 `{provider_instance_id, model}`，Desktop 依赖它们感知当前模式；旧自由文本模型字段与分散 provider 字段已于 2026-08-27 重构删除）。
 - `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。旧 `GET /api/v1/application-modes` TOML 投影与 `PUT /api/v1/agents/:agentId/mode` 代理已删除（2026-08-27 模型与智能体控制面重构）。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
@@ -119,7 +119,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `apps/desktop/src/generated/client.ts` 的响应 DTO 是这些组件的 type 别名（`Schemas['Project']` 等）；`AgentPackEnvelopeDto` 保持请求侧宽松手写（App 用打包 manifest 字面量构造）。改外部 DTO 形状时：先改 mapper → 补/改 `externalDtoOpenApi.ts` → `bun test` 重写快照 → `npm run generate:client` → 同一提交入库。
 
 ### Model/Agent Center
-- 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview`、`PUT /api/v1/agents/:id/runtime-binding` 与 model-center refresh alias 已删除并返回 404；模型发现的 canonical 转发路由是 `POST /api/v1/model-providers/:providerInstanceId/models/refresh`（Desktop `api.refreshProviderModels` 调用，快照 `tests/__snapshots__/openapi.external.json` 由 `bun test` 再生成）。
+- 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview` 与 model-center refresh alias 已删除并返回 404；`PUT /api/v1/agents/:id/runtime-binding` 是**当前有效**代理（`src/index.ts:1523`），不是 404 幽灵路由；模型发现的 canonical 转发路由是 `POST /api/v1/model-providers/:providerInstanceId/models/refresh`（Desktop `api.refreshProviderModels` 调用，快照 `tests/__snapshots__/openapi.external.json` 由 `bun test` 再生成）。
 - Desktop 通过 Gateway 的版本化 provider/route/agent/mode/prompt/default/pack 路径自行组合视图；Gateway 不持久化或推导第二真相源。
 - 任何仍保留的 BFF/代理响应都必须递归剥离 API Key 和其他密钥字段。
 

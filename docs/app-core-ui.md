@@ -84,7 +84,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 | `/debug-studio` | Debug Studio | 诊断、事件、模拟和 trace | 占位/部分实现 | 所有模拟接口按 501 显示，不写入生产事实 |
 | `/panel` | Detached Panel | Git、Approval、Events、Doctor、Orchestration、Terminal | 已实现 | 与主窗口共享 Core 投影，不复制审批状态 |
 | `/pet` | Desktop Pet | 纯客户端体验 | 已实现 | 不与 Core 治理耦合 |
-| `/library` | TinadecUI Library | 纯组件预览 | 已实现 | 保持 UI 组件和 token 示例 |
+| `/library` | TinadecUI Library | 纯组件预览 | 已实现 | 保持 UI 组件和 token 示例；**应用内没有导航入口**（只能手输 URL 到达） |
 
 ### 3.2 页面通用布局
 
@@ -130,9 +130,9 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 5. run 控制只显示适用于当前状态的按钮；控制结果必须以 Core 投影为准。
 6. assistant 正式答复只接受 meeting 的 `delta/done` 或持久消息；worker 输出显示为证据/进度，不能冒充正式答复。
 
-当前 HomeController 在 `interactions` 失败时仍回退 `/sessions/{id}/invoke-stream`，甚至可能直接 `POST messages`。这违反“破坏性变更直接更新 v1、不维护旧路径”的当前政策。下一次 Home 改造应删除回退，以 `POST interactions` + `GET runs/{runId}/stream` + 持久投影作为唯一主路径；失败必须可见，不能降级成一条没有 run 的普通消息。
+**已修复（2026-09-06）**：`HomeController.ts:429-432` 的注释确认 legacy `invoke-stream` / `POST messages` 回退**已删除**，`POST /interactions` 是唯一准入契约，失败会显式呈现（不再降级成一条没有 run 的普通消息）。`api.ts:2229` 的 `invokeStreamWithAdmission` 只是 interactions+run-stream 的内部适配器，不是旧路由客户端。
 
-当前 `queued` 且没有 `run_id` 的 interaction 只是响应内瞬时对象，没有持久记录；`GET /sessions/{id}/interactions` 只能从已有 run 重建，Gateway 也尚未代理这个 list。Desktop 可以在本窗口临时显示队列项，但在 Core 增加耐久 interaction queue 之前不得宣称跨重启可恢复。
+**已修复（2026-09-05）**：`queued` 且没有 `run_id` 的 interaction 现在会持久化为 `RunDirectiveRecord` 并追加 `run.queued` 事件（幂等键 `session:{sid}:queued:{clientMessageId}`，`InteractionsEndpoints.cs:187-226`，集成测试 `FullDuplexEndpointTests.cs:1148`），跨重启可恢复。`GET /sessions/{id}/interactions` 这个 list 端点仍不存在。
 
 `queued` 与 `parallel` 当前最终调用同一个 run admission 流程，`parallel` 主要改变响应和 stream 标签，并不构成独立的并行调度保证。`reassign` 当前只追加 `interaction.reassigned` 事件，不会把任务重新排队，也不会注入目标 run。三项都必须标为“部分实现”。
 
@@ -278,7 +278,7 @@ POST /api/v1/user/tool-actions/{actionId}/snapshot-override
 
 `OfficeAgentPack` 发布以下两个正式角色；Core DevSeed 不再写入 Office Agent/Prompt/Mode/defaults。Desktop 的 Agent Center 必须按职责拆开展示，不能因为它们都与 Git 有关就合并成一个“Git Agent”：
 
-- 治理层 `git_steward`：审阅 diff、组织提交计划、提出审批建议；默认工具集合为空，不直接 stage、commit、push 或改写历史。本期仅安装并冻结，不创建运行实例或参与事件。
+- 治理层 `git_steward`：审阅 diff、组织提交计划、提出审批建议；默认工具集合为空，不直接 stage、commit、push 或改写历史。**状态更新（2026-08-29）**：已由运营层触发链调度（`TinadecCore/DmaEA/Operations/OperationalTriggers.cs`），仅对触碰 `git_*` 工具的 run 发出**建议性** `git.steward.reviewed` 事件，仍不创建合成实例、不执行 Git。
 - 执行层 `worker.git`：持有 Git 专业提示词和 Git 工具范围，负责执行 Core 已授权的 `status/diff/stage/unstage/commit/push/fetch/pull/branch/checkout/worktree/merge/rebase/conflict` 动作。
 
 Agent Center 应显示每个角色的 layer、已发布 AgentVersion、内容 hash、model strategy、prompt profile、声明工具、Mode 节点工具范围和当前 Tool Provider manifest 三者的有效交集。`git_steward` 没有直接工具是设计结果，不是配置错误；`worker.git` 的某个工具不在实时 manifest 时应显示“当前 provider 不可用”，不能由 Desktop 补回。用户在 Git 面板发起的写操作仍是当前用户的 UserToolAction，不冒充 `worker.git`，也不创建伪造 run。
@@ -350,7 +350,7 @@ POST /api/v1/agent-evolution/proposals/{id}/promote
 - provider model refresh：`POST /api/v1/model-providers/{id}/models/refresh`
 - route：`GET /api/v1/model-routes`、`PUT /api/v1/model-routes/{purpose}`
 - CLI：`GET /api/v1/model-providers/cli/discover`、`POST /api/v1/model-providers/cli/connect`
-- readiness：`GET /api/v1/model-readiness`、`GET /api/v1/model-catalog-readiness`
+- readiness：`GET /api/v1/model-readiness`、`GET /api/v1/model-catalog-readiness`（**均为已废弃兼容壳**，硬编码 0/warning；真实就绪请用 `GET /api/v1/readiness` 与 provider/route API）
 
 连接、保存和启用是不同状态。CLI discover 的 `found` 不等于 provider 已配置，provider enabled 不等于 route 已绑定，route ready 才能让 run 取得模型。API key 只提交到 Core/SecretStore，不显示明文。
 
@@ -360,7 +360,7 @@ POST /api/v1/agent-evolution/proposals/{id}/promote
 
 智能体模型策略已版本化：Desktop 通过 `PUT /api/v1/agents/{id}/draft` + `POST /api/v1/agents/{id}/publish`（If-Match revision）保存 `model_strategy`，统一支持 `inherit`、`route`（有序 candidates，`PUT /api/v1/model-routes/{purpose}` 携带 `{candidates:[{provider_instance_id, model, position}]}`）、`fixed`（provider_instance_id + model；CLI/ACP provider 实例的 model 可为空）；Mode 编辑器节点级 `model_strategy_override` 同契约，保存前可 `POST /api/v1/model-resolution/preview` 预览生效链。
 
-历史遗留入口 `GET /model-center/overview`、`GET /agent-center/overview`、`PUT /agents/{id}/runtime-binding` 与别名 `POST /model-center/provider-instances/{id}/models/refresh` 已全部删除（无路由即 404），Desktop/Gateway 客户端与 UI 分支均已清理。
+历史遗留入口 `GET /model-center/overview`、`GET /agent-center/overview` 与别名 `POST /model-center/provider-instances/{id}/models/refresh` 已删除（无路由即 404）。**注意：`PUT /api/v1/agents/{id}/runtime-binding` 并未删除**，它仍是当前契约的一部分（`TinadecCore/AspNetCore/Endpoints/AgentConfigurationEndpoints.cs:21`）；Gateway 侧同路由也已保留。
 
 **工具中心**：
 
@@ -460,7 +460,7 @@ POST /api/v1/governance/capability-leases/{id}/revoke
 
 Core 当前有两种不能混读的 SSE 协议：
 
-**Run stream：** `POST /api/v1/sessions/{sessionId}/invoke-stream` 和 `GET /api/v1/runs/{runId}/stream` 实际只写 `id` 与 `data`，没有 SSE `event` 行，也没有 heartbeat。`data` 是匿名 JSON 投影：
+**Run stream：** `GET /api/v1/runs/{runId}/stream` 实际只写 `id` 与 `data`，没有 SSE `event` 行，也没有 heartbeat（`invoke-stream` 已退役，不再是 stream 来源）。`data` 是匿名 JSON 投影：
 
 ```json
 {
@@ -479,7 +479,7 @@ Core 当前有两种不能混读的 SSE 协议：
 }
 ```
 
-`session_id` 只在 `invoke-stream` 响应中出现；run stream 依赖 URL 中的 run id。当前 run stream 已见基础 kind 为 `ack`、`delta`、`done`、`error`，以及 `queued`、`assigned`、`steering`、`context_conflict`、`model_selection`、`ephemeral_agent`、`control` 扩展 kind。未知 kind 必须原样保留，不能静默丢弃。
+`session_id` 只在 interaction 响应中出现；run stream 依赖 URL 中的 run id。当前 run stream 已见基础 kind 为 `ack`、`delta`、`done`、`error`，以及 `queued`、`assigned`、`steering`、`context_conflict`、`model_selection`、`ephemeral_agent`、`control` 扩展 kind。未知 kind 必须原样保留，不能静默丢弃。
 
 **Event feed：** `GET /api/v1/events` 才写 `event: {event_type}`，data 为 `EventEnvelope`（含 `version`、`event_id`、`event_type`、`timestamp`、session/run 标识和 payload），初始回放及后续 follow 每 15 秒写 `event: heartbeat`。它和 run stream 的 `kind` 不是同一字段，Desktop 必须使用两套 parser/adapter。
 

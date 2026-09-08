@@ -6,7 +6,7 @@ TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desk
 
 ## Standalone display repo (2026-08-28)
 
-`C:\git\agent\TinadecUI` is the standalone display/distribution surface for external consumers (e.g. the Tinadec official website at `C:\git\agent\TinadecOfficalWeb`). Source of truth stays in TinadecOffice; sync via `scripts/sync-tinadec-ui.mjs` (copies the 30 barrel primitives + `lib/utils.ts` + logo assets, rewriting `@/lib/utils` → `../../lib/utils`). `tokens.css`/`fonts.css` in that repo are curated derivatives of `apps/desktop/src/styles.css` L1-370 + the chat micro-interactions (L4894-5144), adapted to web selectors — edit them by hand after token changes. The standalone repo requires Vue 3.6.0-rc.2 + `vue-shim` + `vaporInteropPlugin` because 5 primitives are Vapor SFCs; see its `README.md`/`design.md`.
+The standalone display/distribution surface for external consumers (e.g. the Tinadec official website) is a separate repo whose location is resolved by `scripts/sync-tinadec-ui.mjs` — default target `../TinadecUI` next to this checkout, overridable with `TINADEC_UI_TARGET`. Source of truth stays in TinadecOffice; sync copies the 30 barrel primitives + the ui barrel + `lib/utils.ts` + logo assets, rewriting `@/lib/utils` → `../../lib/utils`. `tokens.css`/`fonts.css` in that repo are curated derivatives of `apps/desktop/src/styles.css` L1-370 + the chat micro-interactions (L4954-5057), adapted to web selectors — edit them by hand after token changes. The standalone repo requires Vue 3.6.0-rc.2 + `vue-shim` + `vaporInteropPlugin` because 5 primitives are Vapor SFCs; see its `README.md`/`design.md`.
 
 ## Structure
 

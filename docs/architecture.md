@@ -47,8 +47,8 @@ Core owns the agent harness model and Tool-layer policy semantics. Gateway proxi
 | `GET /api/v1/sessions/{sessionId}/tool-executions` | Core-owned tool execution timeline built from tool execution events, provider descriptors, checkpoint summaries, durations, and step-result evidence. Supports `runId` and `limit`. |
 | `GET /api/v1/readiness` | Core-owned runtime readiness receipt covering storage (`storage.provider` / `storage.state` for SQLite or PostgreSQL), dual agent layers, canonical tool registry, model routes/providers, and extension runtime registries. Gateway/Desktop must proxy or display it without recomputing the status. |
 | `GET /api/v1/tool-layer-readiness` | Core-owned Tool-layer receipt covering canonical tool dispatchability, provider layers, future-tool markers, human-checkpoint requirements, and execution-agent scope resolution. |
-| `GET /api/v1/model-readiness` | Core-owned model provider and route readiness receipt covering provider status, credential availability, route coverage, blocked routes, and advisory discovery notes. |
-| `GET /api/v1/model-catalog-readiness` | Core-owned model catalog receipt covering static templates, runtime module coverage, configured instance counts, and advisory live-discovery policy. Static templates stay visible when live discovery is unavailable. |
+| `GET /api/v1/model-readiness` | **Deprecated compatibility shim** (`StubEndpoints.cs:58-60`): the route still exists for older clients but its counters are hard-coded to 0. Use `GET /api/v1/readiness` instead. |
+| `GET /api/v1/model-catalog-readiness` | **Deprecated compatibility shim** (`StubEndpoints.cs:127-155`): returns `templates: []` and zeroed counts. Use `GET /api/v1/model-provider-templates` instead. |
 
 ### User actions, governance, and snapshots
 
@@ -65,11 +65,11 @@ Permission granting and single-action approval remain separate state machines. C
 
 ## Model And Agent Configuration APIs
 
-Desktop composes Model Center and Agent Center from Core-owned versioned provider, route, Agent, Mode, PromptPipeline, WorkspaceDefaults and Agent Pack APIs through Gateway. The former `/model-center/overview`, `/agent-center/overview`, `/agents/{id}/runtime-binding` and model-center refresh alias are intentionally absent; Gateway does not derive effective bindings or retain configuration drafts. Canonical model discovery is `POST /api/v1/model-providers/{id}/models/refresh`, and all Agent writes use draft/publish/archive plus immutable version contracts.
+Desktop composes Model Center and Agent Center from Core-owned versioned provider, route, Agent, Mode, PromptPipeline, WorkspaceDefaults and Agent Pack APIs through Gateway. The former `/model-center/overview`, `/agent-center/overview` and model-center refresh alias are intentionally absent; `PUT /api/v1/agents/{id}/runtime-binding` **does exist** (`AgentConfigurationEndpoints.cs:21`) and is part of the current contract; Gateway does not derive effective bindings or retain configuration drafts. Canonical model discovery is `POST /api/v1/model-providers/{id}/models/refresh`, and all Agent writes use draft/publish/archive plus immutable version contracts.
 
 ## Bundled Agent Pack Lifecycle
 
-TinadecCore exposes a generic, workspace-scoped Agent Pack lifecycle; it does not compile TinadecOffice roles into Core. TinadecOffice carries schema `tinadec.io/agent-pack/v1alpha1` Pack `tinadec.office.agent-pack` (`owner=tinadec.office`, `version=0.1.0`) as a deterministic renderer asset. It contains 14 Agent definitions, `baseline-prompt`, `default-mode`, and recommended workspace defaults.
+TinadecCore exposes a generic, workspace-scoped Agent Pack lifecycle; it does not compile TinadecOffice roles into Core. TinadecOffice carries schema `tinadec.io/agent-pack/v1alpha1` Pack `tinadec.office.agent-pack` (`owner=tinadec.office`, current `version=0.2.3`) as a deterministic renderer asset. It contains 14 Agent definitions, 5 PromptPipeline resources, 7 Modes (`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`), and recommended workspace defaults.
 
 On each connected epoch the main renderer asks Core for an install preview through Gateway, validates the returned Pack identity/hash, shows owner/version/hash and default impact, and submits a confirmed install. Electron child/pet/debug windows skip bootstrap; Web tabs coordinate through `BroadcastChannel`/Web Locks, while Core idempotency and revision checks remain authoritative. Rejection is remembered only for the current App lifetime; errors stay non-blocking and expose a retry that obtains a fresh preview.
 
@@ -81,7 +81,7 @@ The northbound surface is `GET /api/v1/agent-packs`, `GET /api/v1/agent-packs/{p
 
 The active path creates exact-version instances for `meeting`, `task_planner`, `supervisor`, and one selected specialist from `worker.code`, `worker.document`, `worker.data`, `worker.browser`, `worker.file`, `worker.git`, or `worker.general`. Worker selection requires complete capability/tool coverage, then prefers specialists, fewer extra permissions, roster order, and slug; no match fails closed as `worker_unavailable`. Assignment is persisted before first invocation and reused after recovery. Only `meeting` may answer the user.
 
-`context_compressor`, `skill_recommender`, `evolution`, and `git_steward` are installed and included in the frozen roster but remain dormant in this release: no synthetic instance or participation event is created. `worker.git` is the executable Git specialist; mutations remain approval-gated through Core-governed Tool Provider calls.
+`context_compressor`, `skill_recommender`, `evolution`, and `git_steward` are installed and included in the frozen roster. Since 2026-08-29 they are activated by the operation-layer trigger chain (`DmaEA/Operations/OperationalTriggers.cs`), but they still create no synthetic instance: they dispatch as bypass governance calls and emit their own events (`context.compacted`, `capability.recommended`, `evolution.agent_candidate_created`, `git.steward.reviewed`). `worker.git` is the executable Git specialist; mutations remain approval-gated through Core-governed Tool Provider calls.
 
 ## Event Envelope
 
@@ -108,7 +108,7 @@ The canonical layers are the governance layer (`operation`) and execution layer 
 
 The meeting agent is the only agent allowed to produce a user-facing answer. A run-time child agent is a Core-owned orchestration instance, not a generic tool: every spawn must carry its parent instance, intent (`temporary`/`persistent_candidate`/`persistent_profile`), target and success criteria, selected context, model, scoped tools/resources, and budget. `search`/`programming`/`testing` are execution specialists selected by the task planner — they remain execution workers and never become a third layer. A child cannot enlarge inherited authority or receive `direct_user_output`, formal-memory writes, or promotion authority. Temporary workers release when their run finishes; a reusable design first becomes an auditable candidate and requires human promotion (`agent.create_profile`, governance-layer only) into an immutable profile version.
 
-Full duplex is coordinated by Core rather than by the lifetime of one HTTP response. A durable run accepts status queries, supplements, goal changes, new tasks, pause, resume, and cancellation while work continues. Shared state uses monotonically increasing `context_revision`; a patch or result based on an obsolete revision cannot overwrite newer constraints and must be rejected, reconciled safely, or trigger re-planning. The intended run states are `understanding`, `executing`, `replanning`, `awaiting_approval`, `paused`, `reviewing`, `completed`, `failed`, and `cancelled`.
+Full duplex is coordinated by Core rather than by the lifetime of one HTTP response. A durable run accepts status queries, supplements, goal changes, new tasks, pause, resume, and cancellation while work continues. Shared state uses monotonically increasing `context_revision`; a patch or result based on an obsolete revision cannot overwrite newer constraints and must be rejected, reconciled safely, or trigger re-planning. The run-state vocabulary of record is 12 states (`RunStatusMachine.cs:12-17`): `planning`, `understanding`, `executing`, `replanning`, `awaiting_approval`, `awaiting_delegate`, `awaiting_user`, `paused`, `reviewing`, `completed`, `failed`, `cancelled`.
 
 Long-term memory and reusable agents follow a candidate-to-promotion path. Session history and summaries may be used automatically; only reviewed, promoted long-term memory is retrievable across sessions. Full content remains in immutable ContentStore, while relational projections and events hold references, hashes, counts, and summaries. Tool approval and memory review are distinct state machines.
 
@@ -127,11 +127,11 @@ The four dormant operational roles are now activated by a trigger chain instead 
 | Surface | Present now | Still required for the full-duplex contract |
 |---|---|---|
 | Runtime configuration | Annotated TOML baseline, validation, aliases, in-process valid-only reload, relational projections for agent instances/candidates/profile overrides, and per-run frozen profile resolution in the full-duplex engine. | Workspace override resolution and readiness diagnostics. |
-| Invocation | `POST /api/v1/sessions/{id}/invoke-stream` runs the durable full-duplex engine: idempotent admission, `context_revision` snapshots/patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Gateway/Desktop normal-chat migration and remaining interaction-contract cleanup. |
+| Invocation | `POST /api/v1/sessions/{id}/interactions` admits work to the durable full-duplex engine (run output is read back through `GET /api/v1/runs/{runId}/stream`; the former `invoke-stream` route is retired and returns 404): idempotent admission, `context_revision` snapshots/patches, governance coordination → task planning → execution → supervision → meeting finalization, worker spawn/lineage, durable SSE (ack/delta/done/error) with replay/follow, run control, active-run limits, and leased-checkpoint recovery. | Gateway/Desktop normal-chat migration and remaining interaction-contract cleanup. |
 | Layer terminology | Configuration parsing normalizes `planning` to `operation`. | Legacy DmaEA records, API projections, and persisted contracts still need migration/normalization to canonical `operation`. |
 | Spawn, lineage, and promotion | Exact-version meeting/planner/supervisor/worker instances, persisted specialist assignment, stable capability/tool selection, recovery reuse, candidate review APIs, and review-driven immutable promotion (2026-08-29: sanitize → publish immutable agent version → record decision). | Canary/activation stages after promotion. |
 | Context, prompts, and memory | Context snapshots/patches plus one frozen prompt assembly path: Core protocol -> agent system prompt -> PromptPipeline -> task evidence -> final constraints. Event-driven `context_compressor` (ToolCallAware-guarded compaction patches), reviewed-memory retrieval injection, and candidate promotion/revocation persistence landed 2026-08-29; worker-proposed context patches are CAS-arbitrated. | Vector retrieval (embedding route unconfigured), prompt graph `variable`/`condition`/`stage` nodes, memory expiry/supersede lifecycle. |
-| Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, `UserToolAction`, governance nonce boundary, and `tool-layer-readiness` receipts. | Scheduling and `tools/shell` (501); ACP permission bridge. |
+| Tools and approvals | Real TinadecTools child process per workspace root (auto-probed executable, manifest-v2 handshake, BOM-free pipe), frozen per-run manifest, one-time approval consumption, prepare/resume dispatch, crash/timeout handling, `UserToolAction`, governance nonce boundary, and `tool-layer-readiness` receipts. | Scheduling (501); ACP permission bridge. (`tools/shell` is implemented — the governed `shell` tool dispatch.) |
 | Workspace snapshots | File-system and Git providers capture HEAD/index/worktree/conflicts and use deterministic restore/guard semantics. | Full restore-plan UX and external compensation records. |
 | Gateway and Desktop | Gateway proxies Core governance and Agent Pack routes without state. Desktop/Web carry the Pack, run owner-confirmed bootstrap, and show Pack version/managed/clone/retry state. | Complete action history/recovery UX and normal-chat migration cleanup. |
 | Bundled Agent Pack | Generic Core preview/install/version/default-adoption/managed-resource lifecycle plus TinadecOffice-owned 14-Agent `OfficeAgentPack`; SQLite/PostgreSQL migrations and exact runtime binding are wired. | Digital signatures, organization trust stores, market distribution, rollback and uninstall. |
@@ -231,7 +231,7 @@ The Desktop main window is rendered by **TinadecUI** (in `apps/TinadecUI`), spli
 
 ### Route semantics
 
-- The router keeps all existing hash paths (`/`, `/settings`, `/market`, `/debug-studio`, `/code-editor`, `/panel`, `/pet`). The main window renders `UieShell` for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
+- The router keeps all existing hash paths (`/`, `/settings`, `/agent-center` → redirect, `/market`, `/debug-studio`, `/code-editor`, `/workbench`, `/governance`, `/snapshots`, `/recovery/:actionId`, `/library`, `/panel`, `/pet`). `/governance`, `/snapshots`, `/recovery/:actionId`, `/code-editor` and `/library` currently have no in-app navigation entry. The main window renders `UieShell` for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
 
 ### Page transition animations
 
@@ -256,9 +256,11 @@ Spatial route transitions are **declarative and CSS-class driven** — page code
 - `main.ts` installs `vaporInteropPlugin` so vapor components can live inside the classic vdom tree.
 - Rollout is batched (`src/vapor/vaporBatch.ts`); exemptions are recorded in `src/vapor/VaporExemptions.ts`.
 
-## Agent Debug Studio
+## Agent Debug Studio (frontend only — backend NOT implemented)
 
-TinadecOffice includes an **Agent Debug Studio** — a dedicated debugging tool designed for Agent systems. See [`docs/agent-debug-studio-plan.md`](agent-debug-studio-plan.md) for the full implementation plan.
+> **Status:** the Desktop window exists, but **no Core-side tracing or debug backend is implemented**. There is no `TinadecCore/Tracing/` or `TinadecCore/Debug/` directory; every `debug/*` route below is served by `AspNetCore/Endpoints/StubEndpoints.cs` and returns an empty array or `501`, and Gateway `/ws/debug` is a dead stub (`TinadecGateway/src/websocket.ts:58-60`). The section below describes the **target** design, not current behavior. See [`docs/agent-debug-studio-plan.md`](agent-debug-studio-plan.md) for the plan.
+
+### Target architecture (not built)
 
 ### Architecture
 
@@ -271,12 +273,12 @@ TinadecOffice includes an **Agent Debug Studio** — a dedicated debugging tool 
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/v1/debug/traces` | Query trace list |
+| `GET /api/v1/debug/traces` | Query trace list — **currently returns `[]`** |
 | `GET /api/v1/debug/traces/{id}` | Get trace detail with span tree |
 | `GET /api/v1/debug/metrics` | Query metric aggregations |
 | `GET /api/v1/debug/diagnostics` | Get diagnostic report |
 | `GET /api/v1/debug/processes` | Process resource info |
-| `WS /api/v1/debug/ws` | Real-time debug event feed |
+| `WS /api/v1/debug/ws` | Real-time debug event feed — **route does not exist** |
 | `POST /api/v1/debug/simulate/message` | Inject simulated message |
 | `POST /api/v1/debug/breakpoints` | Set breakpoint |
 

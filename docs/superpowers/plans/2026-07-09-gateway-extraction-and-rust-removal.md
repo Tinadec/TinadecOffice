@@ -1,5 +1,8 @@
 # Gateway 抽取与 Rust 删除 Implementation Plan
 
+> **⚠️ 历史文档（不可作为事实源）**
+> 本文是 2026-07-09 的执行计划，**未随代码更新**：文中 `gateway/src/...`、`tests/TinadecCore.Tests/...` 等路径已失效（现为 `TinadecGateway/src/`、`TinadecCore/tests/`）。以源码、测试与 `AGENTS.md` 的 M 段记录为准。归档核对时间：2026-09-07（commit 3e8ff30）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 gateway 含内嵌工具抽出为顶层独立组件，删除 Rust native 层，用临时安全补丁兜底 list_directory，清理失效引用，保证 MVP 两周内可跑。

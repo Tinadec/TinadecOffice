@@ -76,7 +76,7 @@ apps/web/
 ### 阶段 1 — 只读 Web 版（低风险，可独立交付）
 
 **可用：** 聊天、会话/项目、任务图、审批 UI、上下文包、事件 SSE、
-Model/Agent Center、Market、设置（除宠物与 Gateway URL）、Debug Studio、Monaco 代码查看。
+Model/Agent Center、Market、设置（除宠物与 Gateway URL）、Debug Studio（仅 UI 可挂载；Core 侧 debug 后端未实现——`AspNetCore/Endpoints/StubEndpoints.cs` 返回空数组/501，Gateway `src/websocket.ts` 的 `/ws/debug` 是死桩）、Monaco 代码查看。
 
 **不可用：** 终端、桌面宠物、分离窗口、本地目录选择。
 
@@ -103,11 +103,11 @@ Model/Agent Center、Market、设置（除宠物与 Gateway URL）、Debug Studi
 两个障碍：
 
 1. **Tool Runtime 服务不存在。** `TinadecGateway/src/websocket.ts:53` 已声明 `/ws/terminal`
-   指向 Tool Runtime (48732)，`config.ts:72` 也已配置 `TINADEC_TOOL_RUNTIME_URL`，
+   指向 Tool Runtime (48732)，`config.ts:74` 也已配置 `TINADEC_TOOL_RUNTIME_URL`，
    但服务本身没有——`TinadecTools/` 是 .NET 控制台原型宿主（stdin/stdout），不是 HTTP/WS 服务。
-2. **Gateway 的 WS 代理是死代码。** `index.ts:822-838` 的 `/ws/terminal` handler 订阅了一个
+2. **Gateway 的 WS 代理是死代码。** `index.ts:2016-2063` 的 `/ws/terminal` handler 订阅了一个
    Bun pub/sub topic，计算出 `targetUrl` 后直接 `void targetUrl`，从未连接目标。
-   `websocket.ts:93-139` 的 `createWsProxyHandlers` 实现了真正的双向代理，但没有任何路由调用它。
+   `websocket.ts:93-126` 的 `createWsProxyHandlers` 实现了真正的双向代理，但没有任何路由调用它。
    三个 WS 路由（terminal / debug / collaboration）全是无效桩。
 
 **PTY 该放在哪里：新建最小 Tool Runtime 服务（Node.js，48732）。**

@@ -44,7 +44,7 @@ Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
 ### Key Configuration Files
 - `package.json`: npm workspace configuration
 - `TinadecOffice.slnx`: .NET solution file
-- `gateway/package.json`: Gateway dependencies
+- `TinadecGateway/package.json`: Gateway dependencies
 - `apps/desktop/package.json`: Desktop dependencies
 
 ## Architecture Patterns and Design Principles
@@ -82,7 +82,7 @@ TinadecOffice follows a strict three-layer architecture:
 ## Common Development Tasks
 
 ### Adding a New Tool
-1. **Define Tool Interface**: Create tool specification in Core's `ToolRegistryService.cs`
+1. **Define Tool Interface**: Register the tool through Core's `IToolRegistry` (`TinadecCore/Tools/CoreToolRegistry.cs`); tool implementations live in `TinadecTools/`
 2. **Implement Tool Logic**: Add tool implementation in appropriate layer (Core or Gateway)
 3. **Register Tool**: Register tool through `IToolRegistry` interface
 4. **Add Tests**: Create unit tests for tool functionality
@@ -109,10 +109,10 @@ TinadecOffice follows a strict three-layer architecture:
 
 ### Testing and Debugging
 1. **Run Full Test Suite**: `npm test`
-2. **Run Core Tests**: `dotnet test tests/TinadecCore.Tests/TinadecCore.Tests.csproj -v minimal`
-3. **Run Gateway Tests**: `npm run test -w @tinadec/gateway`
+2. **Run Core Tests**: `dotnet test TinadecCore/TinadecCore.slnx -v minimal`
+3. **Run Gateway Tests**: `cd TinadecGateway && bun test` (TinadecGateway is not an npm workspace member)
 4. **Run Desktop Tests**: `npm run test -w @tinadec/desktop`
-5. **Debug Studio**: Use Agent Debug Studio for tracing and debugging
+5. **Debug Studio**: the Desktop page exists, but the Core debug/trace endpoints are stubs that return empty arrays or `501` — do not expect live traces
 
 ### Common Commands
 ```powershell
@@ -142,8 +142,9 @@ Before making architecture, feature, UI, or tool-layer changes, read in this ord
 
 For Tool-layer / Code-suite work, inspect:
 
-- `src/TinadecCore/Services/ToolRegistryService.cs` - Core capability registration and approval posture.
-- `gateway/src/codeTools.ts` - Code tool catalog, DTO mapping, and fallback data.
+- `TinadecCore/Tools/CoreToolRegistry.cs` and `TinadecCore/Tools/ToolDispatcher.cs` - Core-side tool governance, approval posture, and dispatch.
+- `TinadecTools/Tools/**` - the actual tool implementations (file, git, command/shell, search, MCP); `TinadecTools/README.md` lists the manifest.
+- Gateway has no `codeTools.ts` catalog any more; `/api/v1/code/tools/*` and `/api/v1/tool-runtime/*` are stateless transport routes.
 - `apps/desktop/src/toolCatalog.ts` and `apps/desktop/src/pages/SettingsPage.vue` - Desktop presentation of Tool-layer capabilities.
 
 ## Product Model
@@ -208,10 +209,10 @@ Claude SHOULD use CodeGraph for:
 **Query Examples**:
 ```powershell
 # 查询特定函数的调用链
-codegraph explore "How does ToolRegistryService register tools?"
+codegraph explore "How does CoreToolRegistry register tools?"
 
 # 查询跨层依赖
-codegraph explore "What calls CoreStore from Gateway?"
+codegraph explore "How does the Gateway coreClient proxy to Core?"
 
 # 查询状态管理
 codegraph explore "How does session state flow through the layers?"
@@ -222,7 +223,7 @@ codegraph explore "How does approval gate mechanism work?"
 
 **Best Practices**:
 1. 查询前先思考：明确要理解的问题，避免模糊查询
-2. 信任结果：CodeGraph 返回的代码已经是最新索引，无需重复验证
+2. 仍需回源核对：CodeGraph 的索引可能落后于工作树。任何"已实现/已删除"的结论都必须用 `grep`/`read` 回查源码与测试后再采信。
 3. 关注调用链：利用 CodeGraph 的调用路径分析功能
 4. 检查影响范围：修改代码前，使用 impact 分析功能
 
@@ -278,5 +279,5 @@ npm run build
 npm test
 Remove-Item Env:Version -ErrorAction SilentlyContinue
 Remove-Item Env:Ice-Version -ErrorAction SilentlyContinue
-dotnet test tests/TinadecCore.Tests/TinadecCore.Tests.csproj -v minimal
+dotnet test TinadecCore/TinadecCore.slnx -v minimal
 ```

@@ -36,7 +36,7 @@ Core 当前是 .NET 10 + Microsoft Agent Framework (MAF) 1.18 的模块化单体
 **设计原则**
 
 - Core 是唯一业务状态权威；Gateway 与 App 不保存第二套业务状态
-- App 可以直连 Core，也可以通过 Gateway；Gateway 不是 Core 的运行必需项
+- Desktop 永远经 Gateway 访问 Core（2026-08-29 四产品路线图决定：Gateway 是 Desktop 的永久且唯一传输边界）；Gateway 对 Core 不是运行必需项，其它产品可直接使用 Core 的公开契约
 - Core 通过当前 Tool Provider 契约连接 TinadecTool 或其它工具服务
 - Gateway 是无状态门面；`/api/v1/code/tools/*` 与 `/api/v1/tool-runtime/*` 保留为 Desktop 和外部用户显式使用工具的直连入口，Gateway 只负责身份、协议和流转，不在其中实现业务状态或授权决定
 - 权限授权、具体动作审批和结果质量监督是三条独立治理链路
@@ -46,7 +46,6 @@ Core 当前是 .NET 10 + Microsoft Agent Framework (MAF) 1.18 的模块化单体
 ```mermaid
 graph TD
     A[TinadecApp] -->|HTTP / SSE / WebSocket| B[TinadecGateway]
-    A -. Direct .-> C[TinadecCore]
     B -->|Proxy / protocol adapter| C
     C -->|Tool provider contract| D[TinadecTool]
     C -->|Same contract| G[Other tool providers]
@@ -93,9 +92,9 @@ TinadecOffice/
 - **审批门控工具执行** — 写操作需用户明确批准
 - **Model / Agent Center** — Gateway 聚合 Core 资源，提供无状态中心视图
 - **可分离面板窗口** — 侧边栏面板可拖出为独立 Electron 窗口
-- **Agent Debug Studio** — 追踪可视化与调试（后端随 Core 重建）
+- **Agent Debug Studio** — 前端页面已存在，但 Core 的 `debug/*` 路由当前是空数组/`501` 桩、WS `/ws/debug` 为死桩，因此暂无真实追踪数据
 - **MCP 透传** — 通过 Tool 层接入外部 MCP server
-- **共享数据库抽象** — 默认 SQLite，可选 PostgreSQL；业务 schema 按模块后续落地
+- **共享数据库抽象** — 默认 SQLite，可选 PostgreSQL；业务 schema 已落地（9 个 DbContext，SQLite 侧 25 个迁移文件，PostgreSQL 侧对应迁移）
 
 ## 常用命令
 
