@@ -1,8 +1,8 @@
-﻿// 主循环
+// 主循环
 
-using System.Text.Json;
-using NLog;
+using System.Text;
 using TinadecTools.Abstractions;
+using TinadecTools.Runtime;
 using TinadecTools.Runtime.Sandbox;
 using TinadecTools.Runtime.Sandbox.Windows;
 using TinadecTools.Tools.FileRW;
@@ -16,7 +16,11 @@ if (OperatingSystem.IsWindows() && WindowsSandboxSetup.IsSetupMode(args))
 if (OperatingSystem.IsWindows() && WindowsSandboxRunner.IsRunnerMode(args))
     return WindowsSandboxRunner.RunRunner();
 
-var logger = LogManager.GetCurrentClassLogger();
+// The wire protocol is BOM-free UTF-8; without this, a zh-CN Windows console
+// defaults stdin/stdout to GBK and Core cannot deserialize the JSON lines.
+Console.InputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
 FileToolRuntime.InitializeWorkspace();
 
 GeneratedToolRegistry.RegisterAll();
@@ -24,41 +28,7 @@ TinadecTools.Tools.Command.ShellToolRegistration.Register();
 
 try
 {
-    while (true)
-    {
-        var line = await Console.In.ReadLineAsync();
-        if (line is null)
-            break;
-
-        ToolCallRequest<JsonElement>? req = null;
-        try
-        {
-            req = JsonSerializer.Deserialize(line, ToolCallJsonContext.Default.ToolCallRequestJsonElement)
-                ?? throw new JsonException("Tool call request was null.");
-            var resp = await ToolRegistry.DispatchAsync(req);
-            lock (Console.Out)
-            {
-                Console.WriteLine(JsonSerializer.Serialize(resp, ToolCallJsonContext.Default.ToolCallResponseJsonElement));
-            }
-
-            logger.Debug("处理完毕工具调用{id},工具类型为{type}", req.ToolCallId, req.ToolId);
-        }
-        catch (Exception ex)
-        {
-            var error = new ToolCallErrorResponse
-            {
-                CallId = req?.ToolCallId ?? -1,
-                IsSuccess = false,
-                Error = ex.Message
-            };
-            lock (Console.Out)
-            {
-                Console.WriteLine(JsonSerializer.Serialize(error, ToolCallJsonContext.Default.ToolCallErrorResponse));
-            }
-
-            logger.Warn("工具调用流程出错，错误为{ex}", ex);
-        }
-    }
+    await ToolDispatchLoop.RunAsync(Console.In, Console.Out);
 }
 finally
 {

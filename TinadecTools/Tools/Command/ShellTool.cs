@@ -53,10 +53,14 @@ internal static class ShellToolRegistration
             retrySafety: "safe");
     }
 
-    private static (string FileName, string Arguments) ResolveShell(string command)
+    // Internal for tests: the cmd quoting rule is the regression surface.
+    internal static (string FileName, string Arguments) ResolveShell(string command)
     {
         if (OperatingSystem.IsWindows())
-            return ("cmd.exe", $"/d /s /c \"{command.Replace("\"", "\\\"")}\"");
+            // cmd has no backslash escaping. Under /d /s /c it strips exactly the
+            // outermost quote pair and executes the rest verbatim, so wrapping the
+            // whole command in quotes preserves every inner quote as-is.
+            return ("cmd.exe", $"/d /s /c \"{command}\"");
         return ("/bin/bash", $"-lc {EscapeSingleQuoted(command)}");
     }
 
@@ -222,14 +226,17 @@ internal static class ShellToolRegistration
         Response = JsonSerializer.SerializeToElement(NotApprovedResponse.MESSAGE, ToolCallJsonContext.Default.String)
     };
 
+    // The tool could not execute at all (no command, blocked, bad cwd, spawn/timeout
+    // failure): this is a wire-level failure so Core records it as failed in state
+    // and audit. Same encoding as the registry's NotApproved path (success=false +
+    // string message). A command that really ran but exited non-zero is NOT this —
+    // it returns wire success with an embedded success=false + exit_code result so
+    // the model can read stderr and correct itself.
     private static ToolCallResponse<JsonElement> Fail(long callId, string message) => new()
     {
         CallId = callId,
-        IsSuccess = true,
-        Response = JsonSerializer.SerializeToElement(
-            new ShellToolResult(false, string.Empty, string.Empty, "failed", -1, string.Empty, string.Empty,
-                false, false, false, 0, message),
-            ShellToolJsonContext.Default.ShellToolResult)
+        IsSuccess = false,
+        Response = JsonSerializer.SerializeToElement(message, ToolCallJsonContext.Default.String)
     };
 }
 

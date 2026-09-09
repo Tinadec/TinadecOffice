@@ -249,6 +249,10 @@ public static class TerminalSessionHost
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true,
+            // The wire protocol is UTF-8; without these, child output is decoded
+            // with the machine OEM codepage (GBK on zh-CN Windows).
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
         };
 
@@ -315,7 +319,7 @@ public sealed record ShellToolResult(
     bool Success,
     string TerminalSessionId,
     string Command,
-    string Status,          // completed | long_lived | timed_out | failed | rejected
+    string Status,          // completed | long_lived (execution failures surface as wire-level errors instead)
     int ExitCode,
     string Stdout,
     string Stderr,
@@ -324,6 +328,13 @@ public sealed record ShellToolResult(
     bool TimedOut,
     long DurationMs,
     string? Error = null);
+
+/// <summary>
+/// Raised when a shell command could not execute to completion as a tool call
+/// (session limit, timeout kill). Surfaced as a wire-level failure so Core records
+/// the execution as failed instead of completed.
+/// </summary>
+public sealed class ShellToolExecutionException(string message) : Exception(message);
 
 /// <summary>
 /// Session-aware terminal execution built on top of <see cref="TerminalRunner"/>'s
@@ -348,8 +359,7 @@ public static class TerminalSessionRunner
     {
         if (!TerminalSessionHost.CanAdmit)
         {
-            return new ShellToolResult(false, string.Empty, command, "rejected", -1, string.Empty, string.Empty,
-                false, false, false, 0, "Too many active terminal sessions.");
+            throw new ShellToolExecutionException("Too many active terminal sessions.");
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -361,7 +371,6 @@ public static class TerminalSessionRunner
         {
             // Give fast-failing commands a moment to surface their error, then
             // hand control back: the call completes, the session lives on.
-            var settle = Task.Delay(TimeSpan.FromMilliseconds(LongLivedSettleMs), cancellationToken);
             var exitTask = process.WaitForExitAsync(cancellationToken);
             var finished = await Task.WhenAny(
                 exitTask,
@@ -413,11 +422,9 @@ public static class TerminalSessionRunner
             session.Exited = true;
             TerminalSessionHost.KillSafe(process);
             await DrainOutputAsync(session, 1000).ConfigureAwait(false);
-            var output = TerminalSessionHost.ReadReplay(session);
-            var (stdout, stderr, truncated) = SplitReplay(output);
-            return new ShellToolResult(false, session.TerminalSessionId, session.Command, "timed_out", -1,
-                stdout, stderr, truncated, truncated, true, stopwatch.ElapsedMilliseconds,
-                $"Command timed out after {timeoutMs}ms and was terminated.");
+            // The tool could not execute to completion: wire-level failure. Any
+            // output produced before the kill already streamed as wire events.
+            throw new ShellToolExecutionException($"Command timed out after {timeoutMs}ms and was terminated.");
         }
 
         // Emit buffered output events *before* the response line, otherwise the

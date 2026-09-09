@@ -169,6 +169,15 @@ internal static class ToolRegistry
         return Handlers.TryGetValue(toolId, out handler!);
     }
 
+    /// <summary>Looks up a registered tool's descriptor. Used by the dispatch loop to gate concurrency.</summary>
+    public static bool TryGetDescriptor(string toolId, out ToolDescriptor descriptor)
+    {
+        lock (RegistrationLock)
+        {
+            return Descriptors.TryGetValue(toolId, out descriptor!);
+        }
+    }
+
     public static ValueTask<ToolCallResponse<JsonElement>> DispatchAsync(
         ToolCallRequest<JsonElement> request,
         CancellationToken cancellationToken = default)
