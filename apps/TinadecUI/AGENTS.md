@@ -1,12 +1,12 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-09-01
+**Last Updated:** 2026-09-09
 
 TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desktop`, `apps/web`) import it as `@tinadec/ui` — a registered alias in both packages' `vite.config.ts` and `tsconfig.json` that resolves to `apps/TinadecUI/src/index.ts`. Both consumers also map `@` → `apps/desktop/src`, so TinadecUI files may reference app code via `@/` and it resolves under every consumer. The boundary is a module home + public barrel, not a build-isolated library.
 
 ## Standalone display repo (2026-08-28)
 
-The standalone display/distribution surface for external consumers (e.g. the Tinadec official website) is a separate repo whose location is resolved by `scripts/sync-tinadec-ui.mjs` — default target `../TinadecUI` next to this checkout, overridable with `TINADEC_UI_TARGET`. Source of truth stays in TinadecOffice; sync copies the 30 barrel primitives + the ui barrel + `lib/utils.ts` + logo assets, rewriting `@/lib/utils` → `../../lib/utils`. `tokens.css`/`fonts.css` in that repo are curated derivatives of `apps/desktop/src/styles.css` L1-370 + the chat micro-interactions (L4954-5057), adapted to web selectors — edit them by hand after token changes. The standalone repo requires Vue 3.6.0-rc.2 + `vue-shim` + `vaporInteropPlugin` because 5 primitives are Vapor SFCs; see its `README.md`/`design.md`.
+The standalone display/distribution surface for external consumers (e.g. the Tinadec official website) is a separate repo whose location is resolved by `scripts/sync-tinadec-ui.mjs` — default target `../TinadecUI` next to this checkout, overridable with `TINADEC_UI_TARGET`. Source of truth stays in TinadecOffice; sync copies the 30 barrel primitives + the ui barrel + `lib/utils.ts` + logo assets, rewriting `@/lib/utils` → `../../lib/utils`. `tokens.css`/`fonts.css` in that repo are curated derivatives of `apps/desktop/src/styles.css` L1-370 + the chat micro-interactions (L4954-5057), adapted to web selectors — edit them by hand after token changes. The standalone repo requires Vue 3.6.0-rc.7 + `vue-shim` + `vaporInteropPlugin` because 5 primitives are Vapor SFCs; see its `README.md`/`design.md`.
 
 ## Structure
 
