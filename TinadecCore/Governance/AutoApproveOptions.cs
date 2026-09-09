@@ -22,8 +22,10 @@ public sealed class AutoApproveOptions
     public int AutoApproveMaxPerRun { get; set; } = 5;
 
     /// <summary>Tool ids that the policy refuses to auto-approve. Any tool id ending in
-    /// "_delete" or starting with "delete_" is additionally refused regardless of this list.</summary>
-    public string[] HumanOnlyTools { get; set; } = ["git_push", "command_run", "git_worktree_remove", "mcp_invoke"];
+    /// "_delete" or starting with "delete_" is additionally refused regardless of this list.
+    /// "shell" is the registered id of the command tool ("command_run" predates it and stays
+    /// listed); a shell call can drive any write the sandbox allows, so it never auto-approves.</summary>
+    public string[] HumanOnlyTools { get; set; } = ["git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke"];
 
     public bool IsHumanOnlyTool(string toolId) =>
         HumanOnlyTools.Contains(toolId, StringComparer.OrdinalIgnoreCase)

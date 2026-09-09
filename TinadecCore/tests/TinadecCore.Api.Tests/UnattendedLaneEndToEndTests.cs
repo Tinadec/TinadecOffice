@@ -33,8 +33,17 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
         "[{\"task_key\":\"run-tests\",\"title\":\"运行测试\",\"description\":\"运行测试并把结果写入 feature.txt\",\"success_criteria\":[\"测试输出文件存在\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"shell\"],\"priority\":1,\"risk\":\"medium\"},"
         + "{\"task_key\":\"commit\",\"title\":\"提交变更\",\"description\":\"提交全部变更\",\"success_criteria\":[\"产生提交\"],\"dependencies\":[\"run-tests\"],\"required_capabilities\":[],\"required_tools\":[\"git_commit\"],\"priority\":1,\"risk\":\"high\"}]";
 
+    // B6: shell is a human-only tool and can never be auto-approved, so the
+    // auto-policy leg drives the same unattended scenario with write_file.
+    private const string LanePlanWriteFile =
+        "[{\"task_key\":\"run-tests\",\"title\":\"运行测试\",\"description\":\"运行测试并把结果写入 feature.txt\",\"success_criteria\":[\"测试输出文件存在\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"medium\"},"
+        + "{\"task_key\":\"commit\",\"title\":\"提交变更\",\"description\":\"提交全部变更\",\"success_criteria\":[\"产生提交\"],\"dependencies\":[\"run-tests\"],\"required_capabilities\":[],\"required_tools\":[\"git_commit\"],\"priority\":1,\"risk\":\"high\"}]";
+
     private const string LaneOpenLine =
         "收到。已登记延后执行。\nLANE_OPEN: {\"lane_key\":\"l2\",\"goal\":\"功能开发完成后测试并提交\",\"tool_scope\":[\"shell\",\"git_commit\"],\"pre_authorization\":\"用户离场前授权\"}";
+
+    private const string LaneOpenLineWriteFile =
+        "收到。已登记延后执行。\nLANE_OPEN: {\"lane_key\":\"l2\",\"goal\":\"功能开发完成后测试并提交\",\"tool_scope\":[\"write_file\",\"git_commit\"],\"pre_authorization\":\"用户离场前授权\"}";
 
     /// <summary>
     /// A complete runtime baseline with lanes enabled: the shipped default keeps
@@ -113,14 +122,16 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
     {
         // The run is frozen under the auto-approve mode and the write tools
         // register as high risk, so the ceiling must be raised explicitly; the
-        // safe default never auto-releases a mutating tool.
+        // safe default never auto-releases a mutating tool. B6: shell is a
+        // human-only tool and can never be auto-approved, so this leg drives
+        // the same unattended scenario with write_file + git_commit.
         var config = new Dictionary<string, string?>
         {
             ["TinadecApproval:AutoApproveEnabled"] = "true",
             ["TinadecApproval:AutoApproveRiskMax"] = "high"
         };
         var (client, workerGate, runId, workspace) =
-            await StartUnattendedRunAsync("autopol", extraConfig: config, permissionMode: "auto-approve");
+            await StartUnattendedRunAsync("autopol", extraConfig: config, permissionMode: "auto-approve", useWriteFileForTests: true);
 
         workerGate.SetResult();
         await AwaitCompletionAsync(client, runId);
@@ -131,7 +142,7 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
     // ── shared scenario scaffolding ───────────────────────────────────────────
 
     private async Task<(HttpClient Client, TaskCompletionSource WorkerGate, Guid RunId, string Workspace)>
-        StartUnattendedRunAsync(string label, IReadOnlyDictionary<string, string?>? extraConfig, string? permissionMode)
+        StartUnattendedRunAsync(string label, IReadOnlyDictionary<string, string?>? extraConfig, string? permissionMode, bool useWriteFileForTests = false)
     {
         var workspace = Path.Combine(_root, $"{label}-workspace");
         Directory.CreateDirectory(workspace);
@@ -144,7 +155,10 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
         var script = new UnattendedScriptedClient
         {
             BeforeWorker = workerGate.Task,
-            WorkerStarted = workerStarted
+            WorkerStarted = workerStarted,
+            UseWriteFileForTests = useWriteFileForTests,
+            LanePlan = useWriteFileForTests ? LanePlanWriteFile : LanePlan,
+            LaneOpenLine = useWriteFileForTests ? LaneOpenLineWriteFile : LaneOpenLine
         };
 
         _factory = new UnattendedFactory(_root, script, extraConfig);
@@ -207,7 +221,7 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
         if (expectSource == "auto_policy") Assert.Contains("approval.auto_decided", events);
 
         Assert.True(File.Exists(Path.Combine(workspace, "feature.txt")),
-            $"The shell tool should have written feature.txt through the real child process. Events: {string.Join(" | ", events)}");
+            $"The unattended tool chain should have written feature.txt through the real child process. Events: {string.Join(" | ", events)}");
         var subject = ReadGitOutput(workspace, "log", "-1", "--format=%s");
         Assert.Equal("M8 unattended commit", subject.Trim());
         Assert.Equal("1", ReadGitOutput(workspace, "rev-list", "--count", "HEAD").Trim());
@@ -442,6 +456,7 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
         public string LaneOpenLine { private get; set; } = UnattendedLaneEndToEndTests.LaneOpenLine;
         public Task? BeforeWorker { private get; set; }
         public TaskCompletionSource? WorkerStarted { private get; set; }
+        public bool UseWriteFileForTests { private get; set; }
         public int WorkerCalls;
 
         public void Dispose() { }
@@ -514,6 +529,16 @@ public sealed class UnattendedLaneEndToEndTests : IAsyncLifetime
             var routingText = $"{prompt}\n{instructions}";
             if (routingText.Contains("运行测试", StringComparison.Ordinal) && FirstTurn("运行测试"))
             {
+                // B6: the auto-policy leg cannot use shell (human-only), so it
+                // writes the evidence file through write_file instead.
+                if (UseWriteFileForTests)
+                {
+                    return [new FunctionCallContent("call-write", "write_file", new Dictionary<string, object?>
+                    {
+                        ["filepath"] = "feature.txt",
+                        ["content"] = "m8-e2e"
+                    })];
+                }
                 return [new FunctionCallContent("call-shell", "shell", new Dictionary<string, object?>
                 {
                     ["command"] = "echo m8-e2e> feature.txt"

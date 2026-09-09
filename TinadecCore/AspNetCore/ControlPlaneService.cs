@@ -621,6 +621,33 @@ public sealed class ControlPlaneService
                 await _runs.SetRunStatusAsync(permissionRun.ToString(), "executing", "Legacy approval decision committed; resuming run.", ct).ConfigureAwait(false);
                 await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
             }
+            else if (resolved.Request.RunId is { } deniedRun
+                && resolved.Request.Status is not (PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser))
+            {
+                // A denied permission request must wake the parked run too: without
+                // the enqueue the awaiting_user run is never lease-eligible and
+                // hangs forever. Denial semantics are preserved — nothing is
+                // consumed and no grant is minted; the resumed dispatch observes
+                // the denied request and the engine drives the task/lane to its
+                // failure or escalation terminal state. This mirrors the wake-up
+                // GovernanceEndpoints applies to every terminal permission decision.
+                var deniedRunState = await _runs.GetRunStateAsync(deniedRun.ToString(), ct).ConfigureAwait(false);
+                if (deniedRunState.Status is not (RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled))
+                {
+                    if (deniedRunState.Status is RunStatus.AwaitingApproval or RunStatus.AwaitingDelegate or RunStatus.AwaitingUser)
+                    {
+                        await _runs.SetRunStatusAsync(deniedRun.ToString(), "executing", "Permission request denied; resuming run to fail closed.", ct).ConfigureAwait(false);
+                        await _runs.AppendEventAsync(deniedRun, "governance.permission_decided", new
+                        {
+                            permission_request_id = resolved.Request.Id,
+                            authorization_decision_id = resolved.Decision.Id,
+                            outcome = resolved.Decision.Outcome,
+                            reason_code = resolved.Decision.ReasonCode
+                        }, "Permission decision committed; run resumed.", cancellationToken: ct).ConfigureAwait(false);
+                    }
+                    await _engine.EnqueueAsync(deniedRun, ct).ConfigureAwait(false);
+                }
+            }
             return Results.Ok(new { id, status = resolved.Request.Status, decided_at = resolved.Decision.CreatedAt });
         }
         var approveAction = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)

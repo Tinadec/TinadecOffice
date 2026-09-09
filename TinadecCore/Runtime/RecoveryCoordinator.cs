@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.DmaEA;
 using TinadecCore.Lifecycle;
 
 namespace TinadecCore.Runtime;
@@ -31,6 +33,8 @@ public sealed class RecoveryCoordinator : BackgroundService
     private readonly StorageLifecycleService _storage;
     private readonly IServiceProvider _services;
     private readonly IUserToolActionRecovery _userToolActionRecovery;
+    private readonly ToolApprovalCoordinator _approvals;
+    private readonly TinadecApprovalOptions _approvalOptions;
     private readonly ILogger<RecoveryCoordinator> _logger;
 
     public RecoveryCoordinator(
@@ -38,12 +42,16 @@ public sealed class RecoveryCoordinator : BackgroundService
         StorageLifecycleService storage,
         IServiceProvider services,
         IUserToolActionRecovery userToolActionRecovery,
-        ILogger<RecoveryCoordinator> logger)
+        ToolApprovalCoordinator approvals,
+        ILogger<RecoveryCoordinator> logger,
+        IOptions<TinadecApprovalOptions>? approvalOptions = null)
     {
         _lifecycle = lifecycle;
         _storage = storage;
         _services = services;
         _userToolActionRecovery = userToolActionRecovery;
+        _approvals = approvals;
+        _approvalOptions = approvalOptions?.Value ?? new TinadecApprovalOptions();
         _logger = logger;
     }
 
@@ -60,6 +68,62 @@ public sealed class RecoveryCoordinator : BackgroundService
         catch (Exception ex)
         {
             _logger.TryLogError(ex, "Recovery coordinator startup passes failed.");
+        }
+
+        // Approval expiry has no other observer: TryStartAsync only evaluates the
+        // decision window when a run happens to resume, and the recovery scans
+        // skip awaiting_* runs by design. Sweep at startup and then periodically
+        // so a parked run escalates to awaiting_user instead of waiting forever.
+        if (!_approvalOptions.ExpirySweepEnabled) return;
+        await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
+        var interval = TimeSpan.FromSeconds(Math.Clamp(_approvalOptions.ExpirySweepIntervalSeconds, 5, 3600));
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// One expiry sweep pass. Public for deterministic test invocation, mirroring
+    /// <see cref="RunStartupPassesAsync"/>. Live runs are only enqueued — the
+    /// engine's resume re-enters TryStartAsync, which owns the park transition —
+    /// while undrivable approvals were already expired by the coordinator.
+    /// </summary>
+    public async Task<ApprovalExpirySweepResult> SweepApprovalExpiryAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var sweep = await _approvals.SweepExpiredPendingApprovalsAsync(cancellationToken).ConfigureAwait(false);
+            if (_services.GetService<IFullDuplexRunEngine>() is { } engine)
+            {
+                foreach (var runId in sweep.RunIdsToWake)
+                {
+                    await engine.EnqueueAsync(runId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            if (sweep.RunIdsToWake.Count > 0 || sweep.OrphanedExpiryCount > 0)
+            {
+                _logger.TryLogInformation("Approval expiry sweep: {WakeCount} run(s) woken, {OrphanCount} undrivable approval(s) expired.",
+                    sweep.RunIdsToWake.Count, sweep.OrphanedExpiryCount);
+            }
+            return sweep;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new ApprovalExpirySweepResult([], 0);
+        }
+        catch (Exception ex)
+        {
+            _logger.TryLogWarning(ex, "Approval expiry sweep failed.");
+            return new ApprovalExpirySweepResult([], 0);
         }
     }
 

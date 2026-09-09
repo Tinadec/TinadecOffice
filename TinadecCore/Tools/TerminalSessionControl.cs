@@ -21,19 +21,26 @@ public sealed class TerminalSessionControlService : ITerminalSessionControl
     private readonly ITerminalSessionRegistry _registry;
     private readonly IToolProvider _provider;
     private readonly ILifecycleManager _lifecycle;
+    private readonly IInFlightToolCallRegistry _inFlightCalls;
 
     public TerminalSessionControlService(
         ITerminalSessionRegistry registry,
         IToolProvider provider,
-        ILifecycleManager lifecycle)
+        ILifecycleManager lifecycle,
+        IInFlightToolCallRegistry inFlightCalls)
     {
         _registry = registry;
         _provider = provider;
         _lifecycle = lifecycle;
+        _inFlightCalls = inFlightCalls;
     }
 
     public async Task<int> KillForRunAsync(Guid runId, CancellationToken cancellationToken = default)
     {
+        // Run cancel reaches the tool layer through this path: interrupt the
+        // run's in-flight provider calls first (a cancelled run must not keep a
+        // wire call alive until timeout), then terminate its terminal sessions.
+        _inFlightCalls.CancelForRun(runId);
         var sessions = _registry.ListLiveForRun(runId);
         if (sessions.Count == 0) return 0;
 

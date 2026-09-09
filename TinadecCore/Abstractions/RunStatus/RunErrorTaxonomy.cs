@@ -31,6 +31,8 @@ public static class RunErrorTaxonomy
     public const string ToolManifestChanged = "manifest_changed";
     public const string ToolBlocked = "blocked";
     public const string ToolAlreadyRunning = "already_running";
+    /// <summary>The provider transport failed before the call was delivered (handshake/startup failure); the call was never sent.</summary>
+    public const string ToolRuntimeUnavailable = "tool_runtime_unavailable";
 
     // ── Approval ──
     public const string ApprovalMissing = "approval_missing";
@@ -49,7 +51,7 @@ public static class RunErrorTaxonomy
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
         Config, Model, Protocol, Runtime, WorkerUnavailable, Cancelled,
-        ToolError, ToolTimeout, ToolProcessExit, ToolPrepareFailed, ToolManifestChanged, ToolBlocked, ToolAlreadyRunning,
+        ToolError, ToolTimeout, ToolProcessExit, ToolPrepareFailed, ToolManifestChanged, ToolBlocked, ToolAlreadyRunning, ToolRuntimeUnavailable,
         ApprovalMissing, ApprovalExpired, ApprovalBindingMismatch, NotApproved, ApprovalConsumedWithoutOutcome,
         RecoveryFailed, OutcomeUnknown, SnapshotFailed, SnapshotOverride, RecoveryMarkedFailed
     };

@@ -1746,17 +1746,18 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private static string NormalizeRisk(string value)
     {
         var risk = CapabilityRuleMatcher.Required(value, nameof(value), 32).ToLowerInvariant();
-        return risk is "low" or "medium" or "high" or "critical"
+        return risk is "low" or "medium" or "elevated" or "high" or "critical"
             ? risk
-            : throw new ArgumentException("Risk must be low, medium, high, or critical.", nameof(value));
+            : throw new ArgumentException("Risk must be low, medium, elevated, high, or critical.", nameof(value));
     }
 
     private static int RiskRank(string risk) => risk.ToLowerInvariant() switch
     {
         "low" => 0,
         "medium" => 1,
-        "high" => 2,
-        "critical" => 3,
+        "elevated" => 2,
+        "high" => 3,
+        "critical" => 4,
         _ => int.MaxValue
     };
 

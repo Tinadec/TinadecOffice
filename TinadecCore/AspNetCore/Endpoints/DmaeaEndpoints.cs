@@ -104,7 +104,7 @@ public static class DmaeaEndpoints
             FullDuplexCheckpointV1? checkpoint = null;
             if (checkpointRow is not null)
             {
-                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content); } catch { }
+                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content, CheckpointJsonOptions); } catch { }
             }
             static string LaneOfTaskSession(DurableTaskNode task) =>
                 string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
@@ -214,29 +214,49 @@ public static class DmaeaEndpoints
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
-            var items = events.Where(e => e.EventType == "step.result.created" || e.EventType == "task.assigned").Select(e => new
+            var items = events.Where(e => e.EventType is "step.result.created" or "task.assigned"
+                    or "tool.execution.requested" or "tool.execution.completed"
+                    or "tool.execution.failed" or "tool.execution.outcome_unknown")
+                .Select(e =>
             {
-                id = PayloadString(e.Payload, "task_node_id"),
-                run_id = PayloadString(e.Payload, "run_id") ?? "",
-                session_id = sessionId,
-                tool_id = PayloadString(e.Payload, "tool_id") ?? "",
-                tool_display_name = "",
-                source = "dmaea",
-                provider_layer = "execution",
-                risk = "medium",
-                requires_approval = false,
-                status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "pending",
-                approval_id = (string?)null,
-                step_result_id = PayloadString(e.Payload, "task_node_id"),
-                summary = PayloadString(e.Payload, "summary") ?? "",
-                evidence = PayloadArray(e.Payload, "evidence"),
-                requested_at = e.Timestamp,
-                updated_at = e.Timestamp,
-                duration_ms = 0L,
-                requested_seq = e.Payload.TryGetValue("sequence", out var seq) ? (long)(seq is JsonElement je && je.ValueKind == JsonValueKind.Number ? je.GetInt64() : 0) : 0L,
-                updated_seq = 0L,
-                event_types = new[] { e.EventType },
-                checkpoint_summary = ""
+                // The durable tool.execution.* journal rows join the legacy
+                // task.assigned/step.result.created projection so the real
+                // dispatch outcomes (including the honestly recorded embedded
+                // tool_success flag) are visible; legacy rows keep their shape.
+                var isToolExecution = e.EventType.StartsWith("tool.execution.", StringComparison.Ordinal);
+                return new
+                {
+                    id = isToolExecution ? PayloadString(e.Payload, "execution_id") : PayloadString(e.Payload, "task_node_id"),
+                    run_id = isToolExecution ? e.RunId ?? "" : PayloadString(e.Payload, "run_id") ?? "",
+                    session_id = sessionId,
+                    tool_id = PayloadString(e.Payload, "tool_id") ?? "",
+                    tool_display_name = "",
+                    source = "dmaea",
+                    provider_layer = "execution",
+                    risk = isToolExecution ? PayloadString(e.Payload, "risk") ?? "medium" : "medium",
+                    requires_approval = PayloadBool(e.Payload, "requires_approval") ?? false,
+                    status = e.EventType switch
+                    {
+                        "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                        "task.assigned" => "pending",
+                        "tool.execution.requested" => "requested",
+                        "tool.execution.completed" => "completed",
+                        "tool.execution.failed" => "failed",
+                        _ => "outcome_unknown"
+                    },
+                    approval_id = (string?)null,
+                    step_result_id = PayloadString(e.Payload, "task_node_id"),
+                    summary = PayloadString(e.Payload, "summary") ?? "",
+                    evidence = PayloadArray(e.Payload, "evidence"),
+                    requested_at = e.Timestamp,
+                    updated_at = e.Timestamp,
+                    duration_ms = 0L,
+                    requested_seq = e.Payload.TryGetValue("sequence", out var seq) ? (long)(seq is JsonElement je && je.ValueKind == JsonValueKind.Number ? je.GetInt64() : 0) : 0L,
+                    updated_seq = 0L,
+                    event_types = new[] { e.EventType },
+                    checkpoint_summary = "",
+                    tool_success = PayloadBool(e.Payload, "tool_success")
+                };
             }).ToList();
             return Results.Ok(items);
         });
@@ -304,13 +324,13 @@ public static class DmaeaEndpoints
             FrozenRunConfigurationV1? parsedFrozen = null;
             if (frozen is not null)
             {
-                try { parsedFrozen = System.Text.Json.JsonSerializer.Deserialize<FrozenRunConfigurationV1>(frozen.Content); } catch { }
+                try { parsedFrozen = System.Text.Json.JsonSerializer.Deserialize<FrozenRunConfigurationV1>(frozen.Content, CheckpointJsonOptions); } catch { }
             }
             var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(runGuid, ct);
             FullDuplexCheckpointV1? checkpoint = null;
             if (checkpointRow is not null)
             {
-                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content); } catch { }
+                try { checkpoint = System.Text.Json.JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content, CheckpointJsonOptions); } catch { }
             }
             static string LaneOfTask(DurableTaskNode task) =>
                 string.IsNullOrWhiteSpace(task.LaneKey) ? "main" : task.LaneKey.Trim();
@@ -599,6 +619,16 @@ public static class DmaeaEndpoints
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
+    /// <summary>
+    /// Checkpoint and frozen-configuration bodies are persisted by the engine
+    /// with web (camelCase) options, while the coordinator's admission-time
+    /// checkpoint write uses bare defaults; web deserialization is
+    /// case-insensitive and reads both shapes. A bare (case-sensitive) read
+    /// silently dropped every camelCase property, which emptied the
+    /// lanes/task_keys projection.
+    /// </summary>
+    private static readonly JsonSerializerOptions CheckpointJsonOptions = new(JsonSerializerDefaults.Web);
+
     private static JsonElement PayloadRoot(IReadOnlyDictionary<string, object?> payload)
     {
         if (payload.TryGetValue("payload", out var inner) && inner is JsonElement { ValueKind: JsonValueKind.Object } obj) return obj;
@@ -625,6 +655,14 @@ public static class DmaeaEndpoints
         var root = PayloadRoot(payload);
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var value))
             return value;
+        return null;
+    }
+
+    private static bool? PayloadBool(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        var root = PayloadRoot(payload);
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty(key, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            return v.GetBoolean();
         return null;
     }
 }

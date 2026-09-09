@@ -303,6 +303,36 @@ public sealed class GovernanceServiceTests
         Assert.False(await harness.Service.RevokeLeaseAsync(lease.Id, "Cross-tenant attempt."));
     }
 
+    [Fact]
+    public async Task RiskVocabulary_ElevatedIsAccepted_UnknownRiskFailsClosed()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        harness.Context.Boundaries = [new("hard_policy", [AllowWrite])];
+        var approverAgent = Guid.NewGuid();
+        var approverVersion = Guid.NewGuid();
+        harness.Context.AgentVersions[approverAgent] = approverVersion;
+
+        // elevated joined the formal vocabulary: it is accepted on both the
+        // delegation ceiling and the request, and an elevated-ceiling delegation
+        // may decide an elevated-risk request (medium < elevated < high).
+        var delegation = await harness.Service.CreateApprovalDelegationAsync(new CreateApprovalDelegationCommand(
+            approverVersion, approverAgent, [AllowWrite], "elevated", 10, 2,
+            harness.Time.GetUtcNow().AddHours(1)));
+        Assert.Equal("elevated", delegation.MaxRisk);
+
+        var pending = await harness.Service.RequestPermissionAsync(Request(
+            Guid.NewGuid(), "elevated-request", Guid.NewGuid(), "elevated", 1));
+        var resolved = await harness.Service.DecidePermissionAsync(new PermissionDecisionCommand(
+            pending.Request.Id, true, approverAgent, delegation.Id, "elevated within an elevated ceiling."));
+        Assert.Equal(PermissionRequestStatuses.Granted, resolved.Request.Status);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => harness.Service.CreateApprovalDelegationAsync(new CreateApprovalDelegationCommand(
+            approverVersion, approverAgent, [AllowWrite], "bogus", 10, 2,
+            harness.Time.GetUtcNow().AddHours(1))));
+        await Assert.ThrowsAsync<ArgumentException>(() => harness.Service.RequestPermissionAsync(
+            Request(Guid.NewGuid(), "bogus-risk", risk: "bogus")));
+    }
+
     private static PermissionRequestCommand Request(
         Guid subject,
         string idempotencyKey,

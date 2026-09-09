@@ -12,20 +12,21 @@ internal static class AutoApprovePolicyRules
     /// Risk ordering used by the auto-approve policy. Rankings are compared
     /// against a configured ceiling, so only the relative order matters; every
     /// value the policy does not explicitly recognize sorts above every ceiling
-    /// and can never be auto-approved.
+    /// and can never be auto-approved. The ordering is the shared vocabulary:
+    /// low &lt; medium &lt; elevated &lt; high &lt; critical.
     /// </summary>
     /// <remarks>
-    /// The durable tool chain also recognizes <c>elevated</c>, which deliberately
-    /// falls into the unrecognized bucket here: it sits between <c>high</c> and
-    /// <c>critical</c> in that ranking, and auto-approving it would widen the
-    /// permission-request path, which has always treated it as unrecognized.
+    /// <c>elevated</c> is part of the shared vocabulary but is still never
+    /// auto-approved at any ceiling (M8 invariant): <see cref="Engages"/> refuses
+    /// it explicitly instead of relying on it sorting above the ceiling.
     /// </remarks>
     public static int RiskRank(string? risk) => risk?.Trim().ToLowerInvariant() switch
     {
         "low" => 0,
         "medium" => 1,
-        "high" => 2,
-        "critical" => 3,
+        "elevated" => 2,
+        "high" => 3,
+        "critical" => 4,
         _ => int.MaxValue
     };
 
@@ -38,5 +39,6 @@ internal static class AutoApprovePolicyRules
         options.AutoApproveEnabled
         && approveIntent
         && !(toolId is not null && options.IsHumanOnlyTool(toolId))
+        && !string.Equals(risk?.Trim(), "elevated", StringComparison.OrdinalIgnoreCase)
         && RiskRank(risk) <= RiskRank(options.AutoApproveRiskMax);
 }

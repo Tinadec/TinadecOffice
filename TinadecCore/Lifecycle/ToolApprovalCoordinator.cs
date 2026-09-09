@@ -492,13 +492,13 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     {
         "low" => 0,
         "medium" => 1,
-        "high" => 2,
-        "elevated" => 3,
+        "elevated" => 2,
+        "high" => 3,
         "critical" => 4,
         _ => 5
     };
 
-    public async Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, CancellationToken cancellationToken = default)
+    public async Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, bool allowStaleRunningReset = false, CancellationToken cancellationToken = default)
     {
         var scope = _tenant.Current;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -509,7 +509,32 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
         var snapshot = await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false);
         if (IsExecutionTerminal(execution.Status)) return new ToolExecutionStartDecision(execution.Status, snapshot, "Tool execution is terminal.");
-        if (execution.Status == "running") return new ToolExecutionStartDecision("already_running", snapshot, "Tool execution is already running.");
+        if (execution.Status == "running" && !allowStaleRunningReset)
+            return new ToolExecutionStartDecision("already_running", snapshot, "Tool execution is already running.");
+        if (execution.Status == "running" && execution.RequiresApproval)
+        {
+            // A running row the caller proved this process cannot hold (host
+            // restart or torn state). The approval consume CAS and the running
+            // mark commit in one transaction, so the approval was provably
+            // consumed and the tool may already have run: never replay a
+            // potentially mutating call automatically.
+            execution.Status = "outcome_unknown";
+            execution.ErrorCategory = RunErrorTaxonomy.ApprovalConsumedWithoutOutcome;
+            execution.SafeErrorMessage = "The host stopped after the approval was consumed; the tool outcome is unknown.";
+            execution.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return new ToolExecutionStartDecision("outcome_unknown", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), execution.SafeErrorMessage);
+        }
+        if (execution.Status == "running")
+        {
+            // A stale read-only running row carries no external side effect a
+            // replay could double, so reset it and let the normal start path
+            // drive it again instead of parking it forever on already_running.
+            execution.Status = "requested";
+            execution.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            snapshot = await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false);
+        }
         if (execution.Status == "outcome_unknown") return new ToolExecutionStartDecision("outcome_unknown", snapshot, "Recovery decision is required before this execution can continue.");
 
         var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x =>
@@ -677,12 +702,13 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         return new ToolExecutionStartDecision("running", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
     }
 
-    public async Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, CancellationToken cancellationToken = default)
+    public async Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, bool? toolSuccess = null, CancellationToken cancellationToken = default)
     {
         var row = await GetExecutionForWriteAsync(executionId, cancellationToken).ConfigureAwait(false);
         if (row.Status != "running") return await ToSnapshotAsync(row, cancellationToken).ConfigureAwait(false);
         var stored = await StoreResultAsync(row, resultJson, cancellationToken).ConfigureAwait(false);
         row.Status = "completed";
+        row.ToolSuccess = toolSuccess;
         row.ResultReference = stored.Value;
         row.ResultHash = stored.Sha256;
         row.ResultLength = stored.Length;
@@ -708,6 +734,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         var body = JsonSerializer.Serialize(new { error_category = errorCategory, message }, JsonOptions);
         var stored = await StoreResultAsync(row, body, cancellationToken).ConfigureAwait(false);
         row.Status = status;
+        row.ToolSuccess = null;
         row.ResultReference = stored.Value;
         row.ResultHash = stored.Sha256;
         row.ResultLength = stored.Length;
@@ -840,6 +867,54 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             execution.CompletedAt = execution.UpdatedAt = now;
         }
         if (approvals.Count != 0 || executions.Count != 0) await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Observer for the expiry paths TryStartAsync only evaluates when a run
+    /// happens to resume: pending approvals whose decision window already
+    /// elapsed. Live runs are returned for the caller to wake (the engine's
+    /// resume re-enters TryStartAsync, which parks the approval with the
+    /// park_expired signal and escalates the lane to awaiting_user); approvals
+    /// nobody will ever drive again (run-less, or their run is terminal) are
+    /// expired directly so they cannot sit pending forever.
+    /// </summary>
+    public async Task<ApprovalExpirySweepResult> SweepExpiredPendingApprovalsAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // SQLite cannot translate DateTimeOffset comparisons; load the pending
+        // set and apply the window in memory, mirroring TryConsumeApprovalAsync.
+        var pending = await db.ApprovalRequests.AsNoTracking()
+            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "pending")
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var elapsed = pending.Where(x => x.ExpiresAt <= now).ToList();
+        if (elapsed.Count == 0) return new ApprovalExpirySweepResult([], 0);
+
+        var runIds = elapsed.Where(x => x.RunId is not null).Select(x => x.RunId!.Value).Distinct().ToList();
+        var runs = await db.Runs.AsNoTracking().Where(x => runIds.Contains(x.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var liveRunIds = runs.Where(x => !RunStatusMachine.IsTerminal(x.Status)).Select(x => x.Id).ToHashSet();
+
+        var orphaned = elapsed.Where(x => x.RunId is null || !liveRunIds.Contains(x.RunId.Value)).ToList();
+        foreach (var approval in orphaned)
+        {
+            await db.ApprovalRequests
+                .Where(x => x.Id == approval.Id && x.Status == "pending")
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.Status, "expired")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        }
+
+        // A live run whose approval elapsed is woken, not marked: marking it
+        // here would turn the next TryStartAsync into a hard not_approved
+        // failure instead of the park-and-escalate path the M8 unattended
+        // design requires.
+        var wakeRunIds = elapsed
+            .Where(x => x.RunId is not null && liveRunIds.Contains(x.RunId.Value))
+            .Select(x => x.RunId!.Value)
+            .Distinct()
+            .ToList();
+        return new ApprovalExpirySweepResult(wakeRunIds, orphaned.Count);
     }
 
     public async Task<Guid> CreateToolApprovalAsync(
@@ -1088,7 +1163,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.ApprovalId, row.ToolId, row.ToolCallKey, row.Risk, row.MutatesWorkspace, row.RequiresApproval, row.Status, parametersJson,
         row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt,
         row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses,
-        row.WorkspaceSnapshotId, row.WorkspaceSnapshotHash, row.LaneKey);
+        row.WorkspaceSnapshotId, row.WorkspaceSnapshotHash, row.LaneKey, row.ToolSuccess);
 
     // Action approvals carry a server-generated, one-time nonce. Only its hash
     // and a protected-material reference are persisted; the material is never
@@ -1126,8 +1201,10 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
     private static string NormalizeRisk(string risk) => risk.Trim().ToLowerInvariant() switch
     {
-        "low" or "medium" or "high" or "elevated" or "critical" => risk.Trim().ToLowerInvariant(),
-        _ => "medium"
+        "low" or "medium" or "elevated" or "high" or "critical" => risk.Trim().ToLowerInvariant(),
+        // Fail closed: silently coercing an unknown risk to "medium" would let a
+        // misspelled high-risk tool slide under the auto-approve ceiling.
+        _ => throw new ArgumentException("Risk must be low, medium, elevated, high, or critical.", nameof(risk))
     };
 
     private static string Truncate(string? value, int limit)
@@ -1177,3 +1254,10 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }
+
+/// <summary>
+/// Outcome of <see cref="ToolApprovalCoordinator.SweepExpiredPendingApprovalsAsync"/>:
+/// the live runs that must be woken so their parked approvals escalate, and how
+/// many undrivable approvals were expired directly.
+/// </summary>
+public sealed record ApprovalExpirySweepResult(IReadOnlyList<Guid> RunIdsToWake, int OrphanedExpiryCount);

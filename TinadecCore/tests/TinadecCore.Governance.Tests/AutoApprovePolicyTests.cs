@@ -54,6 +54,7 @@ public sealed class AutoApprovePolicyTests
     [Theory]
     [InlineData("git_push")]
     [InlineData("command_run")]
+    [InlineData("shell")]
     [InlineData("git_worktree_remove")]
     [InlineData("mcp_invoke")]
     [InlineData("workspace_delete")]
@@ -157,6 +158,8 @@ public sealed class AutoApprovePolicyTests
     [InlineData("medium", "medium", true)]
     [InlineData("high", "medium", false)]
     [InlineData("critical", "critical", true)]
+    [InlineData("elevated", "medium", false)]
+    [InlineData("elevated", "high", false)]
     [InlineData("elevated", "critical", false)]
     [InlineData("unknown_risk", "critical", false)]
     [InlineData("high", null, false)]
@@ -181,10 +184,30 @@ public sealed class AutoApprovePolicyTests
         var policy = new ToolApprovalAutoPolicy(Options.Create(options));
 
         var listed = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("git_push", "low", Guid.NewGuid()));
+        var shell = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("shell", "low", Guid.NewGuid()));
         var suffix = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("file_delete", "low", Guid.NewGuid()));
 
         Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, listed.Outcome);
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, shell.Outcome);
         Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, suffix.Outcome);
+    }
+
+    /// <summary>
+    /// The shared vocabulary orders medium &lt; elevated &lt; high, but elevated is
+    /// never auto-approved at any ceiling (M8 invariant): it is refused even
+    /// when the ceiling would rank above it.
+    /// </summary>
+    [Fact]
+    public async Task ToolApprovalAutoPolicy_ElevatedNeverEngages_EvenBelowTheCeiling()
+    {
+        var options = new AutoApproveOptions { AutoApproveEnabled = true, AutoApproveRiskMax = "high" };
+        var policy = new ToolApprovalAutoPolicy(Options.Create(options));
+
+        var elevated = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "elevated", Guid.NewGuid()));
+        var high = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("write_file", "high", Guid.NewGuid()));
+
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, elevated.Outcome);
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.Approved, high.Outcome);
     }
 
     [Fact]

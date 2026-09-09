@@ -192,8 +192,23 @@ public interface IToolExecutionCoordinator
 {
     Task<ToolExecutionPreparation> PrepareAsync(ToolExecutionPrepareRequest request, CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot?> FindAsync(Guid executionId, CancellationToken cancellationToken = default);
-    Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, CancellationToken cancellationToken = default);
-    Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, CancellationToken cancellationToken = default);
+    /// <param name="allowStaleRunningReset">
+    /// True when the caller has established that this process cannot hold the
+    /// in-flight call a <c>running</c> row refers to (host restart). A stale
+    /// approval-gated running row is converted to <c>outcome_unknown</c> — the
+    /// approval consume CAS and the running mark commit atomically, so it was
+    /// provably consumed — while a stale read-only running row is reset to
+    /// <c>requested</c> and driven again. False keeps the legacy
+    /// <c>already_running</c> answer for genuinely concurrent resumes.
+    /// </param>
+    Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, bool allowStaleRunningReset = false, CancellationToken cancellationToken = default);
+    /// <param name="toolSuccess">
+    /// Embedded outcome flag for tools whose result payload carries its own
+    /// success field (e.g. <c>shell</c> exit status). Null means the tool
+    /// reports no embedded outcome. The dispatch status stays
+    /// <c>completed</c>; this is an audit-honesty flag, not a control-flow one.
+    /// </param>
+    Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, bool? toolSuccess = null, CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> FailAsync(Guid executionId, string status, string errorCategory, string safeMessage, CancellationToken cancellationToken = default);
     Task<ToolExecutionSnapshot> BindAuthorizationAsync(
         Guid executionId,
@@ -283,7 +298,13 @@ public sealed record ToolExecutionSnapshot(
     int LeaseUses = 1,
     Guid? WorkspaceSnapshotId = null,
     string? WorkspaceSnapshotHash = null,
-    string? LaneKey = null);
+    string? LaneKey = null,
+    /// <summary>
+    /// Embedded outcome flag for tools whose result payload carries its own
+    /// success field (e.g. <c>shell</c> reported a non-zero exit). Null when the
+    /// tool reports no embedded outcome. Independent of <see cref="Status"/>.
+    /// </summary>
+    bool? ToolSuccess = null);
 
 /// <summary>
 /// Result of durably admitting one logical tool call. Replaying the same

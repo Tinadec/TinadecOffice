@@ -29,7 +29,7 @@ public sealed class FrozenWorkerSelectionTests
     [Theory]
     [InlineData("worker.code", "tool.code", "write_file")]
     [InlineData("worker.document", "tool.document", "read_file")]
-    [InlineData("worker.data", "tool.data", "shell.execute")]
+    [InlineData("worker.data", "tool.data", "shell")]
     [InlineData("worker.browser", "tool.browser", "browser.fetch")]
     [InlineData("worker.file", "tool.file", "read_file")]
     [InlineData("worker.general", "task.execute", null)]
@@ -126,7 +126,7 @@ public sealed class FrozenWorkerSelectionTests
         var planner = Agent("task_planner", "execution", "execution_coordinator", ["task.plan", "agent.create_temporary"], ["*"], 0);
         var code = Agent("worker.code", "execution", "task_executor", ["tool.code", "tool.file"], ["read_file", "write_file"], 1);
         var document = Agent("worker.document", "execution", "task_executor", ["tool.document"], ["read_file", "write_file"], 2);
-        var data = Agent("worker.data", "execution", "task_executor", ["tool.data"], ["read_file", "shell.execute"], 3);
+        var data = Agent("worker.data", "execution", "task_executor", ["tool.data"], ["read_file", "shell"], 3);
         var browser = Agent("worker.browser", "execution", "task_executor", ["tool.search", "tool.browser"], ["browser.search", "browser.fetch", "mcp_search", "mcp_invoke"], 4);
         var file = Agent("worker.file", "execution", "task_executor", ["tool.file"], ["read_file", "write_file"], 5);
         var general = Agent("worker.general", "execution", "task_executor", ["task.execute"], ["*"], 6);
@@ -153,7 +153,7 @@ public sealed class FrozenWorkerSelectionTests
         {
             ToolManifestProtocolVersion = 2,
             ToolManifest = [
-                Tool("read_file"), Tool("write_file"), Tool("shell.execute"), Tool("mcp_invoke"),
+                Tool("read_file"), Tool("write_file"), Tool("shell"), Tool("mcp_invoke"),
                 Tool("browser.search"), Tool("browser.fetch"), Tool("mcp_search"),
                 Tool("git_status"), Tool("git_diff"), Tool("git_commit")
             ]

@@ -37,6 +37,7 @@ public sealed class ToolDispatcher : IToolDispatcher
     private readonly IWorkspaceSnapshotService _snapshots;
     private readonly ILifecycleManager _lifecycle;
     private readonly ITerminalSessionRegistry _terminalSessions;
+    private readonly IInFlightToolCallRegistry _inFlightCalls;
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
 
@@ -48,6 +49,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         IWorkspaceSnapshotService snapshots,
         ILifecycleManager lifecycle,
         ITerminalSessionRegistry terminalSessions,
+        IInFlightToolCallRegistry inFlightCalls,
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger)
     {
@@ -58,6 +60,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         _snapshots = snapshots;
         _lifecycle = lifecycle;
         _terminalSessions = terminalSessions;
+        _inFlightCalls = inFlightCalls;
         _options = options;
         _logger = logger;
     }
@@ -211,6 +214,20 @@ public sealed class ToolDispatcher : IToolDispatcher
             _logger.LogDebug(ex, "Tool prepare was rejected for run {RunId} and tool {ToolId}", request.RunId, request.ToolId);
             return Blocked(SafeMessage(ex.Message));
         }
+        catch (InvalidDataException ex)
+        {
+            // Manifest handshake failure: the tool runtime never accepted the
+            // call. This is a task-level transport failure, not a run failure.
+            _logger.TryLogWarning(ex, "Tool runtime unavailable while preparing {ToolId} for run {RunId}", request.ToolId, request.RunId);
+            return Blocked($"The tool runtime is unavailable: {SafeMessage(ex.Message)}", errorCategory: RunErrorTaxonomy.ToolRuntimeUnavailable);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Provider startup timeout. Host shutdown (caller's own token) is
+            // deliberately not caught here and keeps its propagation semantics.
+            _logger.TryLogWarning("Tool runtime startup timed out while preparing {ToolId} for run {RunId}", request.ToolId, request.RunId);
+            return Blocked("The tool runtime did not become ready in time.", errorCategory: RunErrorTaxonomy.ToolRuntimeUnavailable);
+        }
     }
 
     public async Task<ToolDispatchResultDto> ResumeAsync(string executionId, CancellationToken cancellationToken = default)
@@ -218,6 +235,14 @@ public sealed class ToolDispatcher : IToolDispatcher
         if (!Guid.TryParse(executionId, out var executionGuid)) return Blocked("execution_id must be a valid id.");
         var execution = await _executions.FindAsync(executionGuid, cancellationToken).ConfigureAwait(false);
         if (execution is null) return Blocked("Tool execution was not found.");
+
+        // A running row this process holds is a genuinely live call, not a
+        // stale remnant: answer already_running before the authorization phase
+        // can clobber the row's status back to requested underneath the call.
+        if (execution.Status == "running" && _inFlightCalls.IsTracked(executionGuid))
+        {
+            return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.ToolAlreadyRunning, Message = "Tool execution is already running." };
+        }
 
         ToolInvocationScope scope;
         ToolManifestEntryDto descriptor;
@@ -300,8 +325,27 @@ public sealed class ToolDispatcher : IToolDispatcher
         {
             return Blocked(SafeMessage(ex.Message), execution);
         }
+        catch (InvalidDataException ex)
+        {
+            // Manifest handshake failure before the execution was started: the
+            // row stays resumable and the failure surfaces at task level.
+            _logger.TryLogWarning(ex, "Tool runtime unavailable while resuming execution {ExecutionId}", execution.Id);
+            return Blocked($"The tool runtime is unavailable: {SafeMessage(ex.Message)}", execution, RunErrorTaxonomy.ToolRuntimeUnavailable);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning("Tool runtime startup timed out while resuming execution {ExecutionId}", execution.Id);
+            return Blocked("The tool runtime did not become ready in time.", execution, RunErrorTaxonomy.ToolRuntimeUnavailable);
+        }
 
-        var start = await _executions.TryStartAsync(executionGuid, cancellationToken).ConfigureAwait(false);
+        // A "running" row this process does not hold is a stale remnant of a
+        // crashed host: the coordinator converts it (outcome_unknown for
+        // approval-gated calls, re-drive for read-only ones) instead of
+        // answering already_running forever. A row this process does hold
+        // keeps the legacy already_running answer.
+        var start = await _executions.TryStartAsync(executionGuid,
+            allowStaleRunningReset: !_inFlightCalls.IsTracked(executionGuid),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         switch (start.Status)
         {
             case "awaiting_approval":
@@ -359,7 +403,10 @@ public sealed class ToolDispatcher : IToolDispatcher
             && string.Equals(descriptor.RetrySafety, "safe", StringComparison.OrdinalIgnoreCase);
         var retryLimit = safeReadRetry ? Math.Max(0, scope.WorkerRetryLimit) : 0;
         var timeoutSeconds = scope.DefaultTimeoutSeconds > 0 ? scope.DefaultTimeoutSeconds : Math.Max(1, _options.DefaultTimeoutSeconds);
-        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        // The wire timeout must cover the tool's own budget: a shell call with
+        // timeout_ms above the configured default must not be killed by Core
+        // before the tool's own deadline fires.
+        var timeout = ResolveWireTimeout(parameters, TimeSpan.FromSeconds(timeoutSeconds));
         var streaming = _provider as IToolProcessManager;
         var streams = streaming is not null && StreamingTools.Contains(descriptor.Id);
         ToolEventPump? pump = null;
@@ -368,6 +415,17 @@ public sealed class ToolDispatcher : IToolDispatcher
             pump = new ToolEventPump(_lifecycle, _logger, execution.RunId, execution.TaskId, execution.Id, descriptor.Id);
             await pump.AppendCommandAsync(parameters, scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
         }
+
+        // Track the in-flight call so a run cancel interrupts the provider call
+        // instead of waiting out the wire timeout, and so a later resume can
+        // tell a live call apart from a stale running row.
+        using var inFlight = _inFlightCalls.TryRegister(execution.RunId, execution.Id);
+        if (inFlight is null)
+        {
+            return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.ToolAlreadyRunning, Message = "Tool execution is already running." };
+        }
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, inFlight.Token);
+        var callToken = linkedCts.Token;
 
         ToolWireResponseDto? last = null;
         try
@@ -382,21 +440,56 @@ public sealed class ToolDispatcher : IToolDispatcher
                     Params = parameters
                 };
 
-                var response = await CallProviderAsync(
-                    streaming, pump, scope, execution, wire, timeout, cancellationToken).ConfigureAwait(false);
+                ToolWireResponseDto response;
+                try
+                {
+                    response = await CallProviderAsync(
+                        streaming, pump, scope, execution, wire, timeout, callToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && inFlight.Token.IsCancellationRequested)
+                {
+                    // The run was cancelled while the provider held the call. The
+                    // child may or may not have executed it, so a mutating call
+                    // lands in outcome_unknown and a read-only call is cancelled.
+                    const string cancelMessage = "The run was cancelled while the tool call was in flight.";
+                    if (execution.MutatesWorkspace)
+                    {
+                        var unknown = await _executions.FailAsync(execution.Id, RunErrorTaxonomy.OutcomeUnknown, RunErrorTaxonomy.Cancelled, cancelMessage, CancellationToken.None).ConfigureAwait(false);
+                        await PauseForUnknownOutcomeAsync(unknown, cancelMessage, CancellationToken.None).ConfigureAwait(false);
+                        return ResultForFailure(unknown, ToolDispatchStatus.OutcomeUnknown);
+                    }
+                    var cancelled = await _executions.FailAsync(execution.Id, "cancelled", RunErrorTaxonomy.Cancelled, cancelMessage, CancellationToken.None).ConfigureAwait(false);
+                    return ResultForFailure(cancelled, ToolDispatchStatus.Blocked);
+                }
+                catch (Exception ex) when ((ex is InvalidDataException or OperationCanceledException) && !cancellationToken.IsCancellationRequested)
+                {
+                    // Handshake/startup failures happen before the request line
+                    // is written: the call provably never reached the tool, so
+                    // even a mutating execution fails (never outcome_unknown) and
+                    // the failure stays at task level instead of killing the run.
+                    _logger.TryLogWarning(ex, "Tool runtime unavailable while dispatching {ToolId} for run {RunId}", descriptor.Id, execution.RunId);
+                    response = new ToolWireResponseDto { CallId = -1, IsSuccess = false, Error = $"{RunErrorTaxonomy.ToolRuntimeUnavailable}: {SafeMessage(ex.Message)}" };
+                }
 
                 if (response.IsSuccess)
                 {
                     var resultJson = response.Result is { } result ? result.GetRawText() : "null";
                     if (streams) RecordTerminalSession(response.Result, execution, scope);
-                    var completed = await _executions.CompleteAsync(execution.Id, resultJson, cancellationToken).ConfigureAwait(false);
-                    await AppendEventAsync(execution.RunId, "tool.execution.completed", $"Tool '{descriptor.Id}' completed.", new
+                    // Shell-class tools report command success inside the result
+                    // payload (a non-zero exit is a wire success). Record that
+                    // honestly without changing the completed dispatch outcome:
+                    // the result still flows back to the model.
+                    var toolSuccess = ReadEmbeddedToolSuccess(descriptor.Id, response.Result);
+                    var completed = await _executions.CompleteAsync(execution.Id, resultJson, toolSuccess, cancellationToken).ConfigureAwait(false);
+                    await AppendEventAsync(execution.RunId, "tool.execution.completed",
+                        toolSuccess == false ? $"Tool '{descriptor.Id}' completed with an embedded failure." : $"Tool '{descriptor.Id}' completed.", new
                     {
                         execution_id = execution.Id,
                         task_id = execution.TaskId,
                         tool_id = descriptor.Id,
-                        attempt
-                    }, cancellationToken, execution.TaskId, descriptor.Id).ConfigureAwait(false);
+                        attempt,
+                        tool_success = toolSuccess
+                    }, cancellationToken, execution.TaskId, descriptor.Id, toolSuccess == false ? "warning" : "info").ConfigureAwait(false);
                     return new ToolDispatchResultDto
                     {
                         Status = ToolDispatchStatus.Completed,
@@ -734,7 +827,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         Message = execution.SafeErrorMessage
     };
 
-    private static ToolDispatchResultDto Blocked(string message, ToolExecutionSnapshot? execution = null) => new()
+    private static ToolDispatchResultDto Blocked(string message, ToolExecutionSnapshot? execution = null, string errorCategory = "blocked") => new()
     {
         Status = ToolDispatchStatus.Blocked,
         ExecutionId = execution?.Id.ToString(),
@@ -742,16 +835,61 @@ public sealed class ToolDispatcher : IToolDispatcher
         PermissionRequestId = execution?.PermissionRequestId?.ToString(),
         AuthorizationDecisionId = execution?.AuthorizationDecisionId?.ToString(),
         Attempt = execution?.Attempt ?? 0,
-        ErrorCategory = "blocked",
+        ErrorCategory = errorCategory,
         Message = message
     };
+
+    /// <summary>
+    /// Wire timeout for one call: the configured default, raised to cover the
+    /// tool's own <c>timeout_ms</c> parameter (shell clamps it to 30 minutes)
+    /// plus a margin, and clamped to the wire ceiling. Without this a worker
+    /// asking for e.g. ten minutes would be killed by Core's 120s default first.
+    /// </summary>
+    internal static TimeSpan ResolveWireTimeout(JsonElement? parameters, TimeSpan defaultTimeout)
+    {
+        var baseSeconds = Math.Clamp((int)Math.Ceiling(defaultTimeout.TotalSeconds), 1, MaxWireTimeoutSeconds);
+        if (parameters is { ValueKind: JsonValueKind.Object } payload
+            && payload.TryGetProperty("timeout_ms", out var element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt64(out var timeoutMs)
+            && timeoutMs > 0)
+        {
+            var toolSeconds = (int)Math.Clamp((timeoutMs + 999) / 1000, 1, 1800);
+            return TimeSpan.FromSeconds(Math.Clamp(Math.Max(baseSeconds, toolSeconds + WireTimeoutMarginSeconds), 1, MaxWireTimeoutSeconds));
+        }
+        return TimeSpan.FromSeconds(baseSeconds);
+    }
+
+    internal const int WireTimeoutMarginSeconds = 30;
+    // The tool-side timeout ceiling (30 minutes) plus the wire margin.
+    internal const int MaxWireTimeoutSeconds = 1800 + WireTimeoutMarginSeconds;
+
+    /// <summary>
+    /// Reads the embedded <c>success</c> field of a shell-class tool result.
+    /// Null when the tool reports no embedded outcome (non-shell tools, or a
+    /// payload without the field).
+    /// </summary>
+    internal static bool? ReadEmbeddedToolSuccess(string toolId, JsonElement? result)
+    {
+        if (!StreamingTools.Contains(toolId)) return null;
+        if (result is not { ValueKind: JsonValueKind.Object } payload) return null;
+        if (!payload.TryGetProperty("success", out var success)) return null;
+        return success.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
+    }
 
     private static string WireErrorCategory(string? error)
     {
         if (string.IsNullOrWhiteSpace(error)) return RunErrorTaxonomy.ToolError;
         var separator = error.IndexOf(':');
         var category = separator > 0 ? error[..separator].Trim().ToLowerInvariant() : error.Trim().ToLowerInvariant();
-        return category is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit ? category : RunErrorTaxonomy.ToolError;
+        return category is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit or RunErrorTaxonomy.ToolRuntimeUnavailable
+            ? category
+            : RunErrorTaxonomy.ToolError;
     }
 
     private static string SafeMessage(string? value) => string.IsNullOrWhiteSpace(value) ? "Tool call failed." : value.Trim()[..Math.Min(value.Trim().Length, 4096)];
@@ -763,8 +901,9 @@ public sealed class ToolDispatcher : IToolDispatcher
     {
         "low" => 0,
         "medium" => 1,
-        "high" => 2,
-        "critical" => 3,
+        "elevated" => 2,
+        "high" => 3,
+        "critical" => 4,
         _ => int.MaxValue
     };
 }

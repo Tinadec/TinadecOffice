@@ -37,6 +37,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         "\n\nIf this task produced a durable fact, decision, or constraint that later tasks must respect, append exactly one final line in this format: CONTEXT_PATCH: <one-line summary> || <full detail>. Otherwise output no CONTEXT_PATCH line.";
     private const string ContextPatchMarker = "CONTEXT_PATCH:";
 
+    /// <summary>Task-level failure category for a declaration surface that cannot be resolved.</summary>
+    private const string ToolManifestUnavailableCategory = "tool_manifest_unavailable";
+
+    /// <summary>
+    /// Task-level failure category for worker resolution/creation failures rooted in
+    /// the frozen configuration or its persisted bindings. These fail only their own
+    /// task; genuine engine invariants (e.g. a missing planner instance) still fail
+    /// the run.
+    /// </summary>
+    private const string WorkerAssignmentInvalidCategory = "worker_assignment_invalid";
+
     private readonly ILifecycleManager _lifecycle;
     private readonly IConversationStore _conversations;
     private readonly IAgentInstanceService _instances;
@@ -258,7 +269,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 && checkpoint.Phase == "awaiting_user"
                 && run.Status is not RunStatus.AwaitingUser and not RunStatus.Executing)
             {
-                await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review.", stoppingToken).ConfigureAwait(false);
+                await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review.", stoppingToken).ConfigureAwait(false);
                 return;
             }
 
@@ -410,9 +421,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
-        await _lifecycle.SetRunStatusAsync(run.RunId,
+        await TrySetRunStatusAsync(run.RunId,
             checkpoint.PlanRevision == 0 ? "understanding" : "replanning",
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+            null, cancellationToken).ConfigureAwait(false);
         var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         checkpoint.MeetingAgentId = agents.Meeting.Id;
         checkpoint.PlannerAgentId = agents.Planner.Id;
@@ -465,7 +476,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint.PlanRevision++;
         checkpoint.Phase = "executing";
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "planned", cancellationToken).ConfigureAwait(false);
-        await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(Guid.Parse(run.RunId), "task_graph.created", $"{checkpoint.Tasks.Count} task(s) planned.", new
         {
             run_id = run.RunId,
@@ -491,11 +502,13 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         }
 
         var runId = Guid.Parse(run.RunId);
-        await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
 
         // A previous worker may have stopped after PrepareAsync persisted an
         // execution. Resume it before asking a model to produce another call.
-        var pending = checkpoint.Tasks.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId));
+        // Terminal tasks never carry a live pending execution (failed/expired
+        // executions are detached when the task reaches its terminal state).
+        var pending = checkpoint.Tasks.FirstOrDefault(HasLivePendingExecution);
         if (pending is not null)
         {
             var resumed = await ResumePendingToolAsync(run, configuration, checkpoint, pending, cancellationToken).ConfigureAwait(false);
@@ -525,7 +538,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 checkpoint.Phase = "reviewing";
                 return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "execution-complete", cancellationToken).ConfigureAwait(false);
             }
-            if (checkpoint.Tasks.Any(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId)))
+            if (checkpoint.Tasks.Any(HasLivePendingExecution))
             {
                 throw new RunAwaitingExternalDecisionException();
             }
@@ -544,16 +557,48 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var plannerId = checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
         // Assign workers before any parallel text-only turns. This makes the
         // lineage durable before a model call and avoids concurrent checkpoint CAS
-        // writes from independent workers.
+        // writes from independent workers. A worker that cannot be resolved or
+        // created from the frozen configuration fails only its own task.
+        var workers = new Dictionary<Guid, RuntimeAgentInstance>();
         foreach (var task in ready)
         {
-            _ = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                workers[task.TaskId] = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            }
+            catch (WorkerAssignmentException ex)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                    FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
+            }
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
+
+        // Every ready task's tool declaration surface resolves through the same
+        // catalog, and the text/tool split keys off the resolved surface — not the
+        // planner's required_tools hint. An empty-required_tools task whose worker
+        // holds an authorized catalog joins the durable tool loop, so a model call
+        // against the catalog can never fail as "not advertised". A task whose
+        // surface cannot be resolved fails on its own; the run continues.
+        var surfaces = new Dictionary<Guid, IReadOnlyList<WorkerToolDescriptor>>();
+        foreach (var task in ready)
+        {
+            if (!workers.TryGetValue(task.TaskId, out var worker)) continue;
+            try
+            {
+                surfaces[task.TaskId] = await GetWorkerToolsAsync(run, configuration, task, worker, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                    FailedTaskResult(task, worker.Id, ToolManifestUnavailableCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         // Tool-capable workers are advanced by the single run owner below. Plain
         // model-only workers can still make their first model turn in parallel.
-        var textOnly = ready.Where(task => task.RequiredTools.Count == 0).ToList();
-        var toolCapable = ready.Where(task => task.RequiredTools.Count != 0).ToList();
+        var textOnly = ready.Where(task => surfaces.TryGetValue(task.TaskId, out var tools) && tools.Count == 0).ToList();
+        var toolCapable = ready.Where(task => surfaces.TryGetValue(task.TaskId, out var tools) && tools.Count != 0).ToList();
         var results = await Task.WhenAll(textOnly.Select(task => ExecuteTextTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken))).ConfigureAwait(false);
         var contextChanged = await ApplyPendingContextPatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false);
         foreach (var result in results)
@@ -600,7 +645,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         foreach (var task in toolCapable)
         {
-            var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken, surfaces[task.TaskId]).ConfigureAwait(false);
             checkpoint = result.Checkpoint;
             if (result.Waiting)
             {
@@ -635,12 +680,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         // overwrite it with "executing" at tick start.
         if (!checkpoint.Lanes.Any(lane => lane.Escalated))
         {
-            await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
         }
 
         // A previous worker may have stopped after PrepareAsync persisted an
         // execution. Resume it before asking a model to produce another call.
-        var pending = checkpoint.Tasks.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId));
+        var pending = checkpoint.Tasks.FirstOrDefault(HasLivePendingExecution);
         if (pending is not null)
         {
             var resumed = await ResumePendingToolAsync(run, configuration, checkpoint, pending, cancellationToken).ConfigureAwait(false);
@@ -698,6 +743,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         {
             if (checkpoint.Lanes.Any(lane => lane.Escalated))
             {
+                // The parked run must keep saying awaiting_user: the escalation
+                // wrote it once, but an approval cascade or a dispatcher resume can
+                // legitimately flip the run back to executing afterwards. Re-assert
+                // it on every idle tick (idempotent; skipped when the state machine
+                // forbids it) so lane state and run state stay self-consistent.
+                await TrySetRunStatusAsync(run.RunId, "awaiting_user", "A lane escalation is pending a user decision.", cancellationToken).ConfigureAwait(false);
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lanes-awaiting-user", cancellationToken).ConfigureAwait(false);
                 throw new RunAwaitingExternalDecisionException();
             }
@@ -706,7 +757,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 checkpoint.Phase = "reviewing";
                 return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "execution-complete", cancellationToken).ConfigureAwait(false);
             }
-            if (checkpoint.Tasks.Any(item => !string.IsNullOrWhiteSpace(item.PendingToolExecutionId)))
+            if (checkpoint.Tasks.Any(HasLivePendingExecution))
             {
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
                 throw new RunAwaitingExternalDecisionException();
@@ -740,14 +791,42 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tasks-dispatched", cancellationToken).ConfigureAwait(false);
 
         var plannerId = checkpoint.PlannerAgentId ?? throw new InvalidDataException("Planner instance is missing from checkpoint.");
+        // A worker that cannot be resolved or created from the frozen
+        // configuration fails only its own task; the rest of the tick continues.
+        var workers = new Dictionary<Guid, RuntimeAgentInstance>();
         foreach (var (_, task) in dispatched)
         {
-            _ = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                workers[task.TaskId] = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            }
+            catch (WorkerAssignmentException ex)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                    FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
+            }
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
 
-        var textOnly = dispatched.Where(pair => pair.Task.RequiredTools.Count == 0).Select(pair => pair.Task).ToList();
-        var toolCapable = dispatched.Where(pair => pair.Task.RequiredTools.Count != 0).Select(pair => pair.Task).ToList();
+        // The text/tool split keys off the resolved declaration surface, not the
+        // planner's required_tools hint (see ExecuteReadyTasksAsync).
+        var surfaces = new Dictionary<Guid, IReadOnlyList<WorkerToolDescriptor>>();
+        foreach (var (_, task) in dispatched)
+        {
+            if (!workers.TryGetValue(task.TaskId, out var worker)) continue;
+            try
+            {
+                surfaces[task.TaskId] = await GetWorkerToolsAsync(run, configuration, task, worker, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                    FailedTaskResult(task, worker.Id, ToolManifestUnavailableCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        var textOnly = dispatched.Where(pair => surfaces.TryGetValue(pair.Task.TaskId, out var tools) && tools.Count == 0).Select(pair => pair.Task).ToList();
+        var toolCapable = dispatched.Where(pair => surfaces.TryGetValue(pair.Task.TaskId, out var tools) && tools.Count != 0).Select(pair => pair.Task).ToList();
         var results = await Task.WhenAll(textOnly.Select(task => ExecuteTextTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken))).ConfigureAwait(false);
         var contextChanged = await ApplyPendingContextPatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false);
         foreach (var result in results)
@@ -793,7 +872,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
 
         foreach (var task in toolCapable)
         {
-            var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            var result = await ExecuteToolTaskAsync(run, configuration, checkpoint, plannerId, task, cancellationToken, surfaces[task.TaskId]).ConfigureAwait(false);
             checkpoint = result.Checkpoint;
             if (result.Waiting)
             {
@@ -851,7 +930,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 }
                 continue;
             }
-            if (laneTasks.Any(item => item.Status == "running" || !string.IsNullOrWhiteSpace(item.PendingToolExecutionId))) continue;
+            if (laneTasks.Any(item => item.Status == "running" || HasLivePendingExecution(item))) continue;
 
             var unmet = UnmetLaneWaits(checkpoint, lane.LaneKey);
             if (unmet.Count > 0)
@@ -983,8 +1062,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         string reason,
         CancellationToken cancellationToken)
     {
+        // A repeated escalation of an already-escalated lane is noise: the lane is
+        // frozen, the run is already parked on the user, and the review request was
+        // emitted with the first escalation.
+        if (lane.Escalated) return;
         lane.Escalated = true;
-        await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", reason, cancellationToken).ConfigureAwait(false);
+        // The run may already wait on an approval or a user decision from another
+        // lane; a rejected status transition must never escalate into a run failure.
+        await TrySetRunStatusAsync(run.RunId, "awaiting_user", reason, cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(runId, "supervision.user_review.requested",
             "A lane escalated and is waiting for a user decision while other lanes continue.",
             new { run_id = run.RunId, lane_key = lane.LaneKey, decision = "escalate", reasons = new[] { reason }, options = new[] { "continue", "correct", "cancel" } }, cancellationToken).ConfigureAwait(false);
@@ -1254,7 +1339,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var laneTasks = tasks.Where(item => LaneKeyOf(item) == laneKey).ToList();
         if (laneTasks.Count == 0) return null;
         if (laneTasks.All(item => item.Status is "completed" or "failed" or "blocked")) return null;
-        if (laneTasks.Any(item => item.Status == "running" || !string.IsNullOrWhiteSpace(item.PendingToolExecutionId))) return null;
+        if (laneTasks.Any(item => item.Status == "running" || HasLivePendingExecution(item))) return null;
         var waitingTasks = laneTasks.Where(item => item.Status is "pending" or "ready").ToList();
         if (waitingTasks.Count == 0) return null;
 
@@ -1299,6 +1384,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         try
         {
             var worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+            // The dispatch split already resolved this task's declaration surface to
+            // empty, so nothing is advertised here; a model call in this state means
+            // the worker genuinely holds no authorized tool.
             var model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, [], cancellationToken).ConfigureAwait(false);
             if (!model.IsAvailable || model.Error is not null)
             {
@@ -1314,6 +1402,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [] }
                 : BuildCompletedStepResult(task.TaskId, worker.Id, model.Text);
             return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result, model.Usage);
+        }
+        catch (Exception ex) when (ex is WorkerAssignmentException or InvalidDataException)
+        {
+            // Frozen worker binding/config drift: fail this task, not the run.
+            return FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1341,20 +1434,36 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         FullDuplexCheckpointV1 checkpoint,
         Guid plannerId,
         DurableTaskNode task,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<WorkerToolDescriptor>? resolvedTools = null)
     {
-        var worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+        RuntimeAgentInstance worker;
+        try
+        {
+            worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+        }
+        catch (WorkerAssignmentException ex)
+        {
+            return FailedToolTask(checkpoint, task, null, WorkerAssignmentInvalidCategory, SafeError(ex));
+        }
         var dispatcher = _services.GetRequiredService<IToolDispatcher>();
         var executionCoordinator = _services.GetRequiredService<IToolExecutionCoordinator>();
         var roundLimit = configuration.Tools.ResolveTaskRoundLimit(task.Category, task.Risk);
         IReadOnlyList<WorkerToolDescriptor> descriptors;
-        try
+        if (resolvedTools is not null)
         {
-            descriptors = await GetWorkerToolsAsync(run, configuration, task, worker, cancellationToken).ConfigureAwait(false);
+            descriptors = resolvedTools;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        else
         {
-            return FailedToolTask(checkpoint, task, worker, "tool_manifest_unavailable", SafeError(ex));
+            try
+            {
+                descriptors = await GetWorkerToolsAsync(run, configuration, task, worker, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return FailedToolTask(checkpoint, task, worker, ToolManifestUnavailableCategory, SafeError(ex));
+            }
         }
 
         while (!cancellationToken.IsCancellationRequested)
@@ -1411,6 +1520,10 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                     SyncLanes(checkpoint);
                     var parkedLane = checkpoint.Lanes.FirstOrDefault(lane =>
                         string.Equals(lane.LaneKey, LaneKeyOf(task), StringComparison.OrdinalIgnoreCase));
+                    // The parked execution is dead: detach it so later ticks never
+                    // resume it (the lane escalation is the durable wake-up), and
+                    // annotate the unresolved turn for audit.
+                    ClearPendingToolExecution(task, RunErrorTaxonomy.ApprovalExpired);
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-park-expired", cancellationToken).ConfigureAwait(false);
                     if (parkedLane is not null)
                     {
@@ -1433,7 +1546,9 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                             ToolDispatchStatus.AwaitingUser => "awaiting_user",
                             _ => "awaiting_approval"
                         };
-                        await _lifecycle.SetRunStatusAsync(run.RunId, runStatus, dispatch.Message, cancellationToken).ConfigureAwait(false);
+                        // A park while another lane already waits on the user is a
+                        // legal coexistence; a rejected transition must not fail the run.
+                        await TrySetRunStatusAsync(run.RunId, runStatus, dispatch.Message, cancellationToken).ConfigureAwait(false);
                     }
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
                     return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
@@ -1463,7 +1578,17 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 continue;
             }
 
-            var model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, descriptors, cancellationToken).ConfigureAwait(false);
+            WorkerModelTurn model;
+            try
+            {
+                model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, descriptors, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException ex)
+            {
+                // The frozen worker binding vanished or drifted mid-run: fail this
+                // task instead of the whole run.
+                return FailedToolTask(checkpoint, task, worker, WorkerAssignmentInvalidCategory, SafeError(ex));
+            }
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, model.Usage);
             if (!model.IsAvailable || model.Error is not null)
             {
@@ -1606,6 +1731,12 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.CapabilityMissing, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
             throw;
         }
+        catch (InvalidDataException ex)
+        {
+            // Frozen manifest/roster drift against the persisted assignment is a
+            // configuration failure scoped to this task, not an engine invariant.
+            throw new WorkerAssignmentException(ex.Message, ex);
+        }
         if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
         {
             task.WorkerAgentSlug = selected.Agent.Id;
@@ -1649,28 +1780,57 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             if (selected.Agent.AgentDefinitionId is not { } definitionId
                 || selected.Agent.AgentVersionId is not { } versionId
                 || string.IsNullOrWhiteSpace(selected.Agent.VersionContentHash))
-                throw new InvalidDataException($"Frozen specialist '{selected.Agent.Id}' has no immutable version binding.");
-            worker = await _instances.SpawnAsync(new AgentSpawnRequest(
-                parent.Id,
-                string.IsNullOrWhiteSpace(task.Description) ? task.Title : task.Description,
-                task.SuccessCriteria,
-                ["session_history", "task_context", "reviewed_memory"],
-                "chat",
-                task.RequiredTools,
-                ["workspace"],
-                configuration.Context.DefaultTokenBudget,
-                task.TaskId,
-                selected.Agent.Role,
-                new AgentSpawnLimits(configuration.Spawn.MaxDepth, configuration.Spawn.MaxAgentsPerRun, configuration.Spawn.MaxParallelWorkers),
-                Template: new FrozenAgentTemplate(
-                    selected.Agent.Id,
-                    selected.Agent.Layer,
+                throw new WorkerAssignmentException($"Frozen specialist '{selected.Agent.Id}' has no immutable version binding.");
+            // A task with no required_tools still needs an instance grant that matches
+            // the declaration surface: with an empty grant the frozen-catalog fallback
+            // could only ever advertise zero tools, so a worker improvising a call
+            // would fail as "not advertised". Grant the template's frozen scope
+            // (concrete ids expanded against the run-frozen manifest, additionally
+            // bounded by the parent instance's own envelope). Dispatch authority is
+            // unchanged — every call still passes scope, approval, and budget gates;
+            // this widens only what the worker may be told about.
+            IReadOnlyList<string> spawnTools = task.RequiredTools;
+            if (spawnTools.Count == 0)
+            {
+                var manifestTools = configuration.ToolManifest.Select(tool => tool.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var templateScope = ExpandFrozenTools(selected.Agent.AllowedTools, manifestTools);
+                var parentScope = ExpandFrozenTools(parent.AllowedTools, manifestTools);
+                spawnTools = templateScope.Where(parentScope.Contains)
+                    .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            try
+            {
+                worker = await _instances.SpawnAsync(new AgentSpawnRequest(
+                    parent.Id,
+                    string.IsNullOrWhiteSpace(task.Description) ? task.Title : task.Description,
+                    task.SuccessCriteria,
+                    ["session_history", "task_context", "reviewed_memory"],
+                    "chat",
+                    spawnTools,
+                    ["workspace"],
+                    configuration.Context.DefaultTokenBudget,
+                    task.TaskId,
                     selected.Agent.Role,
-                    selected.Agent.Capabilities,
-                    selected.Agent.AllowedTools,
-                    definitionId,
-                    versionId,
-                    selected.Agent.VersionContentHash)), cancellationToken).ConfigureAwait(false);
+                    new AgentSpawnLimits(configuration.Spawn.MaxDepth, configuration.Spawn.MaxAgentsPerRun, configuration.Spawn.MaxParallelWorkers),
+                    Template: new FrozenAgentTemplate(
+                        selected.Agent.Id,
+                        selected.Agent.Layer,
+                        selected.Agent.Role,
+                        selected.Agent.Capabilities,
+                        selected.Agent.AllowedTools,
+                        definitionId,
+                        versionId,
+                        selected.Agent.VersionContentHash)), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or UnauthorizedAccessException)
+            {
+                // Grant/subset/budget/template rejections are configuration failures
+                // scoped to this task; the run keeps the rest of its graph.
+                throw new WorkerAssignmentException(
+                    $"The frozen specialist '{selected.Agent.Id}' could not be spawned for task '{task.TaskKey}': {ex.Message}", ex);
+            }
             await AppendEventAsync(runId, "agent.created", "Execution worker created.", new
             {
                 agent_instance_id = worker.Id,
@@ -1856,7 +2016,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             || instance.AgentVersionId != definition.AgentVersionId
             || !string.Equals(instance.AgentVersionContentHash, definition.VersionContentHash, StringComparison.OrdinalIgnoreCase)
             || instance.TaskId != task.TaskId)
-            throw new InvalidDataException($"Worker instance '{instance.Id}' does not match task '{task.TaskKey}' frozen assignment.");
+            throw new WorkerAssignmentException($"Worker instance '{instance.Id}' does not match task '{task.TaskKey}' frozen assignment.");
     }
 
     private static RuntimeAgentDefinition RequiredAgent(
@@ -1924,6 +2084,14 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         task.Evidence = execution.Result.Evidence.ToList();
         task.CompletedAt = execution.Status is "completed" or "failed" or "blocked" ? DateTimeOffset.UtcNow : null;
         if (execution.WorkerAgentId is { } workerId) task.WorkerAgentId = workerId;
+        if (execution.Status is "completed" or "failed" or "blocked")
+        {
+            // A terminal task never carries a pending execution into later ticks:
+            // without this, a failed task would be resumed (and re-evented) on every
+            // wake for the rest of the run.
+            task.PendingToolExecutionId = null;
+            task.PendingToolApprovalId = null;
+        }
 
         await _lifecycle.UpdateTaskSnapshotAsync(runId, new
         {
@@ -1995,17 +2163,38 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     private static ToolTaskExecutionResult FailedToolTask(
         FullDuplexCheckpointV1 checkpoint,
         DurableTaskNode task,
-        RuntimeAgentInstance worker,
+        RuntimeAgentInstance? worker,
         string category,
-        string message) =>
-        new(checkpoint, Waiting: false, new TaskExecutionResult(task.TaskId, worker.Id, "failed", new StepResult
+        string message)
+    {
+        // A failed task is terminal: drop the pending execution linkage so later
+        // ticks never resume a dead execution or re-emit the failure. The
+        // unresolved turn keeps the category as audit evidence.
+        ClearPendingToolExecution(task, category);
+        return new(checkpoint, Waiting: false,
+            FailedTaskResult(task, worker?.Id ?? task.WorkerAgentId, category, message));
+    }
+
+    private static TaskExecutionResult FailedTaskResult(DurableTaskNode task, Guid? workerId, string category, string message) =>
+        new(task.TaskId, workerId, "failed", new StepResult
         {
             TaskNodeId = task.TaskId,
-            AgentId = worker.Id.ToString("N"),
+            AgentId = workerId?.ToString("N") ?? string.Empty,
             Status = "failed",
             Summary = message,
             Evidence = [$"error_category:{category}"]
-        }));
+        });
+
+    private static void ClearPendingToolExecution(DurableTaskNode task, string? category = null)
+    {
+        task.PendingToolExecutionId = null;
+        task.PendingToolApprovalId = null;
+        if (category is null) return;
+        foreach (var turn in task.ToolTurns)
+        {
+            if (string.IsNullOrWhiteSpace(turn.ResultJson)) turn.ErrorCategory ??= category;
+        }
+    }
 
     private static bool TryParseJsonObject(string json, out JsonElement parameters)
     {
@@ -2030,7 +2219,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
-        await _lifecycle.SetRunStatusAsync(run.RunId, "reviewing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        await TrySetRunStatusAsync(run.RunId, "reviewing", null, cancellationToken).ConfigureAwait(false);
         var plans = checkpoint.Tasks.Select(ToPlannedTask).ToArray();
         var results = checkpoint.Tasks.Select(item => new StepResult
         {
@@ -2106,7 +2295,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint.Phase = "awaiting_user";
             checkpoint.MeetingResponse = null;
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
-            await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "supervision.user_review.requested", "Supervision escalated the run and is waiting for a user decision.", new
             {
                 run_id = run.RunId,
@@ -2145,7 +2334,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             }
             checkpoint.SupervisionRound++;
             checkpoint.Phase = "executing";
-            await _lifecycle.SetRunStatusAsync(run.RunId, "replanning", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "replanning", null, cancellationToken).ConfigureAwait(false);
             return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "replanned", cancellationToken).ConfigureAwait(false);
         }
 
@@ -2155,7 +2344,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             // not finalize while that gate is unresolved, even though every
             // task is terminal.
             checkpoint.Phase = "awaiting_user";
-            await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "A lane escalation is pending a user decision.", cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "awaiting_user", "A lane escalation is pending a user decision.", cancellationToken).ConfigureAwait(false);
             return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "lane-escalation-parked", cancellationToken).ConfigureAwait(false);
         }
         checkpoint.Phase = "finalizing";
@@ -2311,7 +2500,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
-        await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+        await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
         checkpoint.MeetingResponse = checkpoint.InteractionKind switch
         {
             "status_query" => await BuildStatusResponseAsync(checkpoint, cancellationToken).ConfigureAwait(false),
@@ -2615,7 +2804,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
             if (run.Status != RunStatus.AwaitingUser)
             {
-                await _lifecycle.SetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+                await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
             }
             return;
         }
@@ -2956,7 +3145,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         if (checkpoint.Phase is "finalizing" or "done" or "completed")
         {
             checkpoint.Phase = "executing";
-            await _lifecycle.SetRunStatusAsync(run.RunId, "executing", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
         }
         await AppendEventAsync(runId, "orchestration.lane_opened",
             "A meeting-authored lane was materialized on this run.",
@@ -4063,8 +4252,64 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         _lifecycle.AppendEventAsync(runId, type, payload, summary, taskId: taskId, idempotencyKey: idempotencyKey, cancellationToken: ct);
 
     private static bool IsTerminal(RunStatus status) => status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled;
+
+    private static bool IsTaskTerminal(DurableTaskNode task) =>
+        task.Status is "completed" or "failed" or "blocked";
+
+    /// <summary>
+    /// A pending tool execution counts only while its task is still alive. A task
+    /// that reached a terminal state keeps no resumable execution — the linkage is
+    /// cleared on termination, and this predicate is the belt-and-braces guard for
+    /// checkpoints written before that rule existed.
+    /// </summary>
+    private static bool HasLivePendingExecution(DurableTaskNode task) =>
+        !IsTaskTerminal(task) && !string.IsNullOrWhiteSpace(task.PendingToolExecutionId);
+
+    /// <summary>
+    /// Runtime run-status writes are advisory: durable state (checkpoint phase,
+    /// lane flags, pending executions) is authoritative, and a rejected transition
+    /// must never escalate into a run failure. A lane parked on an approval while
+    /// another lane already waits on the user is a legal coexistence — the write is
+    /// skipped, not retried. Terminal transitions (failed/completed) stay on the
+    /// direct path in FailRunAsync/FinalizeAsync.
+    /// </summary>
+    private async Task TrySetRunStatusAsync(string runId, string status, string? message, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var current = await _lifecycle.GetRunStateAsync(runId, cancellationToken).ConfigureAwait(false);
+            if (!RunStatusMachine.CanTransition(ToStatusVocabulary(current.Status), status))
+            {
+                _logger.TryLogDebug("Run {RunId} status write '{Status}' skipped: current state is {Current}.", runId, status, current.Status);
+                return;
+            }
+            await _lifecycle.SetRunStatusAsync(runId, status, message, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.TryLogWarning(ex, "Could not move run {RunId} to {Status}; the durable checkpoint remains authoritative.", runId, status);
+        }
+    }
+
+    private static string ToStatusVocabulary(RunStatus status) => status switch
+    {
+        RunStatus.Planning => "planning",
+        RunStatus.Understanding => "understanding",
+        RunStatus.Executing => "executing",
+        RunStatus.Replanning => "replanning",
+        RunStatus.AwaitingApproval => "awaiting_approval",
+        RunStatus.AwaitingDelegate => "awaiting_delegate",
+        RunStatus.AwaitingUser => "awaiting_user",
+        RunStatus.Paused => "paused",
+        RunStatus.Reviewing => "reviewing",
+        RunStatus.Completed => "completed",
+        RunStatus.Failed => "failed",
+        RunStatus.Cancelled => "cancelled",
+        _ => "planning"
+    };
+
     private static string SafeError(Exception ex) =>
-        ex is InvalidOperationException or InvalidDataException or WorkerUnavailableException
+        ex is InvalidOperationException or InvalidDataException or WorkerUnavailableException or WorkerAssignmentException
             ? ex.Message
             : "Unexpected runtime failure.";
 
@@ -4129,6 +4374,16 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
     }
 
     internal sealed class InvalidTaskGraphException(string message) : InvalidOperationException(message);
+
+    /// <summary>
+    /// A worker resolution/creation failure rooted in the frozen configuration or
+    /// its persisted bindings (unknown required tool, missing version binding,
+    /// grant/template subset rejection, spawn budget). Callers convert it into a
+    /// task-level failure; genuine engine invariants (e.g. a missing planner
+    /// instance) keep throwing plain InvalidDataException and fail the run.
+    /// </summary>
+    private sealed class WorkerAssignmentException(string message, Exception? inner = null)
+        : Exception(message, inner);
 
     private sealed record TaskExecutionResult(
         Guid TaskId,
