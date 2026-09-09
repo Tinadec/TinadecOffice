@@ -313,10 +313,10 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapModelStubs(this IEndpointRouteBuilder app)
     {
-        // These three are REQUIRED by the Gateway modelAgentCenter BFF.
-        app.MapGet("/api/v1/model-provider-templates", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/model-providers", () => Results.Ok(Array.Empty<object>()));
-        // Model provider, route, and settings routes are mapped by ControlPlaneEndpoints.
+        // Model provider, provider-template, route, and settings routes are
+        // mapped by ControlPlaneEndpoints. Do not add fallback mappings here:
+        // duplicate endpoint patterns are order-dependent and can silently
+        // shadow the Core-owned control-plane implementation.
     }
 
     // ──────────────────────────────────────────────────────────
