@@ -31,7 +31,10 @@ const session: SessionDto = {
 function factory(overrides: Record<string, unknown> = {}) {
   return mount(AppSidebar, {
     global: {
-      stubs: { BrandLogo: true, TinadecCalligraphy: true },
+      // RowContextMenu wraps its panel in <Transition>; test-utils stubs it by
+      // default, which would render the menu as an empty stub and break every
+      // menu assertion below.
+      stubs: { BrandLogo: true, TinadecCalligraphy: true, transition: false },
     },
     props: {
       projects: [project],

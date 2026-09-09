@@ -72,27 +72,29 @@ function choose(key: string) {
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="visible"
-      ref="menuRef"
-      class="row-context-menu"
-      :style="{ left: `${position.left}px`, top: `${position.top}px` }"
-      role="menu"
-      @contextmenu.prevent
-    >
-      <button
-        v-for="item in items"
-        :key="item.key"
-        type="button"
-        role="menuitem"
-        class="row-context-menu-item"
-        :class="{ danger: item.danger }"
-        @click="choose(item.key)"
+    <Transition name="row-context-menu">
+      <div
+        v-if="visible"
+        ref="menuRef"
+        class="row-context-menu"
+        :style="{ left: `${position.left}px`, top: `${position.top}px` }"
+        role="menu"
+        @contextmenu.prevent
       >
-        <component :is="item.icon" v-if="item.icon" :size="14" class="row-context-menu-icon" />
-        <span>{{ item.label }}</span>
-      </button>
-    </div>
+        <button
+          v-for="item in items"
+          :key="item.key"
+          type="button"
+          role="menuitem"
+          class="row-context-menu-item"
+          :class="{ danger: item.danger }"
+          @click="choose(item.key)"
+        >
+          <component :is="item.icon" v-if="item.icon" :size="14" class="row-context-menu-icon" />
+          <span>{{ item.label }}</span>
+        </button>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -110,6 +112,31 @@ function choose(key: string) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Scale from the pointer corner, not the centre: the menu is anchored to the
+     cursor, so its top-left is effectively the trigger. */
+  transform-origin: top left;
+}
+
+/* Enter/leave: 130ms in, 90ms out. A menu opened many times a day must feel
+   instant — the animation only bridges the appearance, it never makes the user
+   wait. Both use the strong ease-out curve already used by the selection menu
+   (cubic-bezier(0.23, 1, 0.32, 1)); scale starts at 0.96, never 0. */
+.row-context-menu-enter-active {
+  transition:
+    opacity 130ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 130ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.row-context-menu-leave-active {
+  transition:
+    opacity 90ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 90ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.row-context-menu-enter-from,
+.row-context-menu-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
 }
 
 .row-context-menu-item {
@@ -138,5 +165,12 @@ function choose(key: string) {
 
 .row-context-menu-icon {
   flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-context-menu-enter-active,
+  .row-context-menu-leave-active {
+    transition: none;
+  }
 }
 </style>
