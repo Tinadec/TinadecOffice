@@ -847,7 +847,7 @@ async function loadModelCenter() {
   dismissByKey('model-center')
   try {
     // model-center/overview BFF was deleted; derive the same projection from versioned APIs.
-    const [providerRows, templates, routes, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt] = await Promise.all([
+    const [providerRows, providerTemplates, routeRows, acpAdapters, modelReadinessReceipt, catalogReadinessReceipt] = await Promise.all([
       api.listModelProviders().catch(() => [] as ModelProviderInstanceDto[]),
       api.listModelProviderTemplates().catch(() => [] as ModelProviderTemplateDto[]),
       api.listModelRoutes().catch(() => [] as ModelRouteDto[]),
@@ -857,13 +857,17 @@ async function loadModelCenter() {
     ])
     const overview = aggregateModelCenterOverview({
       providers: providerRows,
-      templates,
-      routes,
+      templates: providerTemplates,
+      routes: routeRows,
       acp_adapters: acpAdapters,
       model_readiness: modelReadinessReceipt,
       catalog_readiness: catalogReadinessReceipt
     })
     modelCenterOverview.value = overview
+    // The routes ref feeds the Routes tab, the route editor, and the
+    // "set default model" If-Match token; leaving it unassigned made every
+    // route write send no precondition (Core 428).
+    routes.value = routeRows
     const instances = providersFromOverview(overview)
     providers.value = instances
     modelReadiness.value = overview.readiness.model ?? null

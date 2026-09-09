@@ -116,4 +116,13 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       expect(settingsPageSource).toContain(`<${name} />`)
     }
   })
+
+  it('assigns the routes ref from loadModelCenter (regression: route writes sent no If-Match)', () => {
+    // The Routes tab, the route editor, and setDefaultChatModel all read
+    // `routes.value`; a shadowing local left it permanently empty, so route
+    // PUTs omitted the precondition and Core answered 428.
+    expect(settingsPageSource).toContain('routes.value = routeRows')
+    // The fetched rows must not be captured by a same-named local binding.
+    expect(settingsPageSource).not.toMatch(/const \[[^\]]*\broutes\b[^\]]*\] = await Promise\.all/)
+  })
 })
