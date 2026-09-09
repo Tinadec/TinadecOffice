@@ -120,6 +120,18 @@ describe('runtime center view', () => {
     expect(providers.map((item) => item.id)).toEqual(['provider-http', 'provider-cli'])
   })
 
+  it('carries the provider revision through so writes can send If-Match', () => {
+    // Regression: dropping revision made every provider write fail with
+    // Core 428 precondition_required ("If-Match header ... is required").
+    const source = overview()
+    source.api_connections[0]!.revision = 7
+    source.cli_runtimes[0]!.revision = 3
+
+    const providers = providersFromOverview(source)
+    expect(providers.find((item) => item.id === 'provider-http')?.revision).toBe(7)
+    expect(providers.find((item) => item.id === 'provider-cli')?.revision).toBe(3)
+  })
+
   it('derives form fields from the Core supplier contract for unknown drivers', () => {
     const supplier: ModelCenterSupplierDto = {
       supplier_id: 'future-local:future-local',

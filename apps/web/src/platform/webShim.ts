@@ -89,6 +89,10 @@ function rejectNotAvailable(reason: string): Promise<never> {
   // -- Theme broadcast (no other windows to notify) --
   broadcastTheme: noop,
 
+  // -- Clipboard (browser fallback: the menu uses navigator.clipboard when these are absent) --
+  clipboardReadText: undefined,
+  clipboardWriteText: undefined,
+
   // -- Status notification broadcast (no-op for stage 1) --
   broadcastStatusNotification: noop,
   onStatusNotification: () => noop,

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell } = require('electron');
 const path = require('node:path');
 const { loadAppConfig, resetGatewayUrl, saveGatewayUrl } = require('./appConfig.cjs');
 const { discoverServices } = require('./serviceDiscovery.cjs');
@@ -257,6 +257,17 @@ ipcMain.handle('tinadec:select-background-file', async (event, type) => {
   }
   
   return result.filePaths[0];
+});
+
+// --- Clipboard IPC ---
+// The selection context menu reads/writes the clipboard through the main
+// process: navigator.clipboard.readText() requires a permission grant and a
+// secure context, which the dev renderer's http origin does not reliably have.
+ipcMain.handle('tinadec:clipboard-read-text', () => clipboard.readText());
+ipcMain.handle('tinadec:clipboard-write-text', (_event, text) => {
+  if (typeof text !== 'string') return false;
+  clipboard.writeText(text);
+  return true;
 });
 
 // --- Background Image Read IPC (for Monet color extraction) ---

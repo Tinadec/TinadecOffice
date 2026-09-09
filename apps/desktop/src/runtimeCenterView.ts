@@ -41,6 +41,7 @@ function apiConnectionProvider(connection: ModelCenterApiConnectionDto): ModelPr
     connection_kind: connection.connection_kind,
     base_url: connection.base_url ?? null,
     model: connection.model ?? null,
+    models: connection.models ?? [],
     has_api_key: connection.has_api_key,
     server_url: connection.server_url ?? null,
     capabilities: connection.capabilities,
@@ -48,6 +49,9 @@ function apiConnectionProvider(connection: ModelCenterApiConnectionDto): ModelPr
     status: connection.status,
     status_message: connection.status_message,
     cooldown_until: connection.cooldown_until ?? null,
+    // Revision is the If-Match token for every provider write; dropping it
+    // makes Core reject the save with 428 precondition_required.
+    revision: connection.revision ?? undefined,
     created_at: connection.created_at ?? '',
     updated_at: connection.updated_at ?? ''
   }
@@ -69,6 +73,7 @@ function cliRuntimeProvider(runtime: ModelCenterCliRuntimeDto): ModelProviderIns
     enabled: runtime.enabled,
     status: runtime.status,
     status_message: runtime.status_message,
+    revision: runtime.revision ?? undefined,
     created_at: '',
     updated_at: ''
   }
@@ -463,6 +468,7 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
         status: provider.status,
         status_message: provider.status_message,
         route_purposes: routePurposes,
+        revision: provider.revision ?? null,
         updated_at: provider.updated_at,
         readiness: null
       });
@@ -487,6 +493,7 @@ export function aggregateModelCenterOverview(input: ModelCenterAggregateInput): 
         status: provider.status,
         status_message: provider.status_message,
         route_purposes: routePurposes,
+        revision: provider.revision ?? null,
         readiness: null
       });
       continue;

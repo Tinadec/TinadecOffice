@@ -580,4 +580,31 @@ describe('styles.css extraction contract', () => {
     expect(css.match(/--bg-button-rgb:/g)).toHaveLength(2)
     expect(css.match(/--bg-button-hover-rgb:/g)).toHaveLength(2)
   })
+
+  it('keeps chrome unselectable while content surfaces and form fields opt in', () => {
+    // Default: dragging across the UI must not paint a selection.
+    const bodyBlock = assertCssBlock(css, /(?:^|\n)body\s*\{([^}]+)\}/)
+    expect(bodyBlock).toMatch(/user-select:\s*none;/)
+    expect(bodyBlock).toMatch(/-webkit-user-select:\s*none;/)
+
+    // Content surfaces and form fields opt back in.
+    const optInMatch = css.match(/(input,\s*\ntextarea,[^{]*)\{([^}]+)\}/)
+    expect(optInMatch).not.toBeNull()
+    expect(optInMatch![2]).toMatch(/user-select:\s*text;/)
+    for (const selector of [
+      '.message-content', '.markdown-body', '.detail-dialog',
+      '.composer-error', 'pre', 'code',
+    ]) {
+      expect(optInMatch![1]).toContain(selector)
+    }
+
+    // Interactive chrome stays unselectable even inside a selectable container.
+    const chromeBlock = assertCssBlock(css, /button,\s*\nlabel,[\s\S]*?\{([^}]+)\}/)
+    expect(chromeBlock).toMatch(/user-select:\s*none;/)
+
+    // Notification islands are content even though the capsule body is a
+    // <button>, so the island subtree (buttons included) re-enables selection.
+    const islandBlock = assertCssBlock(css, /\.island-host,\s*\n\.island-host \*\s*\{([^}]+)\}/)
+    expect(islandBlock).toMatch(/user-select:\s*text;/)
+  })
 })

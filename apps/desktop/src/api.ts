@@ -787,6 +787,8 @@ export interface ModelCenterCliRuntimeDto {
   status: string;
   status_message: string;
   route_purposes: string[];
+  /** Provider row revision; required as the If-Match token for writes. */
+  revision?: number | null;
   readiness?: Record<string, unknown> | null;
 }
 
@@ -830,6 +832,8 @@ export interface ModelCenterAcpRuntimeDto {
   capabilities: string[];
   enabled: boolean;
   route_purposes: string[];
+  /** Provider row revision; required as the If-Match token for writes. */
+  revision?: number | null;
   updated_at?: string | null;
   readiness?: Record<string, unknown> | null;
 }

@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld('tinadec', {
   // --- Background Image Read API (Monet color extraction) ---
   readImageAsDataUrl: (source) => ipcRenderer.invoke('tinadec:read-image-data-url', source),
 
+  // --- Clipboard API (selection context menu) ---
+  clipboardReadText: () => ipcRenderer.invoke('tinadec:clipboard-read-text'),
+  clipboardWriteText: (text) => ipcRenderer.invoke('tinadec:clipboard-write-text', text),
+
   // --- Terminal API ---
   terminal: {
     create: (options) => ipcRenderer.invoke('terminal:create', options),

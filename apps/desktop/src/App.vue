@@ -14,6 +14,7 @@ import { ensureOfficeAgentPack, setOfficeAgentPackTranslator } from '@/agentPack
 import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
+import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -182,5 +183,6 @@ router.beforeEach((to, from, next) => {
   </div>
   <NotificationIslandHost v-if="!isConnecting" />
   <NotificationDetailDialog v-if="!isConnecting" />
+  <SelectionContextMenu />
   </template>
 </template>

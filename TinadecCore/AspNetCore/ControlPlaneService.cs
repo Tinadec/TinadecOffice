@@ -352,7 +352,13 @@ public sealed class ControlPlaneService
             : MergeProviderConfig(await LoadProviderConfigAsync(db, provider.CurrentVersionId, ct), input);
         RemoveSecret(merged);
         var stored = await PutJsonAsync(_content, Tenant.TenantId, Tenant.WorkspaceId, "model-config", merged, ct);
-        var version = new ModelProviderVersionRecord { Id = Guid.NewGuid(), ProviderId = provider.Id, Version = (int)provider.Revision + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now };
+        // Version numbers must come from the existing version rows, not from the
+        // row revision: seeded/imported providers can hold Revision=0 alongside
+        // an existing version 1, so Revision+1 collided with the unique
+        // (provider_id, version) index on the first edit. SaveRoute already
+        // derives max(version)+1; providers must do the same.
+        var maxVersion = await db.ProviderVersions.Where(v => v.ProviderId == provider.Id).MaxAsync(v => (int?)v.Version, ct) ?? 0;
+        var version = new ModelProviderVersionRecord { Id = Guid.NewGuid(), ProviderId = provider.Id, Version = maxVersion + 1, ContentReference = stored.reference.Value, ContentHash = stored.reference.Sha256, ContentLength = stored.reference.Length, CreatedByPrincipalId = Tenant.PrincipalId, CreatedAt = now };
         provider.Revision++; provider.CurrentVersionId = version.Id; db.ProviderVersions.Add(version); await db.SaveChangesAsync(ct);
         return Results.Ok(await ToProvider(provider));
     }

@@ -87,11 +87,13 @@ try {
     # ── 2. 启动 Core（命令行参数指定临时 SQLite 数据目录，不污染开发库） ────
     $coreDll = Join-Path $root "TinadecCore\Api\bin\Debug\net10.0\TinadecCore.Api.dll"
     if (-not (Test-Path $coreDll)) { Add-Step "Core 构建产物" $false "$coreDll 不存在；先运行 npm run build 或 dotnet build"; Save-Record; exit 1 }
+    # NOTE: Start-Process joins -ArgumentList without quoting, so every path that
+    # may contain a space (repo root, work dir) must be quoted explicitly.
     $coreArgs = @(
-        $coreDll,
+        ('"' + $coreDll + '"'),
         "--urls", $CoreUrl,
-        "--TinadecPersistence:Sqlite:DatabasePath=$(Join-Path $work 'tinadec.db')",
-        "--TinadecPersistence:DataRoot=$(Join-Path $work 'data')"
+        ('--TinadecPersistence:Sqlite:DatabasePath="' + (Join-Path $work 'tinadec.db') + '"'),
+        ('--TinadecPersistence:DataRoot="' + (Join-Path $work 'data') + '"')
     )
     $core = Start-Process -FilePath "dotnet" -ArgumentList $coreArgs `
         -WorkingDirectory (Join-Path $root "TinadecCore\Api") -PassThru -WindowStyle Hidden `
@@ -105,7 +107,14 @@ try {
         $BaseUrl = if ($DirectCore) { $CoreUrl } else { $GatewayUrl }
         $gateway = $null
         if (-not $DirectCore) {
-            $gateway = Start-Process -FilePath "bun" -ArgumentList "src/index.ts" `
+            # Resolve a real Bun executable: npm's bun.ps1/bun.cmd shims are not
+            # valid Start-Process targets, while a native install exposes bun.exe.
+            $bunExe = "bun"
+            $nativeBun = Join-Path $env:USERPROFILE ".bun\bin\bun.exe"
+            $npmBun = Join-Path $env:APPDATA "npm\node_modules\bun\bin\bun.exe"
+            if (Test-Path $nativeBun) { $bunExe = $nativeBun }
+            elseif (Test-Path $npmBun) { $bunExe = $npmBun }
+            $gateway = Start-Process -FilePath $bunExe -ArgumentList "src/index.ts" `
                 -WorkingDirectory (Join-Path $root "TinadecGateway") -PassThru -WindowStyle Hidden `
                 -RedirectStandardOutput (Join-Path $work "gateway.log") -RedirectStandardError (Join-Path $work "gateway.err.log")
             $gatewayReady = Wait-HttpOk -Url "$GatewayUrl/api/v1/health" -TimeoutSeconds 40 -Label "Gateway"
