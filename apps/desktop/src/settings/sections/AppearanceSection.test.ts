@@ -106,12 +106,48 @@ describe('AppearanceSection custom accent picker', () => {
     // readers announce an unlabelled edit box.
     const hexField = wrapper.find('.custom-accent-hexfield')
     expect(hexField.attributes('aria-label')).toBe('settings.accentHexLabel')
-    // The three sliders are labelled by their visible <label for=…>.
-    for (const id of ['ca-hue', 'ca-sat', 'ca-lig']) {
-      expect(wrapper.find(`label[for="${id}"]`).exists(), id).toBe(true)
-    }
-    // The colour swatch and native picker keep their own names.
-    expect(wrapper.find('.custom-accent-native').attributes('aria-label')).toBeTruthy()
+    // The hue slider is labelled by its visible <label for=…>.
+    expect(wrapper.find('label[for="ca-hue"]').exists()).toBe(true)
+    // The 2D field is a single composite control: it must expose a name and the
+    // saturation/lightness pair as its spoken value.
+    const field = wrapper.find('[role="slider"]')
+    expect(field.attributes('aria-label')).toBe('settings.accentCustom')
+    expect(field.attributes('aria-valuetext')).toContain('settings.saturation')
+    expect(field.attributes('aria-valuetext')).toContain('settings.lightness')
+  })
+
+  it('drives saturation and lightness from a pointer press on the field', async () => {
+    const wrapper = mountSection()
+    await wrapper.find('[data-testid="accent-custom"]').trigger('click')
+
+    const field = wrapper.find('[role="slider"]')
+    const element = field.element as HTMLElement
+    // happy-dom reports a zero rect, so stub the geometry the handler reads.
+    element.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+
+    // Bottom-right corner → full saturation, zero lightness.
+    await field.trigger('pointerdown', { button: 0, clientX: 200, clientY: 100, pointerId: 1 })
+    expect(field.attributes('aria-valuenow')).toBe('100')
+    expect(field.attributes('aria-valuetext')).toContain('settings.lightness 0%')
+
+    // Top-left corner → zero saturation, full lightness.
+    await field.trigger('pointerdown', { button: 0, clientX: 0, clientY: 0, pointerId: 2 })
+    expect(field.attributes('aria-valuenow')).toBe('0')
+    expect(field.attributes('aria-valuetext')).toContain('settings.lightness 100%')
+  })
+
+  it('supports keyboard adjustment of the field', async () => {
+    const wrapper = mountSection()
+    await wrapper.find('[data-testid="accent-custom"]').trigger('click')
+
+    const field = wrapper.find('[role="slider"]')
+    const before = Number(field.attributes('aria-valuenow'))
+    await field.trigger('keydown', { key: 'ArrowRight' })
+    expect(Number(field.attributes('aria-valuenow'))).toBe(Math.min(100, before + 1))
+
+    await field.trigger('keydown', { key: 'Home' })
+    expect(field.attributes('aria-valuenow')).toBe('0')
   })
 
   it('opens with the stored custom hex and commits it exactly', async () => {

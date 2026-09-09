@@ -888,14 +888,35 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   margin: 12px 0 10px;
 }
 
-.custom-accent-native {
-  width: 36px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--border-input);
-  border-radius: 8px;
-  background: var(--surface-input);
-  cursor: pointer;
+.custom-accent-field {
+  margin-bottom: 12px;
+}
+
+/* Hue slider carries its own spectrum track so the field's hue reads directly. */
+.custom-accent-row .param-slider--hue::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
+  );
+}
+
+.custom-accent-row .param-slider--hue::-moz-range-track {
+  background: linear-gradient(
+    to right,
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
+  );
 }
 
 .custom-accent-hexfield {

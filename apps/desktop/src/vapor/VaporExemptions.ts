@@ -49,6 +49,10 @@ export const VAPOR_EXEMPTIONS: readonly VaporExemptionEntry[] = [
     reason: 'Teleport-based tooltip with dynamic positioning. Verify under Vapor.',
   },
   {
+    file: 'src/components/ui/color-field.vue',
+    reason: 'Pointer-capture 2D color area that measures itself with getBoundingClientRect on every pointer event, and its only parent (AppearanceSection.vue) is classic. A classic parent rendering a Vapor child is the documented classic↔Vapor interop path that crashed on leave (see AppSplash.vue); opt in only together with its parent, after verifying pointer capture and rect measurement under the Vapor renderer.',
+  },
+  {
     file: 'src/components/AppSplash.vue',
     reason: 'Wrapped by the root splash-exit <Transition> in App.vue. A classic Transition wrapping a Vapor SFC exercises the classic↔Vapor interop leave path (getInteropTransitionElement / vaporInteropImpl.unmount) that crashed on Ctrl+R reload — the same pattern commit 46a5988 removed the other root Transitions for. De-vapored so the Transition is classic-around-classic, the well-tested path. Zero visual change (markup/CSS untouched).',
     verdict: 'exempt',

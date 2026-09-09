@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Moon, Monitor, Pipette, Plus, Sun } from '@lucide/vue'
 import { UiButton } from '@/components/ui'
+import ColorField from '@/components/ui/color-field.vue'
 import BackgroundPreview from '@/components/ui/background-preview.vue'
 import PanelStyleControl from '@/components/ui/panel-style-control.vue'
 import { CUSTOM_ACCENT_KEY, DYNAMIC_ACCENT_KEY, useTheme } from '@/composables/useTheme'
@@ -175,10 +176,6 @@ function onHexInput(value: string): void {
   draftLig.value = l
 }
 
-function onNativeColorInput(value: string): void {
-  onHexInput(value)
-}
-
 /** A slider the user actually dragged: allow the rounded value to win. */
 function onSliderInput(): void {
   syncingFromSliders = true
@@ -289,30 +286,35 @@ function resetBackgroundToDefault(): void {
           </button>
 
           <div v-if="pickerOpen" class="custom-accent-pop" data-testid="custom-accent-pop">
+            <ColorField
+              class="custom-accent-field"
+              :hue="draftHue"
+              :saturation="draftSat"
+              :lightness="draftLig"
+              :label="t('settings.accentCustom')"
+              :saturation-label="t('settings.saturation')"
+              :lightness-label="t('settings.lightness')"
+              @direct-input="onSliderInput()"
+              @update:saturation="draftSat = $event"
+              @update:lightness="draftLig = $event"
+            />
+
             <div class="custom-accent-row">
               <label class="appearance-label" for="ca-hue">{{ t('settings.hue') }}</label>
-              <input id="ca-hue" class="param-slider" type="range" min="0" max="360" step="1" v-model.number="draftHue" @input="onSliderInput()" />
+              <input
+                id="ca-hue"
+                class="param-slider param-slider--hue"
+                type="range"
+                min="0"
+                max="360"
+                step="1"
+                v-model.number="draftHue"
+                @input="onSliderInput()"
+              />
               <span class="custom-accent-value">{{ draftHue }}°</span>
-            </div>
-            <div class="custom-accent-row">
-              <label class="appearance-label" for="ca-sat">{{ t('settings.saturation') }}</label>
-              <input id="ca-sat" class="param-slider" type="range" min="0" max="100" step="1" v-model.number="draftSat" @input="onSliderInput()" />
-              <span class="custom-accent-value">{{ draftSat }}%</span>
-            </div>
-            <div class="custom-accent-row">
-              <label class="appearance-label" for="ca-lig">{{ t('settings.lightness') }}</label>
-              <input id="ca-lig" class="param-slider" type="range" min="0" max="100" step="1" v-model.number="draftLig" @input="onSliderInput()" />
-              <span class="custom-accent-value">{{ draftLig }}%</span>
             </div>
 
             <div class="custom-accent-hex">
-              <input
-                class="custom-accent-native"
-                type="color"
-                :value="draftHex"
-                :aria-label="t('settings.accentCustom')"
-                @input="onNativeColorInput(($event.target as HTMLInputElement).value)"
-              />
               <input
                 class="custom-accent-hexfield"
                 type="text"
