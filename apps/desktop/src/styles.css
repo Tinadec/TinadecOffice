@@ -340,6 +340,60 @@ body {
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  /* Chrome is not content: dragging across the UI must never paint a text
+     selection. Content surfaces and form fields opt back in below. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ===== Text selection policy =====
+   Default is unselectable (set on body). The surfaces below opt back in:
+   chat messages, dialogs, rendered markdown, read-only code/text blocks,
+   tool/terminal/diff viewers, and every form field. Interactive chrome
+   (buttons, tabs, labels, badges, menus, headers) stays unselectable.
+   Form fields are listed explicitly because Chromium inherits user-select:none
+   into <input>/<textarea>, which would break caret placement and selection. */
+input,
+textarea,
+.message-content,
+.markdown-body,
+.detail-dialog,
+.composer-error,
+.tool-call-card,
+.tool-result-viewer,
+.thinking-process,
+.terminal-call-block,
+.commit-compare,
+.diff-viewer,
+.inspector-panel,
+.search-results,
+pre,
+code {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Interactive chrome nested inside a selectable content surface (tool-card
+   headers, dialog actions, dropdown options) must not become selectable just
+   because its container opted in. */
+button,
+label,
+summary,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Notification islands are content, not chrome: the capsule body is itself a
+   <button>, so the lock above would otherwise make notice text uncopyable.
+   Re-enable selection for the whole island subtree, buttons included. */
+.island-host,
+.island-host * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 :root[data-skip-splash],
