@@ -39,6 +39,9 @@ export function normalizeBackgroundSettings(value: unknown): BackgroundSettings 
     ? value as Partial<BackgroundSettings>
     : {}
   const types: BackgroundType[] = ['none', 'image', 'video', 'html']
+  const sizes: BackgroundSettings['size'][] = ['cover', 'contain', 'auto']
+  const positions: BackgroundSettings['position'][] = ['center', 'top', 'bottom', 'left', 'right']
+  const repeats: BackgroundSettings['repeat'][] = ['no-repeat', 'repeat', 'repeat-x', 'repeat-y']
   const rawOpacity = typeof candidate.opacity === 'number' && Number.isFinite(candidate.opacity)
     ? candidate.opacity
     : DEFAULT_BACKGROUND_SETTINGS.opacity
@@ -48,14 +51,26 @@ export function normalizeBackgroundSettings(value: unknown): BackgroundSettings 
       : DEFAULT_BACKGROUND_SETTINGS.type,
     source: typeof candidate.source === 'string' ? candidate.source : DEFAULT_BACKGROUND_SETTINGS.source,
     // Legacy 0–1 percentages: anything at or below 1 was written by the old
-    // slider, so scale it up. 0 stays 0 either way.
-    opacity: Math.round(rawOpacity > 0 && rawOpacity <= 1 ? rawOpacity * 100 : rawOpacity),
+    // slider, so scale it up. 0 stays 0 either way. The result is clamped to
+    // the contract range: App.vue and BackgroundPreview feed this straight into
+    // inline styles, and an out-of-range value silently becomes invalid CSS.
+    opacity: Math.round(Math.max(0, Math.min(100,
+      rawOpacity > 0 && rawOpacity <= 1 ? rawOpacity * 100 : rawOpacity,
+    ))),
     blur: typeof candidate.blur === 'number' && Number.isFinite(candidate.blur)
       ? Math.round(Math.max(0, Math.min(20, candidate.blur)))
       : DEFAULT_BACKGROUND_SETTINGS.blur,
-    size: candidate.size ?? DEFAULT_BACKGROUND_SETTINGS.size,
-    position: candidate.position ?? DEFAULT_BACKGROUND_SETTINGS.position,
-    repeat: candidate.repeat ?? DEFAULT_BACKGROUND_SETTINGS.repeat,
+    // Union-typed fields: only an exact member survives, everything else
+    // (empty string, typo, arbitrary CSS) falls back to the default.
+    size: sizes.includes(candidate.size as BackgroundSettings['size'])
+      ? candidate.size as BackgroundSettings['size']
+      : DEFAULT_BACKGROUND_SETTINGS.size,
+    position: positions.includes(candidate.position as BackgroundSettings['position'])
+      ? candidate.position as BackgroundSettings['position']
+      : DEFAULT_BACKGROUND_SETTINGS.position,
+    repeat: repeats.includes(candidate.repeat as BackgroundSettings['repeat'])
+      ? candidate.repeat as BackgroundSettings['repeat']
+      : DEFAULT_BACKGROUND_SETTINGS.repeat,
   }
 }
 

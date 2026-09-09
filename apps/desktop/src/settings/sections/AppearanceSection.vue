@@ -317,6 +317,7 @@ function resetBackgroundToDefault(): void {
                 class="custom-accent-hexfield"
                 type="text"
                 spellcheck="false"
+                :aria-label="t('settings.accentHexLabel')"
                 :value="draftHex"
                 @input="onHexInput(($event.target as HTMLInputElement).value)"
               />

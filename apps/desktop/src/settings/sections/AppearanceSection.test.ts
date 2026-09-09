@@ -98,6 +98,22 @@ describe('AppearanceSection background source', () => {
 })
 
 describe('AppearanceSection custom accent picker', () => {
+  it('gives every picker control an accessible name', async () => {
+    const wrapper = mountSection()
+    await wrapper.find('[data-testid="accent-custom"]').trigger('click')
+
+    // The hex field has no visible <label>, so it needs its own name or screen
+    // readers announce an unlabelled edit box.
+    const hexField = wrapper.find('.custom-accent-hexfield')
+    expect(hexField.attributes('aria-label')).toBe('settings.accentHexLabel')
+    // The three sliders are labelled by their visible <label for=…>.
+    for (const id of ['ca-hue', 'ca-sat', 'ca-lig']) {
+      expect(wrapper.find(`label[for="${id}"]`).exists(), id).toBe(true)
+    }
+    // The colour swatch and native picker keep their own names.
+    expect(wrapper.find('.custom-accent-native').attributes('aria-label')).toBeTruthy()
+  })
+
   it('opens with the stored custom hex and commits it exactly', async () => {
     localStorage.setItem('tinadec-custom-accent', '#123456')
     const wrapper = mountSection()
