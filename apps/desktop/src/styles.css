@@ -159,13 +159,15 @@
   --text-brand: #2ec4b6;
   --text-link: #2ec4b6;
   --text-error: #f85149;
-  --text-approve: #2ec4b6;
+  --text-approve: #3fb950;
   --text-reject: #f85149;
   /* Chat muted layer derived like Codex's description color: text at reduced alpha */
   --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
   --accent-primary: #2ec4b6;
-  --accent-success: #2ec4b6;
+  /* Success/approval stay semantic green: a status color must read the same
+     no matter which accent the user picked (see monetExtract.ts contract). */
+  --accent-success: #3fb950;
   --accent-warning: #d29922;
   --accent-danger: #f85149;
   --accent-brand: #2ec4b6;
@@ -239,12 +241,13 @@
   --text-brand: #1f6f68;
   --text-link: #0969da;
   --text-error: #8f2525;
-  --text-approve: #106348;
+  --text-approve: #1a7f37;
   --text-reject: #8f2525;
   --text-chat-muted: color-mix(in srgb, var(--text-primary) 70%, transparent);
 
   --accent-primary: #1f8f80;
-  --accent-success: #1f8f80;
+  /* Semantic success green — deliberately NOT derived from the accent. */
+  --accent-success: #1a7f37;
   --accent-warning: #9a6700;
   --accent-danger: #cf222e;
   --accent-brand: #1f8f80;

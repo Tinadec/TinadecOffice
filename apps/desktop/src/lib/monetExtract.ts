@@ -12,16 +12,18 @@
  * - Neutral families (--bg-*, neutral --border-*, --text-primary/secondary)
  *   are re-derived from Monet "neutral"/"neutralVariant" tonal palettes so
  *   surfaces carry a subtle tint of the source image's hue.
- * - Accent identity (--accent-primary/brand/success, --text-brand,
- *   primary buttons, selection, focus ring) comes from the Monet "primary"
- *   palette at M3 tones (dark: 80, light: 40) with guaranteed contrast.
+ * - Accent identity (--accent-primary/brand, --text-brand, primary buttons,
+ *   selection, focus ring) comes from the Monet "primary" palette at M3 tones
+ *   (dark: 80, light: 40) with guaranteed contrast.
  * - shadcn/Tailwind tokens (--background/--primary/--card/--popover/...)
  *   are emitted as "H S% L%" triplets from the same palettes so the body
  *   base, UI primitives, and bg-card/bg-popover/bg-accent utilities join
  *   the one color system instead of a fixed hue.
  * - Semantic solids stay untouched: error/warning/danger/info/recovery
- *   accents, status backgrounds, --text-error/--text-reject/--text-link
- *   and scrollbar colors keep their styles.css values.
+ *   accents, success and approval green, status backgrounds,
+ *   --text-error/--text-reject/--text-link and scrollbar colors keep their
+ *   styles.css values. A status color must mean the same thing regardless
+ *   of which accent the user picked.
  */
 
 import {
@@ -148,10 +150,8 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
       '--text-secondary': toneHex(variant, 65),
       '--text-muted': toneHex(variant, 58),
       '--text-brand': accent,
-      '--text-approve': accent,
 
       '--accent-primary': accent,
-      '--accent-success': accent,
       '--accent-brand': accent,
       '--accent-soft': rgba(primary.tone(70), 0.12),
       '--shadow-focus': `0 0 0 2px ${rgba(primary.tone(70), 0.3)}`,
@@ -218,10 +218,8 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
     '--text-secondary': toneHex(variant, 40),
     '--text-muted': toneHex(variant, 45),
     '--text-brand': accent,
-    '--text-approve': toneHex(primary, 32),
 
     '--accent-primary': accent,
-    '--accent-success': accent,
     '--accent-brand': accent,
     '--accent-soft': rgba(primary.tone(40), 0.1),
     '--shadow-focus': `0 0 0 2px ${rgba(primary.tone(40), 0.18)}`,

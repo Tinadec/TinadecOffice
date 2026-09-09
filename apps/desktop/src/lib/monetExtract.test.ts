@@ -89,8 +89,23 @@ describe('buildDynamicVars', () => {
 
   it('keeps semantic solids out of the dynamic set', () => {
     const names = DYNAMIC_VAR_NAMES
-    for (const forbidden of ['--text-error', '--accent-danger', '--bg-status-ok', '--border-error']) {
+    for (const forbidden of [
+      '--text-error', '--accent-danger', '--bg-status-ok', '--border-error',
+      // Success/approval are status colors: they must read the same green
+      // regardless of the chosen accent, so they are never emitted here.
+      '--accent-success', '--text-approve',
+    ]) {
       expect(names).not.toContain(forbidden)
+    }
+  })
+
+  it('leaves success and approval colors untouched for any accent', () => {
+    for (const seed of [argb(46, 196, 182), argb(88, 166, 255), argb(248, 81, 73)]) {
+      for (const theme of ['dark', 'light'] as const) {
+        const vars = buildDynamicVars(seed, theme)
+        expect(vars['--accent-success']).toBeUndefined()
+        expect(vars['--text-approve']).toBeUndefined()
+      }
     }
   })
 
