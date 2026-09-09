@@ -1,4 +1,7 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -56,6 +59,58 @@ public sealed class ControlPlaneStorageTests : IAsyncLifetime
         await db.SaveChangesAsync();
         Assert.Equal(1, await db.Providers.CountAsync(p => p.Driver == "test"));
         Assert.Equal(1, await db.ProviderVersions.CountAsync(v => v.ProviderId == provider.Id));
+    }
+
+    [Fact]
+    public async Task ProviderEdit_OnSeededRow_SucceedsAndIncrementsVersion()
+    {
+        // Regression: DevSeed creates a provider with Revision=0 while the version
+        // row is already version 1. Deriving the next version from Revision
+        // produced a duplicate (provider_id, version) and every edit of a seeded
+        // provider failed with SQLite UNIQUE constraint. The next version must be
+        // max(existing version)+1, like SaveRoute already did.
+        var client = _factory!.CreateClient();
+
+        var listed = await client.GetFromJsonAsync<JsonElement>("/api/v1/model-providers");
+        var seeded = listed.EnumerateArray().First();
+        var providerId = seeded.GetProperty("id").GetGuid();
+        var revision = seeded.GetProperty("revision").GetInt64();
+        Assert.Equal(0, revision); // seeded state: revision 0, version 1
+
+        var edit = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/model-providers/{providerId}")
+        {
+            Content = JsonContent.Create(new
+            {
+                driver = "openai",
+                display_name = "edited-provider",
+                connection_kind = "api-key",
+                base_url = "https://api.example.com/v1",
+                model = "edited-model"
+            })
+        };
+        edit.Headers.TryAddWithoutValidation("If-Match", $"\"{revision}\"");
+
+        var response = await client.SendAsync(edit);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var updated = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("edited-provider", updated.GetProperty("display_name").GetString());
+        Assert.Equal(1, updated.GetProperty("revision").GetInt64());
+
+        // A second edit must also succeed (version 3, no collision).
+        var edit2 = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/model-providers/{providerId}")
+        {
+            Content = JsonContent.Create(new
+            {
+                driver = "openai",
+                display_name = "edited-again",
+                connection_kind = "api-key",
+                base_url = "https://api.example.com/v1",
+                model = "edited-model"
+            })
+        };
+        edit2.Headers.TryAddWithoutValidation("If-Match", "\"1\"");
+        var response2 = await client.SendAsync(edit2);
+        Assert.Equal(HttpStatusCode.OK, response2.StatusCode);
     }
 
     private sealed class Factory : WebApplicationFactory<Program>
