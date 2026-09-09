@@ -73,6 +73,7 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
     'ContextVersion',
     'ContextVersionList',
     'OrchestrationSnapshot',
+    'PreAuthorization',
   ];
   const schemas = objectAt(doc, 'components', 'schemas');
   for (const name of requiredPackSchemas) assert.ok(name in schemas, `Missing OpenAPI component schema ${name}`);
@@ -93,6 +94,10 @@ test('openapi external snapshot — title contains Gateway, paths non-empty, fil
   assert.equal(
     valueAt(doc, 'paths', '/api/v1/agent-packs', 'get', 'responses', '200', 'content', 'application/json', 'schema', '$ref'),
     '#/components/schemas/AgentPackInstallationList',
+  );
+  assert.equal(
+    valueAt(doc, 'paths', '/api/v1/approvals/pre-authorizations', 'post', 'responses', '201', 'content', 'application/json', 'schema', '$ref'),
+    '#/components/schemas/PreAuthorization',
   );
   assert.equal(
     valueAt(doc, 'paths', '/api/v1/agent-packs/install-preview', 'post', 'requestBody', 'content', 'application/json', 'schema', '$ref'),

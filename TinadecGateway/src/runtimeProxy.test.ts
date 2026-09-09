@@ -435,3 +435,75 @@ test('code tools remain the current v1 direct user transport and preserve provid
   assert.equal(forwarded?.headers.get('x-request-id'), 'request-direct-1');
   assert.equal(forwarded?.headers.get('x-tenant-id'), 'tenant-1');
 });
+
+test('approval pre-authorization creation is a stateless Core proxy', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+    });
+    return new Response(JSON.stringify({
+      id: 'pre-auth-1',
+      run_id: 'run-1',
+      lane_key: null,
+      tool_scope: ['write_file'],
+      parameter_constraint_hash: null,
+      risk_max: 'medium',
+      max_uses: 2,
+      use_count: 0,
+      expires_at: '2026-09-16T00:00:00Z',
+      revoked: false,
+    }), { status: 201, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+
+  const body = { run_id: 'run-1', tool_scope: ['write_file'], risk_max: 'medium', max_uses: 2, summary: 'unattended commit lane' };
+  const response = await app.handle(new Request('http://gateway.local/api/v1/approvals/pre-authorizations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }));
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), {
+    id: 'pre-auth-1',
+    run_id: 'run-1',
+    lane_key: null,
+    tool_scope: ['write_file'],
+    parameter_constraint_hash: null,
+    risk_max: 'medium',
+    max_uses: 2,
+    use_count: 0,
+    expires_at: '2026-09-16T00:00:00Z',
+    revoked: false,
+  });
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ['POST', 'http://127.0.0.1:48731/api/v1/approvals/pre-authorizations'],
+  ]);
+  assert.deepEqual(JSON.parse(requests[0]!.body ?? ''), body);
+});
+
+test('approval pre-authorization creation surfaces Core validation as ProblemDetails', { concurrency: false }, async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    type: 'https://tinadec.dev/errors/invalid_request',
+    title: 'Invalid request',
+    status: 400,
+    detail: 'Wildcard tool grants are not allowed in a pre-authorization.',
+    code: 'invalid_request',
+    trace_id: 'trace-pre-auth-1',
+  }), { status: 400, headers: { 'content-type': 'application/problem+json' } })) as typeof fetch;
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/approvals/pre-authorizations', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ run_id: 'run-1', tool_scope: ['*'], max_uses: 1 }),
+  }));
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('content-type'), 'application/problem+json');
+  const problem = await response.json() as Record<string, unknown>;
+  assert.equal(problem.code, 'invalid_request');
+  assert.equal(problem.instance, '/api/v1/approvals/pre-authorizations');
+  assert.equal(problem.trace_id, 'trace-pre-auth-1');
+});

@@ -161,6 +161,19 @@ const health = t.Object({
   tool_runtime_url: t.String(),
 }, { additionalProperties: true, description: 'Gateway health fingerprint with forwarded Core health fields.' });
 
+const preAuthorization = t.Object({
+  id: t.String({ format: 'uuid' }),
+  run_id: t.String({ format: 'uuid' }),
+  lane_key: nullableString(),
+  tool_scope: t.Array(t.String()),
+  parameter_constraint_hash: nullableString(),
+  risk_max: t.String(),
+  max_uses: t.Unsafe({ type: 'integer' }),
+  use_count: t.Unsafe({ type: 'integer' }),
+  expires_at: nullableString(),
+  revoked: t.Unsafe({ type: 'boolean' }),
+}, { additionalProperties: true });
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   Project: project,
@@ -182,6 +195,7 @@ export const externalDtoSchemas = {
   Assignment: assignment,
   OrchestrationSnapshot: orchestrationSnapshot,
   Health: health,
+  PreAuthorization: preAuthorization,
 };
 
 export function externalJsonResponse(schemaName: string, description: string) {

@@ -1148,6 +1148,62 @@
         ],
         "type": "object"
       },
+      "PreAuthorization": {
+        "additionalProperties": true,
+        "properties": {
+          "expires_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lane_key": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_uses": {
+            "type": "integer"
+          },
+          "parameter_constraint_hash": {
+            "nullable": true,
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "risk_max": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tool_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "use_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "lane_key",
+          "tool_scope",
+          "parameter_constraint_hash",
+          "risk_max",
+          "max_uses",
+          "use_count",
+          "expires_at",
+          "revoked"
+        ],
+        "type": "object"
+      },
       "ProblemDetails": {
         "additionalProperties": true,
         "properties": {
@@ -2436,6 +2492,27 @@
           "200": {}
         },
         "summary": "List approvals",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/approvals/pre-authorizations": {
+      "post": {
+        "operationId": "postApiV1ApprovalsPre-authorizations",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreAuthorization"
+                }
+              }
+            },
+            "description": "Created pre-authorization grant."
+          }
+        },
+        "summary": "Create pre-authorization",
         "tags": [
           "System"
         ]

@@ -785,6 +785,14 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Decide approval', tags: ['System'] } })
+  .post('/api/v1/approvals/pre-authorizations', async ({ body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/approvals/pre-authorizations', { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/approvals/pre-authorizations'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Create pre-authorization', tags: ['System'], responses: { 201: externalJsonResponse('PreAuthorization', 'Created pre-authorization grant.') } } })
   .get('/api/v1/governance/permission-requests', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
