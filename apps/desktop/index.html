@@ -27,6 +27,11 @@
           yellow: { dark: '#d29922', light: '#9a6700' },
         };
         var c = (brandColors[accent] || brandColors.blue)[theme === 'dark' ? 'dark' : 'light'];
+        // 自定义主题色：读回用户上次选的色值，避免启动瞬间闪回默认色。
+        var custom = localStorage.getItem('tinadec-custom-accent');
+        if (accent === 'custom' && custom && /^#[0-9a-fA-F]{6}$/.test(custom)) {
+          c = custom;
+        }
         document.documentElement.style.setProperty('--accent-brand', c);
 
         // 子窗口（?splash=0）跳过 HTML splash 的 fade-in 动画。

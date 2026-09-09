@@ -251,7 +251,7 @@ Spatial route transitions are **declarative and CSS-class driven** — page code
 
 ### Vapor mode
 
-- Vue 3.6 (RC) Vapor is enabled **per-SFC** via the `<template vapor>` block attribute. The root `package.json` overrides pin `vue` + `@vue/compiler-sfc` to `3.6.0-rc.2` so the compiler and runtime agree.
+- Vue 3.6 (RC) Vapor is enabled **per-SFC** via the `<template vapor>` block attribute. The root `package.json` overrides pin `vue` + `@vue/compiler-sfc` to `3.6.0-rc.7` so the compiler and runtime agree.
 - `src/lib/vue-shim.ts` re-exports `@vue/runtime-dom` + `@vue/runtime-vapor` so vapor SFCs' `from 'vue'` resolves in both Vite build and vitest.
 - `main.ts` installs `vaporInteropPlugin` so vapor components can live inside the classic vdom tree.
 - Rollout is batched (`src/vapor/vaporBatch.ts`); exemptions are recorded in `src/vapor/VaporExemptions.ts`.

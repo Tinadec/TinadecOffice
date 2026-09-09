@@ -12,16 +12,18 @@
  * - Neutral families (--bg-*, neutral --border-*, --text-primary/secondary)
  *   are re-derived from Monet "neutral"/"neutralVariant" tonal palettes so
  *   surfaces carry a subtle tint of the source image's hue.
- * - Accent identity (--accent-primary/brand/success, --text-brand,
- *   primary buttons, selection, focus ring) comes from the Monet "primary"
- *   palette at M3 tones (dark: 80, light: 40) with guaranteed contrast.
+ * - Accent identity (--accent-primary/brand, --text-brand, primary buttons,
+ *   selection, focus ring) comes from the Monet "primary" palette at M3 tones
+ *   (dark: 80, light: 40) with guaranteed contrast.
  * - shadcn/Tailwind tokens (--background/--primary/--card/--popover/...)
  *   are emitted as "H S% L%" triplets from the same palettes so the body
  *   base, UI primitives, and bg-card/bg-popover/bg-accent utilities join
  *   the one color system instead of a fixed hue.
  * - Semantic solids stay untouched: error/warning/danger/info/recovery
- *   accents, status backgrounds, --text-error/--text-reject/--text-link
- *   and scrollbar colors keep their styles.css values.
+ *   accents, success and approval green, status backgrounds,
+ *   --text-error/--text-reject/--text-link and scrollbar colors keep their
+ *   styles.css values. A status color must mean the same thing regardless
+ *   of which accent the user picked.
  */
 
 import {
@@ -148,10 +150,8 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
       '--text-secondary': toneHex(variant, 65),
       '--text-muted': toneHex(variant, 58),
       '--text-brand': accent,
-      '--text-approve': accent,
 
       '--accent-primary': accent,
-      '--accent-success': accent,
       '--accent-brand': accent,
       '--accent-soft': rgba(primary.tone(70), 0.12),
       '--shadow-focus': `0 0 0 2px ${rgba(primary.tone(70), 0.3)}`,
@@ -218,10 +218,8 @@ export function buildDynamicVars(source: number, theme: 'dark' | 'light'): Dynam
     '--text-secondary': toneHex(variant, 40),
     '--text-muted': toneHex(variant, 45),
     '--text-brand': accent,
-    '--text-approve': toneHex(primary, 32),
 
     '--accent-primary': accent,
-    '--accent-success': accent,
     '--accent-brand': accent,
     '--accent-soft': rgba(primary.tone(40), 0.1),
     '--shadow-focus': `0 0 0 2px ${rgba(primary.tone(40), 0.18)}`,
@@ -261,6 +259,75 @@ function rgbTriplet(color: number): string {
 export function argbFromHex(hex: string): number {
   const n = Number.parseInt(hex.replace('#', ''), 16)
   return ((0xff << 24) | (n & 0xffffff)) >>> 0
+}
+
+/** Serialize an ARGB int back to lowercase `#rrggbb`. */
+export function hexFromArgbInt(argb: number): string {
+  return `#${(argb & 0xffffff).toString(16).padStart(6, '0')}`
+}
+
+/** True for a syntactically valid `#rrggbb` (case-insensitive, `#` required). */
+export function isValidHexColor(hex: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(hex)
+}
+
+/**
+ * HSL (h 0-360, s/l 0-100) → `#rrggbb`. The picker's three sliders are the
+ * user-facing control; this is the single conversion into the pipeline's
+ * ARGB world so every custom color travels the exact same path as a preset.
+ */
+export function hexFromHsl(h: number, s: number, l: number): string {
+  const hue = ((h % 360) + 360) % 360
+  const sat = Math.min(Math.max(s, 0), 100) / 100
+  const lum = Math.min(Math.max(l, 0), 100) / 100
+  const k = (n: number): number => (n + hue / 30) % 12
+  const a = sat * Math.min(lum, 1 - lum)
+  const f = (n: number): number =>
+    lum - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  const channel = (n: number): string =>
+    Math.round(255 * f(n)).toString(16).padStart(2, '0')
+  return `#${channel(0)}${channel(8)}${channel(4)}`
+}
+
+/** `#rrggbb` → `[h 0-360, s 0-100, l 0-100]`. Inverse of `hexFromHsl`. */
+export function hslFromHex(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.replace('#', ''), 16)
+  const r = ((n >> 16) & 0xff) / 255
+  const g = ((n >> 8) & 0xff) / 255
+  const b = (n & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  const d = max - min
+  if (d === 0) return [0, 0, Math.round(l * 100)]
+  const s = d / (1 - Math.abs(2 * l - 1))
+  let h: number
+  if (max === r) h = ((g - b) / d + 6) % 6
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  return [Math.round(h * 60), Math.round(s * 100), Math.round(l * 100)]
+}
+
+/**
+ * WCAG relative-luminance contrast ratio between two `#rrggbb` colors.
+ * Used to warn (never block) when a custom accent would make brand text
+ * unreadable against the surface it sits on.
+ */
+export function contrastRatio(a: string, b: string): number {
+  const luminance = (hex: string): number => {
+    const n = Number.parseInt(hex.replace('#', ''), 16)
+    const channel = (v: number): number => {
+      const c = v / 255
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+    }
+    return 0.2126 * channel((n >> 16) & 0xff)
+      + 0.7152 * channel((n >> 8) & 0xff)
+      + 0.0722 * channel(n & 0xff)
+  }
+  const la = luminance(a)
+  const lb = luminance(b)
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la]
+  return (hi + 0.05) / (lo + 0.05)
 }
 
 /**

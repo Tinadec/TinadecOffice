@@ -256,6 +256,17 @@ const activeSection = ref<SettingsSection>('general')
 const agentCenterTab = ref<AgentCenterTab>('agents')
 // Pets section moved to settings/sections/PetsSection.vue (D7.2)
 
+/**
+ * Sections whose content is a fixed-width column, horizontally centered in the
+ * content panel. The remaining sections (model / agentCenter / pets / apiDocs)
+ * stay fluid: they are workspaces (tables, canvases, an embedded docs frame)
+ * that should use the full available width.
+ */
+const CENTERED_SECTIONS: ReadonlySet<SettingsSection> = new Set([
+  'general', 'tools', 'archive', 'appearance', 'language', 'about',
+])
+const isCenteredSection = computed(() => CENTERED_SECTIONS.has(activeSection.value))
+
 function selectSettingsSection(section: SettingsSection) {
   activeSection.value = section
 }
@@ -1888,7 +1899,10 @@ import '../settings/settings.css'
 
       <div class="settings-content" :style="settingsContentStyle" v-bind="settingsContentDataAttrs">
         <Transition name="section-fade" mode="out-in">
-        <div :key="activeSection" class="settings-section-wrapper">
+        <div
+          :key="activeSection"
+          :class="['settings-section-wrapper', { 'settings-section-wrapper--centered': isCenteredSection }]"
+        >
         <template v-if="activeSection === 'general'">
           <GeneralSection />
         </template>

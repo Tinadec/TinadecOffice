@@ -27,11 +27,11 @@ function closeButtonOf(id: string): Element | null | undefined {
     ?.querySelector('.island-capsule__close')
 }
 
-// Skipped: Vue 3.6.0-rc.2 classic <Transition> wrapping a Vapor SFC exercises the
+// Skipped: Vue 3.6.0-rc.7 classic <Transition> wrapping a Vapor SFC exercises the
 // classic↔Vapor interop leave path, whose `parentNode.insertBefore` hits a null
-// anchor under happy-dom (real browsers are unaffected). Re-enable after the
-// Vue 3.6 stable upgrade or when vitest gains a fixed DOM implementation.
-// Tracked as part of the Desktop UI/UX plan (D0.4).
+// anchor under happy-dom (real browsers are unaffected). Re-verified still broken
+// on the rc.2→rc.7 bump. Re-enable after the Vue 3.6 stable upgrade or when vitest
+// gains a fixed DOM implementation. Tracked as part of the Desktop UI/UX plan (D0.4).
 describe.skip('NotificationIslandHost', () => {
   it('renders nothing when empty and appears on first notification', async () => {
     const wrapper = mount(NotificationIslandHost, { attachTo: document.body })

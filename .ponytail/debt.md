@@ -37,7 +37,7 @@ Re-harvest with `/ponytail-debt` after bulk refactors.
 | Location | Shortcut & ceiling | Upgrade path |
 |----------|--------------------|--------------|
 | `apps/desktop/src/main.ts:4` | Tolerate Vue 3.5 (no vaporInteropPlugin) vs 3.6-rc | Remove guard once root vue pins ≥3.6 stable |
-| `apps/desktop/vite.config.ts:21` | Dedupe vue reactivity: nested desktop 3.5.41 vs root 3.6.0-rc.2 caused split-identity bugs | Drop dedupe after nested copies are gone |
+| `apps/desktop/vite.config.ts:21` | Dedupe vue reactivity: nested desktop 3.5.41 vs root 3.6.0-rc.7 caused split-identity bugs | Drop dedupe after nested copies are gone |
 | `apps/desktop/src/generated/client.ts:10` | Hand-written minimal fetch wrapper | Swap to openapi-fetch now that external OpenAPI is live |
 | `apps/desktop/src/composables/useRunStream.ts:8` | fetch+ReadableStream instead of EventSource | Needed to control `Last-Event-ID`/`?cursor=` and `id=seq` dedup; keep until native EventSource covers both |
 | `apps/desktop/src/transport/sseTransport.ts:9` | Transport seam placeholder; real SSE lives in `useRunStream.ts` | Wire WS upgrade through this seam in stage 2 |

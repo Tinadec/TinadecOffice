@@ -60,7 +60,7 @@
 - [ ] **scheduling 仍为 501 桩**（`tools/shell` 已实现：TinadecTools 的 `shell` 工具，审批门控；注意它**没有沙箱**，直接执行 `cmd.exe /d /s /c`，有沙箱的是 `command_run`）— 与本方案无直接耦合，但后续 full-duplex 深化的调度路径待实现。
 
 ### 2.4 既有遗留（当前阶段已知、非本方案引入）
-- **Desktop 14 个 skipped 测试** — `NotificationIslandHost` 为 Vue 3.6.0-rc.2 Transition + happy-dom 环境问题，当前已 `describe.skip`（非运行中失败）；待根 `vue` / `@vue/compiler-sfc` 升到 ≥3.6 stable 后解掉（见 `apps/desktop/AGENTS.md` NOTES）。
+- **Desktop 14 个 skipped 测试** — `NotificationIslandHost` 为 Vue 3.6.0-rc.7 Transition + happy-dom 环境问题（rc.2→rc.7 升级后复测仍失败），当前已 `describe.skip`（非运行中失败）；待根 `vue` / `@vue/compiler-sfc` 升到 ≥3.6 stable 后解掉（见 `apps/desktop/AGENTS.md` NOTES）。
 - **`ToolChainEndpointTests.WorkerWriteFile_…` 偶发 flake** — real-process 写盘测试在整包并发下偶发 approval decision `Conflict`；单测 / 套件单独重跑均 114/114 全绿，属已知资源争用 flake（见 `AGENTS.md` 终端纪律与 Core AGENTS 说明），后续可考虑与 real-process 测试隔离或串行化。
 
 ### 2.5 E2E 验证发现的后续事项（2026-08-29）

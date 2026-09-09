@@ -15,16 +15,63 @@ import { useNotifications } from '@/composables/useNotifications'
 // Storage key for background settings
 const STORAGE_KEY = 'tinadec-background'
 
-/**
- * Get stored background settings reference (lazy initialization)
- */
 let stored: Ref<BackgroundSettings> | null = null
 
+/**
+ * Get stored background settings reference (lazy initialization).
+ *
+ * Normalizes on read: builds created before the opacity-slider unit fix could
+ * persist a 0–1 opacity (the old slider ranged 0–1 while the contract is
+ * 0–100). Such values are migrated to percent so an upgrade does not leave a
+ * nearly-invisible background behind.
+ */
 function getStoredBackground(): Ref<BackgroundSettings> {
   if (!stored) {
-    stored = useStorage<BackgroundSettings>(STORAGE_KEY, { ...DEFAULT_BACKGROUND_SETTINGS })
+    const ref0 = useStorage<BackgroundSettings>(STORAGE_KEY, { ...DEFAULT_BACKGROUND_SETTINGS })
+    ref0.value = normalizeBackgroundSettings(ref0.value)
+    stored = ref0
   }
   return stored
+}
+
+export function normalizeBackgroundSettings(value: unknown): BackgroundSettings {
+  const candidate = typeof value === 'object' && value !== null
+    ? value as Partial<BackgroundSettings>
+    : {}
+  const types: BackgroundType[] = ['none', 'image', 'video', 'html']
+  const sizes: BackgroundSettings['size'][] = ['cover', 'contain', 'auto']
+  const positions: BackgroundSettings['position'][] = ['center', 'top', 'bottom', 'left', 'right']
+  const repeats: BackgroundSettings['repeat'][] = ['no-repeat', 'repeat', 'repeat-x', 'repeat-y']
+  const rawOpacity = typeof candidate.opacity === 'number' && Number.isFinite(candidate.opacity)
+    ? candidate.opacity
+    : DEFAULT_BACKGROUND_SETTINGS.opacity
+  return {
+    type: types.includes(candidate.type as BackgroundType)
+      ? candidate.type as BackgroundType
+      : DEFAULT_BACKGROUND_SETTINGS.type,
+    source: typeof candidate.source === 'string' ? candidate.source : DEFAULT_BACKGROUND_SETTINGS.source,
+    // Legacy 0–1 percentages: anything at or below 1 was written by the old
+    // slider, so scale it up. 0 stays 0 either way. The result is clamped to
+    // the contract range: App.vue and BackgroundPreview feed this straight into
+    // inline styles, and an out-of-range value silently becomes invalid CSS.
+    opacity: Math.round(Math.max(0, Math.min(100,
+      rawOpacity > 0 && rawOpacity <= 1 ? rawOpacity * 100 : rawOpacity,
+    ))),
+    blur: typeof candidate.blur === 'number' && Number.isFinite(candidate.blur)
+      ? Math.round(Math.max(0, Math.min(20, candidate.blur)))
+      : DEFAULT_BACKGROUND_SETTINGS.blur,
+    // Union-typed fields: only an exact member survives, everything else
+    // (empty string, typo, arbitrary CSS) falls back to the default.
+    size: sizes.includes(candidate.size as BackgroundSettings['size'])
+      ? candidate.size as BackgroundSettings['size']
+      : DEFAULT_BACKGROUND_SETTINGS.size,
+    position: positions.includes(candidate.position as BackgroundSettings['position'])
+      ? candidate.position as BackgroundSettings['position']
+      : DEFAULT_BACKGROUND_SETTINGS.position,
+    repeat: repeats.includes(candidate.repeat as BackgroundSettings['repeat'])
+      ? candidate.repeat as BackgroundSettings['repeat']
+      : DEFAULT_BACKGROUND_SETTINGS.repeat,
+  }
 }
 
 /**
@@ -137,22 +184,25 @@ export function useBackground() {
   }
 
   /**
-   * Update background opacity (0-100)
+   * Update background opacity (0-100).
+   * The stored value is a percentage; App.vue divides by 100 at the CSS boundary.
    */
   function setBackgroundOpacity(opacity: number): void {
+    if (!Number.isFinite(opacity)) return
     backgroundSettings.value = {
       ...backgroundSettings.value,
-      opacity: Math.max(0, Math.min(100, opacity)),
+      opacity: Math.round(Math.max(0, Math.min(100, opacity))),
     }
   }
 
   /**
-   * Update background blur (0-20px)
+   * Update background blur (0-20px) — matches the range the slider offers.
    */
   function setBackgroundBlur(blur: number): void {
+    if (!Number.isFinite(blur)) return
     backgroundSettings.value = {
       ...backgroundSettings.value,
-      blur: Math.max(0, Math.min(20, blur)),
+      blur: Math.round(Math.max(0, Math.min(20, blur))),
     }
   }
 

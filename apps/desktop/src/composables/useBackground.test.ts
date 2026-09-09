@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { normalizeFileSource } from './useBackground'
+import { normalizeBackgroundSettings, normalizeFileSource } from './useBackground'
+import type { BackgroundSettings } from '../types/background'
 
 describe('normalizeFileSource', () => {
   // --- Windows paths (the primary bug) ---
@@ -90,5 +91,116 @@ describe('normalizeFileSource', () => {
   it('does not corrupt HTML content (used for html background type)', () => {
     const html = '<div style="background: linear-gradient(135deg, #667eea, #764ba2); width: 100%; height: 100%;"></div>'
     expect(normalizeFileSource(html)).toBe(html)
+  })
+})
+
+/**
+ * The opacity slider used to range 0–1 while the contract is 0–100, so a single
+ * drag wrote 0.5 into a percent field and App.vue divided it again, leaving the
+ * background at 0.5% opacity. These tests pin the unit contract and the
+ * migration of already-persisted 0–1 values.
+ */
+describe('normalizeBackgroundSettings (opacity/blur units)', () => {
+  it('keeps percent opacity in the 0–100 domain', () => {
+    const out = normalizeBackgroundSettings({ type: 'image', source: 'a.jpg', opacity: 70, blur: 6 })
+    expect(out.opacity).toBe(70)
+    expect(out.blur).toBe(6)
+  })
+
+  it('migrates legacy 0–1 opacity to percent', () => {
+    // The old slider wrote 0.5 for "half" — it must become 50%, not 0.5%.
+    expect(normalizeBackgroundSettings({ opacity: 0.5 }).opacity).toBe(50)
+    expect(normalizeBackgroundSettings({ opacity: 1 }).opacity).toBe(100)
+    expect(normalizeBackgroundSettings({ opacity: 0.05 }).opacity).toBe(5)
+  })
+
+  it('treats zero opacity as zero in either domain', () => {
+    expect(normalizeBackgroundSettings({ opacity: 0 }).opacity).toBe(0)
+  })
+
+  it('clamps blur to the 0–20 range the slider offers', () => {
+    expect(normalizeBackgroundSettings({ blur: 30 }).blur).toBe(20)
+    expect(normalizeBackgroundSettings({ blur: -5 }).blur).toBe(0)
+  })
+
+  it('falls back to defaults for corrupt or missing values', () => {
+    const out = normalizeBackgroundSettings({ type: 'nonsense', opacity: Number.NaN })
+    expect(out.type).toBe('none')
+    expect(out.opacity).toBe(100)
+    expect(out.blur).toBe(0)
+  })
+
+  it('rounds fractional values so the label matches the stored number', () => {
+    expect(normalizeBackgroundSettings({ opacity: 62.4 }).opacity).toBe(62)
+    expect(normalizeBackgroundSettings({ blur: 7.6 }).blur).toBe(8)
+  })
+
+  it('clamps persisted opacity into 0–100 instead of trusting the file', () => {
+    // App.vue and BackgroundPreview feed this straight into inline styles, so an
+    // out-of-range value would silently become invalid CSS.
+    expect(normalizeBackgroundSettings({ opacity: 150 }).opacity).toBe(100)
+    expect(normalizeBackgroundSettings({ opacity: -20 }).opacity).toBe(0)
+    expect(normalizeBackgroundSettings({ opacity: 9999 }).opacity).toBe(100)
+    // 1.5 is above the legacy 0–1 band, so it is read as a percent (2%) rather
+    // than scaled — only the ≤1 band is the old slider's unit.
+    expect(normalizeBackgroundSettings({ opacity: 1.5 }).opacity).toBe(2)
+    expect(normalizeBackgroundSettings({ opacity: -0.5 }).opacity).toBe(0)
+  })
+
+  it('rejects non-finite opacity and blur', () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const out = normalizeBackgroundSettings({ opacity: bad, blur: bad })
+      expect(out.opacity, String(bad)).toBe(100)
+      expect(out.blur, String(bad)).toBe(0)
+    }
+  })
+})
+
+/**
+ * size / position / repeat are union-typed and land in inline styles, so a
+ * corrupt persisted string (empty, typo, arbitrary CSS) must fall back rather
+ * than reach the DOM.
+ */
+describe('normalizeBackgroundSettings (union fields)', () => {
+  it('keeps every legal member of each union', () => {
+    for (const size of ['cover', 'contain', 'auto'] as const) {
+      expect(normalizeBackgroundSettings({ size }).size).toBe(size)
+    }
+    for (const position of ['center', 'top', 'bottom', 'left', 'right'] as const) {
+      expect(normalizeBackgroundSettings({ position }).position).toBe(position)
+    }
+    for (const repeat of ['no-repeat', 'repeat', 'repeat-x', 'repeat-y'] as const) {
+      expect(normalizeBackgroundSettings({ repeat }).repeat).toBe(repeat)
+    }
+  })
+
+  it('falls back to defaults for empty, unknown, or wrong-typed values', () => {
+    for (const bad of ['', '  ', 'COVER', 'fill', 'middle', 'repeat-z', 'none']) {
+      const out = normalizeBackgroundSettings({ size: bad, position: bad, repeat: bad })
+      expect(out.size, bad).toBe('cover')
+      expect(out.position, bad).toBe('center')
+      expect(out.repeat, bad).toBe('no-repeat')
+    }
+    const typed = normalizeBackgroundSettings({
+      size: 1 as unknown as BackgroundSettings['size'],
+      position: null as unknown as BackgroundSettings['position'],
+      repeat: {} as unknown as BackgroundSettings['repeat'],
+    })
+    expect(typed.size).toBe('cover')
+    expect(typed.position).toBe('center')
+    expect(typed.repeat).toBe('no-repeat')
+  })
+
+  it('always returns a fully valid object for arbitrary garbage', () => {
+    for (const junk of [null, undefined, 42, 'nope', [], { size: 1 }]) {
+      const out = normalizeBackgroundSettings(junk)
+      expect(['cover', 'contain', 'auto']).toContain(out.size)
+      expect(['center', 'top', 'bottom', 'left', 'right']).toContain(out.position)
+      expect(['no-repeat', 'repeat', 'repeat-x', 'repeat-y']).toContain(out.repeat)
+      expect(out.opacity).toBeGreaterThanOrEqual(0)
+      expect(out.opacity).toBeLessThanOrEqual(100)
+      expect(out.blur).toBeGreaterThanOrEqual(0)
+      expect(out.blur).toBeLessThanOrEqual(20)
+    }
   })
 })
