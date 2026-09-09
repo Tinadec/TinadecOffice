@@ -114,6 +114,31 @@ describe('settings.css contract', () => {
     expect(css).toContain('.settings-section-wrapper')
   })
 
+  it('clamps and centres the fixed-width section wrapper', () => {
+    // Six sections (general/tools/archive/appearance/language/about) render a
+    // fixed-measure column centred in the content panel; the width lives on the
+    // wrapper so multi-root sections like ToolCenterSection are covered too.
+    expectSelectorDeclarations(
+      css,
+      '.settings-section-wrapper--centered',
+      /max-width\s*:\s*780px\s*;/,
+    )
+    expectSelectorDeclarations(
+      css,
+      '.settings-section-wrapper--centered',
+      /margin-left\s*:\s*auto\s*;/,
+    )
+    expectSelectorDeclarations(
+      css,
+      '.settings-section-wrapper--centered',
+      /margin-right\s*:\s*auto\s*;/,
+    )
+    // The fluid default must not clamp.
+    expectSelectorDeclarations(css, '.settings-section-wrapper', /min-height\s*:\s*0\s*;/)
+    expect(declarationsForSelector(css, '.settings-section-wrapper').join('\n'))
+      .not.toMatch(/max-width/)
+  })
+
   it('contains model center sections', () => {
     expect(css).toContain('.model-center-heading')
     expect(css).toContain('.model-route-panel')

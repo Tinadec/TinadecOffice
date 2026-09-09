@@ -246,8 +246,9 @@ overflow: hidden;
   margin-bottom: 6px;
 }
 
+/* Width is owned by .settings-section-wrapper--centered, so groups here must
+   not re-clamp it; they only carry the card surface. */
 .general-settings-group {
-  max-width: 760px;
   margin-top: 24px;
   padding: 18px;
   border-radius: 8px;
@@ -3072,6 +3073,20 @@ transform: translateX(-8px);
    Ensures the transition wrapper fills the scrollable area. */
 .settings-section-wrapper {
 min-height: 0;
+}
+
+/* Fixed-width, horizontally centered sections: general / tools / archive /
+   appearance / language / about. Their content is a readable single column, so
+   it stays at a constant measure and centres in the content panel instead of
+   stretching with the window. Constraining the wrapper (not its children) also
+   covers sections that render a multi-root fragment, such as ToolCenterSection.
+   Workspace sections (model / agentCenter / pets / apiDocs) keep the fluid
+   default. */
+.settings-section-wrapper--centered {
+  width: 100%;
+  max-width: 780px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .settings-nav[data-panel-effect="translucent"],
 .settings-nav[data-panel-effect="blur"] {
