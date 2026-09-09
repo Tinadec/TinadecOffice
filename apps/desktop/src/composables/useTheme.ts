@@ -4,6 +4,7 @@ import {
   argbFromHex,
   buildDynamicVars,
   DYNAMIC_VAR_NAMES,
+  isValidHexColor,
   type DynamicVars,
 } from '../lib/monetExtract'
 import { getDynamicPaletteRef } from './useDynamicPalette'
@@ -12,6 +13,12 @@ export type Theme = 'dark' | 'light' | 'system'
 
 /** Pseudo accent key: colors derived from the image background (Monet). */
 export const DYNAMIC_ACCENT_KEY = 'dynamic'
+
+/** Pseudo accent key: colors derived from the user's own picked hex. */
+export const CUSTOM_ACCENT_KEY = 'custom'
+
+/** Seed used when `custom` is selected before a color was ever picked. */
+const CUSTOM_ACCENT_FALLBACK = '#58a6ff'
 
 export interface AccentColor {
   key: string
@@ -182,6 +189,7 @@ export const ACCENT_COLORS: AccentColor[] = [
 // 使用 ref 延迟初始化，避免在模块加载时访问 localStorage
 let stored: Ref<Theme> | null = null
 let storedAccentColor: Ref<string> | null = null
+let storedCustomAccent: Ref<string> | null = null
 
 function getStoredTheme(): Ref<Theme> {
   if (!stored) {
@@ -195,6 +203,27 @@ function getStoredAccentColor(): Ref<string> {
     storedAccentColor = useStorage<string>('tinadec-accent-color', 'blue')
   }
   return storedAccentColor
+}
+
+/** The user's own accent hex; only consulted when the key is `custom`. */
+export function getCustomAccentHex(): Ref<string> {
+  if (!storedCustomAccent) {
+    const ref0 = useStorage<string>('tinadec-custom-accent', CUSTOM_ACCENT_FALLBACK)
+    if (!isValidHexColor(ref0.value)) ref0.value = CUSTOM_ACCENT_FALLBACK
+    storedCustomAccent = ref0
+  }
+  return storedCustomAccent
+}
+
+/**
+ * Test-only: drop the module-level storage singletons so each case re-reads
+ * localStorage. Without this, the first `useTheme()` in a file pins the refs
+ * and later cases observe the previous case's values.
+ */
+export function __resetThemeForTests(): void {
+  stored = null
+  storedAccentColor = null
+  storedCustomAccent = null
 }
 
 /**
@@ -215,6 +244,10 @@ function resolveAccentVars(key: string, theme: 'dark' | 'light'): DynamicVars | 
     // Not memoized: a fresh extraction must take effect immediately.
     const sourceColor = getDynamicPaletteRef().value?.sourceColor
     return typeof sourceColor === 'number' ? buildDynamicVars(sourceColor >>> 0, theme) : null
+  }
+  if (key === CUSTOM_ACCENT_KEY) {
+    // Not memoized: the seed changes every time the user moves a slider.
+    return buildDynamicVars(argbFromHex(getCustomAccentHex().value), theme)
   }
   const cacheKey = `${key}:${theme}`
   let vars = presetVarsCache.get(cacheKey)
@@ -256,6 +289,7 @@ function removeDynamicVars(root: HTMLElement) {
 export function useTheme() {
   const themeRef = getStoredTheme()
   const accentColorRef = getStoredAccentColor()
+  const customAccentRef = getCustomAccentHex()
 
   function applyInitialTheme() {
     applyTheme(themeRef.value)
@@ -281,6 +315,13 @@ export function useTheme() {
     }
   })
 
+  // Re-apply when the custom hex changes while "custom" is on.
+  watch(customAccentRef, () => {
+    if (accentColorRef.value === CUSTOM_ACCENT_KEY) {
+      applyAccentColor(CUSTOM_ACCENT_KEY)
+    }
+  })
+
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (themeRef.value === 'system') {
       applyTheme('system')
@@ -296,6 +337,11 @@ export function useTheme() {
     accentColor: accentColorRef,
     setAccentColor: (key: string) => {
       accentColorRef.value = key
+    },
+    /** The custom hex ref — bind the picker to it and previews stay live. */
+    customAccent: customAccentRef,
+    setCustomAccent: (hex: string) => {
+      if (isValidHexColor(hex)) customAccentRef.value = hex.toLowerCase()
     },
     accentColors: ACCENT_COLORS,
     applyInitialTheme,

@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   argbFromHex,
   buildDynamicVars,
+  contrastRatio,
   DYNAMIC_VAR_NAMES,
   extractSourceColor,
+  hexFromArgbInt,
+  hexFromHsl,
+  hslFromHex,
+  isValidHexColor,
   previewSwatches,
 } from './monetExtract'
 
@@ -169,5 +174,66 @@ describe('buildDynamicVars', () => {
     // Surfaces span both extremes.
     expect(lum(swatches[3]!)).toBeLessThan(30)
     expect(lum(swatches[4]!)).toBeGreaterThan(220)
+  })
+})
+
+/** Hex/HSL conversion used by the custom accent picker. */
+describe('custom accent color helpers', () => {
+  it('validates #rrggbb only', () => {
+    expect(isValidHexColor('#58a6ff')).toBe(true)
+    expect(isValidHexColor('#58A6FF')).toBe(true)
+    expect(isValidHexColor('58a6ff')).toBe(false)
+    expect(isValidHexColor('#58a6f')).toBe(false)
+    expect(isValidHexColor('#58a6ff00')).toBe(false)
+    expect(isValidHexColor('rgb(88,166,255)')).toBe(false)
+  })
+
+  it('round-trips hex → hsl → hex within channel tolerance', () => {
+    // HSL is stored with integer steps, so a hex cannot always be reproduced
+    // byte-exactly. The picker keeps the typed hex as the source of truth;
+    // this only guarantees the sliders stay visually on the same color.
+    const channels = (hex: string): number[] => {
+      const n = Number.parseInt(hex.slice(1), 16)
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    }
+    for (const hex of ['#58a6ff', '#3fb950', '#ffffff', '#000000', '#f0883e']) {
+      const [h, s, l] = hslFromHex(hex)
+      const back = hexFromHsl(h, s, l)
+      const [a, b] = [channels(hex), channels(back)]
+      for (let i = 0; i < 3; i++) {
+        expect(Math.abs(a[i]! - b[i]!), `${hex} channel ${i}`).toBeLessThanOrEqual(2)
+      }
+    }
+  })
+
+  it('round-trips hsl → hex → hsl within rounding tolerance', () => {
+    for (const [h, s, l] of [[210, 100, 50], [0, 0, 100], [120, 50, 40], [330, 80, 60]]) {
+      const hex = hexFromHsl(h!, s!, l!)
+      expect(hex).toMatch(/^#[0-9a-f]{6}$/)
+      const [h2, s2, l2] = hslFromHex(hex)
+      expect(Math.abs(h2 - h!)).toBeLessThanOrEqual(2)
+      expect(Math.abs(s2 - s!)).toBeLessThanOrEqual(2)
+      expect(Math.abs(l2 - l!)).toBeLessThanOrEqual(2)
+    }
+  })
+
+  it('clamps out-of-range HSL input instead of producing garbage', () => {
+    expect(hexFromHsl(400, 150, 150)).toMatch(/^#[0-9a-f]{6}$/)
+    expect(hexFromHsl(-30, -20, -10)).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('serializes ARGB back to lowercase hex', () => {
+    expect(hexFromArgbInt(argb(46, 196, 182))).toBe('#2ec4b6')
+    expect(hexFromArgbInt(argb(255, 255, 255))).toBe('#ffffff')
+  })
+
+  it('computes WCAG contrast for the low-contrast warning', () => {
+    // White on black is the maximum 21:1; identical colors are 1:1.
+    expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21, 1)
+    expect(contrastRatio('#58a6ff', '#58a6ff')).toBeCloseTo(1, 2)
+    // A dark blue on a dark surface fails the 4.5:1 text threshold.
+    expect(contrastRatio('#101820', '#0a0e14')).toBeLessThan(4.5)
+    // Mid blue on white passes it.
+    expect(contrastRatio('#0969da', '#ffffff')).toBeGreaterThan(4.5)
   })
 })
