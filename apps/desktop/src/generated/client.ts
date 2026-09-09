@@ -56,6 +56,7 @@ export type TaskNodeDto = Schemas['TaskNode']
 export type SupervisionFindingDto = Schemas['SupervisionFinding']
 export type ContextVersionDto = Schemas['ContextVersion']
 export type OrchestrationSnapshotDto = Schemas['OrchestrationSnapshot']
+export type PreAuthorizationDto = Schemas['PreAuthorization']
 
 export type LifecycleStatus = ProjectDto['lifecycle_status']
 

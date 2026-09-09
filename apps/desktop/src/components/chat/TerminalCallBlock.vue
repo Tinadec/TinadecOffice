@@ -47,6 +47,8 @@ let fitAddon: FitAddon | null = null
 let source: ReturnType<typeof createAgentTerminalSource> | null = null
 let unsubscribeEvents: (() => void) | null = null
 const captured: EventEnvelope[] = []
+const capturedSeqs = new Set<number>()
+let backfilling = false
 
 function payloadOf(event: EventEnvelope): Record<string, unknown> {
   return event.payload && typeof event.payload === 'object' ? (event.payload as Record<string, unknown>) : {}
@@ -62,21 +64,73 @@ function runIdOf(event: EventEnvelope): string | null {
   return typeof value === 'string' ? value : null
 }
 
+/** Append to the replay buffer, deduped by seq (SSE reconnects can redeliver). */
+function capture(event: EventEnvelope): boolean {
+  if (capturedSeqs.has(event.seq)) return false
+  capturedSeqs.add(event.seq)
+  captured.push(event)
+  return true
+}
+
 /** Correlate this execution with its run and terminal session from the stream. */
 function inspect(event: EventEnvelope) {
   if (!event.type.startsWith('terminal.')) return
   if (!belongsTo(event)) return
 
-  captured.push(event)
-  if (!resolvedRunId.value) {
-    const runId = runIdOf(event)
-    if (runId) resolvedRunId.value = runId
-  }
-
+  capture(event)
   const sessionId = payloadOf(event).terminal_session_id
   if (!terminalSessionId.value && typeof sessionId === 'string') {
     terminalSessionId.value = sessionId
     attachSession(sessionId)
+  }
+  if (!resolvedRunId.value) {
+    const runId = runIdOf(event)
+    if (runId) {
+      resolvedRunId.value = runId
+      if (!terminalSessionId.value) void backfillSession()
+    }
+  }
+}
+
+/**
+ * Mount-time association recovery. The live listener only sees events emitted
+ * after subscription, so a shell call that started before this block mounted
+ * would never produce a terminal_session_id. Recover in two steps: replay the
+ * controller's bounded recent-event buffer (same session, no extra request),
+ * then ask Core's terminal registry for the session owning this execution.
+ */
+function seedFromRecentEvents(): void {
+  for (const event of homeController.events.value) {
+    if (!event.type.startsWith('terminal.')) continue
+    if (!belongsTo(event)) continue
+    if (!capture(event)) continue
+    if (!resolvedRunId.value) {
+      const runId = runIdOf(event)
+      if (runId) resolvedRunId.value = runId
+    }
+    const sessionId = payloadOf(event).terminal_session_id
+    if (!terminalSessionId.value && typeof sessionId === 'string') {
+      terminalSessionId.value = sessionId
+    }
+  }
+}
+
+async function backfillSession(): Promise<void> {
+  const runId = resolvedRunId.value
+  if (!runId || terminalSessionId.value || backfilling) return
+  backfilling = true
+  try {
+    const sessions = await api.listTerminalSessions(runId)
+    const match = sessions.find((session) => session.execution_id === props.executionId)
+    if (match) {
+      terminalSessionId.value = match.terminal_session_id
+      if (!match.live) exited.value = true
+      attachSession(match.terminal_session_id)
+    }
+  } catch {
+    // Best effort: a later live event can still associate the session.
+  } finally {
+    backfilling = false
   }
 }
 
@@ -206,6 +260,9 @@ onMounted(() => {
   }
 
   unsubscribeEvents = homeController.onEvent(inspect)
+  seedFromRecentEvents()
+  if (terminalSessionId.value) attachSession(terminalSessionId.value)
+  else void backfillSession()
 })
 
 onBeforeUnmount(() => {

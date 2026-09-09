@@ -511,17 +511,18 @@ async function requestShellApproval() {
     if (!projectPath) throw new Error('Select a registered project before requesting a shell action.')
     const command = shellCommand.value.trim()
     if (!command) throw new Error('Enter a command before requesting a shell action.')
-    const windows = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
+    // 'shell' is the governed command tool id (same one agent workers use);
+    // Core resolves it from the live provider manifest and its frozen schema
+    // takes { command, cwd }, not the legacy command_run executable shape.
     const params = {
-      executable: windows ? 'cmd.exe' : '/bin/sh',
-      arguments: windows ? ['/d', '/c', command] : ['-lc', command],
-      working_directory: projectPath,
+      command,
+      cwd: projectPath,
     }
     const idempotencyKey = await userToolActionIdempotencyKey('desktop:home:shell', {
       project_path: projectPath,
       command,
     })
-    const action = await createUserToolActionForPath(projectPath, 'command_run', params, idempotencyKey)
+    const action = await createUserToolActionForPath(projectPath, 'shell', params, idempotencyKey)
     const approval = userToolActionToApproval(action, `Run command: ${command}`, {
       sessionId: selectedSessionId.value,
       cwd: projectPath,

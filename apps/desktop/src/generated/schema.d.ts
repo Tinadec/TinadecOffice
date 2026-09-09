@@ -98,8 +98,6 @@ export interface paths {
   "/api/v1/agents/{agentId}": {
     /** Get agent */
     get: operations["getApiV1AgentsByAgentId"];
-    /** Update agent */
-    put: operations["putApiV1AgentsByAgentId"];
   };
   "/api/v1/agents/{agentId}/archive": {
     /** Archive agent */
@@ -113,6 +111,13 @@ export interface paths {
     /** Publish agent */
     post: operations["postApiV1AgentsByAgentIdPublish"];
   };
+  "/api/v1/agents/{agentId}/runtime-binding": {
+    /**
+     * Set agent runtime binding
+     * @description User-level model/tool override for one agent (inherit or fixed provider+model). Works for pack-managed agents; survives pack reinstalls.
+     */
+    put: operations["putApiV1AgentsByAgentIdRuntime-binding"];
+  };
   "/api/v1/agents/{agentId}/versions": {
     /** List agent versions */
     get: operations["getApiV1AgentsByAgentIdVersions"];
@@ -124,6 +129,10 @@ export interface paths {
   "/api/v1/approvals": {
     /** List approvals */
     get: operations["getApiV1Approvals"];
+  };
+  "/api/v1/approvals/pre-authorizations": {
+    /** Create pre-authorization */
+    post: operations["postApiV1ApprovalsPre-authorizations"];
   };
   "/api/v1/approvals/{approvalId}/decision": {
     /** Decide approval */
@@ -1033,6 +1042,21 @@ export interface components {
       supervision_findings: components["schemas"]["SupervisionFinding"][];
       [key: string]: unknown;
     };
+    PreAuthorization: {
+      expires_at: string | null;
+      /** Format: uuid */
+      id: string;
+      lane_key: string | null;
+      max_uses: number;
+      parameter_constraint_hash: string | null;
+      revoked: boolean;
+      risk_max: string;
+      /** Format: uuid */
+      run_id: string;
+      tool_scope: string[];
+      use_count: number;
+      [key: string]: unknown;
+    };
     ProblemDetails: {
       /** @description Stable snake_case machine-readable error code. */
       code: string;
@@ -1570,19 +1594,6 @@ export interface operations {
       };
     };
   };
-  /** Update agent */
-  putApiV1AgentsByAgentId: {
-    parameters: {
-      path: {
-        agentId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
   /** Archive agent */
   postApiV1AgentsByAgentIdArchive: {
     parameters: {
@@ -1611,6 +1622,22 @@ export interface operations {
   };
   /** Publish agent */
   postApiV1AgentsByAgentIdPublish: {
+    parameters: {
+      path: {
+        agentId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /**
+   * Set agent runtime binding
+   * @description User-level model/tool override for one agent (inherit or fixed provider+model). Works for pack-managed agents; survives pack reinstalls.
+   */
+  "putApiV1AgentsByAgentIdRuntime-binding": {
     parameters: {
       path: {
         agentId: string;
@@ -1654,6 +1681,17 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** Create pre-authorization */
+  "postApiV1ApprovalsPre-authorizations": {
+    responses: {
+      /** @description Created pre-authorization grant. */
+      201: {
+        content: {
+          "application/json": components["schemas"]["PreAuthorization"];
+        };
       };
     };
   };

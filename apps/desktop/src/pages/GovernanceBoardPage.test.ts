@@ -101,4 +101,55 @@ describe('GovernanceBoardPage', () => {
 
     wrapper.unmount()
   })
+
+  it('polls approvals on an interval while mounted and stops after unmount', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      apiMock.listApprovals.mockResolvedValue([])
+      apiMock.listPermissionRequests.mockResolvedValue([])
+      apiMock.listUserToolActions.mockResolvedValue([])
+
+      const wrapper = mount(GovernanceBoardPage)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(3)
+
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(48_000)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pauses polling while the page is hidden and resumes when visible again', async () => {
+    vi.useFakeTimers()
+    try {
+      setActivePinia(createPinia())
+      apiMock.listApprovals.mockResolvedValue([])
+      apiMock.listPermissionRequests.mockResolvedValue([])
+      apiMock.listUserToolActions.mockResolvedValue([])
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+
+      const wrapper = mount(GovernanceBoardPage)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(36_000)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(1)
+
+      visibility.mockRestore()
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(apiMock.listApprovals).toHaveBeenCalledTimes(2)
+
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
