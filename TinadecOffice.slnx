@@ -8,6 +8,10 @@
     <Project Path="TinadecCore/Abstractions/TinadecCore.Abstractions.csproj" />
     <Project Path="TinadecCore/Persistence/TinadecCore.Persistence.csproj" />
     <Project Path="TinadecCore/VectorStore/TinadecCore.VectorStore.csproj" />
+    <Project Path="TinadecCore/Tenancy/TinadecCore.Tenancy.csproj" />
+    <Project Path="TinadecCore/AgentConfiguration/TinadecCore.AgentConfiguration.csproj" />
+    <Project Path="TinadecCore/Storage.Migrations.Sqlite/TinadecCore.Storage.Migrations.Sqlite.csproj" />
+    <Project Path="TinadecCore/Storage.Migrations.PostgreSql/TinadecCore.Storage.Migrations.PostgreSql.csproj" />
     <Project Path="TinadecCore/Strategies/TinadecCore.Strategies.fsproj" />
   </Folder>
   <Folder Name="/TinadecCore/modules/">
@@ -20,6 +24,7 @@
     <Project Path="TinadecCore/LoopGuard/TinadecCore.LoopGuard.csproj" />
     <Project Path="TinadecCore/Lifecycle/TinadecCore.Lifecycle.csproj" />
     <Project Path="TinadecCore/Governance/TinadecCore.Governance.csproj" />
+    <Project Path="TinadecCore/Tools/TinadecCore.Tools.csproj" />
   </Folder>
   <Folder Name="/TinadecCore/host/">
     <Project Path="TinadecCore/Runtime/TinadecCore.Runtime.csproj" />
