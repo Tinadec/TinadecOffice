@@ -9,11 +9,22 @@ const rootDir = resolve(__dirname, "..");
 const isWindows = process.platform === "win32";
 
 function createSpawnOpts(extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+
+  // 从 Electron 宿主（VS Code / CodeBuddy / 任何 Electron 应用）的终端启动时，
+  // ELECTRON_RUN_AS_NODE 会被继承下来。一旦存在，electron.exe 就退化成纯 Node
+  // 运行时：require('electron') 只返回 electron.exe 的路径字符串，
+  // app/BrowserWindow/protocol 全为 undefined，主进程在
+  // protocol.registerSchemesAsPrivileged 处崩溃，窗口永远不出现。
+  // 该变量对 Vite/Node 无意义，这里统一从子进程环境中剔除。
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ELECTRON_NO_ATTACH_CONSOLE;
+
   return {
     cwd: rootDir,
     shell: isWindows,
     stdio: "pipe",
-    env: { ...process.env, ...extraEnv },
+    env,
   };
 }
 

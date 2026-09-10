@@ -7,8 +7,8 @@
     "apps/*"
   ],
   "scripts": {
-    "predev": "node scripts/setup-shadcn-ai.mjs",
-    "dev": "concurrently -n core,gateway,desktop -c blue,magenta,green \"npm run dev:core\" \"npm run dev:gateway\" \"npm run dev:desktop\"",
+    "predev": "node scripts/dev-port-guard.mjs && node scripts/setup-shadcn-ai.mjs",
+    "dev": "concurrently --kill-others -n core,gateway,desktop -c blue,magenta,green \"npm run dev:core\" \"npm run dev:gateway\" \"npm run dev:desktop\"",
     "dev:core": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-dotnet-env.ps1 run --project TinadecCore/Api/TinadecCore.Api.csproj --urls http://127.0.0.1:48731",
     "dev:gateway": "cd TinadecGateway && bun run dev",
     "dev:desktop": "npm run dev -w @tinadec/desktop",

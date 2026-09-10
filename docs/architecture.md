@@ -69,7 +69,7 @@ Desktop composes Model Center and Agent Center from Core-owned versioned provide
 
 ## Bundled Agent Pack Lifecycle
 
-TinadecCore exposes a generic, workspace-scoped Agent Pack lifecycle; it does not compile TinadecOffice roles into Core. TinadecOffice carries schema `tinadec.io/agent-pack/v1alpha1` Pack `tinadec.office.agent-pack` (`owner=tinadec.office`, current `version=0.2.3`) as a deterministic renderer asset. It contains 14 Agent definitions, 5 PromptPipeline resources, 7 Modes (`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`), and recommended workspace defaults.
+TinadecCore exposes a generic, workspace-scoped Agent Pack lifecycle; it does not compile TinadecOffice roles into Core. TinadecOffice carries schema `tinadec.io/agent-pack/v1alpha1` Pack `tinadec.office.agent-pack` (`owner=tinadec.office`, current `version=0.2.4`) as a deterministic renderer asset. It contains 14 Agent definitions, 5 PromptPipeline resources, 7 Modes (`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`), and recommended workspace defaults.
 
 On each connected epoch the main renderer asks Core for an install preview through Gateway, validates the returned Pack identity/hash, shows owner/version/hash and default impact, and submits a confirmed install. Electron child/pet/debug windows skip bootstrap; Web tabs coordinate through `BroadcastChannel`/Web Locks, while Core idempotency and revision checks remain authoritative. Rejection is remembered only for the current App lifetime; errors stay non-blocking and expose a retry that obtains a fresh preview.
 

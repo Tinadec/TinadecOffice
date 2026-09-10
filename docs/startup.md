@@ -141,7 +141,7 @@ Execution layer (`layer = execution`):
 - `worker.general`
 - `worker.git`
 
-After a fresh workspace the roster is empty until the bundled Office Agent Pack (`tinadec.office.agent-pack`, currently 0.2.3) is confirmed/installed; Desktop renders it from Gateway `/api/v1/agents`.
+After a fresh workspace the roster is empty until the bundled Office Agent Pack (`tinadec.office.agent-pack`, currently 0.2.4) is confirmed/installed; Desktop renders it from Gateway `/api/v1/agents`.
 
 ## Troubleshooting
 

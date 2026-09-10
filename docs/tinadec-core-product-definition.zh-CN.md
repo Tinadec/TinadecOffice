@@ -576,7 +576,7 @@ spec:
 
 ### 9.7 Agent Pack 生命周期
 
-- Agent Pack manifest 使用 Pack 内稳定 key 与 `agent:<key>`、`prompt:<key>`、`mode:<key>` 引用，不携带环境 UUID、secret 或机器路径。首版 schema 是 `tinadec.io/agent-pack/v1alpha1`；TinadecOffice 制品为 `tinadec.office.agent-pack` / `tinadec.office` / 当前 `0.2.3`，包含 14 个 Agent、5 个 PromptPipeline、7 个 Mode（`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`）和推荐 WorkspaceDefaults。
+- Agent Pack manifest 使用 Pack 内稳定 key 与 `agent:<key>`、`prompt:<key>`、`mode:<key>` 引用，不携带环境 UUID、secret 或机器路径。首版 schema 是 `tinadec.io/agent-pack/v1alpha1`；TinadecOffice 制品为 `tinadec.office.agent-pack` / `tinadec.office` / 当前 `0.2.4`，包含 14 个 Agent、5 个 PromptPipeline、7 个 Mode（`default-mode` + `conversation.{plan,spec,ask,vibe,auto,agent}`）和推荐 WorkspaceDefaults。
 - Envelope 对 manifest 执行 RFC 8785/JCS canonicalization 后计算 SHA-256，Core 必须重算。首版信任边界是当前工作区 owner 授权、用户确认 owner/version/hash 与审计；完整性哈希不等同于发布者数字签名。
 - install preview 只在同一 tenant/workspace/principal 下有效 15 分钟，返回 `install|upgrade|up_to_date|newer_installed|conflict`、资源/default 差异、警告和基础 revision。PUT 必须提交同一 envelope、`preview_id` 和 `Idempotency-Key`；upgrade 还必须携带 preview ETag 对应的 `If-Match`。
 - Core 在同一事务中按 Prompt -> Agent -> Mode -> defaults 安装。首装只在 defaults 为空或精确等价于旧 DevSeed 基线时采用推荐值；升级只推进仍指向上一 Pack 版本的 defaults，任何用户自定义值都保留。

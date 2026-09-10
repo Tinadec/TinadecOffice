@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   OFFICE_AGENT_PACK_DIGEST,
   OFFICE_AGENT_PACK_ID,
+  OFFICE_AGENT_PACK_VERSION,
   digestAgentPackManifest,
   officeAgentPackEnvelope,
   officeAgentPackManifest,
@@ -12,7 +13,7 @@ describe('OfficeAgentPack', () => {
     expect(officeAgentPackManifest.metadata.pack_id).toBe(OFFICE_AGENT_PACK_ID)
     expect(officeAgentPackManifest.metadata.owner).toBe('tinadec.office')
     expect(officeAgentPackManifest.metadata.product_id).toBe('tinadec.office')
-    expect(officeAgentPackManifest.metadata.version).toBe('0.2.3')
+    expect(officeAgentPackManifest.metadata.version).toBe(OFFICE_AGENT_PACK_VERSION)
     expect(officeAgentPackManifest.resources.agents).toHaveLength(14)
     expect(officeAgentPackManifest.resources.agents.every((agent) => Boolean(agent.system_prompt?.trim()))).toBe(true)
     // Core denies every tool invocation for an operation-layer instance, so a governance

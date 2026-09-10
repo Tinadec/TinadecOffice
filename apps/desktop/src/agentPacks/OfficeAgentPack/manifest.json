@@ -6,7 +6,7 @@
     "owner": "tinadec.office",
     "product_id": "tinadec.office",
     "name": "OfficeAgentPack",
-    "version": "0.2.3"
+    "version": "0.2.4"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",

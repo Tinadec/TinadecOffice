@@ -3,7 +3,7 @@
 **提交:** `3d92404`（首版 0.1.0）/ `9b3d42b`（列表 500 修复）/ 本阶段（v0.2.0 七模式 + 发送框打通）
 **分支:** `Astra`（本文写于 `main` 时代，HEAD 已为 `3e8ff30`）
 **校验结果（2026-08-26 当时）:** Core Api 116/116、AgentFramework 56/56、Gateway 40/40、Desktop 276 pass + 14 skipped 全绿
-**当前版本（2026-09-07 核对）:** Pack `0.2.3`（`apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json:9`）；测试基线为 Core Api 194+1 known-flake、AgentFramework 100、Architecture 11、Governance 34、Gateway 44、Desktop 332
+**当前版本（2026-09-10 核对）:** Pack `0.2.4`（`apps/desktop/src/agentPacks/OfficeAgentPack/manifest.json:9`，digest `e99cd56747cd96fb9d89b5a9082a1b00f54c3622620ce43fb676e3551216f2e9`）；测试基线为 Core Api 194+1 known-flake、AgentFramework 100、Architecture 11、Governance 34、Gateway 44、Desktop 332
 
 本文件记录该方案的落地状态，并把计划中**明确延期**的项登记为后续待办。与 `AGENTS.md`、`docs/tinadec-core-product-definition.zh-CN.md` 相互引用。
 
@@ -13,6 +13,7 @@
 
 - **Pack v0.2.0**：manifest 新增六个对话模式 `conversation.plan/spec/ask/vibe/auto/agent`（节点子集对齐 TOML profile，各带合法 worker 子集），共 7 Mode / 22 资源；digest `837497ea…7ee5`。
 - **Pack v0.2.1（2026-08-31 双层权限收口）**：五个非 steward 治理角色 `tool_scope` 由 `["*"]` 收口为 `[]`，与 Core `CoreAuthorizationContextResolver` 新增的 operation 层零工具策略一致；digest `8110547a…962e`。`worker.general` 的通配按产品决定保留（`conversation.vibe` 唯一可写兜底 worker），且 `AgentInstanceService.SpawnAsync` 已禁止派生实例携带通配，通配不会再落到任何实例上。
+- **Pack v0.2.4（2026-09-10 `create_workspace` 授权 + 版本号修正）**：`worker.code` 的 `tool_scope` 追加 Core 虚拟工具 `create_workspace`（无工作区自由对话的审批建区入口）；digest `e99cd567…f2e9`。**修正**：`5f82e53` 只升了 `index.ts` 的 version/digest 与 manifest 字节，漏改 `manifest.json:metadata.version`（仍为 0.2.3），使服务端把改了字节的包仍当成 0.2.3，已安装 0.2.3 的工作区在 `install-preview` 得到 409 `agent_pack_version_hash_conflict`（"The same pack version is already installed with a different manifest digest."）。现 `metadata.version` = 0.2.4 = `OFFICE_AGENT_PACK_VERSION`，`OfficeAgentPack.test.ts` 改为断言两者相等，避免再次漂移。
 - **拓扑显示修复**：`GET /api/v1/agent-modes/{id}` 对 published/managed 模式返回 published 投影 + `managed` 标记（此前 draft-only 守卫 409 导致画布空白）；Desktop 模式面板只读渲染 + 克隆入口。
 - **agent_mode 打通**：`POST /interactions` 接受 `agent_mode`；解析顺序 = 显式 `mode_version_id` > workspace 已发布 `conversation.{slug}` > 会话默认；选中即持久化到 session 并以 conversation 应用语义 admission。Gateway `sessionMapper` 补转发 `mode_version_id` 等绑定字段，`interactionsMapper` 薄校验枚举。
 - **回归测试**：装包后三列表端点 + published 拓扑读 + agent_mode 三级解析/未知拒绝/优先级。
