@@ -425,7 +425,7 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
         string Kind,
         string Source,
         Guid SessionId,
-        Guid ProjectId,
+        Guid? ProjectId,
         IReadOnlyList<WorkspaceRunMetadata> Runs,
         IReadOnlyList<WorkspaceTaskMetadata> Tasks,
         IReadOnlyList<WorkspaceEventMetadata> Events);

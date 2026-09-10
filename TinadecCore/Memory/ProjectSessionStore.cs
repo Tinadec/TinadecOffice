@@ -6,7 +6,7 @@ using TinadecCore.Persistence;
 
 namespace TinadecCore.Memory;
 
-public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolver, IConversationStore, IStorageMigrationParticipant
+public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolver, IConversationStore, IStorageMigrationParticipant, ISessionWorkspaceBinder
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SessionLocks = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
@@ -70,7 +70,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     }
 
     public async Task<SessionRecord> CreateSessionAsync(
-        Guid projectId,
+        Guid? projectId,
         string? title,
         Guid modeVersionId,
         SessionModelOverride? meetingModelOverride = null,
@@ -78,7 +78,7 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
-        if (!await db.Projects.AnyAsync(x => x.Id == projectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false))
+        if (projectId.HasValue && !await db.Projects.AnyAsync(x => x.Id == projectId.Value && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false))
         {
             throw new KeyNotFoundException("Project was not found.");
         }
@@ -148,6 +148,40 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return session;
+    }
+
+    public async Task<SessionRecord> MigrateSessionAsync(
+        Guid sessionId,
+        Guid targetProjectId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Session was not found.");
+
+        if (!await db.Projects.AnyAsync(x => x.Id == targetProjectId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false))
+        {
+            throw new KeyNotFoundException("Target project was not found.");
+        }
+
+        session.ProjectId = targetProjectId;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return session;
+    }
+
+    public async Task<SessionWorkspaceBinding> BindSessionToWorkspaceAsync(Guid sessionId, string name, string path, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Workspace name is required.");
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Workspace path is required.");
+        var fullPath = Path.GetFullPath(path.Trim());
+        if (!Path.IsPathRooted(fullPath)) throw new ArgumentException("Workspace path must be absolute.");
+        Directory.CreateDirectory(fullPath);
+        var existing = await FindByRootAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        var projectId = existing?.ProjectId ?? (await CreateProjectAsync(name, fullPath, cancellationToken).ConfigureAwait(false)).Id;
+        var session = await MigrateSessionAsync(sessionId, projectId, cancellationToken).ConfigureAwait(false);
+        return new SessionWorkspaceBinding(session.Id, projectId, name.Trim(), Path.TrimEndingDirectorySeparator(fullPath), existing is null);
     }
 
     public async Task<ProjectRecord?> RenameProjectAsync(Guid projectId, string name, CancellationToken cancellationToken = default)

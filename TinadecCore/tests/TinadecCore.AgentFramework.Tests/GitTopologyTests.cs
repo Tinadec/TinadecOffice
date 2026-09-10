@@ -95,6 +95,28 @@ public sealed class GitTopologyTests
         }
     }
 
+    [Fact]
+    public async Task ProjectlessSessionFreezesCoreCreateWorkspaceToolOnly()
+    {
+        var sessionId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var workspaceId = Guid.NewGuid();
+        // A free-conversation session carries no project; no provider is ever contacted.
+        var sessions = new StubSessionLocator(new SessionReference(sessionId, null, tenantId, workspaceId), null);
+        var provider = new StubToolProvider(new ToolManifestDto { ProtocolVersion = 2, ManifestHash = string.Empty, Tools = [] });
+        var resolver = new ToolManifestSnapshotResolver(sessions, provider);
+
+        var snapshot = await resolver.ResolveAsync(new ToolManifestSnapshotRequest(sessionId, ["create_workspace"], AllowAllTools: false));
+
+        Assert.Equal(2, snapshot.ProtocolVersion);
+        var tool = Assert.Single(snapshot.AuthorizedTools);
+        Assert.Equal("create_workspace", tool.Id);
+        Assert.True(tool.RequiresApproval);
+        Assert.True(tool.MutatesWorkspace);
+        Assert.Equal("high", tool.Risk);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.ManifestHash));
+    }
+
     private static (Dictionary<string, TomlTable> Agents, List<TomlTable> Modes) LoadBootstrapDirectory()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Configuration", "bootstrap-agent-directory.toml");
@@ -110,13 +132,13 @@ public sealed class GitTopologyTests
         return (agents, modes);
     }
 
-    private sealed class StubSessionLocator(SessionReference session, ProjectReference project) : ISessionLocator
+    private sealed class StubSessionLocator(SessionReference session, ProjectReference? project) : ISessionLocator
     {
         public Task<SessionReference?> FindAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
             Task.FromResult<SessionReference?>(session.SessionId == sessionId ? session : null);
 
         public Task<ProjectReference?> FindProjectAsync(Guid projectId, CancellationToken cancellationToken = default) =>
-            Task.FromResult<ProjectReference?>(project.ProjectId == projectId ? project : null);
+            Task.FromResult<ProjectReference?>(project is not null && project.ProjectId == projectId ? project : null);
     }
 
     private sealed class StubToolProvider(ToolManifestDto manifest) : IToolProvider

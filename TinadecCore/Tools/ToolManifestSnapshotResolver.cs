@@ -32,7 +32,20 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
 
         var session = await _sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
-        var project = await _sessions.FindProjectAsync(session.ProjectId, cancellationToken).ConfigureAwait(false)
+
+        if (session.ProjectId is null)
+        {
+            // Free-conversation sessions have no TinadecTools child process, so no
+            // live manifest exists to freeze. The frozen manifest carries only the
+            // Core-owned create_workspace virtual tool: a worker may propose binding
+            // a real workspace (approval-gated, executed by Core itself), and the
+            // next interaction freezes a fresh manifest from the new project root.
+            var virtualEntry = CoreWorkspaceTool.ManifestEntry();
+            var virtualHash = ToolManifestHasher.Compute(new[] { virtualEntry });
+            return new ToolManifestSnapshot(2, virtualHash, [ToFrozen(virtualEntry)]);
+        }
+
+        var project = await _sessions.FindProjectAsync(session.ProjectId.Value, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Project was not found.");
         if (project.TenantId != session.TenantId || project.WorkspaceId != session.WorkspaceId)
             throw new ToolManifestSnapshotException("TOOL_MANIFEST_SCOPE_MISMATCH", "The project does not belong to the session workspace.");

@@ -40,6 +40,7 @@ public sealed class ToolDispatcher : IToolDispatcher
     private readonly IInFlightToolCallRegistry _inFlightCalls;
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
+    private readonly ISessionWorkspaceBinder? _workspaceBinder;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -51,7 +52,8 @@ public sealed class ToolDispatcher : IToolDispatcher
         ITerminalSessionRegistry terminalSessions,
         IInFlightToolCallRegistry inFlightCalls,
         ToolDispatchOptions options,
-        ILogger<ToolDispatcher> logger)
+        ILogger<ToolDispatcher> logger,
+        ISessionWorkspaceBinder? workspaceBinder = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -63,6 +65,7 @@ public sealed class ToolDispatcher : IToolDispatcher
         _inFlightCalls = inFlightCalls;
         _options = options;
         _logger = logger;
+        _workspaceBinder = workspaceBinder;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -108,7 +111,10 @@ public sealed class ToolDispatcher : IToolDispatcher
             // High-risk writes receive the same pre-write snapshot guard as
             // explicit user actions. The execution was persisted first, so a
             // snapshot failure can durably block it without calling the provider.
-            if (NeedsPrewriteSnapshot(execution)
+            // Projectless scopes have no workspace to snapshot; the Core-owned
+            // virtual tool's safety net is its approval gate instead.
+            if (scope.ProjectId != Guid.Empty
+                && NeedsPrewriteSnapshot(execution)
                 && execution.WorkspaceSnapshotId is null
                 && execution.Status is not ("completed" or "failed" or "timed_out" or "cancelled"))
             {
@@ -551,6 +557,11 @@ public sealed class ToolDispatcher : IToolDispatcher
     {
         Action<ToolWireEventDto>? observer = pump is null ? null : pump.Enqueue;
 
+        if (scope.ProjectId == Guid.Empty && CoreWorkspaceTool.IsCoreTool(wire.ToolId))
+        {
+            return await ExecuteCoreWorkspaceToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
         if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
         {
             return streaming is not null
@@ -569,6 +580,63 @@ public sealed class ToolDispatcher : IToolDispatcher
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Executes the Core-owned create_workspace virtual tool: creates the directory,
+    /// registers the project, and migrates the projectless session onto it — all
+    /// after the standard approval gate has already passed for this execution.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteCoreWorkspaceToolAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        CancellationToken cancellationToken)
+    {
+        if (_workspaceBinder is null)
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "The session workspace binder is not registered." };
+        }
+
+        string? name = null;
+        string? path = null;
+        if (wire.Params is { ValueKind: JsonValueKind.Object } parameters)
+        {
+            if (parameters.TryGetProperty("name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String)
+                name = nameElement.GetString();
+            if (parameters.TryGetProperty("path", out var pathElement) && pathElement.ValueKind == JsonValueKind.String)
+                path = pathElement.GetString();
+        }
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "create_workspace requires non-empty 'name' and 'path' parameters." };
+        }
+
+        try
+        {
+            var binding = await _workspaceBinder.BindSessionToWorkspaceAsync(scope.SessionId, name, path, cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(scope.RunId, "session.workspace_bound",
+                $"Session was bound to workspace '{binding.ProjectName}'.", new
+                {
+                    session_id = scope.SessionId,
+                    project_id = binding.ProjectId,
+                    root_path = binding.RootPath,
+                    project_created = binding.ProjectCreated
+                }, cancellationToken, scope.TaskId, CoreWorkspaceTool.ToolId).ConfigureAwait(false);
+            var result = JsonSerializer.SerializeToElement(new
+            {
+                success = true,
+                name = binding.ProjectName,
+                path = binding.RootPath,
+                project_id = binding.ProjectId,
+                project_created = binding.ProjectCreated,
+                message = $"Workspace '{binding.ProjectName}' is ready at '{binding.RootPath}'; this conversation is now bound to it. New interactions run with the full tool set of that workspace."
+            });
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = true, Result = result };
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or KeyNotFoundException)
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = SafeMessage(ex.Message) };
         }
     }
 
@@ -607,6 +675,32 @@ public sealed class ToolDispatcher : IToolDispatcher
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)
     {
+        if (scope.ProjectId == Guid.Empty)
+        {
+            // Projectless (free-conversation) scope: no live provider exists. The
+            // Core-owned create_workspace virtual tool is the only legal call, and
+            // the run-frozen manifest is the sole declaration source.
+            if (!CoreWorkspaceTool.IsCoreTool(toolId)) return (null, $"Unknown tool '{toolId}'.");
+            var frozenOnly = scope.AuthorizedToolManifest?.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
+            if (frozenOnly is null) return (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.");
+            if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)
+                || !string.Equals(ToolManifestHasher.Compute(scope.AuthorizedToolManifest!), scope.FrozenToolManifestHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return (null, "The frozen tool manifest hash does not match the run binding.");
+            }
+            return (new ToolManifestEntryDto
+            {
+                Id = frozenOnly.Id,
+                Description = frozenOnly.Description,
+                RequiresApproval = frozenOnly.RequiresApproval,
+                InputSchema = frozenOnly.InputSchema.Clone(),
+                Risk = frozenOnly.Risk,
+                MutatesWorkspace = frozenOnly.MutatesWorkspace,
+                RetrySafety = frozenOnly.RetrySafety,
+                ConfirmationFields = frozenOnly.ConfirmationFields.ToArray()
+            }, null);
+        }
+
         var manifest = await _provider.GetManifestAsync(scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
         if (manifest.ProtocolVersion != 2) return (null, "TinadecTools manifest v2 is required for autonomous dispatch.");
         if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)

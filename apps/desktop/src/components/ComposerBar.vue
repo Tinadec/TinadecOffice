@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings, Sparkles } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -40,7 +40,7 @@ const emit = defineEmits<{
   'submit': [payload: { dispatch_mode: 'parallel' | 'queued' | 'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }]
   'welcome-submit': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }]
   'create-project': []
-  'select-project': [id: string]
+  'select-project': [id: string | null]
   'add-image': []
   'add-file': []
 }>()
@@ -117,7 +117,7 @@ async function toggleProjectDropdown() {
   }
 }
 
-function selectProject(id: string) {
+function selectProject(id: string | null) {
   emit('select-project', id)
   showProjectDropdown.value = false
 }
@@ -330,6 +330,14 @@ function confirmSteer(id: string) {
           <div class="project-dropdown-section">
             <div class="project-dropdown-section-title">{{ t('chat.openedProjects') }}</div>
             <button
+              class="project-dropdown-item"
+              :class="{ active: !selectedProjectId }"
+              @click="selectProject(null)"
+            >
+              <Sparkles :size="12" />
+              <span>{{ t('chat.freeConversation') }}</span>
+            </button>
+            <button
               v-for="project in projects"
               :key="project.id"
               class="project-dropdown-item"
@@ -341,6 +349,15 @@ function confirmSteer(id: string) {
             </button>
           </div>
         </UiScrollArea>
+        <button
+          v-else
+          class="project-dropdown-item"
+          :class="{ active: !selectedProjectId }"
+          @click="selectProject(null)"
+        >
+          <Sparkles :size="12" />
+          <span>{{ t('chat.freeConversation') }}</span>
+        </button>
         <button class="project-dropdown-item project-dropdown-new" @click="openNewProject">
           <FolderPlus :size="12" />
           <span>{{ t('chat.openNewProject') }}</span>

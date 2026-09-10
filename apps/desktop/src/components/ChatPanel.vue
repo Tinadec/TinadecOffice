@@ -38,7 +38,7 @@ const emit = defineEmits<{
   'send': [payload?: { dispatch_mode: 'parallel'|'queued'|'insert'; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }]
   'welcome-send': [payload: { content: string; agent_mode: AgentMode; permission_mode: PermissionLevel; mode_version_id: string | null }]
   'create-project': []
-  'select-project': [id: string]
+  'select-project': [id: string | null]
   'approve': [approvalId: string]
   'reject': [approvalId: string]
 }>()

@@ -1147,7 +1147,7 @@ public sealed class EventFileRecord
     public Guid EventId { get; set; }
     public Guid RunId { get; set; }
     public Guid SessionId { get; set; }
-    public Guid ProjectId { get; set; }
+    public Guid? ProjectId { get; set; }
     public string EventType { get; set; } = string.Empty;
     public string Severity { get; set; } = "info";
     public long Sequence { get; set; }

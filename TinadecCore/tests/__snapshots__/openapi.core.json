@@ -1038,7 +1038,10 @@
             ]
           },
           "project_id": {
-            "type": "string"
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "title": {
             "type": [
@@ -1137,6 +1140,29 @@
           "provider_instance_id": {
             "format": "uuid",
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MigrateSessionRequest": {
+        "properties": {
+          "project_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "project_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "target_project_id": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -5312,6 +5338,38 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/migrate": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MigrateSessionRequest"
               }
             }
           },

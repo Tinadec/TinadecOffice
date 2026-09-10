@@ -277,7 +277,7 @@ public sealed class EventIndexRecord
     public Guid WorkspaceId { get; set; }
     public Guid RunId { get; set; }
     public Guid SessionId { get; set; }
-    public Guid ProjectId { get; set; }
+    public Guid? ProjectId { get; set; }
     public string EventType { get; set; } = string.Empty;
     public string Severity { get; set; } = "info";
     public long Sequence { get; set; }
@@ -337,7 +337,7 @@ public sealed class SessionMetadataSnapshotRecord
     public Guid TenantId { get; set; }
     public Guid WorkspaceId { get; set; }
     public Guid SessionId { get; set; }
-    public Guid ProjectId { get; set; }
+    public Guid? ProjectId { get; set; }
     public string Kind { get; set; } = "session_runtime";
     public string Source { get; set; } = "lifecycle_projection";
     public string SchemaVersion { get; set; } = "1.0";

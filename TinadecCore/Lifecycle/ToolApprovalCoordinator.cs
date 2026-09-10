@@ -89,7 +89,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Id = executionId,
             TenantId = request.TenantId,
             WorkspaceId = request.WorkspaceId,
-            ProjectId = request.ProjectId,
+            ProjectId = request.ProjectId == Guid.Empty ? null : request.ProjectId,
             SessionId = request.SessionId,
             RunId = request.RunId,
             TaskId = request.TaskId,
@@ -123,7 +123,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     Id = pendingApprovalId,
                     TenantId = request.TenantId,
                     WorkspaceId = request.WorkspaceId,
-                    ProjectId = request.ProjectId,
+                    ProjectId = request.ProjectId == Guid.Empty ? null : request.ProjectId,
                     SessionId = request.SessionId,
                     RunId = request.RunId,
                     TaskId = request.TaskId,
@@ -1188,7 +1188,12 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
     private static void ValidatePrepareRequest(ToolExecutionPrepareRequest request)
     {
-        if (request.TenantId == Guid.Empty || request.WorkspaceId == Guid.Empty || request.ProjectId == Guid.Empty
+        // The Core-owned create_workspace virtual tool is the single legal call
+        // without a project: it is the bridge that gives a free conversation one.
+        var projectlessVirtualTool = request.ProjectId == Guid.Empty
+            && string.Equals(request.ToolId, "create_workspace", StringComparison.OrdinalIgnoreCase);
+        if (request.TenantId == Guid.Empty || request.WorkspaceId == Guid.Empty
+            || (request.ProjectId == Guid.Empty && !projectlessVirtualTool)
             || request.SessionId == Guid.Empty || request.RunId == Guid.Empty || request.TaskId == Guid.Empty || request.AgentInstanceId == Guid.Empty)
             throw new ArgumentException("Tool execution scope ids must be non-empty.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.ToolId) || string.IsNullOrWhiteSpace(request.ParametersHash))

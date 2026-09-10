@@ -16,7 +16,7 @@ public sealed record SessionModelOverride(Guid ProviderInstanceId, string? Model
 
 public sealed record SessionReference(
     Guid SessionId,
-    Guid ProjectId,
+    Guid? ProjectId,
     Guid TenantId,
     Guid WorkspaceId,
     Guid? ModeVersionId = null,

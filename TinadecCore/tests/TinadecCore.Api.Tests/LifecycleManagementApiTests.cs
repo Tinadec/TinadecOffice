@@ -315,6 +315,38 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
         Assert.Equal(0, await memory.Messages.CountAsync(x => x.SessionId == kept.GetProperty("id").GetGuid()));
     }
 
+    [Fact]
+    public async Task Session_CanBeCreatedWithoutProject_AndMigratedToNewProject()
+    {
+        var client = _factory!.CreateClient();
+        // 1. Create session without project
+        var response = await client.PostAsJsonAsync("/api/v1/sessions", new { title = "Free conversation" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var freeSession = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = freeSession.GetProperty("id").GetGuid();
+        // Core serializes with WhenWritingNull: a projectless session either omits project_id or sends null.
+        Assert.True(!freeSession.TryGetProperty("project_id", out var freeProjectId) || freeProjectId.ValueKind == JsonValueKind.Null);
+
+        // 2. Migrate to new project with name and path
+        var newWorkspacePath = Path.Combine(_root, "migrated-workspace");
+        var migrateResponse = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/migrate", new
+        {
+            project_name = "Migrated Workspace",
+            project_path = newWorkspacePath
+        });
+        Assert.Equal(HttpStatusCode.OK, migrateResponse.StatusCode);
+        var migratedSession = await migrateResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.String, migratedSession.GetProperty("project_id").ValueKind);
+        var targetProjectId = migratedSession.GetProperty("project_id").GetGuid();
+        Assert.True(Directory.Exists(newWorkspacePath));
+
+        // 3. Check memory store
+        await using var memory = await _factory.Services.GetRequiredService<IDbContextFactory<MemoryDbContext>>().CreateDbContextAsync();
+        var sessionInDb = await memory.Sessions.FindAsync(sessionId);
+        Assert.NotNull(sessionInDb);
+        Assert.Equal(targetProjectId, sessionInDb.ProjectId);
+    }
+
     private async Task<JsonElement> CreateProjectAsync(HttpClient client, string workspaceName)
     {
         var response = await client.PostAsJsonAsync("/api/v1/projects", new { name = workspaceName, path = Path.Combine(_root, workspaceName) });

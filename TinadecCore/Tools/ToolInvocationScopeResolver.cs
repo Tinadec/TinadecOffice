@@ -53,12 +53,25 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             ?? throw new KeyNotFoundException("Session was not found.");
         if (session.TenantId != tenantId || session.WorkspaceId != workspaceId)
             throw new UnauthorizedAccessException("Session does not belong to the run tenant/workspace.");
-        var project = await _sessions.FindProjectAsync(session.ProjectId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Project was not found.");
-        if (project.TenantId != tenantId || project.WorkspaceId != workspaceId)
-            throw new UnauthorizedAccessException("Project does not belong to the run tenant/workspace.");
-        var root = Path.GetFullPath(project.RootPath);
-        if (!Directory.Exists(root)) throw new DirectoryNotFoundException("The project workspace root no longer exists.");
+
+        ProjectReference? project = null;
+        var root = string.Empty;
+        if (session.ProjectId is null)
+        {
+            // Free-conversation sessions expose only the Core-owned create_workspace
+            // virtual tool; every provider-backed tool requires a project root.
+            if (!CoreWorkspaceTool.IsCoreTool(request.ToolId))
+                throw new InvalidOperationException("Tool execution is unavailable for a session without a project workspace root.");
+        }
+        else
+        {
+            project = await _sessions.FindProjectAsync(session.ProjectId.Value, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Project was not found.");
+            if (project.TenantId != tenantId || project.WorkspaceId != workspaceId)
+                throw new UnauthorizedAccessException("Project does not belong to the run tenant/workspace.");
+            root = Path.GetFullPath(project.RootPath);
+            if (!Directory.Exists(root)) throw new DirectoryNotFoundException("The project workspace root no longer exists.");
+        }
 
         if (_agents is null)
             throw new InvalidOperationException("No agent authorization provider is registered.");
@@ -70,7 +83,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new UnauthorizedAccessException("Agent invocation scope does not match the run/session.");
         if (!IsToolAllowed(authorization.AllowedTools, request.ToolId))
             throw new UnauthorizedAccessException($"Agent instance is not allowed to invoke '{request.ToolId}'.");
-        if (!IsResourceAllowed(authorization.AllowedResources, root))
+        if (project is not null && !IsResourceAllowed(authorization.AllowedResources, root))
             throw new UnauthorizedAccessException("Agent instance is not allowed to access the project workspace.");
 
         var frozen = await _lifecycle.GetFrozenRunConfigurationAsync(request.RunId.ToString(), cancellationToken).ConfigureAwait(false)
@@ -83,17 +96,24 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new InvalidOperationException("The run does not contain a valid frozen TinadecTools v2 manifest.");
         }
 
-        var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
-        if (liveManifest.ProtocolVersion != 2
-            || !string.Equals(liveManifest.ManifestHash, frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(ToolManifestHasher.Compute(liveManifest.Tools), frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
+        if (project is not null)
         {
-            throw new InvalidOperationException("The TinadecTools manifest changed after run admission.");
-        }
+            var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
+            if (liveManifest.ProtocolVersion != 2
+                || !string.Equals(liveManifest.ManifestHash, frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(ToolManifestHasher.Compute(liveManifest.Tools), frozenManifest.ManifestHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The TinadecTools manifest changed after run admission.");
+            }
 
-        var liveEntry = liveManifest.Tools.FirstOrDefault(item => string.Equals(item.Id, request.ToolId, StringComparison.OrdinalIgnoreCase));
-        var frozenEntry = frozenManifest.Tools.FirstOrDefault(item => string.Equals(item.Id, request.ToolId, StringComparison.OrdinalIgnoreCase));
-        if (liveEntry is null || frozenEntry is null || !ToolManifestHasher.Equivalent(liveEntry, frozenEntry))
+            var liveEntry = liveManifest.Tools.FirstOrDefault(item => string.Equals(item.Id, request.ToolId, StringComparison.OrdinalIgnoreCase));
+            var frozenPair = frozenManifest.Tools.FirstOrDefault(item => string.Equals(item.Id, request.ToolId, StringComparison.OrdinalIgnoreCase));
+            if (liveEntry is null || frozenPair is null || !ToolManifestHasher.Equivalent(liveEntry, frozenPair))
+            {
+                throw new UnauthorizedAccessException($"Tool '{request.ToolId}' is not in the frozen authorized manifest.");
+            }
+        }
+        else if (!frozenManifest.Tools.Any(item => string.Equals(item.Id, request.ToolId, StringComparison.OrdinalIgnoreCase)))
         {
             throw new UnauthorizedAccessException($"Tool '{request.ToolId}' is not in the frozen authorized manifest.");
         }
@@ -104,7 +124,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             tenantId,
             workspaceId,
             _tenant.Current.PrincipalId,
-            project.ProjectId,
+            project?.ProjectId ?? Guid.Empty,
             sessionId,
             request.RunId,
             request.TaskId,

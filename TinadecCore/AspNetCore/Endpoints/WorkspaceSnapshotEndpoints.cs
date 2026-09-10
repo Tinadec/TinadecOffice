@@ -77,7 +77,9 @@ public static class WorkspaceSnapshotEndpoints
             if (session is null) return Results.NotFound(new { code = "session_not_found" });
             var projection = await snapshots.GetSessionProjectionAsync(sessionId, ct).ConfigureAwait(false);
             if (projection is null) return Results.NotFound(new { code = "session_not_found" });
-            var values = await snapshots.ListAsync(session.ProjectId, ct).ConfigureAwait(false);
+            var values = session.ProjectId is { } projId
+                ? await snapshots.ListAsync(projId, ct).ConfigureAwait(false)
+                : Array.Empty<WorkspaceSnapshot>();
             return Results.Ok(new
             {
                 session_id = sessionId,

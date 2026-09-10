@@ -104,7 +104,7 @@ public sealed record WorkspaceSessionSnapshot(
     Guid TenantId,
     Guid WorkspaceId,
     Guid SessionId,
-    Guid ProjectId,
+    Guid? ProjectId,
     string Kind,
     string Source,
     string SchemaVersion,

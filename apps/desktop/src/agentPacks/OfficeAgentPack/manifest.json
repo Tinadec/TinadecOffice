@@ -125,7 +125,7 @@
         "role": "task_executor",
         "capabilities": ["tool.code", "tool.file"],
         "model_strategy": { "kind": "inherit" },
-        "tool_scope": ["write_file", "read_file", "shell", "mcp_invoke"],
+        "tool_scope": ["write_file", "read_file", "shell", "mcp_invoke", "create_workspace"],
         "system_prompt": "你是代码执行智能体。先读取相关代码与约束，再实施范围最小且可验证的变更，并运行与风险相称的测试；所有写入和命令必须服从工具授权与审批，向父智能体返回修改文件、验证结果和未解决风险，不直接面向用户输出。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:worker-prompt"

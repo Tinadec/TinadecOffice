@@ -159,7 +159,7 @@ public sealed class SessionRecord
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public Guid WorkspaceId { get; set; }
-    public Guid ProjectId { get; set; }
+    public Guid? ProjectId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Status { get; set; } = "active";
     public string Mode { get; set; } = "default";

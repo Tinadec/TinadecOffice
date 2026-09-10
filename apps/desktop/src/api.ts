@@ -1867,9 +1867,13 @@ export const api = {
     body: JSON.stringify({ name, path })
   }),
   listSessions: (projectId?: string) => request<SessionDto[]>(`/api/v1/sessions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
-  createSession: (projectId: string, title?: string) => request<SessionDto>('/api/v1/sessions', {
+  createSession: (projectId?: string | null, title?: string) => request<SessionDto>('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ project_id: projectId, title })
+    body: JSON.stringify({ project_id: projectId ?? undefined, title })
+  }),
+  migrateSession: (sessionId: string, payload: { target_project_id?: string; project_name?: string; project_path?: string }) => request<SessionDto>(`/api/v1/sessions/${sessionId}/migrate`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
   }),
   updateSessionTitle: (sessionId: string, title: string) => request<SessionDto>(`/api/v1/sessions/${sessionId}`, {
     method: 'PATCH',

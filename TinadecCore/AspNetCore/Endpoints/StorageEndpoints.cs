@@ -77,7 +77,12 @@ public static class StorageEndpoints
 
         app.MapPost("/api/v1/sessions", async (CreateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IAgentModelResolver modelResolver, ITenantContextAccessor tenant, CancellationToken ct) =>
         {
-            if (!Guid.TryParse(request.ProjectId, out var projectId)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
+            Guid? projectId = null;
+            if (!string.IsNullOrWhiteSpace(request.ProjectId))
+            {
+                if (!Guid.TryParse(request.ProjectId, out var parsedProjectId)) return Results.BadRequest(new { code = "INVALID_PROJECT_ID" });
+                projectId = parsedProjectId;
+            }
             try
             {
                 Guid? modeVersionId = request.ModeVersionId;
@@ -156,6 +161,47 @@ public static class StorageEndpoints
             }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_SESSION", message = ex.Message }); }
             catch (InvalidDataException ex) { return Results.BadRequest(new { code = "invalid_model_override", message = ex.Message }); }
+        });
+
+        app.MapPost("/api/v1/sessions/{sessionId}/migrate", async (string sessionId, MigrateSessionRequest request, ProjectSessionStore store, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
+            try
+            {
+                Guid targetProjectId;
+                if (!string.IsNullOrWhiteSpace(request.TargetProjectId) && Guid.TryParse(request.TargetProjectId, out var parsedId))
+                {
+                    targetProjectId = parsedId;
+                }
+                else if (!string.IsNullOrWhiteSpace(request.ProjectName) && !string.IsNullOrWhiteSpace(request.ProjectPath))
+                {
+                    var fullPath = Path.GetFullPath(request.ProjectPath.Trim());
+                    if (!Directory.Exists(fullPath))
+                    {
+                        Directory.CreateDirectory(fullPath);
+                    }
+                    var existingProject = await store.FindByRootAsync(fullPath, ct).ConfigureAwait(false);
+                    if (existingProject is not null)
+                    {
+                        targetProjectId = existingProject.ProjectId;
+                    }
+                    else
+                    {
+                        var createdProject = await store.CreateProjectAsync(request.ProjectName, fullPath, ct).ConfigureAwait(false);
+                        targetProjectId = createdProject.Id;
+                    }
+                }
+                else
+                {
+                    return Results.BadRequest(new { code = "INVALID_MIGRATION_REQUEST", message = "target_project_id or (project_name and project_path) must be provided." });
+                }
+
+                var session = await store.MigrateSessionAsync(id, targetProjectId, ct).ConfigureAwait(false);
+                return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
+            }
+            catch (KeyNotFoundException) { return Results.NotFound(new { code = "RESOURCE_NOT_FOUND" }); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_REQUEST", message = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { code = "CONFLICT", message = ex.Message }); }
         });
 
         MapSessionLifecycleEndpoints(app, "archive", lifecycle => lifecycle.ArchiveSessionAsync);
