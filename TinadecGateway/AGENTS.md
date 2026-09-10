@@ -1,9 +1,9 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-08-31
-**Last Updated By:** WorkBuddy
-**Last Verified Commit:** a3af869
-**Branch:** main
+**Last Updated:** 2026-09-10
+**Last Updated By:** Kimi (会话迁移代理路由)
+**Last Verified Commit:** beeb2b6
+**Branch:** Astra
 
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。
@@ -88,6 +88,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - **终端会话路由 (2026-08-31)**：`GET /api/v1/terminals`、`POST /api/v1/terminals/:terminalSessionId/stdin`、`POST /api/v1/terminals/:terminalSessionId/kill` 是 Core 的纯透传（Tags: Terminal）。终端实时输出走既有 `GET /api/v1/runs/:runId/stream` SSE 代理，不需要单独的 WS 通道；`/ws/terminal` 无效桩仍未启用。openapi.external.json 快照已随新路由再生成（快照测试已修复为「先写后断言」，漂移会重新生成文件并由 `git diff --exit-code` 把关）。
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` **已退役**（`src/index.ts:540` 起不再注册，返回 404）；当前入口是 `POST /api/v1/sessions/{sessionId}/interactions`（`interactionsMapper` 只做薄枚举校验），运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。
 - `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model_override`（结构化 `{provider_instance_id, model}`，Desktop 依赖它们感知当前模式；旧自由文本模型字段与分散 provider 字段已于 2026-08-27 重构删除）。
+- **自由对话与会话迁移 (2026-09-10)**：Core 支持无 `project_id` 的自由对话会话（合成 manifest 只含 Core 自有 `create_workspace` 虚拟工具）；`POST /api/v1/sessions/:sessionId/migrate` 是对应的薄代理（`target_project_id` 或 `project_name`+`project_path`，Core 端 find-or-create 项目并原子迁移会话），openapi.external.json 快照与 Desktop generated client 已同步再生成。
 - `GET /api/v1/agent-modes?application_mode=` 直接读取 Core 的可用模式；`im`/`hub` 是当前内置别名，解析属于 Core。旧 `GET /api/v1/application-modes` TOML 投影与 `PUT /api/v1/agents/:agentId/mode` 代理已删除（2026-08-27 模型与智能体控制面重构）。
 - Run 控制与运行期投影均为纯 Core 代理：`POST /api/v1/runs/{runId}/control`、`GET /api/v1/runs/{runId}/orchestration`、`GET /api/v1/runs/{runId}/agent-lineage`、`GET /api/v1/sessions/{sessionId}/context-versions`。
 - `GET /api/v1/model-providers/cli/discover` 与 `POST /api/v1/model-providers/cli/connect` 为纯 Core 代理（CLI 运行时发现与连接，见 Core `ControlPlaneService`）。
