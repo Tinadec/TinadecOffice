@@ -480,7 +480,10 @@ const app = new Elysia()
     const mapped = mapSessions([result.data]);
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return mapped[0] ?? result.data;
-  }, { detail: { summary: 'Create session', tags: ['Sessions'], responses: { 201: externalJsonResponse('Session', 'Created session.') } }, body: t.Object({ project_id: t.String(), title: t.Optional(t.String()) }, { additionalProperties: true }) })
+  // project_id is optional by contract: omitting it creates a free-conversation
+  // (projectless) session. Requiring it here rejected the request at the gateway
+  // before Core ever saw it.
+  }, { detail: { summary: 'Create session', tags: ['Sessions'], responses: { 201: externalJsonResponse('Session', 'Created session.') } }, body: t.Object({ project_id: t.Optional(t.String()), title: t.Optional(t.String()) }, { additionalProperties: true }) })
   .patch('/api/v1/sessions/:sessionId', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/sessions/${params.sessionId}`, { method: 'PATCH', body: body as Record<string, unknown>, headers });

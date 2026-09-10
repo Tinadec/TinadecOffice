@@ -1,7 +1,13 @@
 /** Session mapper */
 export interface ExternalSessionDto {
   id: string;
-  project_id: string;
+  /**
+   * Null for a projectless (free-conversation) session. Core omits the field via
+   * `WhenWritingNull`, and a coerced empty string would satisfy truthiness checks
+   * meant to detect free conversations while failing strict equality against a
+   * real project id.
+   */
+  project_id: string | null;
   title: string | null;
   status: string | null;
   mode: string | null;
@@ -17,6 +23,10 @@ export interface ExternalSessionDto {
 
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
+function nullableId(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 export function mapSession(core: unknown): ExternalSessionDto | null {
   if (!isRecord(core)) return null;
   const id = String(core.id ?? '');
@@ -27,7 +37,7 @@ export function mapSession(core: unknown): ExternalSessionDto | null {
   const rawLifecycle = core.lifecycle_status ?? core.lifecycleStatus;
   return {
     id,
-    project_id: String(core.project_id ?? core.projectId ?? ''),
+    project_id: nullableId(core.project_id ?? core.projectId),
     title: (core.title as string) ?? null,
     status: (core.status as string) ?? null,
     mode: (core.mode as string) ?? null,

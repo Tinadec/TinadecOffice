@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Lifecycle;
+using TinadecCore.Memory;
 using TinadecCore.Tools;
 
 namespace TinadecCore.Api.Tests;
@@ -196,6 +197,135 @@ public sealed class ToolApprovalLifecycleFixTests : IAsyncLifetime
 
         var elevated = await PrepareExecutionAsync(projectId, sessionId, run.Id, "risk:elevated:0:0", risk: "elevated");
         Assert.Equal("elevated", elevated.Risk);
+    }
+
+    /// <summary>
+    /// Regression for the free-conversation admission path: a projectless session
+    /// stores a NULL project_id while the wire request can only express "no project"
+    /// as <see cref="Guid.Empty"/>. Comparing the two raw values never matched, so
+    /// every create_workspace call died with UnauthorizedAccessException before the
+    /// approval gate could ever be reached.
+    /// </summary>
+    [Fact]
+    public async Task ProjectlessCreateWorkspace_IsPreparedWithNullProject_NotRejected()
+    {
+        var sessionId = await InsertProjectlessSessionAsync();
+        var run = await InsertRunAsync(sessionId, "planning");
+        const string parameters = "{\"name\":\"fresh-workspace\",\"path\":\"C:/tmp/fresh-workspace\"}";
+
+        var preparation = await ExecutionCoordinator().PrepareAsync(
+            CreateWorkspaceRequest(sessionId, run.Id, "projectless:create:0:0", parameters));
+
+        Assert.False(preparation.Existing);
+        Assert.Equal("awaiting_approval", preparation.Execution.Status);
+        Assert.NotNull(preparation.Execution.ApprovalId);
+        // The snapshot surfaces the wire sentinel again so callers keep one shape.
+        Assert.Equal(Guid.Empty, preparation.Execution.ProjectId);
+
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var executionRow = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == preparation.Execution.Id);
+        Assert.Null(executionRow.ProjectId);
+        var approvalRow = await verify.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == preparation.Execution.ApprovalId);
+        Assert.Null(approvalRow.ProjectId);
+    }
+
+    /// <summary>
+    /// The idempotent replay path must normalize the same sentinel: replaying one
+    /// tool_call_key returns the original execution rather than reporting "key reused
+    /// with different execution data" for a foreign key that is simply NULL.
+    /// </summary>
+    [Fact]
+    public async Task ProjectlessCreateWorkspace_ReplayedToolCallKey_IsIdempotent()
+    {
+        var sessionId = await InsertProjectlessSessionAsync();
+        var run = await InsertRunAsync(sessionId, "planning");
+        const string parameters = "{\"name\":\"fresh-workspace\",\"path\":\"C:/tmp/fresh-workspace\"}";
+        var request = CreateWorkspaceRequest(sessionId, run.Id, "projectless:replay:0:0", parameters);
+
+        var first = await ExecutionCoordinator().PrepareAsync(request);
+        var replay = await ExecutionCoordinator().PrepareAsync(request);
+
+        Assert.False(first.Existing);
+        Assert.True(replay.Existing);
+        Assert.Equal(first.Execution.Id, replay.Execution.Id);
+        Assert.Equal(first.Execution.ApprovalId, replay.Execution.ApprovalId);
+    }
+
+    /// <summary>
+    /// Only the Core-owned virtual tool may run without a project; the admission
+    /// gate still rejects a provider-backed tool that carries the empty sentinel.
+    /// </summary>
+    [Fact]
+    public async Task ProjectlessProviderTool_IsRejectedByAdmission()
+    {
+        var sessionId = await InsertProjectlessSessionAsync();
+        var run = await InsertRunAsync(sessionId, "planning");
+        var scope = TenantAccessor().Current;
+        var request = new ToolExecutionPrepareRequest(
+            scope.TenantId,
+            scope.WorkspaceId,
+            Guid.Empty,
+            sessionId,
+            run.Id,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "write_file",
+            "high",
+            true,
+            true,
+            "{\"path\":\"probe.txt\"}",
+            ToolParametersHash.Compute("{\"path\":\"probe.txt\"}"),
+            "projectless:provider:0:0",
+            "projectless provider tool test");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => ExecutionCoordinator().PrepareAsync(request));
+    }
+
+    private ToolExecutionPrepareRequest CreateWorkspaceRequest(
+        Guid sessionId,
+        Guid runId,
+        string toolCallKey,
+        string parameters)
+    {
+        var scope = TenantAccessor().Current;
+        return new ToolExecutionPrepareRequest(
+            scope.TenantId,
+            scope.WorkspaceId,
+            Guid.Empty,
+            sessionId,
+            runId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CoreVirtualToolPolicy.CreateWorkspaceToolId,
+            "high",
+            true,
+            true,
+            parameters,
+            ToolParametersHash.Compute(parameters),
+            toolCallKey,
+            "create_workspace admission test");
+    }
+
+    private async Task<Guid> InsertProjectlessSessionAsync()
+    {
+        var scope = TenantAccessor().Current;
+        await using var db = await _factory!.Services
+            .GetRequiredService<IDbContextFactory<MemoryDbContext>>()
+            .CreateDbContextAsync();
+        var session = new SessionRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = scope.TenantId,
+            WorkspaceId = scope.WorkspaceId,
+            ProjectId = null,
+            Title = "Free conversation",
+            ModeVersionId = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.Sessions.Add(session);
+        await db.SaveChangesAsync();
+        return session.Id;
     }
 
     private async Task MarkRunningWithConsumedApprovalAsync(ToolExecutionSnapshot execution)

@@ -147,26 +147,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             : allowedTools.Any(value => string.Equals(value, "*", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(value, toolId, StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsResourceAllowed(IReadOnlyList<string> resources, string root)
-    {
-        if (resources.Count == 0) return true;
-        foreach (var resource in resources)
-        {
-            if (string.Equals(resource, "workspace", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(resource, "project", StringComparison.OrdinalIgnoreCase)) return true;
-            try
-            {
-                var candidate = Path.GetFullPath(resource);
-                if (string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase)
-                    || candidate.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            catch (Exception) when (resource.Length > 0)
-            {
-                // A malformed resource is simply not an authorization grant.
-            }
-        }
-        return false;
-    }
+    private static bool IsResourceAllowed(IReadOnlyList<string> resources, string root) =>
+        ToolResourceAllowList.IsAllowed(resources, root);
 
     internal static FrozenToolManifestBinding ReadFrozenToolManifest(string content)
     {

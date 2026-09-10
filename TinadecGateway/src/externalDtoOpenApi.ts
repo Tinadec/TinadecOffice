@@ -36,7 +36,8 @@ const meetingModelOverride = t.Object({
 
 const session = t.Object({
   id: t.String({ format: 'uuid' }),
-  project_id: t.String({ format: 'uuid' }),
+  // Null for a free-conversation session created without project_id.
+  project_id: t.Unsafe({ type: 'string', format: 'uuid', nullable: true }),
   title: nullableString(),
   status: nullableString(),
   mode: nullableString(),

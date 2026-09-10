@@ -48,6 +48,7 @@ const archivedEmpty = computed(() => archivedProjects.value.length === 0 && arch
 const trashEmpty = computed(() => trashedProjects.value.length === 0 && trashedSessions.value.length === 0)
 
 function projectNameOf(session: SessionDto): string {
+  if (!session.project_id) return t('sidebar.freeConversations')
   return projectNames.value.get(session.project_id) ?? session.project_id
 }
 

@@ -30,11 +30,15 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             throw new ArgumentException("Project name and path are required.");
         }
 
-        var rootPath = Path.GetFullPath(path.Trim());
-        if (!Path.IsPathRooted(rootPath))
+        // Rootedness is a property of the caller's input, not of GetFullPath's
+        // output (which always returns a rooted path), so check before normalizing.
+        var trimmedPath = path.Trim();
+        if (!Path.IsPathRooted(trimmedPath))
         {
             throw new ArgumentException("Project path must be absolute.");
         }
+
+        var rootPath = Path.GetFullPath(trimmedPath);
 
         var now = DateTimeOffset.UtcNow;
         var scope = _tenantContext.Current;
@@ -155,6 +159,25 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         Guid targetProjectId,
         CancellationToken cancellationToken = default)
     {
+        // Rebinding a session is a read-modify-write on one row; without the gate a
+        // concurrent migrate/create_workspace pair can lose the winning update.
+        var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await MigrateSessionUnlockedAsync(sessionId, targetProjectId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<SessionRecord> MigrateSessionUnlockedAsync(
+        Guid sessionId,
+        Guid targetProjectId,
+        CancellationToken cancellationToken)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
         var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false)
@@ -175,13 +198,29 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Workspace name is required.");
         if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Workspace path is required.");
-        var fullPath = Path.GetFullPath(path.Trim());
-        if (!Path.IsPathRooted(fullPath)) throw new ArgumentException("Workspace path must be absolute.");
-        Directory.CreateDirectory(fullPath);
-        var existing = await FindByRootAsync(fullPath, cancellationToken).ConfigureAwait(false);
-        var projectId = existing?.ProjectId ?? (await CreateProjectAsync(name, fullPath, cancellationToken).ConfigureAwait(false)).Id;
-        var session = await MigrateSessionAsync(sessionId, projectId, cancellationToken).ConfigureAwait(false);
-        return new SessionWorkspaceBinding(session.Id, projectId, name.Trim(), Path.TrimEndingDirectorySeparator(fullPath), existing is null);
+        // Rootedness must be checked on the caller-supplied value: GetFullPath
+        // normalizes a relative path against the process CWD, so checking it after
+        // the call can never fail.
+        var trimmedPath = path.Trim();
+        if (!Path.IsPathRooted(trimmedPath)) throw new ArgumentException("Workspace path must be absolute.");
+        var fullPath = Path.GetFullPath(trimmedPath);
+        // Find-or-create plus the session rebind must be one critical section per
+        // session: a double-clicked approval or retried dispatch otherwise races
+        // two create_workspace calls and the loser silently overwrites the winner.
+        var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Directory.CreateDirectory(fullPath);
+            var existing = await FindByRootAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            var projectId = existing?.ProjectId ?? (await CreateProjectAsync(name, fullPath, cancellationToken).ConfigureAwait(false)).Id;
+            var session = await MigrateSessionUnlockedAsync(sessionId, projectId, cancellationToken).ConfigureAwait(false);
+            return new SessionWorkspaceBinding(session.Id, projectId, name.Trim(), Path.TrimEndingDirectorySeparator(fullPath), existing is null);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public async Task<ProjectRecord?> RenameProjectAsync(Guid projectId, string name, CancellationToken cancellationToken = default)

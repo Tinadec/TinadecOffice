@@ -142,7 +142,12 @@ export const generatedApi = {
     const suffix = params.toString() ? `?${params.toString()}` : ''
     return req<SessionDto[]>(`/api/v1/sessions${suffix}`)
   },
-  createSession: (projectId: string, title?: string) => req<SessionDto>('/api/v1/sessions', { method: 'POST', body: JSON.stringify({ project_id: projectId, title }) }),
+  // A null project_id means "free conversation": omit the key entirely rather than
+  // sending null, which the Gateway's create-session validator would reject.
+  createSession: (projectId: string | null, title?: string) => req<SessionDto>('/api/v1/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ ...(projectId ? { project_id: projectId } : {}), title }),
+  }),
   archiveSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST' }),
   trashSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/trash`, { method: 'POST' }),
   restoreSession: (sessionId: string) => req<void>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/restore`, { method: 'POST' }),

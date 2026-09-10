@@ -1407,6 +1407,7 @@
           },
           "project_id": {
             "format": "uuid",
+            "nullable": true,
             "type": "string"
           },
           "status": {
@@ -4857,9 +4858,6 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "project_id"
-                ],
                 "type": "object"
               }
             },
@@ -4874,9 +4872,6 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "project_id"
-                ],
                 "type": "object"
               }
             },
@@ -4891,9 +4886,6 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "project_id"
-                ],
                 "type": "object"
               }
             }

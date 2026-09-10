@@ -173,7 +173,7 @@ async function loadSessions() {
     }
     return
   }
-  const projectSessions = sessions.value.filter((s) => s.project_id === selectedProjectId.value)
+  const projectSessions = sessions.value.filter((s) => (s.project_id ?? null) === selectedProjectId.value)
   if (!projectSessions.find((s) => s.id === selectedSessionId.value)) {
     selectedSessionId.value = projectSessions[0]?.id ?? null
   }
@@ -287,11 +287,15 @@ async function openProject() {
 }
 
 async function createSession(projectId: string | null) {
+  const targetProjectId = projectId ?? null
   if (pendingSessionId.value) {
     const existing = sessions.value.find((s) => s.id === pendingSessionId.value)
-    if (existing && existing.project_id === projectId) {
+    // Compare normalized project identity: Core omits project_id for a free
+    // conversation, so the value can arrive as null or undefined while the
+    // argument is null — a raw === check would miss and create a duplicate.
+    if (existing && (existing.project_id ?? null) === targetProjectId) {
       selectedSessionId.value = pendingSessionId.value
-      selectedProjectId.value = projectId
+      selectedProjectId.value = targetProjectId
       return
     }
   }
@@ -311,12 +315,14 @@ async function createSession(projectId: string | null) {
 async function refreshProjectsAndSessions() {
   const projectList = await api.listProjects()
   projects.value = projectList
-  const allSessions = await Promise.all(projectList.map((p) => api.listSessions(p.id)))
-  sessions.value = allSessions.flat()
+  // Unfiltered listing, same as loadSessions: per-project queries never return
+  // free conversations, so archiving/trashing anything would drop them from the
+  // sidebar until a full reload.
+  sessions.value = await api.listSessions()
   if (selectedProjectId.value && !projectList.some((p) => p.id === selectedProjectId.value)) {
     selectedProjectId.value = projectList[0]?.id ?? null
   }
-  const projectSessions = sessions.value.filter((s) => s.project_id === selectedProjectId.value)
+  const projectSessions = sessions.value.filter((s) => (s.project_id ?? null) === selectedProjectId.value)
   if (selectedSessionId.value && !projectSessions.some((s) => s.id === selectedSessionId.value)) {
     selectedSessionId.value = projectSessions[0]?.id ?? null
   }

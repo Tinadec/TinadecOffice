@@ -168,35 +168,25 @@ public static class StorageEndpoints
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             try
             {
-                Guid targetProjectId;
+                SessionRecord session;
                 if (!string.IsNullOrWhiteSpace(request.TargetProjectId) && Guid.TryParse(request.TargetProjectId, out var parsedId))
                 {
-                    targetProjectId = parsedId;
+                    session = await store.MigrateSessionAsync(id, parsedId, ct).ConfigureAwait(false);
                 }
                 else if (!string.IsNullOrWhiteSpace(request.ProjectName) && !string.IsNullOrWhiteSpace(request.ProjectPath))
                 {
-                    var fullPath = Path.GetFullPath(request.ProjectPath.Trim());
-                    if (!Directory.Exists(fullPath))
-                    {
-                        Directory.CreateDirectory(fullPath);
-                    }
-                    var existingProject = await store.FindByRootAsync(fullPath, ct).ConfigureAwait(false);
-                    if (existingProject is not null)
-                    {
-                        targetProjectId = existingProject.ProjectId;
-                    }
-                    else
-                    {
-                        var createdProject = await store.CreateProjectAsync(request.ProjectName, fullPath, ct).ConfigureAwait(false);
-                        targetProjectId = createdProject.Id;
-                    }
+                    // The same binder the create_workspace virtual tool uses: directory
+                    // creation, absolute-path validation, find-or-create by root, and the
+                    // atomically locked session rebind must have exactly one implementation.
+                    var binding = await store.BindSessionToWorkspaceAsync(id, request.ProjectName, request.ProjectPath, ct).ConfigureAwait(false);
+                    session = await store.GetSessionAsync(binding.SessionId, ct).ConfigureAwait(false)
+                        ?? throw new KeyNotFoundException("Session was not found.");
                 }
                 else
                 {
                     return Results.BadRequest(new { code = "INVALID_MIGRATION_REQUEST", message = "target_project_id or (project_name and project_path) must be provided." });
                 }
 
-                var session = await store.MigrateSessionAsync(id, targetProjectId, ct).ConfigureAwait(false);
                 return Results.Ok(await ToSessionEnrichedAsync(session, cfgFactory, ct).ConfigureAwait(false));
             }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "RESOURCE_NOT_FOUND" }); }

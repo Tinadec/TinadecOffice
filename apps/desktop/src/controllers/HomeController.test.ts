@@ -6,12 +6,26 @@ import { flushPromises } from '@vue/test-utils'
 const h = vi.hoisted(() => ({
   createUserToolActionForPath: vi.fn(),
   listSessions: vi.fn(async () => []),
+  createSession: vi.fn(),
+  listMessages: vi.fn(async () => []),
+  listApprovals: vi.fn(async () => []),
+  getOrchestrationSnapshot: vi.fn(async () => null),
+  listToolExecutions: vi.fn(async () => []),
+  listRuns: vi.fn(async () => []),
+  connectEvents: vi.fn(() => ({ close: vi.fn(), disconnect: vi.fn() })),
   notifyError: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
   api: {
     listSessions: h.listSessions,
+    createSession: h.createSession,
+    listMessages: h.listMessages,
+    listApprovals: h.listApprovals,
+    getOrchestrationSnapshot: h.getOrchestrationSnapshot,
+    listToolExecutions: h.listToolExecutions,
+    listRuns: h.listRuns,
+    connectEvents: h.connectEvents,
   },
   createUserToolActionForPath: h.createUserToolActionForPath,
 }))
@@ -94,5 +108,32 @@ describe('HomeController.requestShellApproval', () => {
 
     expect(h.createUserToolActionForPath).not.toHaveBeenCalled()
     expect(h.notifyError).toHaveBeenCalled()
+  })
+})
+
+describe('HomeController.createSession free-conversation dedup', () => {
+  it('reuses the pending free conversation instead of creating a duplicate', async () => {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    // The selectedProjectId watcher fires an async loadSessions(); let it settle
+    // before seeding state so it cannot overwrite sessions mid-assertion.
+    await flushPromises()
+    // Core omits project_id for a free conversation, so the echoed row can carry
+    // null/undefined while the argument is null; a raw === check used to miss and
+    // create a second invisible conversation.
+    h.createSession.mockResolvedValue({
+      id: 'free-1',
+      project_id: null,
+      title: 'Tinadec session',
+      status: 'active',
+      created_at: '2026-09-10T00:00:00Z',
+      updated_at: '2026-09-10T00:00:00Z',
+    })
+
+    await homeController.createSession(null)
+    await homeController.createSession(null)
+
+    expect(h.createSession).toHaveBeenCalledTimes(1)
+    expect(homeController.selectedSessionId.value).toBe('free-1')
   })
 })

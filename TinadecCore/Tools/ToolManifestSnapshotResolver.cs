@@ -40,6 +40,16 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
             // Core-owned create_workspace virtual tool: a worker may propose binding
             // a real workspace (approval-gated, executed by Core itself), and the
             // next interaction freezes a fresh manifest from the new project root.
+            //
+            // This synthetic entry is the run's tool *ceiling*, not a per-agent
+            // grant: unlike the project path it is not intersected with each agent's
+            // declared tool_scope, because the projectless ceiling must stay
+            // resolvable on installs whose published mode predates create_workspace.
+            // The per-agent boundary is still enforced downstream — every invocation
+            // passes ToolInvocationScopeResolver.IsToolAllowed(instance grant) and the
+            // model only ever sees IFrozenToolManifestCatalog (instance grant ∩ this
+            // frozen manifest), so an agent that does not declare the tool cannot
+            // reach it.
             var virtualEntry = CoreWorkspaceTool.ManifestEntry();
             var virtualHash = ToolManifestHasher.Compute(new[] { virtualEntry });
             return new ToolManifestSnapshot(2, virtualHash, [ToFrozen(virtualEntry)]);

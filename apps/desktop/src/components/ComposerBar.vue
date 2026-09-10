@@ -298,7 +298,7 @@ function confirmSteer(id: string) {
           >
             <FolderOpen :size="12" />
             <span class="project-dropdown-label">
-              {{ selectedProject?.name ?? t('chat.selectProject') }}
+              {{ selectedProject?.name ?? t('chat.freeConversation') }}
             </span>
             <ChevronDown :size="11" class="project-dropdown-chevron" />
           </button>

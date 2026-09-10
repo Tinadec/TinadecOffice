@@ -131,11 +131,11 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           : data().sessions,
         scenario.value,
       ) as Promise<SessionDto[]>,
-    createSession: (projectId: string, title?: string) =>
+    createSession: (projectId: string | null, title?: string) =>
       delay(
         {
           id: `sess-new-${Date.now()}`,
-          project_id: projectId,
+          project_id: projectId ?? null,
           title: title ?? '新会话',
           status: 'active',
           created_at: new Date().toISOString(),

@@ -35,7 +35,11 @@ function stubLists() {
     return [{ id: 'p-active', name: 'Active project', path: 'C:/live', created_at: '2026-08-27T00:00:00Z' }]
   })
   generatedApi.listSessions.mockImplementation(async (_projectId?: string, status?: string) => {
-    if (status === 'archived') return [{ id: 's-archived', project_id: 'p-active', title: 'Archived session', status: 'ready', created_at: '2026-08-27T00:00:00Z', updated_at: '2026-08-27T00:00:00Z' }]
+    if (status === 'archived') return [
+      { id: 's-archived', project_id: 'p-active', title: 'Archived session', status: 'ready', created_at: '2026-08-27T00:00:00Z', updated_at: '2026-08-27T00:00:00Z' },
+      // A free conversation has no project; its row must not render a blank parent.
+      { id: 's-free', project_id: null, title: 'Free conversation', status: 'ready', created_at: '2026-08-27T00:00:00Z', updated_at: '2026-08-27T00:00:00Z' },
+    ]
     if (status === 'trashed') return [{ id: 's-trashed', project_id: 'p-trashed', title: 'Trashed session', status: 'ready', created_at: '2026-08-27T00:00:00Z', updated_at: '2026-08-27T00:00:00Z' }]
     return []
   })
@@ -56,6 +60,13 @@ describe('ArchiveTrashSection', () => {
     expect(wrapper.text()).toContain('Archived project')
     expect(wrapper.text()).toContain('Trashed session')
     expect(wrapper.text()).toContain('settings.sessionInProject:Trashed project')
+  })
+
+  it('labels an archived free conversation instead of rendering an empty parent', async () => {
+    const wrapper = mount(ArchiveTrashSection)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Free conversation')
+    expect(wrapper.text()).toContain('settings.sessionInProject:sidebar.freeConversations')
   })
 
   it('restores an archived project without confirmation', async () => {

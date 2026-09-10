@@ -113,7 +113,7 @@ public sealed class ToolDispatcher : IToolDispatcher
             // snapshot failure can durably block it without calling the provider.
             // Projectless scopes have no workspace to snapshot; the Core-owned
             // virtual tool's safety net is its approval gate instead.
-            if (scope.ProjectId != Guid.Empty
+            if (!CoreVirtualToolPolicy.IsProjectlessScope(scope.ProjectId)
                 && NeedsPrewriteSnapshot(execution)
                 && execution.WorkspaceSnapshotId is null
                 && execution.Status is not ("completed" or "failed" or "timed_out" or "cancelled"))
@@ -557,7 +557,7 @@ public sealed class ToolDispatcher : IToolDispatcher
     {
         Action<ToolWireEventDto>? observer = pump is null ? null : pump.Enqueue;
 
-        if (scope.ProjectId == Guid.Empty && CoreWorkspaceTool.IsCoreTool(wire.ToolId))
+        if (CoreVirtualToolPolicy.IsProjectlessCreateWorkspace(scope.ProjectId, wire.ToolId))
         {
             return await ExecuteCoreWorkspaceToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
         }
@@ -610,6 +610,15 @@ public sealed class ToolDispatcher : IToolDispatcher
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
         {
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "create_workspace requires non-empty 'name' and 'path' parameters." };
+        }
+
+        // The invocation-scope resolver skips project-root checks for a projectless
+        // scope, so the agent's declared resource grant must be evaluated against the
+        // requested target here — otherwise this is the one tool that could act
+        // outside its allow list. An undeclared (empty) grant stays unrestricted.
+        if (!ToolResourceAllowList.IsAllowed(scope.AllowedResources, path))
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "create_workspace path is outside the agent's allowed resources." };
         }
 
         try
@@ -675,12 +684,12 @@ public sealed class ToolDispatcher : IToolDispatcher
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)
     {
-        if (scope.ProjectId == Guid.Empty)
+        if (CoreVirtualToolPolicy.IsProjectlessScope(scope.ProjectId))
         {
             // Projectless (free-conversation) scope: no live provider exists. The
             // Core-owned create_workspace virtual tool is the only legal call, and
             // the run-frozen manifest is the sole declaration source.
-            if (!CoreWorkspaceTool.IsCoreTool(toolId)) return (null, $"Unknown tool '{toolId}'.");
+            if (!CoreVirtualToolPolicy.IsCreateWorkspace(toolId)) return (null, $"Unknown tool '{toolId}'.");
             var frozenOnly = scope.AuthorizedToolManifest?.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
             if (frozenOnly is null) return (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.");
             if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)

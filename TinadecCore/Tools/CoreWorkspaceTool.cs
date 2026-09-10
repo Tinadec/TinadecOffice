@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Tools;
@@ -13,7 +14,7 @@ namespace TinadecCore.Tools;
 /// </summary>
 internal static class CoreWorkspaceTool
 {
-    public const string ToolId = "create_workspace";
+    public const string ToolId = CoreVirtualToolPolicy.CreateWorkspaceToolId;
 
     private const string InputSchemaJson =
         "{\"type\":\"object\",\"properties\":{" +
@@ -33,6 +34,5 @@ internal static class CoreWorkspaceTool
         ConfirmationFields = []
     };
 
-    public static bool IsCoreTool(string toolId) =>
-        string.Equals(toolId, ToolId, StringComparison.OrdinalIgnoreCase);
+    public static bool IsCoreTool(string toolId) => CoreVirtualToolPolicy.IsCreateWorkspace(toolId);
 }

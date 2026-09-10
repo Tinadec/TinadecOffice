@@ -146,9 +146,7 @@ const filteredProjects = computed(() => {
 })
 
 function getProjectSessions(projectId: string): SessionDto[] {
-  return props.sessions.filter(
-    (s) => s.project_id === projectId && s.title && s.title !== 'Tinadec session'
-  )
+  return props.sessions.filter((s) => (s.project_id ?? null) === projectId && s.title)
 }
 
 function isExpanded(projectId: string): boolean {
@@ -182,9 +180,12 @@ function handleNewThread() {
   emit('create-session', props.selectedProjectId ?? props.projects[0]?.id ?? null)
 }
 
-// Sessions not bound to any project (Codex-style free conversations).
+// Sessions not bound to any project (Codex-style free conversations). The title is
+// not a filter: a newly created conversation still carries the default
+// 'Tinadec session' title until its first message generates one, so hiding that
+// title made every fresh free conversation invisible.
 const freeSessions = computed(() =>
-  props.sessions.filter((s) => !s.project_id && s.title && s.title !== 'Tinadec session')
+  props.sessions.filter((s) => !s.project_id && s.title)
 )
 
 const tokenUsage = ref<number[]>([])

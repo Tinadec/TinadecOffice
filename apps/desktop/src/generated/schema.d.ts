@@ -1114,7 +1114,7 @@ export interface components {
       mode: string | null;
       mode_version_id: string | null;
       /** Format: uuid */
-      project_id: string;
+      project_id: string | null;
       status: string | null;
       summary: string | null;
       title: string | null;
@@ -3054,17 +3054,17 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": {
-          project_id: string;
+          project_id?: string;
           title?: string;
           [key: string]: unknown;
         };
         "multipart/form-data": {
-          project_id: string;
+          project_id?: string;
           title?: string;
           [key: string]: unknown;
         };
         "text/plain": {
-          project_id: string;
+          project_id?: string;
           title?: string;
           [key: string]: unknown;
         };

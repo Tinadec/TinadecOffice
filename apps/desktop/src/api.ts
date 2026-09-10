@@ -11,7 +11,8 @@ export interface ProjectDto {
 
 export interface SessionDto {
   id: string;
-  project_id: string;
+  /** Null for a free conversation created without a workspace (Codex-style). */
+  project_id: string | null;
   title: string;
   status: string;
   mode_version_id?: string | null;

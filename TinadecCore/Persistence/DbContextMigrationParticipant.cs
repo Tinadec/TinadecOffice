@@ -147,6 +147,11 @@ public static class DbContextSchemaBootstrapper
         if (rows.Count == 0) return;
         var definitions = new List<string>();
         var names = new List<string>();
+        // pragma_table_info.pk is the 1-based ordinal of the column inside the
+        // primary key (0 when the column is not part of it), not a boolean. A
+        // composite key reports pk = 1, 2, ...; reading it as a boolean silently
+        // dropped every key column after the first from the rebuilt table.
+        var primaryKey = new List<(int Ordinal, string Name)>();
         foreach (var row in rows)
         {
             var parts = row.Split('\u001f');
@@ -154,9 +159,17 @@ public static class DbContextSchemaBootstrapper
             var type = string.IsNullOrWhiteSpace(parts[1]) ? "TEXT" : parts[1];
             var keepNotNull = parts[2] == "1" && !relaxColumns.Contains(name, StringComparer.OrdinalIgnoreCase);
             var defaultValue = parts[3];
-            var isPrimaryKey = parts.Length > 4 && parts[4] == "1";
+            var pkOrdinal = parts.Length > 4 && int.TryParse(parts[4], out var parsedOrdinal) ? parsedOrdinal : 0;
             names.Add(name);
-            definitions.Add($"\"{name}\" {type}{(keepNotNull ? " NOT NULL" : "")}{(string.IsNullOrWhiteSpace(defaultValue) ? "" : $" DEFAULT {defaultValue}")}{(isPrimaryKey ? " PRIMARY KEY" : "")}");
+            definitions.Add($"\"{name}\" {type}{(keepNotNull ? " NOT NULL" : "")}{(string.IsNullOrWhiteSpace(defaultValue) ? "" : $" DEFAULT {defaultValue}")}");
+            if (pkOrdinal > 0) primaryKey.Add((pkOrdinal, name));
+        }
+        if (primaryKey.Count > 0)
+        {
+            // A table-level constraint preserves single and composite keys alike;
+            // SQLite still treats a lone INTEGER PRIMARY KEY as a rowid alias.
+            var ordered = primaryKey.OrderBy(entry => entry.Ordinal).Select(entry => $"\"{entry.Name}\"");
+            definitions.Add($"PRIMARY KEY ({string.Join(", ", ordered)})");
         }
         var temp = tableName + "_relax";
         var columnList = string.Join(", ", names.Select(name => $"\"{name}\""));

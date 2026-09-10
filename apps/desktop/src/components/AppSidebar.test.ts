@@ -123,4 +123,28 @@ describe('AppSidebar lifecycle management', () => {
     await wrapper.find('.session-more').trigger('click')
     expect(menuButtons()).toHaveLength(3)
   })
+
+  it('lists a freshly created free conversation before its first message', () => {
+    // A new conversation carries the default title until its first message
+    // generates one; hiding that title made every fresh free conversation
+    // invisible in the sidebar.
+    const fresh: SessionDto = {
+      id: 's-free',
+      project_id: null,
+      title: 'Tinadec session',
+      status: 'ready',
+      created_at: '2026-09-10T00:00:00Z',
+      updated_at: '2026-09-10T00:00:00Z',
+    }
+
+    const wrapper = factory({
+      sessions: [session, fresh],
+      selectedProjectId: null,
+      selectedSessionId: null,
+    })
+
+    const freeRows = wrapper.findAll('.free-conversation-group .session-item')
+    expect(freeRows).toHaveLength(1)
+    expect(freeRows[0]!.text()).toContain('Tinadec session')
+  })
 })
