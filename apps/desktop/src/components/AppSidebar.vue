@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   Settings,
+  Sparkles,
   Store,
   Terminal,
   Trash2,
@@ -42,7 +43,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'select-project': [id: string]
   'select-session': [id: string]
-  'create-session': [projectId: string]
+  'create-session': [projectId: string | null]
   'open-project': []
   'go-settings': []
   'go-market': []
@@ -178,12 +179,13 @@ function handleNewSession(projectId: string) {
 }
 
 function handleNewThread() {
-  if (props.selectedProjectId) {
-    emit('create-session', props.selectedProjectId)
-  } else if (props.projects.length > 0) {
-    emit('create-session', props.projects[0].id)
-  }
+  emit('create-session', props.selectedProjectId ?? props.projects[0]?.id ?? null)
 }
+
+// Sessions not bound to any project (Codex-style free conversations).
+const freeSessions = computed(() =>
+  props.sessions.filter((s) => !s.project_id && s.title && s.title !== 'Tinadec session')
+)
 
 const tokenUsage = ref<number[]>([])
 
@@ -206,7 +208,7 @@ function openDebugStudio() {
         variant="ghost"
         size="sm"
         class="sidebar-nav-item w-full justify-start"
-        :disabled="busy || projects.length === 0"
+        :disabled="busy"
         :title="t('sidebar.newChat')"
         @click="handleNewThread"
       >
@@ -246,6 +248,47 @@ function openDebugStudio() {
     </nav>
 
     <div class="sidebar-list">
+      <div v-if="freeSessions.length > 0" class="project-group free-conversation-group">
+        <div class="project-row">
+          <div class="project-row-main free-conversation-header">
+            <Sparkles :size="14" class="sidebar-list-item-icon sidebar-icon" />
+            <span class="sidebar-list-item-text sidebar-label">{{ t('sidebar.freeConversations') }}</span>
+          </div>
+        </div>
+        <div class="project-sessions sidebar-extra">
+          <div
+            v-for="session in freeSessions"
+            :key="session.id"
+            class="session-row"
+            @contextmenu.prevent="openMenuAtCursor($event, 'session', session.id, session.title)"
+          >
+            <button
+              class="session-item"
+              :class="{ active: session.id === selectedSessionId }"
+              @click="handleSessionClick(session.id)"
+              @dblclick.stop="renaming = { kind: 'session', id: session.id }"
+            >
+              <span class="session-dot" :class="session.status" />
+              <InlineRenameInput
+                v-if="renaming?.kind === 'session' && renaming.id === session.id"
+                :model-value="session.title"
+                class="session-title"
+                @submit="submitRename"
+                @cancel="cancelRename"
+              />
+              <span v-else class="session-title">{{ session.title }}</span>
+            </button>
+            <button
+              class="session-more"
+              :title="t('sidebar.moreActions')"
+              @click.stop="openMenuAtButton($event, 'session', session.id, session.title)"
+            >
+              <MoreHorizontal :size="13" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div
         v-for="project in filteredProjects"
         :key="project.id"

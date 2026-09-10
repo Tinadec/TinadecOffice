@@ -5256,6 +5256,28 @@
         ]
       }
     },
+    "/api/v1/sessions/{sessionId}/migrate": {
+      "post": {
+        "operationId": "postApiV1SessionsBySessionIdMigrate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Migrate session onto a project workspace (find-or-create by root path)",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
     "/api/v1/sessions/{sessionId}/orchestration": {
       "get": {
         "operationId": "getApiV1SessionsBySessionIdOrchestration",

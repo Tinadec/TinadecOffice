@@ -513,6 +513,15 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
     setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
   }, { detail: { summary: 'Restore session', tags: ['Sessions'] } })
+  .post('/api/v1/sessions/:sessionId/migrate', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/migrate`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown> ?? {}, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers); return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Migrate session onto a project workspace (find-or-create by root path)', tags: ['Sessions'] } })
   .delete('/api/v1/sessions/:sessionId', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}`;

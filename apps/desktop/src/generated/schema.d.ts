@@ -623,6 +623,10 @@ export interface paths {
     /** Create message (compat) */
     post: operations["postApiV1SessionsBySessionIdMessages"];
   };
+  "/api/v1/sessions/{sessionId}/migrate": {
+    /** Migrate session onto a project workspace (find-or-create by root path) */
+    post: operations["postApiV1SessionsBySessionIdMigrate"];
+  };
   "/api/v1/sessions/{sessionId}/orchestration": {
     /** Session orchestration snapshot */
     get: operations["getApiV1SessionsBySessionIdOrchestration"];
@@ -3244,6 +3248,19 @@ export interface operations {
         "text/plain": {
           content: string;
         };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Migrate session onto a project workspace (find-or-create by root path) */
+  postApiV1SessionsBySessionIdMigrate: {
+    parameters: {
+      path: {
+        sessionId: string;
       };
     };
     responses: {
