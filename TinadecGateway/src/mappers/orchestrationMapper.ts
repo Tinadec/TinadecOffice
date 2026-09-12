@@ -9,7 +9,9 @@ export function mapOrchestration(core: unknown): Record<string, unknown> {
   return {
     run,
     graph: (core.graph as unknown) ?? null,
+    flows: Array.isArray(core.flows) ? core.flows : [],
     nodes: Array.isArray(core.nodes) ? core.nodes : [],
+    lanes: Array.isArray(core.lanes) ? core.lanes : [],
     assignments: Array.isArray(core.assignments) ? core.assignments : [],
     step_results: Array.isArray(core.step_results) ? core.step_results : Array.isArray((core as Record<string, unknown>).stepResults) ? (core as Record<string, unknown>).stepResults : [],
     context_packs: Array.isArray(core.context_packs) ? core.context_packs : [],

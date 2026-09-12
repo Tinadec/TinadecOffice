@@ -91,14 +91,29 @@ public static class DmaeaEndpoints
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
         });
 
-        app.MapGet("/api/v1/sessions/{sessionId}/orchestration", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, CancellationToken ct) =>
+        app.MapGet("/api/v1/sessions/{sessionId}/orchestration", async (string sessionId, StorageLifecycleService lifecycle, ProjectSessionStore sessions, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             var session = await sessions.FindAsync(sessionGuid, ct);
             if (session is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
+
+            // Declared graph (additive-only): the published mode-version snapshot is
+            // the base layer, even before any run exists — what the UI draws is what
+            // the engine walks. Observed flows come from the durable task graph.
+            var declaredGraph = (object?)null;
+            if (session.ModeVersionId is { } modeVersionId)
+            {
+                await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
+                var snapshotJson = await cfg.ModeVersions.AsNoTracking()
+                    .Where(x => x.Id == modeVersionId && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
+                    .Select(x => x.SnapshotJson)
+                    .FirstOrDefaultAsync(ct);
+                declaredGraph = OrchestrationGraphProjection.FromSnapshot(snapshotJson);
+            }
+
             var runs = await lifecycle.ListRunsAsync(sessionGuid, ct);
             var run = runs.FirstOrDefault();
-            if (run is null) return Results.Json(new { run = (object?)null, graph = (object?)null, nodes = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
+            if (run is null) return Results.Json(new { run = (object?)null, graph = declaredGraph, nodes = Array.Empty<object>(), lanes = Array.Empty<object>(), flows = Array.Empty<object>(), assignments = Array.Empty<object>(), step_results = Array.Empty<object>(), context_packs = Array.Empty<object>(), supervision_findings = Array.Empty<object>() }, options: new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
             var checkpointRow = await lifecycle.GetCurrentRunCheckpointAsync(run.Id, ct);
             FullDuplexCheckpointV1? checkpoint = null;
@@ -196,9 +211,10 @@ public static class DmaeaEndpoints
                     created_at = run.CreatedAt,
                     updated_at = run.UpdatedAt
                 },
-                graph = (object?)null,
+                graph = declaredGraph,
                 nodes,
                 lanes,
+                flows = OrchestrationGraphProjection.FlowsFromCheckpoint(checkpoint, session.ConversationTemplateSlug),
                 assignments = Array.Empty<object>(),
                 step_results = stepResults,
                 context_packs = Array.Empty<object>(),
@@ -315,11 +331,31 @@ public static class DmaeaEndpoints
             }
         });
 
-        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, IDbContextFactory<AgentConfigurationDbContext> agentConfigFactory, CancellationToken ct) =>
+        app.MapGet("/api/v1/runs/{runId}/orchestration", async (string runId, StorageLifecycleService lifecycle, IAgentInstanceService instances, ILifecycleManager manager, IDbContextFactory<AgentConfigurationDbContext> agentConfigFactory, ProjectSessionStore sessionStore, CancellationToken ct) =>
         {
             if (!Guid.TryParse(runId, out var runGuid)) return Results.BadRequest(new { code = "INVALID_RUN_ID", message = "Run id must be a valid Guid." });
             var run = await lifecycle.FindRunAsync(runGuid, ct);
             if (run is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Run was not found." });
+
+            // Declared graph + observed flows (additive-only): the session's
+            // published mode-version snapshot is the base layer; flows come from
+            // the durable task graph, the same source /replay rebuilds from.
+            var declaredGraph = (object?)null;
+            string? conversationTemplateSlug = null;
+            if (await sessionStore.FindAsync(run.SessionId, ct) is { } orchestrationSession)
+            {
+                conversationTemplateSlug = orchestrationSession.ConversationTemplateSlug;
+                if (orchestrationSession.ModeVersionId is { } modeVersionId)
+                {
+                    await using var graphCfg = await agentConfigFactory.CreateDbContextAsync(ct);
+                    var snapshotJson = await graphCfg.ModeVersions.AsNoTracking()
+                        .Where(x => x.Id == modeVersionId && x.TenantId == orchestrationSession.TenantId && x.WorkspaceId == orchestrationSession.WorkspaceId)
+                        .Select(x => x.SnapshotJson)
+                        .FirstOrDefaultAsync(ct);
+                    declaredGraph = OrchestrationGraphProjection.FromSnapshot(snapshotJson);
+                }
+            }
+
             var frozen = await manager.GetFrozenRunConfigurationAsync(runGuid.ToString(), ct);
             FrozenRunConfigurationV1? parsedFrozen = null;
             if (frozen is not null)
@@ -502,9 +538,10 @@ public static class DmaeaEndpoints
                     tool_manifest_protocol_version = parsedFrozen.ToolManifestProtocolVersion,
                     bindings = parsedFrozen.Bindings
                 },
-                graph = (object?)null,
+                graph = declaredGraph,
                 nodes,
                 lanes,
+                flows = OrchestrationGraphProjection.FlowsFromCheckpoint(checkpoint, conversationTemplateSlug),
                 assignments,
                 step_results = stepResults,
                 agent_instances = agentInstancesProjection,

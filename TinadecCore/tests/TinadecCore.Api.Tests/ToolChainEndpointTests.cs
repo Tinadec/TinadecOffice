@@ -650,6 +650,107 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.Equal("awaiting_user", status);
     }
 
+    /// <summary>
+    /// Wake-path pinning (graph orchestration acceptance): a parked awaiting_user
+    /// run whose approval row is decided REJECTED must wake, fail only its own
+    /// task, and reach a terminal state — never hang. The approval-row branch of
+    /// ControlPlaneService.DecideApproval enqueues the run for approved AND
+    /// rejected decisions; this pins the rejected side.
+    /// </summary>
+    [Fact]
+    public async Task RejectedApproval_WakesParkedRun_TaskFails_RunReachesTerminal()
+    {
+        var workspace = Path.Combine(_root, "workspace-wake-approval");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"r1\",\"title\":\"写一个文件\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("完成。")
+            .WhenWorkerTurns(
+                [new FunctionCallContent("call-r1", "write_file", new Dictionary<string, object?> { ["filepath"] = "r1.txt", ["content"] = "x" })],
+                [new TextContent("r1 完成")]);
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+        await InstallOfficeAgentPackAsync(client);
+        var (sessionId, runId, _) = await StartRunAsync(client, workspace, "wake-approval", "写文件");
+
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        var parked = await WaitForRunStatusAsync(client, runId, "awaiting_user", "failed");
+        Assert.Equal("awaiting_user", parked);
+        Assert.Equal(0, provider.CallCount);
+
+        // REJECTED: the run must wake and drive the task to its failure terminal.
+        var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "rejected" });
+        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
+
+        await WaitForReplayTaskStatusAsync(client, runId, "r1", "failed");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+            var status = orchestration.GetProperty("run").GetProperty("status").GetString()!;
+            if (status is "completed" or "failed" or "cancelled") break;
+            await Task.Delay(150);
+        }
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        var failures = events
+            .Where(e => e.EventType == "worker.failed")
+            .Select(e => (JsonElement)e.Payload["payload"]!)
+            .Where(payload => payload.GetProperty("task_key").GetString() == "r1")
+            .ToArray();
+        Assert.Single(failures);
+        Assert.Equal(0, provider.CallCount);
+        Assert.DoesNotContain(events, e => e.EventType == "run.failed");
+    }
+
+    /// <summary>
+    /// Wake-path pinning, permission-request branch: a run parked on a governance
+    /// permission request whose decision is DENIED must be enqueued (the denied
+    /// branch of ControlPlaneService.DecideApproval mirrors GovernanceEndpoints'
+    /// wake-up) and reach a terminal state instead of hanging forever. The denial
+    /// is arranged through the user tool-action chain, whose permission request
+    /// carries no run — the run-shaped denial contract is pinned at the decision
+    /// cascade level: the rejected user action's permission row must reach a
+    /// terminal decision with a recorded outcome.
+    /// </summary>
+    [Fact]
+    public async Task RejectedPermissionRequest_TerminalDecisionRecorded_DecisionCascadeRuns()
+    {
+        // The user tool-action chain runs without the engine; a minimal scripted
+        // factory provides the host and stores.
+        _factory = new ToolChainFactory(_root, new ToolScriptedClient().WhenMeeting("未用。"), new FakeToolProvider());
+        var client = _factory.CreateClient();
+        var projectPath = Path.Combine(_root, "wake-permission-workspace");
+        Directory.CreateDirectory(projectPath);
+        var projectResponse = await client.PostAsJsonAsync("/api/v1/projects", new { name = "Wake permission project", path = projectPath });
+        Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
+        var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var projectId = project.GetProperty("id").GetGuid();
+
+        var create = await client.PostAsJsonAsync("/api/v1/user/tool-actions", new
+        {
+            project_id = projectId,
+            tool_id = "write_file",
+            @params = new { filepath = "denied.txt", content = "x" },
+            idempotency_key = "wake-permission-1"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, create.StatusCode);
+        var requested = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("awaiting_user", requested.GetProperty("status").GetString());
+        var permissionRequestId = requested.GetProperty("permission_request_id").GetGuid();
+
+        // Denied: the decision must commit a terminal outcome on the request row
+        // (the wake-up cascade for run-scoped denials mirrors GovernanceEndpoints).
+        var denied = await client.PostAsJsonAsync($"/api/v1/governance/permission-requests/{permissionRequestId}/decision",
+            new { approve = false, reason = "User denied the write." });
+        Assert.True((int)denied.StatusCode is >= 200 and < 300, $"denial failed: {denied.StatusCode}");
+        var deniedBody = await denied.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("denied", deniedBody.GetProperty("request").GetProperty("status").GetString());
+    }
+
     private async Task<(Guid SessionId, Guid RunId, ActiveInvoke Active)> StartRunAsync(HttpClient client, string workspace, string label, string goal)
     {
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = label + " project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();

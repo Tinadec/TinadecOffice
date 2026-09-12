@@ -168,6 +168,13 @@ public sealed class SessionRecord
     public Guid? ModeVersionId { get; set; }
     public Guid? MeetingModelOverrideProviderInstanceId { get; set; }
     public string? MeetingModelOverrideModel { get; set; }
+    // ConversationIdentity (DmaEA graph orchestration): the mode node that carries the
+    // governance-layer conversation role, frozen at session creation. Immutable across
+    // mode switches; null on rows created before this column (resolved lazily by the
+    // creation-time fallback chain: conversation-marked node → operation node whose
+    // template holds a conversation capability → literal "meeting" node).
+    public string? ConversationNodeKey { get; set; }
+    public string? ConversationTemplateSlug { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string LifecycleStatus { get; set; } = LifecycleStatuses.Active;

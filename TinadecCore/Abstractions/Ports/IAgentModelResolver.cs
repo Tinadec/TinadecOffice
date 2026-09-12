@@ -19,7 +19,10 @@ public sealed record AgentModelFreezeRequest(
     string AgentId,
     string StrategyJson,
     string StrategySource,
-    bool IsMeetingRoot,
+    // True for the conversation root — the agent that talks to the user and
+    // therefore receives the session/turn model override. Keyed on the frozen
+    // conversation identity; the literal "meeting" slug is only the legacy fallback.
+    bool IsConversationRoot,
     SessionModelOverride? MeetingModelOverride = null);
 
 public sealed record FrozenModelCandidate(

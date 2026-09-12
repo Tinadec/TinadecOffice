@@ -20,6 +20,11 @@ public sealed record SessionReference(
     Guid TenantId,
     Guid WorkspaceId,
     Guid? ModeVersionId = null,
-    SessionModelOverride? MeetingModelOverride = null);
+    SessionModelOverride? MeetingModelOverride = null,
+    // ConversationIdentity (DmaEA graph orchestration), frozen at session creation.
+    // Null on sessions created before the columns existed — the freeze gate keeps
+    // the legacy literal-meeting semantics for those rows.
+    string? ConversationNodeKey = null,
+    string? ConversationTemplateSlug = null);
 
 public sealed record ProjectReference(Guid ProjectId, Guid TenantId, Guid WorkspaceId, string RootPath);

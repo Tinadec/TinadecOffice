@@ -522,6 +522,62 @@
         },
         "type": "object"
       },
+      "AgentPackModeBindingDto": {
+        "properties": {
+          "agent_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "duty_description_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "envelope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "includes_core_reserved": {
+            "type": "boolean"
+          },
+          "instance_naming": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_switches": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "AgentPackModeEdgeDto": {
         "properties": {
           "condition": {
@@ -579,12 +635,31 @@
           },
           "position": {
             "$ref": "#/components/schemas/JsonElement"
+          },
+          "relationship": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
           }
         },
         "type": "object"
       },
       "AgentPackModeResourceDto": {
         "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackModeBindingDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
           "canvas_layout": {
             "$ref": "#/components/schemas/JsonElement"
           },
@@ -813,6 +888,60 @@
               "$ref": "#/components/schemas/AgentPackPromptPipelineResourceDto"
             },
             "type": "array"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPackToolResourceDto"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPackToolResourceDto": {
+        "properties": {
+          "definition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "entry_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "tool_id": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         },
         "type": "object"
@@ -1020,6 +1149,12 @@
       },
       "CreateSessionRequest": {
         "properties": {
+          "conversation_node_key": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "meeting_model_override": {
             "oneOf": [
               {

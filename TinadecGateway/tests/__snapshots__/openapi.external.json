@@ -1087,6 +1087,10 @@
             "items": {},
             "type": "array"
           },
+          "flows": {
+            "items": {},
+            "type": "array"
+          },
           "frozen": {
             "anyOf": [
               {
@@ -1137,6 +1141,7 @@
         "required": [
           "run",
           "graph",
+          "flows",
           "nodes",
           "lanes",
           "assignments",

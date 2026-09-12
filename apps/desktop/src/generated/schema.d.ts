@@ -1033,6 +1033,7 @@ export interface components {
       agent_instances: unknown[];
       assignments: components["schemas"]["Assignment"][];
       context_packs: unknown[];
+      flows: unknown[];
       frozen: {
         [key: string]: unknown;
       } | null;

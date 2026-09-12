@@ -124,7 +124,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             tenantId,
             workspaceId,
             _tenant.Current.PrincipalId,
-            project?.ProjectId ?? Guid.Empty,
+            CoreVirtualToolPolicy.ToWireSentinel(project?.ProjectId),
             sessionId,
             request.RunId,
             request.TaskId,

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { AlertTriangle, Archive, BarChart3, CheckCircle2, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
+import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
 import type { OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
+import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
 import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
 import ToolStatsDashboard from './tools/ToolStatsDashboard.vue'
@@ -50,6 +51,14 @@ function onExecuteTool(tool: ToolDescriptorDto) {
     </div>
 
     <template v-else-if="snapshot">
+      <article v-if="snapshot.graph" class="orchestration-block">
+        <div class="orchestration-block-head">
+          <GitBranch :size="15" />
+          <strong>Mode Graph</strong>
+        </div>
+        <DeclaredGraphCanvas :graph="snapshot.graph" :flows="snapshot.flows" />
+      </article>
+
       <article class="orchestration-block">
         <div class="orchestration-block-head">
           <Layers3 :size="15" />

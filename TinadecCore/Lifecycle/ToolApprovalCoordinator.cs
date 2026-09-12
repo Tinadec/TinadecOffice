@@ -1163,7 +1163,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     }
 
     private static ToolExecutionSnapshot ToSnapshot(ToolExecutionRecord row, string parametersJson, string? resultJson) => new(
-        row.Id, row.TenantId, row.WorkspaceId, row.ProjectId ?? Guid.Empty, row.SessionId, row.RunId, row.TaskId, row.AgentInstanceId,
+        row.Id, row.TenantId, row.WorkspaceId, CoreVirtualToolPolicy.ToWireSentinel(row.ProjectId), row.SessionId, row.RunId, row.TaskId, row.AgentInstanceId,
         row.ApprovalId, row.ToolId, row.ToolCallKey, row.Risk, row.MutatesWorkspace, row.RequiresApproval, row.Status, parametersJson,
         row.ParametersHash, row.Attempt, resultJson, row.ErrorCategory, row.SafeErrorMessage, row.CreatedAt, row.UpdatedAt, row.CompletedAt,
         row.PermissionRequestId, row.AuthorizationDecisionId, row.CapabilityLeaseId, row.LeaseUses,
@@ -1194,9 +1194,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
     /// Maps the wire-level project sentinel (<see cref="Guid.Empty"/>, used because a
     /// nullable id cannot be expressed on the request) onto the durable NULL that
     /// projectless rows store, so comparison/idempotency logic sees one representation.
+    /// Implementation lives in <see cref="CoreVirtualToolPolicy.FromWireSentinel"/> so every
+    /// wire↔durable translation point shares one contract (reverse:
+    /// <see cref="CoreVirtualToolPolicy.ToWireSentinel"/>).
     /// </summary>
-    private static Guid? NormalizeProjectId(Guid projectId) =>
-        CoreVirtualToolPolicy.IsProjectlessScope(projectId) ? null : projectId;
+    private static Guid? NormalizeProjectId(Guid projectId) => CoreVirtualToolPolicy.FromWireSentinel(projectId);
 
     private static void ValidatePrepareRequest(ToolExecutionPrepareRequest request)
     {

@@ -54,6 +54,11 @@ public sealed record RunReplay(
 
 internal sealed class RunReplayService : IRunReplayService
 {
+    // Must match the engine's checkpoint serialization options (Web): a bare
+    // Deserialize silently mismatches property names and lane projections read
+    // back as empty shapes.
+    private static readonly JsonSerializerOptions CheckpointJsonOptions = new(JsonSerializerDefaults.Web);
+
     private static readonly HashSet<string> MilestoneTypes = new(StringComparer.Ordinal)
     {
         "task.accepted",
@@ -102,7 +107,13 @@ internal sealed class RunReplayService : IRunReplayService
         {
             var checkpointRow = await _lifecycle.GetCurrentRunCheckpointAsync(runId, cancellationToken).ConfigureAwait(false);
             if (checkpointRow is not null)
-                checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content);
+            {
+                // Explicit web options: the engine serializes the checkpoint with
+                // camelCase naming; a bare Deserialize here silently mismatches
+                // property names and lane projections read back as empty shapes
+                // (explicit scope item, DmaEA graph orchestration round).
+                checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(checkpointRow.Content, CheckpointJsonOptions);
+            }
         }
         catch
         {

@@ -71,9 +71,19 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
         {
             CheckDraft(mode.Status, mode.Revision, ifMatchRevision);
             var nodes = await db.ModeNodes.AsNoTracking().Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (!nodes.Any(x => x.Layer == "operation" && (string.Equals(x.NodeKey, "meeting", StringComparison.OrdinalIgnoreCase) || string.Equals(x.Label, "meeting", StringComparison.OrdinalIgnoreCase)))) throw new InvalidDataException("Mode must contain an operation-layer meeting node.");
             if (!nodes.Any(x => x.Layer == "execution")) throw new InvalidDataException("Mode must contain at least one execution-layer node.");
             var edges = await db.ModeEdges.AsNoTracking().Where(x => x.ModeId == mode.Id && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.Status == "draft").ToListAsync(cancellationToken).ConfigureAwait(false);
+            // Graph semantics shared with pack admission (GraphValidation): replaces
+            // the legacy hardcoded operation-layer-meeting check. The conversation
+            // node is resolved by marker → capability → legacy meeting tiers.
+            var agentIds = nodes.Select(x => x.AgentDefinitionId).Distinct().ToArray();
+            var agentDefs = await db.AgentDefinitions.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && agentIds.Contains(x.Id))
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var agentRefs = agentDefs.Select(x => new GraphValidation.AgentRef(x.Id.ToString(), x.Slug, x.Layer, ParseCapabilities(x.CapabilitiesJson))).ToArray();
+            var nodeRefs = nodes.Select(x => new GraphValidation.NodeRef(x.NodeKey, x.AgentDefinitionId.ToString(), x.Layer, x.Label, ParseConfig(x.ConfigJson), default)).ToArray();
+            var edgeRefs = edges.Select(x => new GraphValidation.EdgeRef(x.EdgeKey, x.SourceNodeKey, x.TargetNodeKey)).ToArray();
+            GraphValidation.ValidateModeGraph(mode.Slug, nodeRefs, edgeRefs, agentRefs);
             var snapshot = JsonSerializer.Serialize(new { mode = new { id = mode.Id, slug = mode.Slug, display_name = mode.DisplayName }, nodes, edges });
             var hash = Hash(snapshot); var version = (await db.ModeVersions.Where(x => x.AgentModeId == mode.Id).MaxAsync(x => (int?)x.Version, cancellationToken).ConfigureAwait(false) ?? 0) + 1;
             db.ModeVersions.Add(new ModeVersionRecord { Id = Guid.NewGuid(), TenantId = mode.TenantId, WorkspaceId = mode.WorkspaceId, AgentModeId = mode.Id, Version = version, SnapshotJson = snapshot, TopologyHash = hash, Status = "published", Revision = 1, CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId });
@@ -135,4 +145,28 @@ public sealed class AgentConfigurationService : IAgentConfigurationService
     private static string? String(JsonElement e, string name) => e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
     private static string? Raw(JsonElement e, string name) => e.TryGetProperty(name, out var p) ? p.GetRawText() : null;
     private static JsonElement ParseJson(string? value) => string.IsNullOrWhiteSpace(value) ? JsonSerializer.SerializeToElement((object?)null) : JsonSerializer.Deserialize<JsonElement>(value);
+
+    private static IReadOnlyList<string> ParseCapabilities(string? capabilitiesJson)
+    {
+        if (string.IsNullOrWhiteSpace(capabilitiesJson)) return [];
+        try
+        {
+            var element = JsonSerializer.Deserialize<JsonElement>(capabilitiesJson);
+            if (element.ValueKind != JsonValueKind.Array) return [];
+            return element.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!).ToArray();
+        }
+        catch (JsonException) { return []; }
+    }
+
+    // Undefined when absent/non-object so GraphValidation's config contract holds.
+    private static JsonElement ParseConfig(string? configJson)
+    {
+        if (string.IsNullOrWhiteSpace(configJson)) return default;
+        try
+        {
+            var element = JsonSerializer.Deserialize<JsonElement>(configJson);
+            return element.ValueKind == JsonValueKind.Object ? element : default;
+        }
+        catch (JsonException) { return default; }
+    }
 }

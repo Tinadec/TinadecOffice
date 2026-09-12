@@ -116,7 +116,11 @@ public sealed class AgentPackService : IAgentPackService
     {
         "agent_pack_lifecycle",
         "versioned_agent_configuration",
-        "frozen_agent_version_binding"
+        "frozen_agent_version_binding",
+        // DmaEA graph orchestration pack surface (resources.tools, mode bindings,
+        // node relationship files). Declaring it opts the pack into those semantics;
+        // older Cores reject the unknown capability fail-closed.
+        GraphValidation.GraphModePacksCapability
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -713,6 +717,29 @@ public sealed class AgentPackService : IAgentPackService
             CreatedAt = now, CreatedByPrincipalId = scope.PrincipalId
         };
         if (wasCreated) db.AgentModes.Add(logical);
+
+        // Gate 2 (mode publish) binding-envelope rules over the pack's declared
+        // bindings: envelope ⊆ template capabilities/tools, operation deny floor
+        // on the effective surface. TOML-ceiling comparison runs authoritatively at
+        // run freeze (ceilings are not available in the pack admission context).
+        if (resource.Bindings is { Count: > 0 })
+        {
+            var nodeAgentKey = resource.Nodes.ToDictionary(
+                item => item.NodeKey!,
+                item => ReferenceKey(item.AgentRef!, "agent", $"mode '{resource.ResourceKey}' node '{item.NodeKey}' agent_ref"),
+                StringComparer.Ordinal);
+            var agentResourceByKey = agentResources.ToDictionary(item => item.ResourceKey!, StringComparer.Ordinal);
+            var subjects = resource.Bindings!.Select(binding =>
+            {
+                var agentKey = nodeAgentKey[binding.NodeKey!];
+                var agent = agentResourceByKey[agentKey];
+                return new ModePublishGate.BindingSubject(
+                    binding.NodeKey!, agent.Slug ?? agentKey, agent.Layer ?? string.Empty,
+                    agent.Capabilities, agent.ToolScope, binding.ToolSwitches, binding.Envelope);
+            }).ToArray();
+            ModePublishGate.ValidateBindings(resource.ResourceKey!, subjects, ceilings: null);
+        }
+
         var agentDefinitions = agentResources.ToDictionary(item => item.ResourceKey!, StringComparer.Ordinal);
         var snapshotNodes = resource.Nodes.OrderBy(item => item.NodeKey, StringComparer.Ordinal).Select(node =>
         {
@@ -731,6 +758,7 @@ public sealed class AgentPackService : IAgentPackService
                 layer = node.Layer,
                 label = node.Label,
                 config = NormalizeObject(node.Config),
+                relationship = node.Relationship is { } relationshipElement ? (object?)NormalizeObject(relationshipElement) : null,
                 effective_tools = EffectiveTools(agentResource.ToolScope, node.Config),
                 prompt_pipeline_id = prompt?.LogicalId,
                 prompt_version_id = prompt?.VersionId,
@@ -744,12 +772,27 @@ public sealed class AgentPackService : IAgentPackService
             target_node_key = edge.TargetNodeKey,
             condition = NormalizeObject(edge.Condition)
         }).ToArray();
+        var agentKeyByNode = resource.Nodes.ToDictionary(
+            item => item.NodeKey!,
+            item => ReferenceKey(item.AgentRef!, "agent", $"mode '{resource.ResourceKey}' node '{item.NodeKey}' agent_ref"),
+            StringComparer.Ordinal);
+        var snapshotBindings = (resource.Bindings ?? []).OrderBy(item => item.NodeKey, StringComparer.Ordinal).Select(binding => new
+        {
+            node_key = binding.NodeKey,
+            agent_ref = agentKeyByNode[binding.NodeKey!],
+            duty_description_ref = binding.DutyDescriptionRef,
+            tool_switches = binding.ToolSwitches is { } switchesElement ? (object?)NormalizeObject(switchesElement) : null,
+            envelope = binding.Envelope is { } envelopeElement ? (object?)NormalizeObject(envelopeElement) : null,
+            includes_core_reserved = binding.IncludesCoreReserved,
+            instance_naming = binding.InstanceNaming is { } namingElement ? (object?)NormalizeObject(namingElement) : null,
+        }).ToArray();
         var snapshotElement = JsonSerializer.SerializeToElement(new
         {
             schema = "tinadec.mode_version/v1",
             mode = new { id = logical.Id, slug = resource.Slug, display_name = resource.DisplayName },
             nodes = snapshotNodes,
             edges = snapshotEdges,
+            bindings = snapshotBindings,
             canvas_layout = NormalizeObject(resource.CanvasLayout)
         }, JsonOptions);
         var snapshot = Encoding.UTF8.GetString(JsonCanonicalizer.Canonicalize(snapshotElement));
@@ -1166,36 +1209,147 @@ public sealed class AgentPackService : IAgentPackService
             if (mode.Nodes.Count == 0) Invalid($"mode '{mode.ResourceKey}' must contain nodes.");
             EnsureUnique(mode.Nodes.Select(item => RequiredToken(item.NodeKey, $"mode '{mode.ResourceKey}' node_key", 128)), $"mode '{mode.ResourceKey}' node_key");
             EnsureUnique(mode.Edges.Select(item => RequiredToken(item.EdgeKey, $"mode '{mode.ResourceKey}' edge_key", 128)), $"mode '{mode.ResourceKey}' edge_key");
-            var nodeKeys = mode.Nodes.Select(item => item.NodeKey!).ToHashSet(StringComparer.Ordinal);
-            var operationMeeting = 0;
-            var execution = 0;
+
+            // Graph semantics shared with manual mode publish (one implementation so
+            // the two historical meeting-enforcement sites cannot drift): resolvable
+            // conversation node, edge endpoint/self-loop checks, relationship files.
+            // The legacy operation-layer-meeting + execution-count checks are folded
+            // into the conversation-node and edge validation below.
+            var agentRefs = resources.Agents
+                .Select(item => new GraphValidation.AgentRef(item.ResourceKey!, item.Slug ?? string.Empty, item.Layer ?? string.Empty, item.Capabilities))
+                .ToArray();
+            var nodeRefs = mode.Nodes
+                .Select(node => new GraphValidation.NodeRef(
+                    node.NodeKey!, ReferenceKey(RequiredText(node.AgentRef, $"mode '{mode.ResourceKey}' node '{node.NodeKey}' agent_ref", 256), "agent", $"mode '{mode.ResourceKey}' node '{node.NodeKey}' agent_ref"),
+                    node.Layer ?? string.Empty, node.Label, node.Config, node.Relationship))
+                .ToArray();
+            var edgeRefs = mode.Edges
+                .Select(edge => new GraphValidation.EdgeRef(edge.EdgeKey!, edge.SourceNodeKey!, edge.TargetNodeKey!))
+                .ToArray();
             foreach (var node in mode.Nodes)
             {
-                var agentRef = RequiredText(node.AgentRef, $"mode '{mode.ResourceKey}' node '{node.NodeKey}' agent_ref", 256);
-                var agentKey = ReferenceKey(agentRef, "agent", $"mode '{mode.ResourceKey}' node '{node.NodeKey}' agent_ref");
-                if (!agents.TryGetValue(agentKey, out var agent)) Invalid($"mode '{mode.ResourceKey}' references unknown agent '{agentRef}'.");
-                if (!string.Equals(node.Layer, agent.Layer, StringComparison.Ordinal)) Invalid($"mode '{mode.ResourceKey}' node '{node.NodeKey}' layer differs from agent '{agentRef}'.");
-                if (node.Config.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined)) Invalid($"mode '{mode.ResourceKey}' node '{node.NodeKey}' config must be an object.");
                 if (node.Position.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined)) Invalid($"mode '{mode.ResourceKey}' node '{node.NodeKey}' position must be an object or null.");
-                if (node.Layer == "operation" && agentKey == "meeting") operationMeeting++;
-                if (node.Layer == "execution") execution++;
             }
-            if (operationMeeting == 0) Invalid($"mode '{mode.ResourceKey}' requires an operation-layer meeting agent.");
-            if (execution == 0) Invalid($"mode '{mode.ResourceKey}' requires at least one execution-layer agent.");
+            try { GraphValidation.ValidateModeGraph(mode.ResourceKey!, nodeRefs, edgeRefs, agentRefs); }
+            catch (InvalidDataException graphError) { Invalid(graphError.Message); }
+            if (!nodeRefs.Any(node => string.Equals(node.Layer, "execution", StringComparison.Ordinal)))
+                Invalid($"mode '{mode.ResourceKey}' requires at least one execution-layer agent.");
+
+            ValidateModeBindings(mode);
             foreach (var edge in mode.Edges)
             {
-                var source = RequiredToken(edge.SourceNodeKey, $"mode '{mode.ResourceKey}' edge source_node_key", 128);
-                var target = RequiredToken(edge.TargetNodeKey, $"mode '{mode.ResourceKey}' edge target_node_key", 128);
-                if (!nodeKeys.Contains(source) || !nodeKeys.Contains(target)) Invalid($"mode '{mode.ResourceKey}' edge '{edge.EdgeKey}' references an unknown node.");
                 if (edge.Condition.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined)) Invalid($"mode '{mode.ResourceKey}' edge '{edge.EdgeKey}' condition must be an object.");
             }
             if (mode.CanvasLayout.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined)) Invalid($"mode '{mode.ResourceKey}' canvas_layout must be an object.");
         }
 
+        ValidateToolResources(manifest, resources, resources.Modes.Any(mode =>
+            (mode.Bindings is { Count: > 0 })
+            || mode.Nodes.Any(node => node.Relationship is { })));
+
         var defaults = manifest.Activation?.WorkspaceDefaults ?? throw InvalidException("activation.workspace_defaults is required.");
         if (!agents.ContainsKey(ReferenceKey(defaults.AgentRef, "agent", "activation.workspace_defaults.agent_ref"))) Invalid("activation workspace default agent_ref is unknown.");
         if (!resources.Modes.Any(item => item.ResourceKey == ReferenceKey(defaults.ModeRef, "mode", "activation.workspace_defaults.mode_ref"))) Invalid("activation workspace default mode_ref is unknown.");
         if (!prompts.ContainsKey(ReferenceKey(defaults.PromptPipelineRef, "prompt", "activation.workspace_defaults.prompt_pipeline_ref"))) Invalid("activation workspace default prompt_pipeline_ref is unknown.");
+    }
+
+    /// <summary>
+    /// Optional per-node mode bindings (always-v1 additive surface). Structural
+    /// checks only: node must exist, agent_ref (when present) must match the node's
+    /// agent, envelope/tool_switches/instance_naming must be JSON objects. The
+    /// narrowing-only envelope semantics are enforced by the mode publish gate
+    /// (ModePublishGate), not here — pack admission has no TOML ceiling context.
+    /// </summary>
+    private static void ValidateModeBindings(AgentPackModeResourceDto mode)
+    {
+        if (mode.Bindings is not { Count: > 0 }) return;
+        var nodeKeys = mode.Nodes.Select(item => item.NodeKey!).ToHashSet(StringComparer.Ordinal);
+        var agentKeyByNode = mode.Nodes.ToDictionary(item => item.NodeKey!, item => ReferenceKey(item.AgentRef!, "agent", $"mode '{mode.ResourceKey}' node '{item.NodeKey}' agent_ref"), StringComparer.Ordinal);
+        EnsureUnique(mode.Bindings.Select(item => RequiredToken(item.NodeKey, $"mode '{mode.ResourceKey}' binding node_key", 128)), $"mode '{mode.ResourceKey}' binding node_key");
+        foreach (var binding in mode.Bindings)
+        {
+            if (!nodeKeys.Contains(binding.NodeKey!)) Invalid($"mode '{mode.ResourceKey}' binding references unknown node '{binding.NodeKey}'.");
+            if (binding.AgentRef is { Length: > 0 } bindingAgentRef)
+            {
+                var bindingAgentKey = ReferenceKey(bindingAgentRef, "agent", $"mode '{mode.ResourceKey}' binding '{binding.NodeKey}' agent_ref");
+                if (!string.Equals(bindingAgentKey, agentKeyByNode[binding.NodeKey!], StringComparison.Ordinal))
+                    Invalid($"mode '{mode.ResourceKey}' binding '{binding.NodeKey}' agent_ref does not match the node's agent.");
+            }
+            if (binding.Envelope is { } envelopeElement && envelopeElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null)) Invalid($"mode '{mode.ResourceKey}' binding '{binding.NodeKey}' envelope must be an object.");
+            if (binding.ToolSwitches is { } switchesElement && switchesElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null)) Invalid($"mode '{mode.ResourceKey}' binding '{binding.NodeKey}' tool_switches must be an object.");
+            if (binding.InstanceNaming is { } namingElement && namingElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null)) Invalid($"mode '{mode.ResourceKey}' binding '{binding.NodeKey}' instance_naming must be an object or null.");
+        }
+    }
+
+    /// <summary>
+    /// Optional declared-tools section (always-v1 additive surface). Absent/empty
+    /// keeps the legacy pure-id-reference behavior. Present, it requires the
+    /// graph_mode_packs core capability so older Cores reject the pack fail-closed
+    /// instead of silently ignoring semantics they cannot enforce. Reference tier
+    /// pins the sha256 of the TinadecTools manifest entry (drift fails at freeze);
+    /// definition tier is the controlled import registry — names/refs/schema only,
+    /// inline secret values are rejected here and never reach storage.
+    /// </summary>
+    private static void ValidateToolResources(AgentPackManifestDto manifest, AgentPackResourcesDto resources, bool hasGraphPackSurface)
+    {
+        var hasTools = resources.Tools is { Count: > 0 };
+        if (!hasTools && !hasGraphPackSurface) return;
+        var required = manifest.Compatibility?.RequiredCoreCapabilities ?? [];
+        if (!required.Contains(GraphValidation.GraphModePacksCapability, StringComparer.Ordinal))
+            Invalid($"resources.tools (and mode bindings/relationship files) require compatibility.required_core_capabilities to declare '{GraphValidation.GraphModePacksCapability}'.");
+
+        if (!hasTools) return;
+        EnsureUnique(resources.Tools!.Select(item => RequiredToken(item.ToolId, "tool.tool_id", 128)), "tool tool_id");
+        foreach (var tool in resources.Tools!)
+        {
+            switch (tool.Kind)
+            {
+                case "reference":
+                    if (tool.EntryHash is not { Length: 64 } entryHash || entryHash.Any(character => !Uri.IsHexDigit(character)))
+                        Invalid($"tool '{tool.ToolId}' reference entries must pin a 64-character sha256 entry_hash.");
+                    break;
+                case "definition":
+                    RequiredText(tool.DisplayName, $"tool '{tool.ToolId}' display_name", 256);
+                    if (tool.Definition is not { } definitionElement || definitionElement.ValueKind is not JsonValueKind.Object)
+                        Invalid($"tool '{tool.ToolId}' definition must be an object.");
+                    else
+                        RejectInlineSecrets(tool.ToolId!, definitionElement);
+                    break;
+                default:
+                    Invalid($"tool '{tool.ToolId}' kind must be 'reference' or 'definition'.");
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tool-definition secret hygiene: definitions may carry names and references
+    /// only. Secret VALUES live in ISecretStore / .tinadec/sandbox.json, never in
+    /// the pack or in the tool_definitions rows.
+    /// </summary>
+    private static readonly HashSet<string> InlineSecretKeys = new(StringComparer.OrdinalIgnoreCase)
+    { "api_key", "secret", "secret_value", "password", "credential", "access_token", "private_key" };
+
+    private static void RejectInlineSecrets(string toolId, JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (InlineSecretKeys.Contains(property.Name)
+                        && property.Value.ValueKind is JsonValueKind.String
+                        && !string.IsNullOrEmpty(property.Value.GetString()))
+                    {
+                        Invalid($"tool '{toolId}' definition carries an inline secret value in '{property.Name}'; reference the secret by name instead.");
+                    }
+                    RejectInlineSecrets(toolId, property.Value);
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray()) RejectInlineSecrets(toolId, item);
+                break;
+        }
     }
 
     private static void ValidatePromptGraph(string resourceKey, JsonElement graph)

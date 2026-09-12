@@ -78,6 +78,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         string? title,
         Guid modeVersionId,
         SessionModelOverride? meetingModelOverride = null,
+        string? conversationNodeKey = null,
+        string? conversationTemplateSlug = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -96,6 +98,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             ModeVersionId = modeVersionId,
             MeetingModelOverrideProviderInstanceId = meetingModelOverride?.ProviderInstanceId,
             MeetingModelOverrideModel = meetingModelOverride?.Model,
+            ConversationNodeKey = conversationNodeKey,
+            ConversationTemplateSlug = conversationTemplateSlug,
             CreatedAt = now, UpdatedAt = now
         };
         db.Sessions.Add(session);
@@ -684,7 +688,9 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
                 x.Id, x.ProjectId, x.TenantId, x.WorkspaceId, x.ModeVersionId,
                 x.MeetingModelOverrideProviderInstanceId == null
                     ? null
-                    : new SessionModelOverride(x.MeetingModelOverrideProviderInstanceId.Value, x.MeetingModelOverrideModel)))
+                    : new SessionModelOverride(x.MeetingModelOverrideProviderInstanceId.Value, x.MeetingModelOverrideModel),
+                x.ConversationNodeKey,
+                x.ConversationTemplateSlug))
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 

@@ -144,6 +144,7 @@ const assignment = t.Object({
 const orchestrationSnapshot = t.Object({
   run: nullableRef('Run'),
   graph: nullableJsonObject(),
+  flows: t.Array(t.Unknown()),
   nodes: t.Array(t.Unknown()),
   lanes: t.Array(componentRef('Lane')),
   assignments: t.Array(componentRef('Assignment')),

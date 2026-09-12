@@ -224,6 +224,11 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                     ?? throw new InvalidDataException("Frozen configuration is empty.");
                 if (!string.Equals(configuration.ContentHash, frozen.ContentHash, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Frozen configuration hash does not match its stored body.");
+                // Gate 3 re-verification on recovery: the operation deny floor and
+                // roster topology must hold for the resumed document too. Session
+                // identity re-lock happens through the frozen bindings (null here
+                // keeps the legacy semantics for pre-identity runs).
+                RunFreezeGate.Validate(null, configuration.OperationAgents, configuration.ExecutionAgents);
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException)
             {
@@ -4414,6 +4419,20 @@ internal sealed class FullDuplexCheckpointV1
     public Guid? MeetingAgentId { get; set; }
     public Guid? PlannerAgentId { get; set; }
     public Guid? SupervisorAgentId { get; set; }
+
+    /// <summary>
+    /// Parallel instance pool carrying the conversation identity (DmaEA graph
+    /// orchestration). The conversation-identity instance IS the main instance:
+    /// user-facing output is emitted only through it, pool members execute
+    /// envelope-bounded sub-work while sharing context_revision and tools.
+    /// Tolerance read: an absent/empty pool (checkpoints written before this
+    /// field) means the legacy singleton path — identity/planner/supervisor are
+    /// the Guid? fields above and no pool scheduling applies. Both shapes are
+    /// written during the transition; the singleton fields are retired in Phase 2.
+    /// </summary>
+    public Guid? ConversationIdentityInstanceId { get; set; }
+    public List<Guid> InstancePoolIds { get; set; } = [];
+    public Guid? MainInstanceId { get; set; }
     public List<DurableTaskNode> Tasks { get; set; } = [];
     public int SupervisionRound { get; set; }
     public string? SupervisionDecision { get; set; }

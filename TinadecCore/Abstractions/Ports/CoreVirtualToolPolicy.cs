@@ -24,6 +24,22 @@ public static class CoreVirtualToolPolicy
     public static bool IsProjectlessScope(Guid projectId) => projectId == ProjectlessProjectId;
 
     /// <summary>
+    /// Wire → durable translation for the projectless sentinel: the wire-level
+    /// Guid.Empty becomes a durable NULL. Every call site that stores or compares a
+    /// project id arriving from the wire must go through this pair — comparing a raw
+    /// wire sentinel against a durable NULL never matches and silently breaks
+    /// projectless admission/idempotency.
+    /// </summary>
+    public static Guid? FromWireSentinel(Guid projectId) =>
+        IsProjectlessScope(projectId) ? null : projectId;
+
+    /// <summary>
+    /// Durable → wire translation: a stored NULL is projected back as the
+    /// Guid.Empty sentinel (and a real project id passes through unchanged).
+    /// </summary>
+    public static Guid ToWireSentinel(Guid? projectId) => projectId ?? ProjectlessProjectId;
+
+    /// <summary>
     /// True for the only tool that may run inside a projectless scope: the
     /// Core-owned workspace-creation virtual tool. Every provider-backed tool
     /// requires a real project root and must fail closed here.

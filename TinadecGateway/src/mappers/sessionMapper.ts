@@ -12,6 +12,9 @@ export interface ExternalSessionDto {
   status: string | null;
   mode: string | null;
   mode_version_id: string | null;
+  /** ConversationIdentity (DmaEA graph orchestration), frozen at session creation; null on pre-identity rows. */
+  conversation_node_key: string | null;
+  conversation_template_slug: string | null;
   meeting_model_override: { provider_instance_id: string; model?: string | null } | null;
   summary: string | null;
   history_revision: number | null;
@@ -42,6 +45,8 @@ export function mapSession(core: unknown): ExternalSessionDto | null {
     status: (core.status as string) ?? null,
     mode: (core.mode as string) ?? null,
     mode_version_id: (core.mode_version_id as string) ?? (core.modeVersionId as string) ?? null,
+    conversation_node_key: (core.conversation_node_key as string) ?? (core.conversationNodeKey as string) ?? null,
+    conversation_template_slug: (core.conversation_template_slug as string) ?? (core.conversationTemplateSlug as string) ?? null,
     meeting_model_override: override && typeof override.provider_instance_id === 'string'
       ? { provider_instance_id: override.provider_instance_id, model: override.model ?? null }
       : null,

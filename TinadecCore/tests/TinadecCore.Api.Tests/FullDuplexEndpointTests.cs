@@ -1691,11 +1691,22 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         await runA.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         await runB.Completion.WaitAsync(TimeSpan.FromSeconds(30));
 
+        // The terminal drain commits AFTER the run stream's done frame (and the
+        // queued directive row itself lands asynchronously after admission), so
+        // poll for the drained state instead of racing either write.
         await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
         {
-            var directive = await db.RunDirectives.SingleAsync(x => x.Id == directiveId);
-            Assert.Equal("rejected", directive.Status);
-            Assert.NotNull(directive.DrainedAt);
+            var drainDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
+            RunDirectiveRecord? directive = null;
+            while (DateTimeOffset.UtcNow < drainDeadline)
+            {
+                directive = await db.RunDirectives.AsNoTracking().SingleOrDefaultAsync(x => x.Id == directiveId);
+                if (directive is { Status: "rejected", DrainedAt: not null }) break;
+                await Task.Delay(150);
+                db.ChangeTracker.Clear();
+            }
+            Assert.True(directive is { Status: "rejected", DrainedAt: not null },
+                $"Directive {directiveId} was never drained as rejected; last state: {(directive is null ? "row absent" : directive.Status)}.");
         }
 
         var manager = factory.Services.GetRequiredService<ILifecycleManager>();

@@ -274,7 +274,7 @@ public sealed class AgentPackEndpointTests
         var envelope = OfficeEnvelope();
 
         using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
-        Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+        Assert.True(previewResponse.StatusCode == HttpStatusCode.OK, $"preview: {previewResponse.StatusCode} {await previewResponse.Content.ReadAsStringAsync()}");
         var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("install", preview.GetProperty("action").GetString());
         Assert.Equal(14, preview.GetProperty("counts").GetProperty("agents").GetInt32());

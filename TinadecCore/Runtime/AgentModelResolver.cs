@@ -144,7 +144,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
     {
         var strategy = ModelStrategyJson.Parse(request.StrategyJson);
         var source = request.StrategySource;
-        if (request.IsMeetingRoot)
+        if (request.IsConversationRoot)
         {
             var meetingOverride = request.MeetingModelOverride;
             if (meetingOverride is not null)
@@ -162,7 +162,7 @@ internal sealed class AgentModelResolver : IAgentModelResolver
                 }
             }
         }
-        return await FreezeStrategyAsync(strategy, source, !request.IsMeetingRoot && strategy.Kind == ModelStrategyKinds.Inherit, cancellationToken).ConfigureAwait(false);
+        return await FreezeStrategyAsync(strategy, source, !request.IsConversationRoot && strategy.Kind == ModelStrategyKinds.Inherit, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<ChatResolution>> ResolveInvocationCandidatesAsync(FrozenModelPlan plan, Guid? parentInstanceId, CancellationToken cancellationToken = default)

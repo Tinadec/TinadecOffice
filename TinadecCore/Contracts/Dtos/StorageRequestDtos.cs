@@ -18,6 +18,12 @@ public sealed class CreateSessionRequest
     public string? Title { get; set; }
     public Guid? ModeVersionId { get; set; }
     public MeetingModelOverrideDto? MeetingModelOverride { get; set; }
+    // ConversationIdentity (additive, optional): the mode node carrying the
+    // conversation role. Omitted → resolved from the selected mode's designated
+    // conversation node; provided → must satisfy the resolution tiers or the
+    // request fails with conversation_identity_invalid. Frozen after creation —
+    // immutable across mode switches.
+    public string? ConversationNodeKey { get; set; }
 }
 
 public sealed class UpdateSessionRequest

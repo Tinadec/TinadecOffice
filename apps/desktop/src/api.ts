@@ -1706,9 +1706,41 @@ export interface OrchestrationLaneDto {
   waits: OrchestrationLaneWaitDto[];
 }
 
+export interface DeclaredGraphNodeDto {
+  node_key: string;
+  label?: string | null;
+  layer?: string | null;
+  agent_definition_id?: string | null;
+  is_conversation: boolean;
+  relationship?: Record<string, unknown> | null;
+}
+
+export interface DeclaredGraphEdgeDto {
+  edge_key: string;
+  source_node_key?: string | null;
+  target_node_key?: string | null;
+  data_contract?: Record<string, unknown> | null;
+}
+
+/** Declared mode graph (DmaEA graph orchestration): the published mode-version snapshot projected as base layer. */
+export interface DeclaredModeGraphDto {
+  nodes: DeclaredGraphNodeDto[];
+  edges: DeclaredGraphEdgeDto[];
+}
+
+/** Observed data flow projected from the durable task graph (dispatch through the conversation identity). */
+export interface OrchestrationFlowDto {
+  from: string;
+  to: string;
+  task_key: string;
+  kind: string;
+  status: string;
+}
+
 export interface OrchestrationSnapshotDto {
   run?: OrchestrationRunDto | null;
-  graph?: TaskGraphDto | null;
+  graph?: DeclaredModeGraphDto | null;
+  flows?: OrchestrationFlowDto[];
   nodes: TaskNodeDto[];
   lanes: OrchestrationLaneDto[];
   assignments: AgentAssignmentDto[];

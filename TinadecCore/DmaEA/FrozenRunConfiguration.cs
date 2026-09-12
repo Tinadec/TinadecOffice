@@ -166,8 +166,19 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
         var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
         var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
-        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
-        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+
+        // Gate 3 (run freeze): conversation identity lock + operation deny floor,
+        // fail-closed at admission. Sessions frozen before ConversationIdentity
+        // existed keep the legacy literal-meeting semantics (null identity).
+        RunFreezeGate.Validate(
+            session.ConversationNodeKey is null
+                ? null
+                : new RunFreezeGate.ConversationIdentity(session.ConversationNodeKey, session.ConversationTemplateSlug ?? string.Empty),
+            operation,
+            execution);
+
         var runtimeProfileId = relational.RuntimeProfileId;
         bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
         foreach (var agent in relational.Operation.Concat(relational.Execution))
@@ -222,6 +233,7 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         IReadOnlyList<RuntimeAgentDefinition> definitions,
         Guid sessionId,
         Guid modeVersionId,
+        string? conversationTemplateSlug,
         SessionModelOverride? meetingModelOverride,
         CancellationToken cancellationToken)
     {
@@ -233,12 +245,20 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             var plan = await _models.FreezeAsync(new AgentModelFreezeRequest(
                 sessionId, modeVersionId, definitionId, versionId, definition.Id,
                 definition.ModelStrategyJson, definition.ModelStrategySource,
-                definition.Layer == "operation" && definition.Id == "meeting",
+                IsConversationRoot(definition, conversationTemplateSlug),
                 meetingModelOverride), cancellationToken).ConfigureAwait(false);
             result.Add(definition with { ModelPlan = plan });
         }
         return result;
     }
+
+    // The conversation root is the frozen conversation identity holder; sessions
+    // created before identity existed fall back to the literal meeting slug.
+    private static bool IsConversationRoot(RuntimeAgentDefinition definition, string? conversationTemplateSlug) =>
+        definition.Layer == "operation"
+        && (conversationTemplateSlug is { } slug
+            ? string.Equals(definition.Id, slug, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(definition.Id, "meeting", StringComparison.OrdinalIgnoreCase));
 
     private async Task<RuntimeProfileOverrideRecord?> LoadLatestOverrideAsync(
         SessionReference session,
