@@ -876,6 +876,226 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.True(script.StewardCalls >= 1, "The git steward should review runs that touched git tools.");
     }
 
+    /// <summary>
+    /// Vibe pack with-run E2E on the FakeToolProvider harness (no TinadecTools
+    /// binary required): a declared-graph mode freezes a self_dispatch tier (the
+    /// conversation identity holds agent.create_temporary), the conversation
+    /// identity authors the task graph (no task_planner instance is created), the
+    /// worker is created authoritatively from the frozen roster as a root instance
+    /// bound to its declared edge target, write_file parks the run on the approval
+    /// gate, the approval wakes it, and the orchestration projection carries the
+    /// declared graph plus observed flows. Fixture constraints: no supervisor node
+    /// (the review gate skips), lanes disabled (the freeze-gate passing side).
+    /// </summary>
+    [Fact]
+    public async Task VibePack_Run_WalksDeclaredEdges_ParksOnApproval_AndCompletes()
+    {
+        var workspace = Path.Combine(_root, "workspace-vibe-run");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            .WhenPlanner("[{\"task_key\":\"v1\",\"title\":\"写vibe文件\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenMeeting("vibe 完成。")
+            .WhenWorkerTurns(
+                [new FunctionCallContent("call-v1", "write_file", new Dictionary<string, object?> { ["filepath"] = "vibe.txt", ["content"] = "x" })],
+                [new TextContent("已写入 vibe.txt")]);
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+
+        var envelope = VibeRunPackEnvelope();
+        using var preview = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        Assert.True(preview.StatusCode == HttpStatusCode.Created || preview.StatusCode == HttpStatusCode.OK,
+            $"vibe preview: {preview.StatusCode} {await preview.Content.ReadAsStringAsync()}");
+        var previewBody = await preview.Content.ReadFromJsonAsync<JsonElement>();
+        using var apply = new HttpRequestMessage(HttpMethod.Put, "/api/v1/agent-packs/tinadec.tests.vibe-run-pack")
+        {
+            Content = JsonContent.Create(new { preview_id = previewBody.GetProperty("preview_id").GetGuid(), envelope })
+        };
+        apply.Headers.TryAddWithoutValidation("Idempotency-Key", "vibe-run-install");
+        using var applyResponse = await client.SendAsync(apply);
+        Assert.True(applyResponse.StatusCode == HttpStatusCode.Created,
+            $"vibe install: {applyResponse.StatusCode} {await applyResponse.Content.ReadAsStringAsync()}");
+        var packDetail = await client.GetFromJsonAsync<JsonElement>("/api/v1/agent-packs/tinadec.tests.vibe-run-pack");
+        var modeVersionId = packDetail.GetProperty("resources").EnumerateArray()
+            .Where(resource => resource.GetProperty("kind").GetString() == "mode")
+            .Select(resource => resource.GetProperty("version_id").GetGuid())
+            .Single();
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "vibe run project", path = workspace }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = project.GetProperty("id").GetGuid(),
+            title = "vibe run",
+            mode_version_id = modeVersionId
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        Assert.Contains("meeting", session.GetProperty("conversation_template_slug").GetString());
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一个 vibe 文件", client_message_id = "vibe-run-c-1" });
+        var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        var runId = ack.GetProperty("run_id").GetGuid();
+
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        var parked = await WaitForRunStatusAsync(client, runId, "awaiting_user", "failed");
+        Assert.Equal("awaiting_user", parked);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" })).StatusCode);
+
+        await WaitForReplayTaskStatusAsync(client, runId, "v1", "completed");
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+
+        // Tier observability: self_dispatch, announced exactly once.
+        var tierEvent = Assert.Single(events, e => e.EventType == "orchestration.mode_tier_decided");
+        var tierPayload = (JsonElement)tierEvent.Payload["payload"]!;
+        Assert.Equal("self_dispatch", tierPayload.GetProperty("tier").GetString());
+        Assert.Contains("meeting", tierPayload.GetProperty("conversation_slug").GetString());
+
+        // Declared graph + observed flows through the conversation identity.
+        var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
+        var graph = orchestration.GetProperty("graph");
+        Assert.Equal(3, graph.GetProperty("nodes").GetArrayLength());
+        Assert.Equal(2, graph.GetProperty("edges").GetArrayLength());
+        var flow = Assert.Single(orchestration.GetProperty("flows").EnumerateArray()
+            .Where(item => item.GetProperty("task_key").GetString() == "v1"));
+        Assert.Contains("meeting", flow.GetProperty("from").GetString());
+        Assert.Contains("worker", flow.GetProperty("to").GetString());
+
+        // Root-instance lineage: the conversation identity authors; NO task_planner
+        // instance exists in a graph tier.
+        var createdAgents = events
+            .Where(e => e.EventType == "agent.created")
+            .Select(e => (JsonElement)e.Payload["payload"]!)
+            .ToArray();
+        Assert.Single(createdAgents, payload => payload.GetProperty("agent_slug").GetString()!.Contains("meeting"));
+        Assert.DoesNotContain(createdAgents, payload => payload.GetProperty("agent_slug").GetString() == "task_planner");
+        Assert.Contains(events, e => e.EventType == "supervision.skipped");
+    }
+
+    /// <summary>
+    /// Generic vibe run-pack fixture (never Office content). The digest covers the
+    /// Core DTO re-serialization — Core digests its own round-tripped shape, so the
+    /// fixture must hash exactly what Core will hash.
+    /// </summary>
+    private static JsonElement VibeRunPackEnvelope()
+    {
+        static object Agent(string key, string layer, string role, string[] capabilities, string[] tools) => new
+        {
+            resource_key = key,
+            slug = key,
+            display_name = key,
+            layer,
+            role,
+            capabilities,
+            model_strategy = new { kind = "inherit" },
+            tool_scope = tools,
+            system_prompt = $"{key} system prompt",
+            enabled = true,
+            base_prompt_pipeline_ref = "prompt:vibe-run-base"
+        };
+        static object Node(string key, string agent, string layer) => new
+        {
+            node_key = key,
+            agent_ref = $"agent:{agent}",
+            layer,
+            label = key,
+            config = new { },
+            position = (object?)null
+        };
+        var manifest = JsonSerializer.SerializeToElement(new
+        {
+            api_version = "tinadec.io/agent-pack/v1alpha1",
+            kind = "AgentPack",
+            metadata = new
+            {
+                pack_id = "tinadec.tests.vibe-run-pack",
+                owner = "tinadec.tests",
+                product_id = "tinadec.tests",
+                name = "Vibe Run Test Pack",
+                version = "1.0.0"
+            },
+            compatibility = new { required_core_capabilities = Array.Empty<string>() },
+            resources = new
+            {
+                agents = new[]
+                {
+                    Agent("meeting", "operation", "session_coordinator", new[] { "user.respond", "task.dispatch", "agent.create_temporary" }, Array.Empty<string>()),
+                    Agent("worker.search", "execution", "task_executor", new[] { "task.dispatch" }, new[] { "mcp_search", "mcp_invoke", "read_file" }),
+                    Agent("worker.global_engineering", "execution", "task_executor", new[] { "task.dispatch" }, new[] { "read_file", "write_file", "shell" })
+                },
+                prompt_pipelines = new[]
+                {
+                    new
+                    {
+                        resource_key = "vibe-run-base",
+                        slug = "vibe-run-base",
+                        display_name = "Vibe run base",
+                        graph = new
+                        {
+                            nodes = new object[]
+                            {
+                                new { id = "template", type = "template", config = new { content = "vibe-run-template" } },
+                                new { id = "assemble", type = "assemble" }
+                            },
+                            edges = new[] { new { source = "template", target = "assemble" } }
+                        }
+                    }
+                },
+                modes = new[]
+                {
+                    new
+                    {
+                        resource_key = "vibe-run-mode",
+                        slug = "vibe-run-mode",
+                        display_name = "Vibe run mode",
+                        nodes = new[]
+                        {
+                            Node("meeting-1", "meeting", "operation"),
+                            Node("search-1", "worker.search", "execution"),
+                            Node("eng-1", "worker.global_engineering", "execution")
+                        },
+                        edges = new[]
+                        {
+                            new { edge_key = "e1", source_node_key = "meeting-1", target_node_key = "search-1", condition = new { request = new[] { "query" }, response = new[] { "evidence" } } },
+                            new { edge_key = "e2", source_node_key = "meeting-1", target_node_key = "eng-1", condition = new { request = new[] { "task" }, response = new[] { "artifact" } } }
+                        },
+                        canvas_layout = new { }
+                    }
+                }
+            },
+            activation = new
+            {
+                workspace_defaults = new
+                {
+                    agent_ref = "agent:meeting",
+                    mode_ref = "mode:vibe-run-mode",
+                    prompt_pipeline_ref = "prompt:vibe-run-base"
+                }
+            }
+        });
+        var serverOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+        var roundTripped = JsonSerializer.Deserialize<TinadecCore.Contracts.Dtos.AgentPackManifestDto>(
+            manifest.GetRawText(), serverOptions);
+        var serverElement = JsonSerializer.SerializeToElement(roundTripped, serverOptions);
+        var digest = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(JsonCanonicalizer.Canonicalize(serverElement)))
+            .ToLowerInvariant();
+        return JsonSerializer.SerializeToElement(new
+        {
+            manifest,
+            integrity = new { algorithm = "sha256", digest }
+        });
+    }
+
     private static void RunGit(string workingDirectory, params string[] arguments)
     {
         var info = new System.Diagnostics.ProcessStartInfo("git", arguments)

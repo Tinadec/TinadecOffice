@@ -217,6 +217,13 @@ public sealed record AgentRuntimeConfigurationSnapshot(
     /// <summary>Lane master switch and ceilings; absent TOML keeps lanes off.</summary>
     public OrchestrationPolicy Orchestration { get; init; } = OrchestrationPolicy.Disabled;
 
+    /// <summary>
+    /// Dual-write resolver mode for declared-graph modes ("shadow" | "active");
+    /// absent TOML keeps shadow — legacy roster wins and drift is only reported.
+    /// Not frozen into run configurations: the flip is a deployment decision.
+    /// </summary>
+    public string GraphResolverMode { get; init; } = "shadow";
+
     public (string ApplicationMode, string AgentMode, RuntimeProfileDefinition Profile) Resolve(string? applicationMode, string? agentMode)
     {
         var appId = NormalizeApplicationMode(applicationMode);
@@ -400,9 +407,17 @@ public sealed class AgentRuntimeConfigurationStore : IAgentRuntimeConfiguration,
             new Dictionary<string, RuntimeAgentDefinition>(StringComparer.OrdinalIgnoreCase))
         {
             Triggers = triggersPolicy,
-            Orchestration = orchestrationPolicy
+            Orchestration = orchestrationPolicy,
+            GraphResolverMode = NormalizeGraphResolverMode(orchestration is null ? null : OptionalString(orchestration, "graph_resolver"))
         };
     }
+
+    /// <summary>Unknown or absent values stay on shadow; only "active" flips the dual-write.</summary>
+    private static string NormalizeGraphResolverMode(string? value) =>
+        string.Equals(value, "active", StringComparison.OrdinalIgnoreCase) ? "active" : "shadow";
+
+    private static string? OptionalString(TomlTable table, string key) =>
+        table.TryGetValue(key, out var value) && value is string text ? text : null;
 
     public static string NormalizeLayer(string? layer) => string.Equals(layer, "planning", StringComparison.OrdinalIgnoreCase) ? "operation" : layer?.Trim().ToLowerInvariant() ?? string.Empty;
 

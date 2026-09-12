@@ -51,7 +51,14 @@ public static class TinadecCoreServiceCollectionExtensions
         // packageable. The composition root replaces its fail-closed placeholder
         // with the Core-state resolver only in the full runtime.
         services.Replace(ServiceDescriptor.Singleton<IAuthorizationContextResolver, CoreAuthorizationContextResolver>());
-        services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver, FormalModeResolver>();
+        // Dual-write (lane 双写过渡): the graph decorator wraps the legacy
+        // resolver — shadow by default (legacy roster wins, drift reported);
+        // [orchestration] graph_resolver = "active" flips the derived semantics on.
+        services.AddSingleton<FormalModeResolver>();
+        services.AddSingleton<TinadecCore.Abstractions.Ports.IFormalModeResolver>(sp =>
+            new GraphModeResolver(
+                sp.GetRequiredService<FormalModeResolver>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GraphModeResolver>>()));
         services.AddSingleton<IAgentModelResolver, AgentModelResolver>();
         services.AddSingleton<UserToolActionService>();
         services.AddSingleton<IUserToolActionService>(sp => sp.GetRequiredService<UserToolActionService>());

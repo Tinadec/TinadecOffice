@@ -159,6 +159,6 @@ public sealed class GitTopologyTests
 
         public Task<ChatResolution?> TryResolveFormalChatAsync(Guid sessionId, string layer, Guid runId, Guid turnId, CancellationToken cancellationToken = default) => Task.FromResult<ChatResolution?>(null);
 
-        public Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken cancellationToken = default) => Task.FromResult<FormalModeRoster?>(null);
+        public Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, string graphResolverMode = GraphResolverModes.Shadow, CancellationToken cancellationToken = default) => Task.FromResult<FormalModeRoster?>(null);
     }
 }

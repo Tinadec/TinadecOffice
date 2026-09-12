@@ -15,6 +15,10 @@ namespace TinadecCore.DmaEA;
 ///    the main instance must be the conversation identity; an absent/empty pool
 ///    is the tolerated legacy singleton shape.
 /// ③ topology — the frozen roster must retain an execution layer.
+/// ④ graph_tier_lanes_unsupported — declared-graph tiers do not define lane
+///    machinery (deferred lanes, gate reviews, per-lane planners) in this phase;
+///    the frozen configuration is the authority, so the combination is rejected
+///    at admission instead of failing mid-run.
 ///
 /// Deliberately NOT here: the operation-layer tool floor. Template-level
 /// tool_scope entries on operation agents only contribute the frozen manifest
@@ -33,7 +37,9 @@ public static class RunFreezeGate
     public static void Validate(
         ConversationIdentity? identity,
         IReadOnlyList<RuntimeAgentDefinition> operation,
-        IReadOnlyList<RuntimeAgentDefinition> execution)
+        IReadOnlyList<RuntimeAgentDefinition> execution,
+        FrozenGraph? graph = null,
+        bool lanesEnabled = false)
     {
         // ① conversation identity lock
         if (identity is not null)
@@ -50,10 +56,17 @@ public static class RunFreezeGate
                     $"Conversation identity holder '{holder.Id}' does not carry a conversation capability.");
         }
 
-        // ③ topology: execution roster must exist (legacy invariant)
+        // ② topology: execution roster must exist (legacy invariant)
         if (execution.Count == 0)
             throw new RunAdmissionException("mode_topology_invalid",
                 "The frozen roster has no execution-layer agent.");
+
+        // ③ lanes × declared-graph tiers — fail fast at admission (the frozen
+        // configuration is the authority; a mid-run rejection here would mean the
+        // freeze gate was bypassed).
+        if (graph is not null && lanesEnabled)
+            throw new RunAdmissionException("graph_tier_lanes_unsupported",
+                "Lane orchestration is not supported for declared-graph tiers; disable lanes in the runtime configuration or publish the mode without declared edges.");
     }
 
     /// <summary>

@@ -86,6 +86,19 @@ public sealed record FrozenRunConfigurationV1(
     /// </summary>
     public OrchestrationPolicy Orchestration { get; init; } = OrchestrationPolicy.Disabled;
 
+    /// <summary>
+    /// Declared mode graph frozen at admission (DmaEA graph orchestration).
+    /// Null for modes without declared edges — the canonical body then stays
+    /// byte-identical to pre-graph freezes, so stored ContentHashes never churn
+    /// and legacy runs double-read as Graph=null (legacy engine path). Tiers:
+    /// deterministic | self_dispatch — in this phase both walk the declared
+    /// edges identically (the tier is an observation label; enforcement
+    /// differences are a Phase 2 decision). The tier is derived ONLY from
+    /// frozen inputs at admission; recovery never re-derives it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FrozenGraph? Graph { get; init; }
+
     public string ToCanonicalJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     [JsonIgnore]
@@ -101,6 +114,32 @@ public sealed record FrozenRunConfigurationV1(
         WriteIndented = false
     };
 }
+
+/// <summary>Observation labels for the declared-graph orchestration tier.</summary>
+public static class FrozenGraphTiers
+{
+    /// <summary>Conversation identity holds no dispatchable-worker spawn authority (or holds only agent.create_persistent); the declared graph is walked.</summary>
+    public const string Deterministic = "deterministic";
+
+    /// <summary>Conversation identity holds agent.create_temporary (or the agent.spawn alias): dispatch happens inside the declared-edge envelope.</summary>
+    public const string SelfDispatch = "self_dispatch";
+
+    /// <summary>No declared edges — legacy free-form orchestration; no Graph section is frozen.</summary>
+    public const string FreeForm = "free_form";
+}
+
+/// <summary>
+/// The frozen declared graph of the session's published mode. Edges are a
+/// communication topology, not a DAG — mutual dispatch/result pairs are legal.
+/// </summary>
+public sealed record FrozenGraph(
+    string Tier,
+    string? ConversationTemplateSlug,
+    string? ConversationNodeKey,
+    IReadOnlyList<FrozenGraphNode> Nodes,
+    IReadOnlyList<DeclaredGraphEdge> Edges);
+
+public sealed record FrozenGraphNode(string NodeKey, string AgentSlug, string Layer, bool IsConversation);
 
 internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigurationResolver
 {
@@ -162,12 +201,32 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             new("agent_runtime_baseline", DeterministicGuid(snapshot.ContentHash), DeterministicGuid(snapshot.ContentHash + ":" + snapshot.Version), snapshot.ContentHash)
         };
         var modeVersionId = session.ModeVersionId.Value;
-        var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
+        var relational = await _formal.ResolveRosterAsync(sessionId, snapshot.GraphResolverMode, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
         var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
         var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
         operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
         execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+
+        // Declared graph freeze (DmaEA graph orchestration): only modes with
+        // declared edges carry a Graph section — the canonical body of edge-less
+        // modes stays byte-identical to pre-graph freezes, so stored hashes never
+        // churn. The tier is derived ONLY here from frozen inputs; recovery
+        // never re-derives it (configuration.Graph is the single authority).
+        FrozenGraph? graph = null;
+        if (relational.HasDeclaredEdges)
+        {
+            graph = new FrozenGraph(
+                DeriveGraphTier(operation, relational.ConversationTemplateSlug),
+                relational.ConversationTemplateSlug,
+                relational.ConversationNodeKey,
+                relational.GraphNodes.Select(node => new FrozenGraphNode(
+                    node.NodeKey,
+                    node.AgentSlug,
+                    node.Layer,
+                    string.Equals(node.NodeKey, relational.ConversationNodeKey, StringComparison.Ordinal))).ToArray(),
+                relational.Edges);
+        }
 
         // Gate 3 (run freeze): conversation identity lock + operation deny floor,
         // fail-closed at admission. Sessions frozen before ConversationIdentity
@@ -177,7 +236,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
                 ? null
                 : new RunFreezeGate.ConversationIdentity(session.ConversationNodeKey, session.ConversationTemplateSlug ?? string.Empty),
             operation,
-            execution);
+            execution,
+            graph,
+            snapshot.Orchestration.LanesEnabled);
 
         var runtimeProfileId = relational.RuntimeProfileId;
         bindings.Add(new RunConfigurationBinding("agent_mode_version", relational.AgentModeId, relational.ModeVersionId, relational.TopologyHash ?? ""));
@@ -224,9 +285,29 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             PolicySnapshotHash = policySnapshot?.SnapshotHash ?? "",
             PolicyBundles = policySnapshot?.Bundles ?? [],
             Triggers = snapshot.Triggers,
-            Orchestration = snapshot.Orchestration
+            Orchestration = snapshot.Orchestration,
+            Graph = graph
         };
         return frozen;
+    }
+
+    /// <summary>
+    /// self_dispatch requires a dispatchable-worker spawn authority
+    /// (agent.create_temporary, or the agent.spawn alias). A conversation identity
+    /// that only holds agent.create_persistent mints candidates, not dispatchable
+    /// workers, so it lands in the deterministic tier.
+    /// </summary>
+    internal static string DeriveGraphTier(IReadOnlyList<RuntimeAgentDefinition> operation, string? conversationSlug)
+    {
+        var conversation = conversationSlug is { } slug
+            ? operation.FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))
+            : null;
+        var capabilities = conversation?.Capabilities ?? [];
+        return capabilities.Any(capability =>
+            string.Equals(capability, ThreeNamespaceMap.SpawnTemporaryCapability, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(capability, ThreeNamespaceMap.SpawnAliasCapability, StringComparison.OrdinalIgnoreCase))
+            ? FrozenGraphTiers.SelfDispatch
+            : FrozenGraphTiers.Deterministic;
     }
 
     private async Task<IReadOnlyList<RuntimeAgentDefinition>> FreezeModelPlansAsync(

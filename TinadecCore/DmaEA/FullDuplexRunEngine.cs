@@ -429,11 +429,40 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         await TrySetRunStatusAsync(run.RunId,
             checkpoint.PlanRevision == 0 ? "understanding" : "replanning",
             null, cancellationToken).ConfigureAwait(false);
-        var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
-        checkpoint.MeetingAgentId = agents.Meeting.Id;
-        checkpoint.PlannerAgentId = agents.Planner.Id;
 
-        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        RuntimeAgentDefinition plannerDefinition;
+        if (configuration.Graph is not null)
+        {
+            // Declared-graph tier: the CONVERSATION IDENTITY authors the task graph
+            // (PlannerAgentId semantics = task-graph author instance). The planning
+            // machinery is unchanged — the dispatch side constrains the output to
+            // the declared edges. The tier event commits under the same checkpoint
+            // CAS as the planning result, guarded by GraphTierAnnounced.
+            var author = await EnsureConversationAuthorAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingAgentId = author.Id;
+            checkpoint.PlannerAgentId = author.Id;
+            plannerDefinition = RequiredConversationAgent(configuration);
+            if (!checkpoint.GraphTierAnnounced)
+            {
+                var graphRunId = Guid.Parse(run.RunId);
+                await AppendEventAsync(graphRunId, "orchestration.mode_tier_decided",
+                    "Declared-graph tier decided at admission.", new
+                    {
+                        run_id = run.RunId,
+                        tier = configuration.Graph.Tier,
+                        conversation_slug = configuration.Graph.ConversationTemplateSlug,
+                        edge_count = configuration.Graph.Edges.Count
+                    }, cancellationToken, idempotencyKey: $"run:{run.RunId}:tier").ConfigureAwait(false);
+                checkpoint.GraphTierAnnounced = true;
+            }
+        }
+        else
+        {
+            var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingAgentId = agents.Meeting.Id;
+            checkpoint.PlannerAgentId = agents.Planner.Id;
+            plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        }
         var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var assembly = await AssemblePromptAsync(plannerDefinition, context, cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(Guid.Parse(run.RunId), "context.packed", "Planner context assembled.", new
@@ -1742,6 +1771,20 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             // configuration failure scoped to this task, not an engine invariant.
             throw new WorkerAssignmentException(ex.Message, ex);
         }
+
+        // Graph-tier dispatch authority and budget run BEFORE the assignment is
+        // persisted: a doomed selection must never reach the checkpoint. The
+        // instance population also feeds the graph-tier budget guard, so it is
+        // loaded before the assignment write instead of after it.
+        var graph = configuration.Graph;
+        var instances = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        if (graph is not null)
+        {
+            if (!GraphEdgeAuthority.IsDispatchAllowed(graph, selected.Agent.Id))
+                throw new WorkerAssignmentException(
+                    $"Task '{task.TaskKey}' worker '{selected.Agent.Id}' is not a declared dispatch target of the mode graph (tier {graph.Tier}).");
+            EnsureGraphWorkerBudget(instances, configuration.Spawn.MaxAgentsPerRun, task.TaskKey);
+        }
         if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
         {
             task.WorkerAgentSlug = selected.Agent.Id;
@@ -1763,7 +1806,6 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 required_tools = task.RequiredTools
             }, cancellationToken, task.TaskId).ConfigureAwait(false);
         }
-        var instances = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
         if (task.WorkerAgentId is { } assigned)
         {
             var existing = instances.FirstOrDefault(item => item.Id == assigned);
@@ -1780,12 +1822,47 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             && item.Status is "created" or "running");
         if (worker is null)
         {
-            var parent = instances.FirstOrDefault(item => item.Id == plannerId)
-                ?? throw new InvalidDataException("Planner instance is missing from the run lineage.");
             if (selected.Agent.AgentDefinitionId is not { } definitionId
                 || selected.Agent.AgentVersionId is not { } versionId
                 || string.IsNullOrWhiteSpace(selected.Agent.VersionContentHash))
                 throw new WorkerAssignmentException($"Frozen specialist '{selected.Agent.Id}' has no immutable version binding.");
+            if (graph is not null)
+            {
+                // Engine-authoritative root path for declared-graph tiers: the
+                // worker's authority comes from the frozen roster definition (the
+                // seed carries it), NOT from a parent grant — meeting as parent
+                // would fail SpawnAsync's layer and subset gates by construction.
+                // Budget already guarded above; lineage audit carries the author.
+                worker = await _instances.CreateRootAsync(new RuntimeAgentSeed(
+                    Guid.Parse(run.SessionId),
+                    runId,
+                    selected.Agent.Id,
+                    selected.Agent.Layer,
+                    selected.Agent.Role,
+                    "chat",
+                    selected.Agent.Capabilities,
+                    selected.Agent.AllowedTools,
+                    ["workspace"],
+                    configuration.Context.DefaultTokenBudget,
+                    TaskId: task.TaskId,
+                    AgentDefinitionId: definitionId,
+                    AgentVersionId: versionId,
+                    VersionContentHash: selected.Agent.VersionContentHash), cancellationToken).ConfigureAwait(false);
+                await AppendEventAsync(runId, "agent.created", "Graph-tier execution worker created.", new
+                {
+                    agent_instance_id = worker.Id,
+                    agent_slug = selected.Agent.Id,
+                    agent_definition_id = worker.AgentDefinitionId,
+                    agent_version_id = worker.AgentVersionId,
+                    layer = worker.Layer,
+                    role = worker.Role,
+                    author_instance_id = plannerId
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+            var parent = instances.FirstOrDefault(item => item.Id == plannerId)
+                ?? throw new InvalidDataException("Planner instance is missing from the run lineage.");
             // A task with no required_tools still needs an instance grant that matches
             // the declaration surface: with an empty grant the frozen-catalog fallback
             // could only ever advertise zero tools, so a worker improvising a call
@@ -1848,6 +1925,7 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
                 role = worker.Role
             }, cancellationToken, task.TaskId).ConfigureAwait(false);
             try { await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(checkpoint.TurnId, "ephemeral_agent", null, IdempotencyKey: $"run:{runId}:ephemeral:{worker.Id}"), cancellationToken).ConfigureAwait(false); } catch { }
+            }
         }
         VerifyWorkerInstance(worker, selected.Agent, task);
 
@@ -1857,6 +1935,20 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-assigned", cancellationToken).ConfigureAwait(false);
         }
         return worker;
+    }
+
+    /// <summary>
+    /// Graph-tier instance budget. The root-instance creation path bypasses
+    /// SpawnAsync's per-run generated budget, so the ceiling is enforced here
+    /// against the run's FULL instance population (author + workers) — the closed
+    /// boundary against planner sprawl. Concurrency remains bounded by the ready
+    /// dispatch window; per-task tool spend stays behind approval and loop-guard.
+    /// </summary>
+    private static void EnsureGraphWorkerBudget(IReadOnlyList<RuntimeAgentInstance> instances, int maxAgentsPerRun, string taskKey)
+    {
+        if (instances.Count >= maxAgentsPerRun)
+            throw new WorkerAssignmentException(
+                $"Graph-tier worker budget exhausted for task '{taskKey}': the run already carries {instances.Count} instances (ceiling {maxAgentsPerRun}).");
     }
 
     private async Task<WorkerModelTurn> GetWorkerModelTurnAsync(
@@ -2373,11 +2465,25 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         // A replan while a lane escalation awaits a user decision would rewrite
         // tasks the user is about to judge. Leave those runs on retry semantics.
         if (checkpoint.Lanes.Any(lane => lane.Escalated)) return false;
-        var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
-        checkpoint.MeetingAgentId = agents.Meeting.Id;
-        checkpoint.PlannerAgentId = agents.Planner.Id;
 
-        var plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        RuntimeAgentDefinition plannerDefinition;
+        if (configuration.Graph is not null)
+        {
+            // Declared-graph replan: the conversation identity stays the task-graph
+            // author (same author instance, no task_planner requirement).
+            var author = await EnsureConversationAuthorAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingAgentId = author.Id;
+            checkpoint.PlannerAgentId = author.Id;
+            plannerDefinition = RequiredConversationAgent(configuration);
+        }
+        else
+        {
+            var agents = await EnsureRootAgentsAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            checkpoint.MeetingAgentId = agents.Meeting.Id;
+            checkpoint.PlannerAgentId = agents.Planner.Id;
+            plannerDefinition = RequiredAgent(configuration.ExecutionAgents, "task_planner");
+        }
+
         var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var assembly = await AssemblePromptAsync(plannerDefinition, context, cancellationToken).ConfigureAwait(false);
         var instructions = SupervisionReplanInstructions(checkpoint, assembly.Instructions, verdict, reviseIndexes);
@@ -3393,6 +3499,64 @@ internal sealed class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEng
         var checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(stored.Content, JsonOptions);
         if (checkpoint is not null) checkpoint.CheckpointRevision = stored.Revision;
         return checkpoint;
+    }
+
+    /// <summary>
+    /// Graph-tier root: ensure only the conversation identity exists (it authors
+    /// the task graph); no task_planner requirement. Reuses the existing meeting
+    /// instance across replans.
+    /// </summary>
+    private async Task<RuntimeAgentInstance> EnsureConversationAuthorAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var conversationDefinition = RequiredConversationAgent(configuration);
+        var runId = Guid.Parse(run.RunId);
+        var all = await _instances.ListByRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        var author = checkpoint.MeetingAgentId is { } meetingId ? all.FirstOrDefault(item => item.Id == meetingId) : null;
+        author ??= all.FirstOrDefault(item => !item.Generated && item.AgentVersionId == conversationDefinition.AgentVersionId);
+        if (author is not null)
+        {
+            VerifyRootInstance(author, conversationDefinition, checkpoint.MeetingAgentId, "meeting");
+            return author;
+        }
+        author = await _instances.CreateRootAsync(new RuntimeAgentSeed(
+            Guid.Parse(run.SessionId),
+            runId,
+            conversationDefinition.Id,
+            conversationDefinition.Layer,
+            conversationDefinition.Role,
+            "chat",
+            conversationDefinition.Capabilities,
+            conversationDefinition.AllowedTools,
+            ["workspace"],
+            configuration.Context.DefaultTokenBudget,
+            AgentDefinitionId: conversationDefinition.AgentDefinitionId,
+            AgentVersionId: conversationDefinition.AgentVersionId,
+            VersionContentHash: conversationDefinition.VersionContentHash), cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "agent.created", "Conversation author agent created.", new
+        {
+            agent_instance_id = author.Id,
+            agent_slug = conversationDefinition.Id,
+            layer = author.Layer,
+            role = author.Role
+        }, cancellationToken).ConfigureAwait(false);
+        return author;
+    }
+
+    /// <summary>
+    /// Locates the conversation-identity definition in the frozen operation roster.
+    /// Graph tiers always carry the slug; the literal meeting slug is the tolerance
+    /// fallback for bodies frozen before identity existed.
+    /// </summary>
+    private static RuntimeAgentDefinition RequiredConversationAgent(FrozenRunConfigurationV1 configuration)
+    {
+        var slug = configuration.Graph?.ConversationTemplateSlug ?? "meeting";
+        return configuration.OperationAgents.SingleOrDefault(item =>
+            string.Equals(item.Id, slug, StringComparison.Ordinal))
+            ?? throw new InvalidDataException($"The frozen operation roster has no conversation agent '{slug}'.");
     }
 
     private async Task<(RuntimeAgentInstance Meeting, RuntimeAgentInstance Planner)> EnsureRootAgentsAsync(
@@ -4461,6 +4625,14 @@ internal sealed class FullDuplexCheckpointV1
     /// from the pending-status filter on the drain query, not from this cursor.
     /// </summary>
     public long DirectiveCursor { get; set; }
+
+    /// <summary>
+    /// Set in the same CAS save as the first planning tick once the
+    /// orchestration.mode_tier_decided event has been appended, so concurrent
+    /// ticks cannot double-announce (the checkpoint is the single-writer state
+    /// machine; no reliance on event-dedupe). Absent on pre-graph checkpoints.
+    /// </summary>
+    public bool GraphTierAnnounced { get; set; }
 }
 
 /// <summary>

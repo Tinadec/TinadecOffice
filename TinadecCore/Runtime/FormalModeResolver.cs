@@ -58,7 +58,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         }
     }
 
-    public async Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, string graphResolverMode = GraphResolverModes.Shadow, CancellationToken ct = default)
     {
         var sess = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
         if (sess?.ModeVersionId is not { } modeVersionId) return null;
@@ -96,6 +96,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             var operation = new List<RuntimeAgentRosterEntry>();
             var execution = new List<RuntimeAgentRosterEntry>();
             var slugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var definitionInputs = new List<ConversationIdentityResolver.DefinitionInput>();
             for (var order = 0; order < nodes.Count; order++)
             {
                 var node = nodes[order];
@@ -113,6 +114,8 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     throw new InvalidDataException($"AgentVersion '{version.Id}' snapshot has a different agent definition id.");
                 var slug = RequiredString(agent, "slug");
                 if (!slugs.Add(slug)) throw new InvalidDataException($"Mode version contains duplicate agent slug '{slug}'.");
+                definitionInputs.Add(new ConversationIdentityResolver.DefinitionInput(
+                    node.AgentDefinitionId, slug, node.Layer, RawJson(agent, "capabilities", "[]")));
                 var layer = RequiredString(agent, "layer").Trim().ToLowerInvariant();
                 if (layer is not ("operation" or "execution") || !string.Equals(layer, node.Layer, StringComparison.Ordinal))
                     throw new InvalidDataException($"Mode node '{node.NodeKey}' layer does not match AgentVersion '{version.Id}'.");
@@ -193,9 +196,30 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             if (execution.Count == 0)
                 throw new InvalidDataException($"Published agent mode '{mv.AgentModeId}' has no execution-layer agent.");
 
+            // Graph orchestration (additive): parse the declared edges that have
+            // been frozen into snapshots since the pack pipeline shipped them but
+            // were never consumed, and resolve the conversation node through the
+            // shared identity resolution chain (marker → capability → legacy
+            // meeting). A mode without declared edges carries no graph info and
+            // the run freeze writes no Graph section for it.
+            var edges = ParseDeclaredEdges(mv);
+            var nodeInputs = nodes.Select(node => new ConversationIdentityResolver.NodeInput(
+                node.AgentDefinitionId, node.NodeKey, node.Layer, node.Label, node.Config)).ToArray();
+            var conversation = ConversationIdentityResolver.Resolve(nodeInputs, definitionInputs);
+            var slugByDefinition = definitionInputs.ToDictionary(item => item.Id, item => item.Slug);
+            var graphNodes = nodes
+                .Where(node => slugByDefinition.ContainsKey(node.AgentDefinitionId))
+                .Select(node => new DeclaredGraphNode(node.NodeKey, slugByDefinition[node.AgentDefinitionId], node.Layer))
+                .ToArray();
+
             return new FormalModeRoster(operation, execution, mv.Id, mv.Version, mv.TopologyHash, $"mode:{mv.AgentModeId}:{mv.Version}")
             {
-                AgentModeId = mv.AgentModeId
+                AgentModeId = mv.AgentModeId,
+                Edges = edges,
+                HasDeclaredEdges = edges.Count > 0,
+                GraphNodes = graphNodes,
+                ConversationNodeKey = conversation?.NodeKey,
+                ConversationTemplateSlug = conversation?.TemplateSlug
             };
         }
         catch (Exception ex)
@@ -226,6 +250,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             if (layer is not ("operation" or "execution"))
                 throw new InvalidDataException("Mode snapshot node layer must be operation or execution.");
             var tools = ReadStringArray(node, "effective_tools", requireOrdinalOrder: true, requireProperty: true);
+            JsonElement? config = node.TryGetProperty("config", out var configElement) && configElement.ValueKind == JsonValueKind.Object
+                ? configElement.Clone()
+                : null;
             result.Add(new ModeNodeSnapshot(
                 RequiredString(node, "node_key"),
                 RequiredGuid(node, "agent_definition_id"),
@@ -236,7 +263,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 OptionalGuid(node, "prompt_pipeline_id"),
                 OptionalGuid(node, "prompt_version_id"),
                 OptionalString(node, "prompt_version_hash")?.Trim().ToLowerInvariant(),
-                RawNullableJson(node, "model_strategy_override")));
+                RawNullableJson(node, "model_strategy_override"),
+                OptionalString(node, "label"),
+                config));
         }
         if (result.Count == 0) throw new InvalidDataException($"ModeVersion '{version.Id}' snapshot contains no nodes.");
         if (result.Select(item => item.NodeKey).Distinct(StringComparer.Ordinal).Count() != result.Count)
@@ -246,8 +275,44 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         return result;
     }
 
-    private static void VerifyHash(string body, string? indexedHash, string? frozenHash, string label)
+    /// <summary>
+    /// Parses the declared edges frozen into the mode snapshot. Tolerant of a
+    /// missing or empty edges array (returns an empty list — the free-form case);
+    /// malformed individual edges are rejected rather than silently dropped so a
+    /// corrupt topology cannot walk a partially declared graph.
+    /// </summary>
+    private static IReadOnlyList<DeclaredGraphEdge> ParseDeclaredEdges(ModeVersionRecord version)
     {
+        if (string.IsNullOrWhiteSpace(version.SnapshotJson)) return [];
+        JsonElement root;
+        try
+        {
+            using var document = JsonDocument.Parse(version.SnapshotJson);
+            root = document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("edges", out var edgeArray)
+            || edgeArray.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        var edges = new List<DeclaredGraphEdge>();
+        foreach (var edge in edgeArray.EnumerateArray())
+        {
+            if (edge.ValueKind != JsonValueKind.Object) continue;
+            edges.Add(new DeclaredGraphEdge(
+                RequiredString(edge, "edge_key"),
+                RequiredString(edge, "source_node_key"),
+                RequiredString(edge, "target_node_key")));
+        }
+        return edges;
+    }
+
+    private static void VerifyHash(string body, string? indexedHash, string? frozenHash, string label)    {
         if (string.IsNullOrWhiteSpace(indexedHash) || string.IsNullOrWhiteSpace(frozenHash))
             throw new InvalidDataException($"{label} has no immutable content hash.");
         var computed = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
@@ -334,5 +399,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         Guid? PromptPipelineId,
         Guid? PromptVersionId,
         string? PromptVersionHash,
-        string? ModelStrategyOverrideJson);
+        string? ModelStrategyOverrideJson,
+        string? Label = null,
+        JsonElement? Config = null);
 }
