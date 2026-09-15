@@ -191,7 +191,6 @@ describe('settings.css contract', () => {
     expect(css).toContain('.bg-type-option')
     expect(css).toContain('.source-input-row')
     expect(css).toContain('.param-slider')
-    expect(css).toContain('.panel-styles-grid')
     expect(css).toContain('.performance-warning')
   })
 

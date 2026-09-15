@@ -995,7 +995,6 @@ retry: 'Retry',
     loadFailed: 'Could not load the extension catalog.',
     reset: 'Reset',
     resetBackground: 'Reset Background',
-    resetPanelStyles: 'Reset Material Style',
     
     // Panel style settings (global material effect)
     globalMaterial: 'Global Material Effect',

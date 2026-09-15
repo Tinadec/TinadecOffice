@@ -636,10 +636,6 @@ overflow: hidden;
   .bg-param-row--selects {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .panel-styles-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .settings-field label {
@@ -797,6 +793,22 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   transition: transform 0.16s ease-out;
 }
 
+/* Unpicked custom entry: a hue wheel instead of a stored color, so the swatch
+   reads as "pick anything here" rather than as another preset. Once a custom
+   color is committed the dot falls back to `--swatch-color`. */
+.accent-color-dot--spectrum {
+  background: conic-gradient(
+    from 0deg,
+    hsl(0 85% 55%),
+    hsl(60 85% 55%),
+    hsl(120 85% 55%),
+    hsl(180 85% 55%),
+    hsl(240 85% 55%),
+    hsl(300 85% 55%),
+    hsl(360 85% 55%)
+  );
+}
+
 .accent-color-check {
   position: absolute;
   top: 50%;
@@ -827,12 +839,15 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   display: inline-flex;
 }
 
+/* Sits on the hue wheel, so it is always white — a token color would blend
+   into whichever hue happens to be behind it. */
 .custom-accent-plus {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: var(--text-secondary);
+  color: #fff;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.65));
   pointer-events: none;
 }
 
@@ -993,21 +1008,21 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   flex: 1;
 }
 
-/* Dynamic (Monet "follow background") option: spans the full preset row.
-   Label sits left; the extracted color roles render as standalone circles. */
+/* Dynamic (Monet "follow background") option: closes the preset swatch row and
+   is pushed to its right edge by `margin-left: auto`. Unlike a preset it has no
+   single fixed color, so it keeps a label plus the one accent the palette
+   applies — a bare circle would be indistinguishable from a preset swatch. */
 .accent-dynamic-option {
-  grid-column: 1 / -1;
-  display: flex;
+  margin-left: auto;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 10px;
+  gap: 8px;
+  padding: 5px 7px 5px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
   background: var(--surface-button);
   cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
-  position: relative;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .accent-dynamic-option:hover:not(:disabled) {
@@ -1016,7 +1031,8 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
 
 .accent-dynamic-option.active {
   background: var(--surface-selected);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 72%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 40%, transparent);
 }
 
 .accent-dynamic-option:focus-visible {
@@ -1029,13 +1045,8 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   cursor: not-allowed;
 }
 
-.accent-dynamic-info {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .accent-dynamic-check {
+  flex: none;
   color: var(--accent-primary);
 }
 
@@ -1043,20 +1054,20 @@ box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--swatch-color);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
-.accent-dynamic-circles {
-  display: flex;
-  gap: 8px;
-}
-
-.accent-dynamic-circle {
+.accent-dynamic-swatch {
   display: block;
-  width: 22px;
-  height: 22px;
+  flex: none;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
+  /* Fallback keeps the pill's geometry stable before an image is extracted. */
+  background: var(--surface-input);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 1px 3px rgba(0, 0, 0, 0.25);
 }
+
 .lang-options {
   display: flex;
   gap: 8px;
@@ -3400,18 +3411,6 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
   background: var(--surface-raised);
   border: 0;
   border-radius: 6px;
-}
-
-.panel-styles-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-  margin-bottom: 0;
-}
-
-.panel-styles-reset {
-  align-self: end;
 }
 
 .panel-styles-actions {

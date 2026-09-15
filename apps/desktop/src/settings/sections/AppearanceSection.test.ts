@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AppearanceSection from './AppearanceSection.vue'
 import { __resetPanelStylesForTests } from '@/composables/usePanelStyles'
 import { __resetThemeForTests } from '@/composables/useTheme'
+import { __resetDynamicPaletteForTests } from '@/composables/useDynamicPalette'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-CN' } }),
@@ -44,6 +45,7 @@ beforeEach(() => {
   for (const key of STORAGE_KEYS) localStorage.removeItem(key)
   __resetPanelStylesForTests()
   __resetThemeForTests()
+  __resetDynamicPaletteForTests()
 })
 
 describe('AppearanceSection background sliders', () => {
@@ -200,5 +202,114 @@ describe('AppearanceSection accent swatches', () => {
     // Labels were removed in favour of title/aria-label to keep the row compact.
     expect(wrapper.find('.accent-color-label').exists()).toBe(false)
     expect(swatches[0]!.attributes('title')).toBe('accentColors.blue')
+  })
+})
+
+describe('AppearanceSection custom swatch states', () => {
+  function customDot(wrapper: ReturnType<typeof mountSection>) {
+    return wrapper.find('[data-testid="accent-custom"] .accent-color-dot')
+  }
+
+  it('shows the hue wheel and a bold plus while no custom color is active', () => {
+    const wrapper = mountSection()
+    // Nothing stored → the swatch must advertise "pick anything", not a color.
+    expect(customDot(wrapper).classes()).toContain('accent-color-dot--spectrum')
+    const plus = wrapper.find('[data-testid="accent-custom"] .custom-accent-plus')
+    expect(plus.exists()).toBe(true)
+    // Enlarged + thickened so it reads against the saturated wheel.
+    expect(plus.attributes('width')).toBe('16')
+    expect(plus.attributes('stroke-width')).toBe('3')
+  })
+
+  it('replaces the wheel with the committed color once custom is selected', async () => {
+    localStorage.setItem('tinadec-custom-accent', '#123456')
+    const wrapper = mountSection()
+    await wrapper.find('[data-testid="accent-custom"]').trigger('click')
+    await wrapper.findAll('.custom-accent-actions button').at(-1)!.trigger('click')
+
+    expect(localStorage.getItem('tinadec-accent-color')).toBe('custom')
+    expect(customDot(wrapper).classes()).not.toContain('accent-color-dot--spectrum')
+    // The dot still carries the chosen color through --swatch-color.
+    expect(wrapper.find('[data-testid="accent-custom"]').attributes('style'))
+      .toContain('#123456')
+    expect(wrapper.find('[data-testid="accent-custom"] .custom-accent-plus').exists()).toBe(false)
+  })
+
+  it('returns to the wheel when a preset is picked afterwards', async () => {
+    localStorage.setItem('tinadec-accent-color', 'custom')
+    const wrapper = mountSection()
+    expect(customDot(wrapper).classes()).not.toContain('accent-color-dot--spectrum')
+
+    await wrapper.findAll('.accent-color-swatch')[0]!.trigger('click')
+    expect(customDot(wrapper).classes()).toContain('accent-color-dot--spectrum')
+  })
+})
+
+describe('AppearanceSection material section', () => {
+  it('exposes exactly one reset affordance — the control header button', () => {
+    const wrapper = mountSection()
+    // The duplicate "重置材质样式" button next to the control is gone; the
+    // control's own header reset already restores the same defaults.
+    expect(wrapper.find('.panel-styles-reset').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('settings.resetPanelStyles')
+    expect(wrapper.findAll('.control-reset')).toHaveLength(1)
+  })
+
+  it('lets the control fill the section width now that nothing shares its row', () => {
+    const wrapper = mountSection()
+    // No grid wrapper remains between the group body and the control, so the
+    // control stretches to the section's full width instead of a 1fr track.
+    const control = wrapper.find('.panel-style-control')
+    expect(control.exists()).toBe(true)
+    expect(control.element.parentElement?.classList.contains('panel-styles-grid')).toBe(false)
+  })
+})
+
+describe('AppearanceSection follow-background option', () => {
+  it('shows a single extracted swatch, not a role strip', async () => {
+    localStorage.setItem(
+      'tinadec-dynamic-palette',
+      JSON.stringify({
+        source: 'file:///wall.jpg',
+        sourceColor: 0xff2ec4b6,
+        dark: { '--accent-primary': '#7fd9cf' },
+        light: { '--accent-primary': '#00695f' },
+      }),
+    )
+    __resetDynamicPaletteForTests()
+    const wrapper = mountSection()
+
+    const option = wrapper.find('[data-testid="accent-dynamic"]')
+    expect(option.exists()).toBe(true)
+    // Exactly one swatch; the previous five-circle role strip must be gone.
+    expect(option.findAll('.accent-dynamic-swatch')).toHaveLength(1)
+    expect(option.find('.accent-dynamic-circle').exists()).toBe(false)
+    expect(wrapper.findAll('.accent-dynamic-circle')).toHaveLength(0)
+  })
+
+  it('paints that swatch with the accent the palette applies', async () => {
+    localStorage.setItem(
+      'tinadec-dynamic-palette',
+      JSON.stringify({
+        source: 'file:///wall.jpg',
+        sourceColor: 0xff2ec4b6,
+        dark: { '--accent-primary': '#7fd9cf' },
+        light: { '--accent-primary': '#00695f' },
+      }),
+    )
+    __resetDynamicPaletteForTests()
+    const wrapper = mountSection()
+
+    const swatch = wrapper.find('[data-testid="accent-dynamic"] .accent-dynamic-swatch')
+    // The swatch takes the dark accent — the same role the preset swatches show.
+    expect(swatch.attributes('style')!.replace(/\s/g, '').toLowerCase()).toContain('#7fd9cf')
+  })
+
+  it('sits inside the preset swatch row so it right-aligns with them', () => {
+    const wrapper = mountSection()
+    const grid = wrapper.find('[data-testid="accent-colors"]')
+    // Direct child of the row (not a block below it) is what lets
+    // `margin-left: auto` push it to the row's right edge.
+    expect(grid.element.querySelector(':scope > [data-testid="accent-dynamic"]')).not.toBeNull()
   })
 })

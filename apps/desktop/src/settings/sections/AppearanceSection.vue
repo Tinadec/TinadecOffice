@@ -59,7 +59,6 @@ const {
 const {
   panelStyle,
   updatePanelStyle,
-  resetPanelStyle,
 } = usePanelStyles()
 
 // Monet "follow background" accent: palette is extracted by the global
@@ -72,11 +71,11 @@ const resolvedTheme = computed<'dark' | 'light'>(() => {
   }
   return theme.value
 })
-// Five standalone circles: dark accent / light accent / primary button /
-// dark surface / light surface — the roles the extraction drives.
-const dynamicCircles = computed(() =>
-  dynamicPalette.value ? previewSwatches(dynamicPalette.value.sourceColor) : [],
-)
+// One swatch, matching what the preset swatches show: the accent this palette
+// actually applies in dark mode. Showing the whole role set (accent, button,
+// surfaces) made the option read as a palette strip next to single-color
+// swatches; the accent is the role the choice is about.
+const dynamicSwatch = computed(() => dynamicPalette.value?.dark['--accent-primary'] ?? '')
 const isFrozen = computed(
   () => accentColor.value === DYNAMIC_ACCENT_KEY && backgroundSettings.value.type !== 'image',
 )
@@ -280,8 +279,16 @@ function resetBackgroundToDefault(): void {
             data-testid="accent-custom"
             @click="openPicker()"
           >
-            <span class="accent-color-dot"></span>
-            <Plus v-if="accentColor !== CUSTOM_ACCENT_KEY" :size="13" class="custom-accent-plus" />
+            <span
+              class="accent-color-dot"
+              :class="{ 'accent-color-dot--spectrum': accentColor !== CUSTOM_ACCENT_KEY }"
+            ></span>
+            <Plus
+              v-if="accentColor !== CUSTOM_ACCENT_KEY"
+              :size="16"
+              :stroke-width="3"
+              class="custom-accent-plus"
+            />
             <Check v-else :size="14" class="accent-color-check" />
           </button>
 
@@ -353,28 +360,22 @@ function resetBackgroundToDefault(): void {
             </div>
           </div>
         </span>
-      </div>
 
-      <button
-        :class="['accent-dynamic-option', { active: accentColor === DYNAMIC_ACCENT_KEY }]"
-        :disabled="!hasPalette"
-        data-testid="accent-dynamic"
-        :title="t('settings.accentFollowBackground')"
-        @click="changeAccentColor(DYNAMIC_ACCENT_KEY)"
-      >
-        <span class="accent-dynamic-info">
+        <!-- "Follow background" closes the swatch row, pushed to the right. -->
+        <button
+          :class="['accent-dynamic-option', { active: accentColor === DYNAMIC_ACCENT_KEY }]"
+          :disabled="!hasPalette"
+          data-testid="accent-dynamic"
+          :title="t('settings.accentFollowBackground')"
+          :aria-label="t('settings.accentFollowBackground')"
+          @click="changeAccentColor(DYNAMIC_ACCENT_KEY)"
+        >
           <Check v-if="accentColor === DYNAMIC_ACCENT_KEY" :size="14" class="accent-dynamic-check" />
           <span class="accent-dynamic-label">{{ t('settings.accentFollowBackground') }}</span>
-        </span>
-        <span class="accent-dynamic-circles">
-          <span
-            v-for="(circle, i) in dynamicCircles"
-            :key="i"
-            class="accent-dynamic-circle"
-            :style="{ background: circle }"
-          ></span>
-        </span>
-      </button>
+          <span class="accent-dynamic-swatch" :style="{ background: dynamicSwatch }"></span>
+        </button>
+      </div>
+
       <p v-if="isFrozen" class="accent-color-hint" data-testid="dynamic-frozen-hint">
         {{ t('settings.accentDynamicFrozen') }}
       </p>
@@ -386,16 +387,11 @@ function resetBackgroundToDefault(): void {
         <h3>{{ t('settings.globalMaterial') }}</h3>
         <p>{{ t('settings.globalMaterialHint') }}</p>
       </div>
-      <div class="panel-styles-grid">
-        <PanelStyleControl
-          :label="t('settings.globalMaterial')"
-          :settings="panelStyle"
-          @update="updatePanelStyle($event)"
-        />
-        <UiButton variant="outline" size="sm" class="panel-styles-reset" @click="resetPanelStyle()">
-          {{ t('settings.resetPanelStyles') }}
-        </UiButton>
-      </div>
+      <PanelStyleControl
+        :label="t('settings.globalMaterial')"
+        :settings="panelStyle"
+        @update="updatePanelStyle($event)"
+      />
     </section>
 
     <!-- ── 4. Background ────────────────────────────────────────────── -->

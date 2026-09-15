@@ -995,7 +995,6 @@ retry: '重试',
     loadFailed: '无法加载扩展目录。',
     reset: '重置',
     resetBackground: '重置背景',
-    resetPanelStyles: '重置材质样式',
     
     // Panel style settings (global material effect)
     globalMaterial: '全局材质效果',
