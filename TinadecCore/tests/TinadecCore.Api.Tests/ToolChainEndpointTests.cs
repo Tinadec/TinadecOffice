@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
@@ -1288,6 +1289,178 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.DoesNotContain(lineage!, instance => instance.GetProperty("layer").GetString() == "execution");
     }
 
+    /// <summary>
+    /// Runtime baseline for the budget close-out tests. The per-task context budget
+    /// is deliberately tiny so one worker turn already exceeds it, while the round
+    /// limit keeps the retired global default (4) so the tests also prove the loop
+    /// guard now runs inside what used to be its blind zone.
+    /// </summary>
+    private static string TaskBudgetToml(int taskTokenBudget, int maxToolRounds = 4, int maxToolCalls = 100) =>
+        "schema_version = 1\n\n"
+        + "[spawn]\nmax_depth = 2\nmax_agents_per_run = 16\nmax_parallel_workers = 4\n\n"
+        + "[scheduling]\nmax_active_runs_per_session = 2\nworker_retry_limit = 2\npreserve_partial_results = true\n\n"
+        + "[supervision]\nrequired_before_final = true\nmax_revision_rounds = 2\n\n"
+        + $"[context]\ndefault_token_budget = {taskTokenBudget}\nrecent_message_limit = 24\noptimistic_revision = true\n\n"
+        + "[memory]\ncandidate_only = true\nretrieval_limit = 8\n"
+        + "allowed_scopes = [\"principal\", \"workspace\", \"project\", \"agent\"]\n"
+        + "allowed_kinds = [\"fact\", \"preference\", \"decision\", \"success_pattern\", \"failure_pattern\", \"task_template\", \"supervision_rule\"]\n\n"
+        + $"[tools]\nprovider = \"tinadec-tools-process\"\nmutation_requires_approval = true\nserialize_workspace_writes = true\ndefault_timeout_seconds = 120\nmax_tool_rounds = {maxToolRounds}\nmax_tool_calls = {maxToolCalls}\n\n"
+        + "[triggers]\nenabled = false\ncontext_token_threshold = 0\ncompress_on_task_closed = false\nrecommend_on_task_created = false\ncurate_on_run_closed = false\ngit_steward_on_run_closed = false\n";
+
+    private const string ReadProbePlan =
+        "[{\"task_key\":\"read-probe\",\"title\":\"读取探针\",\"description\":\"读取 probe.txt\",\"success_criteria\":[\"完成\"],"
+        + "\"dependencies\":[],\"required_capabilities\":[\"tool.file\"],\"required_tools\":[\"read_file\"],\"priority\":1,\"risk\":\"low\"}]";
+
+    /// <summary>
+    /// WS-3/WS-5: a task that exhausts its own context budget is closed out, not
+    /// failed. The trigger fires on the first round, so the call the model already
+    /// produced is dropped (the provider is never called), the next turn is
+    /// text-only, and the hand-off text lands as the task evidence together with
+    /// the machine-readable stop reason.
+    /// </summary>
+    [Fact]
+    public async Task TaskTokenBudgetExhausted_DropsTheCall_AndCompletesWithCloseoutEvidence()
+    {
+        var workspace = Path.Combine(_root, "workspace-closeout");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        const string handOff = "收尾：已读取 probe.txt；剩余：无；停止原因：本任务 token 预算耗尽。";
+        var script = new ToolScriptedClient { UsageTokensPerTurn = 200 }
+            .WhenPlanner(ReadProbePlan)
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已收尾。")
+            .WhenWorkerTurns(
+                [new FunctionCallContent("call-1", "read_file", new Dictionary<string, object?> { ["filepath"] = "probe.txt" })],
+                [new TextContent(handOff)]);
+
+        _factory = new ToolChainFactory(_root, script, provider, runtimeToml: TaskBudgetToml(taskTokenBudget: 40));
+        var client = _factory.CreateClient();
+        await InstallToolChainPackAsync(client);
+        var (sessionId, runId, active) = await StartRunAsync(client, workspace, "closeout", "读取探针文件");
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        // The trigger round's call is dropped: tools are withdrawn before any side
+        // effect, which is the entire reason to close out instead of failing.
+        Assert.Equal(0, provider.CallCount);
+        Assert.Equal(new[] { 1, 0 }, script.WorkerToolCounts.ToArray());
+
+        var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay").ConfigureAwait(false);
+        var task = Assert.Single(replay.GetProperty("tasks").EnumerateArray(), item => item.GetProperty("task_key").GetString() == "read-probe");
+        Assert.Equal("completed", task.GetProperty("status").GetString());
+        Assert.Equal(handOff, task.GetProperty("summary").GetString());
+        var evidence = task.GetProperty("evidence").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains(handOff, evidence);
+        Assert.Contains("closeout:token_budget_exhausted", evidence);
+        Assert.Contains(evidence, item => item!.StartsWith("closeout_reason:", StringComparison.Ordinal));
+
+        var milestones = replay.GetProperty("milestones").EnumerateArray()
+            .Select(item => item.GetProperty("event_type").GetString()).ToArray();
+        Assert.Contains("worker.tool_round", milestones);
+        Assert.Contains("worker.budget_exhausted", milestones);
+
+        // "Completed but the goal was not reached" must be visible where the
+        // supervisor and the final answer look, not only in the raw event log.
+        var reasons = Assert.Single(replay.GetProperty("supervision_rounds").EnumerateArray())
+            .GetProperty("reasons").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains(reasons, reason => reason!.StartsWith("closeout:read-probe:token_budget_exhausted", StringComparison.Ordinal));
+
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        var stop = Assert.Single(events, item => item.EventType == "worker.budget_exhausted");
+        var payload = Assert.IsType<JsonElement>(stop.Payload["payload"]);
+        Assert.Equal("read-probe", payload.GetProperty("task_key").GetString());
+        Assert.Equal("token_budget_exhausted", payload.GetProperty("category").GetString());
+        Assert.False(payload.GetProperty("hard_ceiling").GetBoolean());
+        Assert.True(payload.GetProperty("task_tokens_used").GetInt32() >= 40);
+        Assert.Equal(40, payload.GetProperty("task_token_budget").GetInt32());
+        Assert.Equal(1, payload.GetProperty("dropped_calls").GetInt32());
+    }
+
+    /// <summary>
+    /// WS-2/WS-4/WS-6: the loop guard now runs on every round — including the
+    /// rounds that used to sit inside its blind zone (<c>max_tool_rounds</c>) — and
+    /// its verdict stops the task gracefully instead of failing it. A fuse veto is
+    /// reported with <c>hard_ceiling = true</c> in the event, in the evidence, and
+    /// in the supervision reasons, and the guard finally receives real budget
+    /// inputs instead of the defaults it silently used before.
+    /// </summary>
+    [Fact]
+    public async Task LoopGuardVetoOnFirstRound_StopsGracefully_AndCarriesHardCeiling()
+    {
+        var workspace = Path.Combine(_root, "workspace-fuse");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var guard = new CapturingLoopGuard
+        {
+            Decision = new LoopGuardDecision
+            {
+                ShouldContinue = false,
+                Reason = "Tool call fuse tripped: 100/100",
+                Category = RunErrorTaxonomy.ToolCallCeiling,
+                HardCeiling = true
+            }
+        };
+        var script = new ToolScriptedClient { UsageTokensPerTurn = 7 }
+            .WhenPlanner(ReadProbePlan)
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}")
+            .WhenMeeting("已收尾。")
+            .WhenWorkerTurns(
+                [new FunctionCallContent("call-1", "read_file", new Dictionary<string, object?> { ["filepath"] = "probe.txt" })],
+                [new TextContent("收尾：触发绝对保险丝。")]);
+
+        _factory = new ToolChainFactory(_root, script, provider, runtimeToml: TaskBudgetToml(taskTokenBudget: 4096), loopGuardOverride: guard);
+        var client = _factory.CreateClient();
+        await InstallToolChainPackAsync(client);
+        var (sessionId, runId, active) = await StartRunAsync(client, workspace, "fuse", "读取探针文件");
+
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+        Assert.Equal(0, provider.CallCount);
+
+        // The guard was consulted on the FIRST round: ToolRounds was still inside the
+        // `> MaxToolRounds` blind zone the old precondition created, and every budget
+        // field now arrives populated (tokens/calls/iteration used to default to 0,
+        // which made the token and error checks dead code).
+        var context = Assert.Single(guard.Contexts);
+        Assert.Equal(0, context.Iteration);
+        Assert.Equal(4, context.MaxIterations);
+        Assert.Equal(7, context.TokensUsed);
+        Assert.Equal(4096, context.TokenBudget);
+        Assert.Equal(100, context.MaxToolCalls);
+        Assert.Equal(0, context.ToolCallCount);
+        Assert.Empty(context.RecentToolCallFingerprints);
+
+        var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay").ConfigureAwait(false);
+        var task = Assert.Single(replay.GetProperty("tasks").EnumerateArray(), item => item.GetProperty("task_key").GetString() == "read-probe");
+        Assert.Equal("completed", task.GetProperty("status").GetString());
+        var evidence = task.GetProperty("evidence").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains("closeout:tool_call_ceiling", evidence);
+        Assert.Contains("hard_ceiling:true", evidence);
+
+        var reasons = Assert.Single(replay.GetProperty("supervision_rounds").EnumerateArray())
+            .GetProperty("reasons").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains(reasons, reason => reason!.Contains("closeout:read-probe:tool_call_ceiling (hard_ceiling)", StringComparison.Ordinal));
+
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        var stop = Assert.Single(events, item => item.EventType == "worker.budget_exhausted");
+        var payload = Assert.IsType<JsonElement>(stop.Payload["payload"]);
+        Assert.Equal("tool_call_ceiling", payload.GetProperty("category").GetString());
+        Assert.True(payload.GetProperty("hard_ceiling").GetBoolean());
+
+        var round = Assert.Single(
+            events.Where(item => item.EventType == "worker.tool_round"),
+            item => string.Equals(item.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase));
+        var roundPayload = Assert.IsType<JsonElement>(round.Payload["payload"]);
+        Assert.Equal(1, roundPayload.GetProperty("round").GetInt32());
+        Assert.Equal(1, roundPayload.GetProperty("calls_this_round").GetInt32());
+        Assert.Equal(1, roundPayload.GetProperty("calls_total").GetInt32());
+        Assert.Equal(4, roundPayload.GetProperty("effective_round_limit").GetInt32());
+        Assert.Equal("global_default", roundPayload.GetProperty("round_limit_source").GetString());
+    }
+
     private sealed class FakeToolProvider : IToolProvider
     {
         private readonly object _lock = new();
@@ -1742,6 +1915,14 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         private readonly Queue<AIContent[]> _workerTurns = new();
         public int WorkerCalls;
         public int StewardCalls;
+        /// <summary>Tokens reported on every worker turn; 0 leaves usage unreported.
+        /// Budget tests need deterministic usage, which a provider-less script
+        /// otherwise never produces.</summary>
+        public int UsageTokensPerTurn { get; set; }
+        /// <summary>Tool declaration count the engine sent on each worker turn, in
+        /// order — the close-out contract is "the tools are withdrawn", and this is
+        /// the only place that is observable.</summary>
+        public List<int> WorkerToolCounts { get; } = [];
         /// <summary>Optional gate awaited at the start of every worker model turn
         /// (before any tool prepare), so tests can install grants/pre-authorizations
         /// while the run is durably mid-flight.</summary>
@@ -1800,17 +1981,28 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             WorkerStarted?.TrySetResult();
             if (BeforeWorker is not null) await BeforeWorker.WaitAsync(cancellationToken);
             var isFirstWorkerTurn = Interlocked.Increment(ref WorkerCalls) == 1;
+            WorkerToolCounts.Add(options?.Tools?.Count ?? 0);
             if (_workerTurns.Count > 0)
-                return new ChatResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()));
+                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()));
             if (_workerText is not null)
-                return new ChatResponse(new ChatMessage(ChatRole.Assistant, _workerText));
+                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerText));
             var contents = isFirstWorkerTurn
                 ? new AIContent[] { new FunctionCallContent(
                     "call-1",
                     _firstWorkerTool?.ToolId ?? "write_file",
                     _firstWorkerTool?.Arguments ?? new Dictionary<string, object?> { ["filepath"] = "probe.txt", ["content"] = "hello" }) }
                 : new AIContent[] { new TextContent(_workerFollowUp ?? "已写入 probe.txt") };
-            return new ChatResponse(new ChatMessage(ChatRole.Assistant, contents));
+            return WorkerResponse(new ChatMessage(ChatRole.Assistant, contents));
+        }
+
+        private ChatResponse WorkerResponse(ChatMessage message)
+        {
+            var response = new ChatResponse(message);
+            if (UsageTokensPerTurn > 0)
+            {
+                response.Usage = new UsageDetails { InputTokenCount = UsageTokensPerTurn, OutputTokenCount = 0 };
+            }
+            return response;
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -1834,13 +2026,20 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         private readonly ToolScriptedClient _client;
         private readonly IToolProvider? _providerOverride;
         private readonly string? _runtimeToml;
+        private readonly ILoopGuard? _loopGuardOverride;
 
-        public ToolChainFactory(string root, ToolScriptedClient client, IToolProvider? providerOverride = null, string? runtimeToml = null)
+        public ToolChainFactory(
+            string root,
+            ToolScriptedClient client,
+            IToolProvider? providerOverride = null,
+            string? runtimeToml = null,
+            ILoopGuard? loopGuardOverride = null)
         {
             _root = root;
             _client = client;
             _providerOverride = providerOverride;
             _runtimeToml = runtimeToml;
+            _loopGuardOverride = loopGuardOverride;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -1870,7 +2069,36 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
                 {
                     services.Replace(ServiceDescriptor.Singleton<IToolProvider>(_providerOverride));
                 }
+                if (_loopGuardOverride is not null)
+                {
+                    services.Replace(ServiceDescriptor.Singleton<ILoopGuard>(_loopGuardOverride));
+                }
             });
+        }
+    }
+
+    /// <summary>
+    /// Records every loop-guard evaluation and answers with a scripted decision, so
+    /// the engine's budget wiring can be pinned independently of the real detector
+    /// thresholds. The recorded contexts are what catch a regression where the
+    /// engine stops supplying tokens, call counts, or the error streak — fields
+    /// that were silently left at their defaults until this round.
+    /// </summary>
+    private sealed class CapturingLoopGuard : ILoopGuard
+    {
+        public List<LoopGuardContext> Contexts { get; } = [];
+
+        /// <summary>Decision handed back for every call; null means "continue".</summary>
+        public LoopGuardDecision? Decision { get; set; }
+
+        public Task<LoopGuardDecision> EvaluateAsync(
+            string sessionId,
+            string runId,
+            LoopGuardContext context,
+            CancellationToken cancellationToken = default)
+        {
+            Contexts.Add(context);
+            return Task.FromResult(Decision ?? new LoopGuardDecision());
         }
     }
 

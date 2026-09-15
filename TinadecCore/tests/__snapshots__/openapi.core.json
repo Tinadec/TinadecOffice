@@ -361,6 +361,13 @@
               "string"
             ]
           },
+          "default_mode_version_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "installed_at": {
             "format": "date-time",
             "type": "string"

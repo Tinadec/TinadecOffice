@@ -121,6 +121,18 @@ internal static class Maf18RuntimeAdapter
         usage is null ? null : JsonSerializer.Serialize(usage);
 
     /// <summary>
+    /// Token accounting for the budget gates. Providers are not required to report
+    /// a total, and <see cref="ModelUsage.TotalTokens"/> stays null for calls that
+    /// omit it, so fall back to input + output. Cached and reasoning tokens are
+    /// separate dimensions: they are already inside the total when a provider
+    /// reports one, and adding them on top would double-count.
+    /// </summary>
+    internal static long BudgetTokens(ModelUsage? usage) =>
+        usage is null
+            ? 0
+            : usage.TotalTokens ?? (usage.InputTokens.GetValueOrDefault() + usage.OutputTokens.GetValueOrDefault());
+
+    /// <summary>
     /// Applies MAF's atomic tool-call grouping before a worker model turn. The
     /// user's goal is kept outside compaction; old tool groups may be summarized
     /// or removed, while a function call and its result can never be split.

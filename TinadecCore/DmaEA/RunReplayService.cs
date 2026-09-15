@@ -65,6 +65,8 @@ internal sealed class RunReplayService : IRunReplayService
         "task_graph.created",
         "worker.completed",
         "worker.failed",
+        "worker.tool_round",
+        "worker.budget_exhausted",
         "supervision.completed",
         "supervision.user_decision",
         "context.patch.accepted",

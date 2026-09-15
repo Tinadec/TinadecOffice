@@ -22,9 +22,11 @@ let detectRepeatCalls (fingerprints: IReadOnlyList<string>) : bool =
 
 /// <summary>
 /// Checks if the iteration count exceeds the maximum.
+/// A non-positive maximum means "no round gate" (unlimited rounds), matching the
+/// TOML `max_tool_rounds <= 0` semantics; it must not veto on the first round.
 /// </summary>
 let isOverIterationLimit (iteration: int) (maxIterations: int) : bool =
-    iteration >= maxIterations
+    maxIterations > 0 && iteration >= maxIterations
 
 /// <summary>
 /// Checks if the token budget is exhausted.
@@ -34,12 +36,16 @@ let isTokenBudgetExhausted (tokensUsed: int) (tokenBudget: int) : bool =
 
 /// <summary>
 /// Checks if the tool call count exceeds the maximum.
+/// A non-positive maximum disables the check instead of vetoing immediately
+/// (the previous hard-coded default made an unsupplied budget always fire).
 /// </summary>
 let isToolCallLimitExceeded (toolCallCount: int) (maxToolCalls: int) : bool =
-    toolCallCount >= maxToolCalls
+    maxToolCalls > 0 && toolCallCount >= maxToolCalls
 
 /// <summary>
 /// Checks if there are too many consecutive errors.
+/// A non-positive maximum disables the check, matching the other budget checks:
+/// zero must mean "not enforced", never "veto immediately".
 /// </summary>
 let hasTooManyConsecutiveErrors (consecutiveErrors: int) (maxConsecutiveErrors: int) : bool =
-    consecutiveErrors >= maxConsecutiveErrors
+    maxConsecutiveErrors > 0 && consecutiveErrors >= maxConsecutiveErrors

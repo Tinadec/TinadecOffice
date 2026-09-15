@@ -38,6 +38,20 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         "\n\nIf this task produced a durable fact, decision, or constraint that later tasks must respect, append exactly one final line in this format: CONTEXT_PATCH: <one-line summary> || <full detail>. Otherwise output no CONTEXT_PATCH line.";
     private const string ContextPatchMarker = "CONTEXT_PATCH:";
 
+    /// <summary>
+    /// Consecutive empty worker responses tolerated before the task is closed out
+    /// (codex: <c>consecutive_empty_turns &gt;= 3</c>). One blank answer is noise;
+    /// three in a row means the model has nothing to say about this task.
+    /// </summary>
+    private const int MaxConsecutiveEmptyResponses = 3;
+
+    /// <summary>
+    /// Fingerprints handed to repeat detection. It only inspects the trailing run
+    /// of identical calls, so passing the tail keeps every round O(1) instead of
+    /// rebuilding the whole transcript and turning a long task quadratic.
+    /// </summary>
+    private const int FingerprintTail = 3;
+
     /// <summary>Task-level failure category for a declaration surface that cannot be resolved.</summary>
     private const string ToolManifestUnavailableCategory = RunErrorTaxonomy.ToolManifestUnavailable;
 
@@ -857,7 +871,18 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         AgentInstanceId = worker.Id.ToString(),
                         ToolId = pendingTurn.ToolId,
                         ToolCallKey = toolCallKey,
-                        LeaseUses = Math.Max(1, roundLimit - task.ToolRounds + 1),
+                        // One call, one single-use ticket. The lease budget is
+                        // decoupled from the task's round budget: a lease is
+                        // consumed exactly once per execution (the dispatcher's
+                        // consumption idempotency key is derived from the
+                        // execution id, so resume/replay replays the receipt
+                        // instead of spending a second use), which means the
+                        // former "remaining rounds" allowance only ever handed
+                        // out unconsumed uses. Keeping it at 1 restores the
+                        // one-time nonce semantics and, crucially, stops the
+                        // round limit from capping the lease ceiling (33+ rounds
+                        // used to trip the coordinator's 1..32 validation).
+                        LeaseUses = 1,
                         LaneKey = LaneKeyOf(task),
                         Params = parameters
                     }, cancellationToken).ConfigureAwait(false);
@@ -985,7 +1010,35 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             WorkerModelTurn model;
             try
             {
-                model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, descriptors, cancellationToken).ConfigureAwait(false);
+                // The close-out turn is text-only by construction: the declarations
+                // are withheld so the model cannot start another side effect, and the
+                // prompt asks it to hand off instead. A budget or loop trigger already
+                // decided that no further tool use is affordable.
+                IReadOnlyList<WorkerToolDescriptor> declaredTools = descriptors;
+                string? closeoutPrompt = null;
+                if (task.CloseoutRequested)
+                {
+                    declaredTools = [];
+                    closeoutPrompt = CloseoutPrompts.Build(new CloseoutPrompts.CloseoutContext(
+                        task.CloseoutCategory ?? RunErrorTaxonomy.Runtime,
+                        task.CloseoutReason ?? "The worker budget was exhausted before the task could finish.",
+                        task.CloseoutHardCeiling,
+                        task.ToolRounds,
+                        roundLimit,
+                        configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk),
+                        task.ToolTurns.Count,
+                        configuration.Tools.MaxToolCalls,
+                        task.TokensUsed,
+                        configuration.Context.DefaultTokenBudget,
+                        Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
+                        configuration.Context.RunTokenBudget,
+                        task.ToolTurns
+                            .TakeLast(3)
+                            .Select(turn => turn.ToolId)
+                            .Where(id => !string.IsNullOrWhiteSpace(id))
+                            .ToArray()));
+                }
+                model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, declaredTools, cancellationToken, closeoutPrompt).ConfigureAwait(false);
             }
             catch (InvalidDataException ex)
             {
@@ -994,41 +1047,55 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 return FailedToolTask(checkpoint, task, worker, WorkerAssignmentInvalidCategory, SafeError(ex));
             }
             checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, model.Usage);
+            AccumulateTaskTokens(task, model.Usage);
             if (!model.IsAvailable || model.Error is not null)
             {
                 return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ModelUnavailable, model.Error ?? "Worker model is unavailable.");
             }
-            if (model.Calls.Count == 0)
+            if (task.CloseoutRequested)
             {
-                var status = string.IsNullOrWhiteSpace(model.Text) ? "failed" : "completed";
-                var stepResult = string.IsNullOrWhiteSpace(model.Text)
-                    ? new StepResult
-                    {
-                        TaskNodeId = task.TaskId,
-                        AgentId = worker.Id.ToString("N"),
-                        Status = status,
-                        Summary = "Execution returned no output.",
-                        Evidence = []
-                    }
-                    : BuildCompletedStepResult(task.TaskId, worker.Id, model.Text);
-                return new ToolTaskExecutionResult(checkpoint, Waiting: false,
-                    new TaskExecutionResult(task.TaskId, worker.Id, stepResult.Status, stepResult));
+                // Tools were withheld for exactly this turn, so the loop ends here
+                // whatever came back: a stray call is dropped rather than dispatched,
+                // and the hand-off text (or, when the model says nothing, the
+                // recorded stop reason) becomes the task's evidence.
+                return CompleteCloseout(checkpoint, task, worker, model);
             }
 
             task.ToolRounds++;
-            if (task.ToolRounds > roundLimit)
+            if (model.Calls.Count == 0 && string.IsNullOrWhiteSpace(model.Text))
             {
-                return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolRoundLimit, $"The worker exceeded the effective max_tool_rounds limit ({roundLimit}).");
+                // An empty response used to fail the task outright. Count the streak
+                // instead (codex: consecutive_empty_turns >= 3) so the model gets a
+                // chance to answer before the task is closed out.
+                task.ConsecutiveEmptyResponses++;
             }
-            if (_loopGuard is { } guard && task.ToolRounds > configuration.Tools.MaxToolRounds)
+            else
             {
-                // The task is running past the frozen global default only because a
-                // category/risk override raised its limit; every extra round must
-                // clear the loop guard before another call is dispatched.
-                var fingerprints = task.ToolTurns
-                    .Where(turn => !string.IsNullOrWhiteSpace(turn.ResultJson))
-                    .Select(turn => $"{turn.ToolId}:{turn.ArgumentsJson}")
-                    .ToArray();
+                task.ConsecutiveEmptyResponses = 0;
+            }
+
+            // One structured line per round, emitted before the gates so the event
+            // stream shows how the task walked to its end — including the round the
+            // stop fires on — instead of only the last sentence it produced.
+            await EmitToolRoundEventAsync(run, checkpoint, task, configuration, roundLimit, model, cancellationToken).ConfigureAwait(false);
+
+            // Round gate: 0 (or less) means unlimited, so this only fires for a
+            // configuration that deliberately narrows a task class. Convergence is
+            // carried by the loop guard and the token budgets below, not by counting
+            // rounds — the round limit survives as an optional ceiling.
+            if (roundLimit > 0 && task.ToolRounds > roundLimit)
+            {
+                RequestCloseout(task, RunErrorTaxonomy.ToolRoundLimit,
+                    $"The worker exhausted its tool-round budget ({DescribeToolBudget(configuration, task, roundLimit)}).");
+            }
+
+            if (!task.CloseoutRequested && _loopGuard is { } guard)
+            {
+                // The guard runs on EVERY round now. It used to engage only once
+                // ToolRounds passed the frozen global default, so a worker looping
+                // inside its first four rounds was invisible to repeat/error
+                // detection, and its stop was misreported as a spent round budget —
+                // the two causes point at opposite fixes.
                 var decision = await guard.EvaluateAsync(
                     run.SessionId.ToString(),
                     run.RunId.ToString(),
@@ -1040,15 +1107,65 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         // so the guard's boundary matches the engine's `>`.
                         Iteration = task.ToolRounds - 1,
                         MaxIterations = roundLimit,
+                        TokensUsed = task.TokensUsed,
+                        TokenBudget = configuration.Context.DefaultTokenBudget,
                         ToolCallCount = task.ToolTurns.Count,
-                        RecentToolCallFingerprints = fingerprints
+                        MaxToolCalls = configuration.Tools.MaxToolCalls,
+                        // Repeat detection only inspects the trailing run, so the tail
+                        // is all it needs; rebuilding the whole transcript every round
+                        // made a long task quadratic.
+                        RecentToolCallFingerprints = TrailingFingerprints(task, FingerprintTail),
+                        ConsecutiveErrors = TrailingConsecutiveErrors(task)
                     },
                     cancellationToken).ConfigureAwait(false);
                 if (!decision.ShouldContinue)
                 {
-                    return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.ToolLoopDetected,
-                        decision.Reason ?? "The loop guard rejected further tool rounds for this task.");
+                    RequestCloseout(task, decision.Category ?? RunErrorTaxonomy.ToolLoopDetected,
+                        decision.Reason ?? "The loop guard stopped further tool rounds for this task.",
+                        decision.HardCeiling);
                 }
+            }
+
+            if (!task.CloseoutRequested)
+            {
+                // Run-level counterpart of the task budget: the whole run, across
+                // every task and every role, gets one fuse of its own.
+                var runTokens = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage);
+                if (configuration.Context.RunTokenBudget > 0 && runTokens >= configuration.Context.RunTokenBudget)
+                {
+                    RequestCloseout(task, RunErrorTaxonomy.RunTokenBudgetExhausted,
+                        $"The run exhausted its token budget ({runTokens}/{configuration.Context.RunTokenBudget}).");
+                }
+            }
+
+            if (!task.CloseoutRequested && task.ConsecutiveEmptyResponses >= MaxConsecutiveEmptyResponses)
+            {
+                RequestCloseout(task, RunErrorTaxonomy.EmptyResponseLimit,
+                    $"The worker returned {task.ConsecutiveEmptyResponses} consecutive empty responses.");
+            }
+
+            if (task.CloseoutRequested)
+            {
+                // This round's calls are intentionally dropped: the next turn asks for
+                // a hand-off rather than more side effects, and the loop can never
+                // re-arm from the close-out state.
+                await EmitCloseoutRequestedAsync(run, checkpoint, task, configuration, roundLimit, model, cancellationToken).ConfigureAwait(false);
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-closeout", cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            if (model.Calls.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(model.Text))
+                {
+                    return new ToolTaskExecutionResult(checkpoint, Waiting: false,
+                        new TaskExecutionResult(task.TaskId, worker.Id, "completed",
+                            BuildCompletedStepResult(task.TaskId, worker.Id, model.Text)));
+                }
+                // Blank answer below the streak threshold: give the model another
+                // turn instead of failing the task on one empty response.
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-empty-response", cancellationToken).ConfigureAwait(false);
+                continue;
             }
 
             var existingCallIds = task.ToolTurns.Select(item => item.CallId).ToHashSet(StringComparer.Ordinal);
@@ -1367,7 +1484,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         DurableTaskNode task,
         RuntimeAgentInstance worker,
         IReadOnlyList<WorkerToolDescriptor> tools,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? closeoutPrompt = null)
     {
         var workerDefinition = GetAssignedWorkerDefinition(configuration, task);
         var context = await BuildContextAsync(run, configuration, workerDefinition.Id,
@@ -1391,7 +1509,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             ToPlannedTask(task),
             task.ToolTurns,
             tools,
-            assembly.Instructions + WorkerPatchProtocol,
+            // The close-out instruction leads: on that turn the model must hand off,
+            // not continue, so it must not be buried under the normal task framing.
+            closeoutPrompt is null
+                ? assembly.Instructions + WorkerPatchProtocol
+                : closeoutPrompt + "\n\n" + assembly.Instructions + WorkerPatchProtocol,
             configuration.Context.RecentMessageLimit,
             cancellationToken).ConfigureAwait(false);
     }
@@ -1804,6 +1926,196 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
     }
 
+    /// <summary>
+    /// Enters the close-out state exactly once per task: the first trigger wins, so
+    /// the reported reason is the one that actually stopped the work instead of
+    /// whichever check happened to run last.
+    /// </summary>
+    private static void RequestCloseout(DurableTaskNode task, string category, string reason, bool hardCeiling = false)
+    {
+        if (task.CloseoutRequested) return;
+        task.CloseoutRequested = true;
+        task.CloseoutCategory = category;
+        task.CloseoutReason = reason;
+        task.CloseoutHardCeiling = hardCeiling;
+    }
+
+    /// <summary>
+    /// Ends a task that a budget, fuse, or loop guard stopped. The task is recorded
+    /// as completed on purpose: the hand-off text is the explicit channel for
+    /// "stopped early, here is what is left", and failing the task would bury the
+    /// partial work behind a generic failure. The stop reason travels in the
+    /// evidence either way so supervision and the final answer can see it.
+    /// </summary>
+    private static ToolTaskExecutionResult CompleteCloseout(
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        RuntimeAgentInstance worker,
+        WorkerModelTurn model)
+    {
+        var category = task.CloseoutCategory ?? RunErrorTaxonomy.Runtime;
+        var reason = task.CloseoutReason ?? "The worker budget was exhausted before the task could finish.";
+        var text = model.Text?.Trim();
+        var evidence = new List<string>();
+        if (!string.IsNullOrWhiteSpace(text)) evidence.Add(text);
+        evidence.Add($"closeout:{category}");
+        evidence.Add($"closeout_reason:{reason}");
+        if (task.CloseoutHardCeiling) evidence.Add("hard_ceiling:true");
+        var result = new StepResult
+        {
+            TaskNodeId = task.TaskId,
+            AgentId = worker.Id.ToString("N"),
+            Status = "completed",
+            // Without hand-off text the system still knows why it stopped, so the
+            // reason becomes the summary rather than an empty "no output".
+            Summary = string.IsNullOrWhiteSpace(text)
+                ? $"Stopped before completion ({category}): {reason}"
+                : text,
+            Evidence = evidence
+        };
+        return new ToolTaskExecutionResult(checkpoint, Waiting: false,
+            new TaskExecutionResult(task.TaskId, worker.Id, "completed", result, model.Usage));
+    }
+
+    /// <summary>Adds one model call's tokens to the task's own budget counter.</summary>
+    private static void AccumulateTaskTokens(DurableTaskNode task, ModelUsage? usage)
+    {
+        var tokens = Maf18RuntimeAdapter.BudgetTokens(usage);
+        if (tokens <= 0) return;
+        task.TokensUsed = (int)Math.Min(int.MaxValue, task.TokensUsed + tokens);
+    }
+
+    /// <summary>
+    /// Trailing consecutive failed calls. A turn counts as failed while it carries
+    /// an error category, which is exactly how the dispatcher records a refusal,
+    /// an approval expiry, or a provider error; any success resets the streak.
+    /// </summary>
+    private static int TrailingConsecutiveErrors(DurableTaskNode task)
+    {
+        var count = 0;
+        for (var index = task.ToolTurns.Count - 1; index >= 0; index--)
+        {
+            if (string.IsNullOrWhiteSpace(task.ToolTurns[index].ErrorCategory)) break;
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Newest-last fingerprints of the trailing completed calls, bounded to the few
+    /// entries repeat detection actually inspects.
+    /// </summary>
+    private static IReadOnlyList<string> TrailingFingerprints(DurableTaskNode task, int max)
+    {
+        var tail = new List<string>(max);
+        for (var index = task.ToolTurns.Count - 1; index >= 0 && tail.Count < max; index--)
+        {
+            var turn = task.ToolTurns[index];
+            if (string.IsNullOrWhiteSpace(turn.ResultJson)) continue;
+            tail.Add($"{turn.ToolId}:{turn.ArgumentsJson}");
+        }
+        tail.Reverse();
+        return tail;
+    }
+
+    /// <summary>
+    /// The operator-facing budget context for a round-limit stop: which limit is in
+    /// force, where it came from, how much was used, and on which tools. Prose alone
+    /// ("exceeded max_tool_rounds") sent readers looking at the wrong dial.
+    /// </summary>
+    private static string DescribeToolBudget(FrozenRunConfigurationV1 configuration, DurableTaskNode task, int roundLimit)
+    {
+        var source = configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk);
+        var limit = roundLimit > 0
+            ? $"{roundLimit} (source: {source})"
+            : $"unlimited (source: {source}; max_tool_calls fuse: {configuration.Tools.MaxToolCalls})";
+        var lastTools = task.ToolTurns
+            .TakeLast(3)
+            .Select(turn => turn.ToolId)
+            .Where(id => !string.IsNullOrWhiteSpace(id));
+        return $"effective round limit {limit}, category {task.Category ?? "(none)"}, risk {task.Risk}, "
+            + $"rounds used {task.ToolRounds}, calls issued {task.ToolTurns.Count}, "
+            + $"last tools [{string.Join(", ", lastTools)}]";
+    }
+
+    /// <summary>
+    /// One structured line per tool round, so the event stream shows how a task
+    /// walked to its end instead of only the last sentence it produced.
+    /// </summary>
+    private async Task EmitToolRoundEventAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        FrozenRunConfigurationV1 configuration,
+        int roundLimit,
+        WorkerModelTurn model,
+        CancellationToken cancellationToken)
+    {
+        // Deterministic idempotency key: a crash between the model turn and the
+        // checkpoint save re-runs this round, and the journal must not grow a
+        // second line for it.
+        var idempotencyKey = $"worker-tool-round:{run.RunId}:{task.TaskId:N}:{task.ToolRounds}";
+        await AppendEventAsync(Guid.Parse(run.RunId), "worker.tool_round",
+            $"Worker round {task.ToolRounds}: {model.Calls.Count} call(s) this round, {task.ToolTurns.Count + model.Calls.Count} in total.",
+            new
+            {
+                run_id = run.RunId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                lane_key = LaneKeyOf(task),
+                round = task.ToolRounds,
+                effective_round_limit = roundLimit,
+                round_limit_source = configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk),
+                task_category = task.Category,
+                calls_this_round = model.Calls.Count,
+                calls_total = task.ToolTurns.Count + model.Calls.Count,
+                task_tokens_used = task.TokensUsed,
+                task_token_budget = configuration.Context.DefaultTokenBudget,
+                run_tokens_used = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
+                run_token_budget = configuration.Context.RunTokenBudget
+            }, cancellationToken, taskId: task.TaskId, idempotencyKey: idempotencyKey).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Announces that the worker is wrapping up rather than continuing. Carries the
+    /// full budget context because the event is the durable record of *why* a task
+    /// stopped; <c>hard_ceiling</c> marks the absolute-fuse path, which usually
+    /// means a bug rather than an exhausted budget.
+    /// </summary>
+    private async Task EmitCloseoutRequestedAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        FrozenRunConfigurationV1 configuration,
+        int roundLimit,
+        WorkerModelTurn model,
+        CancellationToken cancellationToken)
+    {
+        await AppendEventAsync(Guid.Parse(run.RunId), "worker.budget_exhausted",
+            task.CloseoutReason ?? "The worker stopped tool use and is wrapping up.",
+            new
+            {
+                run_id = run.RunId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                lane_key = LaneKeyOf(task),
+                category = task.CloseoutCategory,
+                reason = task.CloseoutReason,
+                hard_ceiling = task.CloseoutHardCeiling,
+                effective_round_limit = roundLimit,
+                round_limit_source = configuration.Tools.ResolveTaskRoundLimitSource(task.Category, task.Risk),
+                task_category = task.Category,
+                rounds_used = task.ToolRounds,
+                calls_issued = task.ToolTurns.Count,
+                dropped_calls = model.Calls.Count,
+                task_tokens_used = task.TokensUsed,
+                task_token_budget = configuration.Context.DefaultTokenBudget,
+                run_tokens_used = Maf18RuntimeAdapter.BudgetTokens(checkpoint.ModelUsage),
+                run_token_budget = configuration.Context.RunTokenBudget,
+                max_tool_calls = configuration.Tools.MaxToolCalls
+            }, cancellationToken).ConfigureAwait(false);
+    }
+
     private static bool TryParseJsonObject(string json, out JsonElement parameters)
     {
         parameters = default;
@@ -1880,6 +2192,17 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         checkpoint.SupervisionDecision = verdict.DecictionString();
         checkpoint.SupervisionReasons = verdict.Reasons.ToList();
+        // A task that stopped on a budget, fuse, or loop trigger must not read as an
+        // ordinary pass. Surfacing the trigger in the supervision reasons keeps
+        // "completed but the goal was not reached" visible in the final answer
+        // instead of only in the event log.
+        foreach (var stopped in checkpoint.Tasks.Where(item => item.CloseoutRequested))
+        {
+            var reason = $"closeout:{stopped.TaskKey}:{stopped.CloseoutCategory}"
+                + (stopped.CloseoutHardCeiling ? " (hard_ceiling)" : string.Empty)
+                + $" — {stopped.CloseoutReason}";
+            if (!checkpoint.SupervisionReasons.Contains(reason, StringComparer.Ordinal)) checkpoint.SupervisionReasons.Add(reason);
+        }
         MapCriterionVerdicts(checkpoint, verdict);
         foreach (var lane in checkpoint.Lanes)
         {
@@ -3528,6 +3851,39 @@ internal sealed class DurableTaskNode
     public int Attempt { get; set; }
     public int ToolRounds { get; set; }
     public List<WorkerToolTurn> ToolTurns { get; set; } = [];
+
+    /// <summary>
+    /// Tokens this task has consumed across all of its model turns (the task's
+    /// own context budget). Additive and default-suppressed so checkpoints
+    /// written before this field existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int TokensUsed { get; set; }
+
+    /// <summary>Trailing consecutive empty model responses (no text, no calls).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ConsecutiveEmptyResponses { get; set; }
+
+    /// <summary>
+    /// Set once a budget or loop-guard trigger stopped tool use. The next round
+    /// is text-only (no tool declarations, close-out prompt) and ends the task.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CloseoutRequested { get; set; }
+
+    /// <summary>RunErrorTaxonomy category of the stop that requested the close-out.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CloseoutCategory { get; set; }
+
+    /// <summary>Human-readable stop reason with the concrete budget numbers.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CloseoutReason { get; set; }
+
+    /// <summary>True when the stop came from the absolute call fuse, i.e. an
+    /// abnormal path rather than a spent budget.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CloseoutHardCeiling { get; set; }
+
     public string? PendingToolExecutionId { get; set; }
     public string? PendingToolApprovalId { get; set; }
     public Guid? WorkerAgentId { get; set; }

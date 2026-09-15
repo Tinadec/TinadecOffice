@@ -26,9 +26,15 @@ lanes_enabled = false
 max_lanes_per_run = 4
 max_tasks_per_lane = 6
 
+# Context policy. default_token_budget is the per-task context budget the loop
+# guard enforces; run_token_budget is the run-wide counterpart and is a FUSE,
+# not a budget -- crossing either one ends the active task with a hand-off
+# summary instead of failing the run. All values below are fuse-level initial
+# values pending calibration against measured P95 usage.
 [context]
-default_token_budget = 8192
-recent_message_limit = 24
+default_token_budget = 65536
+recent_message_limit = 128
+run_token_budget = 1048576
 optimistic_revision = true
 
 [memory]
@@ -41,22 +47,42 @@ allowed_kinds = ["fact", "preference", "decision", "success_pattern", "failure_p
 provider = "tinadec-tools-process"
 mutation_requires_approval = true
 serialize_workspace_writes = true
-default_timeout_seconds = 120
-max_tool_rounds = 4
+default_timeout_seconds = 600
+
+# Rounds are a safety fuse, not the primary convergence mechanism: 0 means
+# unlimited. What actually stops a worker is the loop guard (repeated calls,
+# consecutive errors, consecutive empty responses) plus the token budgets; the
+# round limit survives only as an optional narrowing device for callers that
+# want a tighter bound. Values above 0 are clamped to the Core ceiling (32).
+max_tool_rounds = 0
+
+# Absolute per-task tool-call FUSE, not a budget. A normal task never reaches
+# it; it exists because Core also runs unattended (auto-approve / full-access)
+# where nobody is at the keyboard to interrupt a runaway loop. Tripping it is
+# reported with hard_ceiling = true so it is never mistaken for a spent budget.
+# 0 disables the fuse explicitly.
+max_tool_calls = 500
 
 # Per-task round overrides, keyed by the planner's task category (the risk class
 # doubles as the key when the planner omits category). Every value is clamped to
-# the per-task hard ceiling (12) at parse time, and rounds past the global
-# default must clear the loop guard's repeat-call detection before each call.
+# the per-task ceiling (32) at parse time; 0 means unlimited for that category,
+# so these entries are how a caller narrows specific classes without restoring a
+# global round gate.
 [tools.task_round_overrides]
-test = 12
+test = 0
+build = 0
+refactor = 0
+investigate = 0
 
 # Operational-role trigger chain (context compression, skill recommendation,
 # experience curation, git stewardship). Roles stay dormant when disabled or
-# when the frozen roster does not carry the role.
+# when the frozen roster does not carry the role. context_token_threshold must
+# stay below default_token_budget -- the pair is validated at load time,
+# because a threshold at or above the budget makes compression either never
+# fire or always fire.
 [triggers]
 enabled = true
-context_token_threshold = 6000
+context_token_threshold = 48000
 compress_on_task_closed = true
 recommend_on_task_created = true
 curate_on_run_closed = true

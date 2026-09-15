@@ -38,6 +38,21 @@ public static class RunErrorTaxonomy
     public const string ToolRoundLimit = "tool_round_limit";
     /// <summary>The loop guard rejected further tool rounds for this task.</summary>
     public const string ToolLoopDetected = "tool_loop_detected";
+    /// <summary>The run exhausted the task's own context token budget.</summary>
+    public const string TokenBudgetExhausted = "token_budget_exhausted";
+    /// <summary>The run exhausted the run-wide token budget.</summary>
+    public const string RunTokenBudgetExhausted = "run_token_budget_exhausted";
+    /// <summary>The worker kept failing calls back to back; the loop guard stopped it.</summary>
+    public const string TooManyConsecutiveErrors = "too_many_consecutive_errors";
+    /// <summary>The worker kept returning empty responses; the loop guard stopped it.</summary>
+    public const string EmptyResponseLimit = "empty_response_limit";
+    /// <summary>
+    /// The absolute per-task tool-call fuse tripped (`[tools] max_tool_calls`).
+    /// This is not a budget: a run that reaches it is almost always looping, so
+    /// the event payload marks <c>hard_ceiling = true</c> and the supervision
+    /// reason flags it as an abnormal path.
+    /// </summary>
+    public const string ToolCallCeiling = "tool_call_ceiling";
     /// <summary>The worker reused a tool call id inside one task.</summary>
     public const string DuplicateToolCall = "duplicate_tool_call";
     /// <summary>Authorization refused the call without a more specific PDP reason code.</summary>
@@ -84,7 +99,8 @@ public static class RunErrorTaxonomy
     {
         Config, Model, Protocol, Runtime, WorkerUnavailable, Cancelled,
         ToolManifestUnavailable, WorkerAssignmentInvalid, InvalidToolArguments, ModelUnavailable,
-        ToolRoundLimit, ToolLoopDetected, DuplicateToolCall, NotAuthorized,
+        ToolRoundLimit, ToolLoopDetected, TokenBudgetExhausted, RunTokenBudgetExhausted,
+        TooManyConsecutiveErrors, EmptyResponseLimit, ToolCallCeiling, DuplicateToolCall, NotAuthorized,
         ToolError, ToolTimeout, ToolProcessExit, ToolPrepareFailed, ToolManifestChanged, ToolBlocked, ToolAlreadyRunning, ToolRuntimeUnavailable,
         ApprovalMissing, ApprovalExpired, ApprovalBindingMismatch, NotApproved, ApprovalConsumedWithoutOutcome,
         RecoveryFailed, OutcomeUnknown, SnapshotFailed, SnapshotOverride, RecoveryMarkedFailed,
