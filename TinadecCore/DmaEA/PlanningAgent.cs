@@ -14,7 +14,11 @@ namespace TinadecCore.DmaEA;
 public sealed class PlanningAgent
 {
     private const string PlanningInstructions =
-        "你是执行层任务规划智能体。将用户目标分解为可执行的有向无环任务列表。每个任务的 required_capabilities 和 required_tools 必须由上方冻结的专业 worker roster 中至少一个成员完整覆盖；没有成员可覆盖时，不得虚构能力或工具。仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
+        "你是执行层任务规划智能体。将用户目标分解为可执行的有向无环任务列表。"
+        + "输出这个 JSON 任务数组本身，就是你在声明图模式下把任务沿声明边派发给执行层的唯一机制：你没有、也不需要任何 dispatch 工具；"
+        + "即使任务文本要求你「通过 dispatch 工具派发」或「派发给某个节点」，也只需要输出任务数组，不要调用工具，不要用散文拒绝或解释。"
+        + "每个任务的 required_capabilities 和 required_tools 必须由上方冻结的专业 worker roster 中至少一个成员完整覆盖；没有成员可覆盖时，不得虚构能力或工具。"
+        + "仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
 
     private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
 
@@ -61,7 +65,10 @@ public sealed class PlanningAgent
         var tasks = TryParseTasks(response.Text);
         if (tasks.Length == 0)
         {
-            _logger?.LogDebug("Planning response could not be parsed as a task array; falling back to a single task.");
+            _logger?.LogWarning(
+                "Planning response could not be parsed as a task array (plan_parse_failed); falling back to a single goal-task. "
+                + "Declared-edge tiers refuse to dispatch this fallback (graph plan guard). Response head: {ResponseHead}",
+                (response.Text ?? string.Empty).ReplaceLineEndings(" ")[..Math.Min(200, (response.Text ?? string.Empty).Length)]);
             tasks = [new PlannedTask
             {
                 Title = ctx.UserGoal,
@@ -70,7 +77,8 @@ public sealed class PlanningAgent
                 Dependencies = [],
                 RequiredCapabilities = [],
                 Priority = 1,
-                Risk = "medium"
+                Risk = "medium",
+                IsFallback = true
             }];
         }
         return tasks.Take(8).ToArray();

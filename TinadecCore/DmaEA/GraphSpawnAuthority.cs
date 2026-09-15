@@ -61,7 +61,7 @@ public static class GraphSpawnAuthority
             .FirstOrDefault();
     }
 
-    private static bool CarriesSpawnAuthority(string tier) =>
+    internal static bool CarriesSpawnAuthority(string tier) =>
         string.Equals(tier, FrozenGraphTiers.SelfDispatch, StringComparison.Ordinal)
         || string.Equals(tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal);
 

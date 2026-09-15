@@ -518,6 +518,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     BuildFrozenPlannerRoster(configuration),
                     PlannerInstructions(checkpoint, assembly.Instructions),
                     cancellationToken).ConfigureAwait(false);
+                RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 var materialized = ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
@@ -1480,24 +1481,94 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             .Select(value => value.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private static IReadOnlyList<AgentDefinition> BuildFrozenPlannerRoster(FrozenRunConfigurationV1 configuration) =>
-        configuration.ExecutionAgents
-            .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
-            .Where(agent => agent.Id.StartsWith("worker.", StringComparison.Ordinal)
-                || agent.Role is "task_executor" or "git_specialist")
-            .OrderBy(agent => agent.RosterOrder)
-            .ThenBy(agent => agent.Id, StringComparer.Ordinal)
-            .Select(agent => new AgentDefinition
+    // 缺口①修复 A：规划名册图原生。规划模型可见的择人面 = 本 run 的合法派发目标——
+    // 声明边目标 ∪（tier 携带 spawn 权时）冻结 spawnable 白名单；role 字符串从此只是
+    // 展示/审计元数据，不再做硬白名单（worker.*/task_executor 过滤退役：GraphSeedPack
+    // 能进名册纯属 role 恰好叫 task_executor，下一个自定角色词汇的包会隐形）。
+    // Graph 为 null 仅存在于手工构造的测试配置，回落为全部启用执行智能体。
+    internal static IReadOnlyList<AgentDefinition> BuildFrozenPlannerRoster(FrozenRunConfigurationV1 configuration)
+    {
+        var graph = configuration.Graph;
+        if (graph is null)
+            return configuration.ExecutionAgents
+                .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
+                .OrderBy(agent => agent.RosterOrder)
+                .ThenBy(agent => agent.Id, StringComparer.Ordinal)
+                .Select(agent => ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools))
+                .ToArray();
+
+        var slugByNodeKey = graph.Nodes.ToDictionary(node => node.NodeKey, node => node.AgentSlug, StringComparer.Ordinal);
+        var slugs = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        void AddSlug(string? slug)
+        {
+            if (!string.IsNullOrWhiteSpace(slug) && seen.Add(slug)) slugs.Add(slug);
+        }
+        foreach (var edge in graph.Edges)
+            AddSlug(slugByNodeKey.TryGetValue(edge.TargetNodeKey, out var target) ? target : null);
+        if (GraphSpawnAuthority.CarriesSpawnAuthority(graph.Tier))
+        {
+            foreach (var template in graph.SpawnableTemplates)
+                AddSlug(template.Slug);
+            // free_form 对任意启用 worker 放行（IsDispatchAllowed 无条件 true）：包未声明
+            // agent_types 白名单的 legacy 形态（office 对话模式、测试夹具）的执行层必须仍在
+            // 名册上，否则规划模型对所有 worker 失明。
+            if (string.Equals(graph.Tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal))
+                foreach (var agent in configuration.ExecutionAgents
+                    .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
+                    .OrderBy(agent => agent.RosterOrder)
+                    .ThenBy(agent => agent.Id, StringComparer.Ordinal))
+                    AddSlug(agent.Id);
+        }
+
+        var enabledBySlug = configuration.ExecutionAgents
+            .Where(agent => agent.Enabled)
+            .GroupBy(agent => agent.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.First().Id, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var roster = new List<AgentDefinition>();
+        foreach (var slug in slugs)
+        {
+            if (enabledBySlug.TryGetValue(slug, out var agent))
             {
-                Id = agent.AgentDefinitionId ?? Guid.Empty,
-                Name = agent.Id,
-                Layer = agent.Layer,
-                AgentType = agent.Role,
-                Capabilities = agent.Capabilities,
-                AllowedTools = agent.AllowedTools,
-                Enabled = agent.Enabled
-            })
-            .ToArray();
+                roster.Add(ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools));
+                continue;
+            }
+            var template = graph.SpawnableTemplates.FirstOrDefault(candidate =>
+                string.Equals(candidate.Slug, slug, StringComparison.OrdinalIgnoreCase));
+            if (template is not null)
+                roster.Add(ToPlannerRosterEntry(template.AgentDefinitionId, template.Slug, template.Role, template.Capabilities, template.ToolCeiling));
+        }
+        return roster;
+    }
+
+    private static AgentDefinition ToPlannerRosterEntry(
+        Guid definitionId,
+        string slug,
+        string role,
+        IReadOnlyList<string> capabilities,
+        IReadOnlyList<string> allowedTools) => new()
+    {
+        Id = definitionId,
+        Name = slug,
+        Layer = "execution",
+        AgentType = role,
+        Capabilities = capabilities,
+        AllowedTools = allowedTools,
+        Enabled = true
+    };
+
+    // 缺口①修复 C：声明边模式下，解析失败产生的回落单任务（整句目标、零需求）不得静默派发——
+    // 就近覆盖平局规则会把它派给最窄工具面的模板（run d035fa40：写文件目标被派给只读 search，
+    // worker 如实报告无 dispatch 工具，run 假完成）。抛 InvalidTaskGraphException 走既有的
+    // 两次规划重试，二次失败即 run 失败，失败原因带 plan_parse_failed 可见。free_form（无边）
+    // 保留回落：总监体接管目标本就是合法语义，无错误靶点风险。
+    internal static void RefuseSilentPlanningFallbackOnDeclaredEdges(FrozenRunConfigurationV1 configuration, PlannedTask[] planned)
+    {
+        if (configuration.Graph is { Edges.Count: > 0 } && planned.Any(task => task.IsFallback))
+            throw new InvalidTaskGraphException(
+                "The planner output could not be parsed as a task array (plan_parse_failed); "
+                + "refusing to dispatch the silent fallback goal-task along declared edges.");
+    }
 
     private static RuntimeAgentDefinition GetAssignedWorkerDefinition(
         FrozenRunConfigurationV1 configuration,
@@ -1937,6 +2008,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     BuildFrozenPlannerRoster(configuration),
                     PlannerInstructions(checkpoint, instructions),
                     cancellationToken).ConfigureAwait(false);
+                RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 checkpoint.Tasks = MergeReplannedGraph(checkpoint.Tasks,
                     ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun));

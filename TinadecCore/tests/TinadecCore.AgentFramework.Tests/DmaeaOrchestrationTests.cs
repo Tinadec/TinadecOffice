@@ -42,6 +42,25 @@ public sealed class DmaeaOrchestrationTests
         var task = Assert.Single(tasks);
         Assert.Equal("用户目标", task.Title);
         Assert.Equal("Task is complete when the goal is satisfied", task.SuccessCriteria[0]);
+        // 缺口①修复 C：回落任务必须可被引擎识别，声明边模式下拒绝静默派发。
+        Assert.True(task.IsFallback);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_InstructionsExplainTaskArrayIsTheDispatchMechanism()
+    {
+        // 缺口①修复 B（提示词汇表断层）：对话身份「派发」的唯一机制是输出 JSON 任务数组；
+        // 治理层零工具，用户文本一旦要求「通过 dispatch 工具派发」，没有这句话模型就会
+        // 找工具找不到而以散文拒绝（run d035fa40）。
+        var client = new StubChatClient("[]");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        _ = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        Assert.NotNull(client.LastInstructions);
+        Assert.Contains("唯一机制", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("不需要任何 dispatch 工具", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("不要用散文拒绝或解释", client.LastInstructions, StringComparison.Ordinal);
     }
 
     [Fact]

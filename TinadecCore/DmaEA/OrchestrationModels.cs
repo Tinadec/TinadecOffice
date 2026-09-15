@@ -42,6 +42,16 @@ public sealed class PlannedTask
     public int Priority { get; init; } = 1;
     [JsonPropertyName("risk")]
     public string Risk { get; init; } = "medium";
+
+    /// <summary>
+    /// True when this task is the planner's silent parse-failure fallback (whole
+    /// goal, no requirements) rather than a model-authored task. Never parsed
+    /// from model JSON: the engine refuses to dispatch a fallback goal-task
+    /// along declared edges (plan_parse_failed) instead of letting the
+    /// nearest-coverage tie-break mis-target it.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsFallback { get; init; }
 }
 
 /// <summary>Outcome of executing one planned task.</summary>
