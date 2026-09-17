@@ -57,6 +57,8 @@ public static class RunErrorTaxonomy
     public const string DuplicateToolCall = "duplicate_tool_call";
     /// <summary>Authorization refused the call without a more specific PDP reason code.</summary>
     public const string NotAuthorized = "not_authorized";
+    /// <summary>An approver explicitly rejected the request, so the call never ran.</summary>
+    public const string ApproverRejected = "approver_rejected";
 
     // ── Tools ──
     public const string ToolError = "tool_error";
@@ -100,7 +102,7 @@ public static class RunErrorTaxonomy
         Config, Model, Protocol, Runtime, WorkerUnavailable, Cancelled,
         ToolManifestUnavailable, WorkerAssignmentInvalid, InvalidToolArguments, ModelUnavailable,
         ToolRoundLimit, ToolLoopDetected, TokenBudgetExhausted, RunTokenBudgetExhausted,
-        TooManyConsecutiveErrors, EmptyResponseLimit, ToolCallCeiling, DuplicateToolCall, NotAuthorized,
+        TooManyConsecutiveErrors, EmptyResponseLimit, ToolCallCeiling, DuplicateToolCall, NotAuthorized, ApproverRejected,
         ToolError, ToolTimeout, ToolProcessExit, ToolPrepareFailed, ToolManifestChanged, ToolBlocked, ToolAlreadyRunning, ToolRuntimeUnavailable,
         ApprovalMissing, ApprovalExpired, ApprovalBindingMismatch, NotApproved, ApprovalConsumedWithoutOutcome,
         RecoveryFailed, OutcomeUnknown, SnapshotFailed, SnapshotOverride, RecoveryMarkedFailed,

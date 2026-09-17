@@ -274,8 +274,12 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     [Fact]
     public void ResolveWireTimeout_UnitLevels()
     {
-        Assert.Equal(TimeSpan.FromSeconds(120), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(120)));
-        Assert.Equal(TimeSpan.FromSeconds(120), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{}").RootElement, TimeSpan.FromSeconds(120)));
+        // The margin is unconditional: even a call that declares no timeout_ms gets
+        // a wire budget strictly above the tool's own deadline, so the tool always
+        // reports its timeout as a result instead of Core severing the call.
+        Assert.Equal(TimeSpan.FromSeconds(150), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(120)));
+        Assert.Equal(TimeSpan.FromSeconds(150), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{}").RootElement, TimeSpan.FromSeconds(120)));
+        Assert.Equal(TimeSpan.FromSeconds(630), ToolDispatcher.ResolveWireTimeout(null, TimeSpan.FromSeconds(600)));
         Assert.Equal(TimeSpan.FromSeconds(630), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":600000}").RootElement, TimeSpan.FromSeconds(120)));
         Assert.Equal(TimeSpan.FromSeconds(1830), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":1800000}").RootElement, TimeSpan.FromSeconds(120)));
         Assert.Equal(TimeSpan.FromSeconds(1830), ToolDispatcher.ResolveWireTimeout(JsonDocument.Parse("{\"timeout_ms\":99999999}").RootElement, TimeSpan.FromSeconds(120)));

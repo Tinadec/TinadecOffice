@@ -14,7 +14,13 @@ public sealed class ToolDispatchOptions
 {
     public bool MutationRequiresApproval { get; set; } = true;
     public bool SerializeWorkspaceWrites { get; set; } = true;
-    public int DefaultTimeoutSeconds { get; set; } = 120;
+    /// <summary>
+    /// Fallback wire budget when a run carries no frozen tool policy. Kept in step
+    /// with the frozen default (<c>tools.default_timeout_seconds</c>) and with the
+    /// shell tool's own default: a build or test run must not be cut off by Core
+    /// before the tool's own deadline fires.
+    /// </summary>
+    public int DefaultTimeoutSeconds { get; set; } = 600;
     public int WorkerRetryLimit { get; set; } = 2;
 }
 
@@ -148,6 +154,25 @@ public sealed class ToolDispatcher : IToolDispatcher
                         authorization.Status,
                         cancellationToken).ConfigureAwait(false);
                     await TrySetRunStatusAsync(execution.RunId, authorization.Status, cancellationToken).ConfigureAwait(false);
+                    // Announce the POLICY park as well as the approval-gate park. Only the
+                    // approval layer used to emit approval.requested, so a call held by the
+                    // PDP was invisible in the run's event log: the UI could not show the
+                    // pending decision or offer the button, and a user watching a "stuck"
+                    // run had nothing to act on. The permission_request_id is what the
+                    // decision endpoint accepts for this kind of park, so it travels as
+                    // approval_id and the client needs no special case.
+                    await AppendEventAsync(execution.RunId, "approval.requested",
+                        $"Approval requested for tool '{descriptor.Entry.Id}' (resource authorization).", new
+                        {
+                            approval_id = authorization.PermissionRequestId,
+                            permission_request_id = authorization.PermissionRequestId,
+                            execution_id = execution.Id,
+                            task_id = scope.TaskId,
+                            tool_id = descriptor.Entry.Id,
+                            risk = execution.Risk,
+                            status = authorization.Status,
+                            lane_key = execution.LaneKey
+                        }, cancellationToken, scope.TaskId, descriptor.Entry.Id, "warning").ConfigureAwait(false);
                     return PreparedResult(execution, preparation.Existing, authorization);
                 }
                 if (authorization.Status == ToolDispatchStatus.Blocked)
@@ -359,7 +384,19 @@ public sealed class ToolDispatcher : IToolDispatcher
             case "awaiting_resume":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.AwaitingResume, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message };
             case RunErrorTaxonomy.OutcomeUnknown:
-                await PauseForUnknownOutcomeAsync(execution, start.Message, cancellationToken).ConfigureAwait(false);
+                // A stale "running" row left by a crashed host is also reported as an
+                // unknown outcome rather than a run-level pause: the caller feeds it
+                // back to the worker, which can re-read the workspace and decide.
+                await AppendEventAsync(execution.RunId, "tool.execution.outcome_unknown",
+                    $"Tool '{execution.ToolId}' was left running by a previous host; its outcome is unknown.", new
+                    {
+                        execution_id = execution.Id,
+                        task_id = execution.TaskId,
+                        tool_id = execution.ToolId,
+                        error_category = RunErrorTaxonomy.OutcomeUnknown,
+                        message = SafeMessage(start.Message),
+                        paused = false
+                    }, cancellationToken, execution.TaskId, execution.ToolId, "warning").ConfigureAwait(false);
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.OutcomeUnknown, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.OutcomeUnknown, Message = start.Message };
             case "not_approved":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.NotApproved, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "not_approved", Message = start.Message };
@@ -532,8 +569,25 @@ public sealed class ToolDispatcher : IToolDispatcher
         var message = SafeMessage(last?.Error);
         if (execution.MutatesWorkspace && finalCategory is RunErrorTaxonomy.ToolTimeout or RunErrorTaxonomy.ToolProcessExit)
         {
+            // A mutating call that timed out or died may or may not have taken
+            // effect, so its outcome stays explicitly unknown — but that ambiguity
+            // is now returned to the caller as a tool RESULT instead of freezing the
+            // whole run. The former pause was clearable only by a human, which turned
+            // "the tool is slow" into "the run is stuck", and a build or test run
+            // legitimately outlives a short default. The pre-write workspace snapshot
+            // check and the approval gate are unchanged, so the write still cannot be
+            // silently replayed; only the report path changed.
             var unknown = await _executions.FailAsync(execution.Id, RunErrorTaxonomy.OutcomeUnknown, finalCategory, message, cancellationToken).ConfigureAwait(false);
-            await PauseForUnknownOutcomeAsync(unknown, message, cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(execution.RunId, "tool.execution.outcome_unknown",
+                $"Tool '{descriptor.Id}' finished with an unknown outcome ({finalCategory}); returned to the caller.", new
+                {
+                    execution_id = execution.Id,
+                    task_id = execution.TaskId,
+                    tool_id = descriptor.Id,
+                    category = finalCategory,
+                    message,
+                    paused = false
+                }, cancellationToken, execution.TaskId, descriptor.Id, "warning").ConfigureAwait(false);
             return ResultForFailure(unknown, ToolDispatchStatus.OutcomeUnknown);
         }
 
@@ -562,6 +616,11 @@ public sealed class ToolDispatcher : IToolDispatcher
             return await ExecuteCoreWorkspaceToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
+        if (CoreVirtualToolPolicy.IsTaskDispatch(wire.ToolId))
+        {
+            return await ExecuteTaskDispatchToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
         if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
         {
             return streaming is not null
@@ -582,6 +641,110 @@ public sealed class ToolDispatcher : IToolDispatcher
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// Executes the Core-owned task_dispatch virtual tool: the conversation identity hands
+    /// a sub-task to the ordinary dispatch path.
+    ///
+    /// The sub-task is persisted as a durable run directive rather than written straight
+    /// into a checkpoint, because the dispatcher does not own the checkpoint: the engine is
+    /// its single writer and materializes the task node on its next tick, where worker
+    /// selection, spawnable templates, approval and convergence already work.
+    ///
+    /// v1 returns as soon as the sub-task is QUEUED. The result text says exactly that —
+    /// claiming the sub-agent finished would be a lie the master would then repeat to the
+    /// user. The sub-agent's outcome reaches the answer through the close-out evidence.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteTaskDispatchToolAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        CancellationToken cancellationToken)
+    {
+        string? title = null;
+        string? description = null;
+        string[] successCriteria = [];
+        string[] requiredTools = [];
+        string[] requiredCapabilities = [];
+        if (wire.Params is { ValueKind: JsonValueKind.Object } parameters)
+        {
+            if (parameters.TryGetProperty("title", out var titleElement) && titleElement.ValueKind == JsonValueKind.String)
+                title = titleElement.GetString()?.Trim();
+            if (parameters.TryGetProperty("description", out var descriptionElement) && descriptionElement.ValueKind == JsonValueKind.String)
+                description = descriptionElement.GetString()?.Trim();
+            successCriteria = ReadStringArray(parameters, "success_criteria");
+            requiredTools = ReadStringArray(parameters, "required_tools");
+            requiredCapabilities = ReadStringArray(parameters, "required_capabilities");
+        }
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "task_dispatch requires a non-empty 'title'." };
+        }
+
+        var dispatchId = Guid.NewGuid();
+        var payload = JsonSerializer.Serialize(new
+        {
+            dispatch_id = dispatchId,
+            title,
+            description,
+            success_criteria = successCriteria,
+            required_tools = requiredTools,
+            required_capabilities = requiredCapabilities,
+            dispatched_by_tool_call = wire.ToolCallId,
+            task_id = scope.TaskId
+        });
+        try
+        {
+            await _lifecycle.EnqueueRunDirectiveAsync(new RunDirectiveWrite(
+                scope.RunId,
+                scope.SessionId,
+                MessageId: null,
+                Kind: "task_dispatch",
+                PayloadJson: payload,
+                // One dispatch per tool call: a replayed call must not create a second
+                // sub-task, and the key is what makes that true across a host crash.
+                IdempotencyKey: $"run:{scope.RunId}:task-dispatch:{wire.ToolCallId}"),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException)
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = $"The sub-task could not be queued: {SafeMessage(ex.Message)}" };
+        }
+
+        await AppendEventAsync(scope.RunId, "task.dispatch_requested",
+            $"Sub-task '{title}' was queued for dispatch.",
+            new
+            {
+                dispatch_id = dispatchId,
+                title,
+                required_tools = requiredTools,
+                required_capabilities = requiredCapabilities,
+                requested_by_task_id = scope.TaskId,
+                agent_instance_id = scope.AgentInstanceId
+            }, cancellationToken, scope.TaskId, CoreTaskDispatchTool.ToolId).ConfigureAwait(false);
+
+        return new ToolWireResponseDto
+        {
+            CallId = wire.ToolCallId,
+            IsSuccess = true,
+            Result = JsonSerializer.SerializeToElement(new
+            {
+                queued = true,
+                dispatch_id = dispatchId,
+                title,
+                message = $"Sub-task '{title}' is queued and will run after your current step. Its result is NOT in this reply — check the run evidence before reporting on it."
+            })
+        };
+    }
+
+    private static string[] ReadStringArray(JsonElement parameters, string propertyName) =>
+        parameters.TryGetProperty(propertyName, out var element) && element.ValueKind == JsonValueKind.Array
+            ? element.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()!.Trim())
+                .Where(value => value.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : [];
 
     /// <summary>
     /// Executes the Core-owned create_workspace virtual tool: creates the directory,
@@ -685,10 +848,10 @@ public sealed class ToolDispatcher : IToolDispatcher
     {
         if (CoreVirtualToolPolicy.IsProjectlessScope(scope.ProjectId))
         {
-            // Projectless (free-conversation) scope: no live provider exists. The
-            // Core-owned create_workspace virtual tool is the only legal call, and
-            // the run-frozen manifest is the sole declaration source.
-            if (!CoreVirtualToolPolicy.IsCreateWorkspace(toolId)) return (null, $"Unknown tool '{toolId}'.");
+            // Projectless (free-conversation) scope: no live provider exists. Core-owned
+            // virtual tools are the only legal calls, and the run-frozen manifest is the
+            // sole declaration source.
+            if (!CoreVirtualToolPolicy.IsCoreVirtual(toolId)) return (null, $"Unknown tool '{toolId}'.");
             var frozenOnly = scope.AuthorizedToolManifest?.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
             if (frozenOnly is null) return (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.");
             if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)
@@ -975,7 +1138,12 @@ public sealed class ToolDispatcher : IToolDispatcher
             var toolSeconds = (int)Math.Clamp((timeoutMs + 999) / 1000, 1, 1800);
             return TimeSpan.FromSeconds(Math.Clamp(Math.Max(baseSeconds, toolSeconds + WireTimeoutMarginSeconds), 1, MaxWireTimeoutSeconds));
         }
-        return TimeSpan.FromSeconds(baseSeconds);
+        // The margin is unconditional — not only for a call that carries an explicit
+        // timeout_ms. The wire budget must always outlive the tool's own deadline, so
+        // the tool reports its timeout as a tool RESULT the worker can read. Equal
+        // budgets on the two sides made Core win the race every time and severed the
+        // call before the tool could say what happened.
+        return TimeSpan.FromSeconds(Math.Clamp(baseSeconds + WireTimeoutMarginSeconds, 1, MaxWireTimeoutSeconds));
     }
 
     internal const int WireTimeoutMarginSeconds = 30;

@@ -18,6 +18,17 @@ internal static class Maf18RuntimeAdapter
     internal const int RequiredMinorVersion = 18;
     internal const string TelemetrySourceName = "TinadecCore.Maf";
 
+    /// <summary>
+    /// Output ceiling applied whenever a caller does not set one. Leaving it unset let
+    /// the PROVIDER's default decide, which silently truncated structured output: the
+    /// task planner's JSON array was cut off mid-object at ~180 tokens, so it could
+    /// never parse — and along declared edges a parse failure fails the whole run, which
+    /// is why the chain never got past planning. A complete task array, a full meeting
+    /// answer, and one worker turn all need more room than a chat-completions default
+    /// gives. Deliberately generous: it is a ceiling, not a target.
+    /// </summary>
+    internal const int DefaultMaxOutputTokens = 4096;
+
     internal static IReadOnlyDictionary<string, Version> FrameworkVersions => new Dictionary<string, Version>(StringComparer.Ordinal)
     {
         ["Microsoft.Agents.AI.Abstractions"] = VersionOf(typeof(AIAgent)),
@@ -55,11 +66,31 @@ internal static class Maf18RuntimeAdapter
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(chatOptions);
 
-        if (chatOptions.Tools is { Count: > 0 })
+        // Governance agents MAY now receive tools: the operation layer is no longer barred
+        // from holding a tool surface of its own, because a mode can arm its conversation
+        // identity to edit the workspace directly (the solo/master-slave shape).
+        //
+        // What stays barred is a tool MAF could INVOKE BY ITSELF. The guard is not about
+        // who the agent is; it is about keeping Core the only thing that executes side
+        // effects — an invokable tool would let MAF call it straight through, bypassing the
+        // authorization, approval, audit and checkpoint path. Executors already pass
+        // declarations (AIFunctionFactory.CreateDeclaration with a null implementation),
+        // which MAF cannot call: the model's call comes back to the engine and Core
+        // dispatches it. So the line is drawn on invokability, not on layer.
+        var invokable = chatOptions.Tools?
+            .OfType<AIFunction>()
+            .Where(tool => tool.UnderlyingMethod is not null)
+            .ToArray() ?? [];
+        if (invokable.Length != 0)
         {
             throw new InvalidOperationException(
-                "MAF governance agents cannot receive tools; TinadecCore owns authorization and dispatch.");
+                "MAF governance agents may only receive declarative tools "
+                + $"(AIFunctionFactory.CreateDeclaration with no implementation); received invokable tool(s) "
+                + $"{string.Join(", ", invokable.Select(tool => tool.Name))}. "
+                + "TinadecCore owns authorization and dispatch, so MAF must never be able to invoke a tool itself.");
         }
+
+        chatOptions.MaxOutputTokens ??= DefaultMaxOutputTokens;
 
         EnsureCompatible();
         var agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
