@@ -58,9 +58,9 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
         var root = string.Empty;
         if (session.ProjectId is null)
         {
-            // Free-conversation sessions expose only the Core-owned create_workspace
-            // virtual tool; every provider-backed tool requires a project root.
-            if (!CoreWorkspaceTool.IsCoreTool(request.ToolId))
+            // Free-conversation sessions expose only Core-owned virtual tools; every
+            // provider-backed tool requires a project root.
+            if (!CoreVirtualToolPolicy.IsCoreVirtual(request.ToolId))
                 throw new InvalidOperationException("Tool execution is unavailable for a session without a project workspace root.");
         }
         else
@@ -255,7 +255,7 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             // this gate never grants an approval by itself.
             var permissionMode = ReadString(document.RootElement, "permissionMode", "permission_mode");
             EnsurePermissionModeExecutable(permissionMode);
-            var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 120, 1, 1800);
+            var timeout = ReadInt(document.RootElement, "tools", "defaultTimeoutSeconds", "default_timeout_seconds", 600, 1, 1800);
             var retries = ReadInt(document.RootElement, "scheduling", "workerRetryLimit", "worker_retry_limit", 0, 0, 10);
             var serialize = ReadBoolean(document.RootElement, "tools", "serializeWorkspaceWrites", "serialize_workspace_writes", true);
             return new FrozenToolPolicy(permissionMode, timeout, retries, serialize);

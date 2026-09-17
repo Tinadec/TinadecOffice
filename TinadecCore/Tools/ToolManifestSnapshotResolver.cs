@@ -132,6 +132,24 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         var byId = manifest.Tools.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
         var available = manifest.Tools.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Core-owned virtual tools are executed by Core itself and are deliberately absent
+        // from the child process manifest. A mode that DECLARES one must still get it frozen
+        // in: dropping it here would leave the agent holding a declaration it can never see,
+        // which is how "the pack declares task_dispatch" would silently do nothing. Only
+        // DECLARED ones qualify — the mode's effective-tool union is the authority, exactly
+        // as for every provider tool.
+        var virtualEntries = (formalEffective ?? [])
+            .Where(CoreVirtualToolPolicy.IsCoreVirtual)
+            .Select(id => CoreVirtualToolPolicy.IsCreateWorkspace(id)
+                ? CoreWorkspaceTool.ManifestEntry()
+                : CoreTaskDispatchTool.ManifestEntry())
+            .ToArray();
+        foreach (var entry in virtualEntries)
+        {
+            byId[entry.Id] = entry;
+            available.Add(entry.Id);
+        }
+
         // Effective set to validate/freeze. When a formal mode governs the session, the agent ∩ mode
         // grant is authoritative and is trimmed to the tools the actual manifest offers — a
         // specialist's tool the manifest does not declare (e.g. browser.fetch on a code-only
@@ -169,6 +187,9 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         else if (formalEffective.Contains("*")) authorized = baseAuthorized;
         else if (formalEffective.Count == 0) authorized = [];
         else authorized = baseAuthorized.Where(item => formalEffective.Contains(item.Id, StringComparer.OrdinalIgnoreCase)).ToList();
+        // The declared virtual entries were never in baseAuthorized (they are not in the
+        // process manifest), so they are appended here rather than filtered into it.
+        authorized = [.. authorized, .. virtualEntries];
 
         var frozen = authorized.Select(ToFrozen).ToArray();
         return new ToolManifestSnapshot(manifest.ProtocolVersion, computedHash, frozen);

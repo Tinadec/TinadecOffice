@@ -12,6 +12,17 @@ public static class CoreVirtualToolPolicy
     public const string CreateWorkspaceToolId = "create_workspace";
 
     /// <summary>
+    /// Lets the conversation identity hand a sub-task to the ordinary dispatch path.
+    ///
+    /// A solo master works in ONE tool loop, so it needs a way to say "dispatch this"
+    /// from INSIDE that loop: emitting a task array is the planner's mechanism and the
+    /// master never runs the planner. This tool is that mechanism, and it is the reason
+    /// "dispatch aggressively, as the model judges" is something the model can actually
+    /// carry out rather than a line of prompt prose.
+    /// </summary>
+    public const string TaskDispatchToolId = "task_dispatch";
+
+    /// <summary>
     /// A nullable project id cannot travel on the wire, so a projectless call
     /// carries <see cref="Guid.Empty"/> as its project sentinel.
     /// </summary>
@@ -19,6 +30,18 @@ public static class CoreVirtualToolPolicy
 
     public static bool IsCreateWorkspace(string? toolId) =>
         string.Equals(toolId, CreateWorkspaceToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTaskDispatch(string? toolId) =>
+        string.Equals(toolId, TaskDispatchToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True for ANY Core-owned virtual tool. These are executed by Core itself and are
+    /// deliberately absent from the TinadecTools child manifest, so every place that
+    /// validates a tool id against the live manifest has to recognise them — otherwise a
+    /// legitimately declared virtual tool is dropped as "the process does not offer it".
+    /// </summary>
+    public static bool IsCoreVirtual(string? toolId) =>
+        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId);
 
     /// <summary>True when the caller declared no project (the <see cref="Guid.Empty"/> sentinel).</summary>
     public static bool IsProjectlessScope(Guid projectId) => projectId == ProjectlessProjectId;
