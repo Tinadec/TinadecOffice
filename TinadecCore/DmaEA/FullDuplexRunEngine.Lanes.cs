@@ -905,10 +905,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
     /// <summary>
     /// Run-terminal drain of orchestration directives queued while this run held
-    /// the session. Queued interactions keep the M2 semantics; an orchestration
-    /// directive arriving at terminal fails closed (a new lane is meaningless on
-    /// a finished run). The pending-status filter makes a replayed finalize
-    /// idempotent.
+    /// the session. An orchestration directive arriving at terminal fails closed (a
+    /// new lane is meaningless on a finished run); a queued INTERACTION is re-admitted
+    /// as its own run by <see cref="ReleaseQueuedInteractionAsync"/>, because the slot
+    /// it was waiting for is exactly what just became free. The pending-status filter
+    /// makes a replayed finalize idempotent.
     /// </summary>
     private async Task<FullDuplexCheckpointV1> DrainRunDirectivesAsync(
         RunState run,
@@ -920,6 +921,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
         foreach (var directive in pending)
         {
+            // Queued interactions belong exclusively to the re-admission pass below.
+            // Letting them fall through to the generic branch marked them "rejected"
+            // (lanes are off by default) BEFORE the releasing pass saw them, so one
+            // message was recorded as both rejected and executed, and the release's
+            // own drain then matched no pending row.
+            if (string.Equals(directive.Kind, "queued_interaction", StringComparison.Ordinal)) continue;
             if (string.Equals(directive.Kind, "orchestration", StringComparison.Ordinal))
             {
                 await AppendEventAsync(runId, "orchestration.directive.rejected",
@@ -945,11 +952,104 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }
             checkpoint.DirectiveCursor++;
         }
+        // A queued USER MESSAGE is not an orchestration directive. It already returned
+        // 201 to the client, and the run that stood in its way has just finished — so
+        // the only reason it was queued no longer holds and it must be executed.
+        //
+        // It used to share the directives' fate: with lanes off (the shipped default)
+        // it was marked "rejected" and the user, who had seen the message accepted,
+        // simply never got an answer. Nothing about a queued conversation turn depends
+        // on lanes.
+        foreach (var directive in pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList())
+        {
+            var status = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
+            await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], status, cancellationToken).ConfigureAwait(false);
+            checkpoint.DirectiveCursor++;
+        }
         if (pending.Count > 0)
         {
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "directives-drained", cancellationToken).ConfigureAwait(false);
         }
         return checkpoint;
+    }
+
+    /// <summary>
+    /// Re-admits an interaction that was queued behind this run, now that the run has
+    /// finished and the slot it was waiting for is free. The payload is the one the
+    /// interactions endpoint persisted, so the message the user already received a 201
+    /// for becomes the run that actually answers it.
+    /// </summary>
+    /// <returns>
+    /// The drain status to record. <c>executed</c> when a run was admitted;
+    /// <c>deferred</c> when it still could not be admitted (the reason is published on
+    /// the run rather than swallowed) or when no coordinator is available in this host;
+    /// <c>rejected</c> only when the stored payload cannot be read at all, because a
+    /// message that cannot be reconstructed can never be executed.
+    /// </returns>
+    private async Task<string> ReleaseQueuedInteractionAsync(RunState run, RunDirective directive, CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        string? content = null;
+        string? clientMessageId = null;
+        string? permissionMode = null;
+        try
+        {
+            using var document = JsonDocument.Parse(directive.PayloadJson);
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("content", out var contentValue) && contentValue.ValueKind == JsonValueKind.String)
+                    content = contentValue.GetString();
+                if (root.TryGetProperty("client_message_id", out var clientValue) && clientValue.ValueKind == JsonValueKind.String)
+                    clientMessageId = clientValue.GetString();
+                if (root.TryGetProperty("permission_mode", out var modeValue) && modeValue.ValueKind == JsonValueKind.String)
+                    permissionMode = modeValue.GetString();
+            }
+        }
+        catch (JsonException) { }
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            await AppendEventAsync(runId, "interaction.queued_unreadable",
+                "A queued interaction could not be re-admitted: its stored payload carries no content.",
+                new { directive_id = directive.Id, code = "queued_payload_unreadable" }, cancellationToken).ConfigureAwait(false);
+            return "rejected";
+        }
+
+        // Resolved lazily for the same reason the other optional collaborators are:
+        // the coordinator depends on this engine, so a constructor dependency would be
+        // a cycle. By drain time the engine singleton exists, so this cannot recurse.
+        if (_services.GetService(typeof(IFullDuplexRunCoordinator)) is not IFullDuplexRunCoordinator coordinator)
+        {
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                "A queued interaction is still pending: this host has no run coordinator to admit it.",
+                new { directive_id = directive.Id, code = "run_coordinator_unavailable" }, cancellationToken).ConfigureAwait(false);
+            return "deferred";
+        }
+
+        try
+        {
+            var submission = await coordinator.SubmitAsync(new FullDuplexInvocation(
+                directive.SessionId,
+                content,
+                clientMessageId,
+                string.IsNullOrWhiteSpace(permissionMode) ? "default" : permissionMode,
+                TargetRunId: null,
+                ExpectedContextRevision: null), cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, "interaction.queued_executed",
+                "A queued interaction was admitted as its own run once this run finished.",
+                new { directive_id = directive.Id, released_run_id = submission.RunId, existing = submission.Existing }, cancellationToken).ConfigureAwait(false);
+            return "executed";
+        }
+        catch (RunAdmissionException ex)
+        {
+            // Still not admissible. Say so where the user can see it instead of
+            // dropping the message: the failure is a queueing fact, not a verdict.
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                $"A queued interaction is still waiting: {ex.Message}",
+                new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
+            return "deferred";
+        }
     }
 
     /// <summary>
