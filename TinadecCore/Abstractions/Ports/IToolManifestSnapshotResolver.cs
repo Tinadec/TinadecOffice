@@ -100,8 +100,25 @@ public static class ToolManifestHasher
         && string.Equals(GetRawSchema(live.InputSchema), GetRawSchema(frozen.InputSchema), StringComparison.Ordinal)
         && live.ConfirmationFields.SequenceEqual(frozen.ConfirmationFields, StringComparer.Ordinal);
 
-    public static string GetRawSchema(JsonElement schema) =>
-        schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? string.Empty : schema.GetRawText();
+    /// <summary>
+    /// The schema text both processes hash. It is CANONICALIZED, not taken raw: the
+    /// tools process hashes the element it parsed from its own literal while Core hashes
+    /// the element it parsed off the wire, and those two texts legitimately differ in
+    /// escaping (a description carrying an apostrophe or a quote is written literally on
+    /// one side and \u-escaped on the other) and in whitespace. Hashing raw text made a
+    /// byte-different but semantically identical manifest look tampered, so admission
+    /// refused every call with TOOL_MANIFEST_HASH_MISMATCH. Re-writing the element with a
+    /// fixed writer gives both sides ONE representation of the same schema — the tools
+    /// side uses the identical helper because its process has reflection serialization
+    /// disabled.
+    /// </summary>
+    public static string GetRawSchema(JsonElement schema)
+    {
+        if (schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return string.Empty;
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer)) schema.WriteTo(writer);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
 
     private static void Append(
         StringBuilder builder,

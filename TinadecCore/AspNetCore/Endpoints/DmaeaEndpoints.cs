@@ -232,7 +232,8 @@ public static class DmaeaEndpoints
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
             var items = events.Where(e => e.EventType is "step.result.created" or "task.assigned"
                     or "tool.execution.requested" or "tool.execution.completed"
-                    or "tool.execution.failed" or "tool.execution.outcome_unknown")
+                    or "tool.execution.failed" or "tool.execution.outcome_unknown"
+                    or "approval.requested" or "approval.decided")
                 .Select(e =>
             {
                 // The durable tool.execution.* journal rows join the legacy
@@ -240,9 +241,15 @@ public static class DmaeaEndpoints
                 // dispatch outcomes (including the honestly recorded embedded
                 // tool_success flag) are visible; legacy rows keep their shape.
                 var isToolExecution = e.EventType.StartsWith("tool.execution.", StringComparison.Ordinal);
+                // The approval events carry their own id in their own field; the tool
+                // row needs the id the decision endpoint accepts, and that is exactly
+                // what approval.requested now publishes for both park kinds.
+                var approvalId = PayloadString(e.Payload, "approval_id");
                 return new
                 {
-                    id = isToolExecution ? PayloadString(e.Payload, "execution_id") : PayloadString(e.Payload, "task_node_id"),
+                    id = isToolExecution || e.EventType == "approval.decided"
+                        ? PayloadString(e.Payload, "execution_id") ?? PayloadString(e.Payload, "approval_id")
+                        : PayloadString(e.Payload, "task_node_id"),
                     run_id = isToolExecution ? e.RunId ?? "" : PayloadString(e.Payload, "run_id") ?? "",
                     session_id = sessionId,
                     tool_id = PayloadString(e.Payload, "tool_id") ?? "",
@@ -258,9 +265,15 @@ public static class DmaeaEndpoints
                         "tool.execution.requested" => "requested",
                         "tool.execution.completed" => "completed",
                         "tool.execution.failed" => "failed",
+                        // A park is a status of its own, not "requested": the chat can
+                        // only offer the approve/reject buttons while it can tell a call
+                        // is waiting on a human, and the projection used to have no word
+                        // for that state at all.
+                        "approval.requested" => "waiting_approval",
+                        "approval.decided" => PayloadString(e.Payload, "decision") ?? "completed",
                         _ => "outcome_unknown"
                     },
-                    approval_id = (string?)null,
+                    approval_id = approvalId,
                     step_result_id = PayloadString(e.Payload, "task_node_id"),
                     summary = PayloadString(e.Payload, "summary") ?? "",
                     evidence = PayloadArray(e.Payload, "evidence"),
