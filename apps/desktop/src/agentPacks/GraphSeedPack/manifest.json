@@ -6,8 +6,8 @@
     "owner": "tinadec",
     "product_id": "tinadec-core",
     "name": "GraphSeedPack",
-    "version": "2.1.0",
-    "description": "DmaEA 图编排种子包：3 模板 × 3 模式，一个模式对应一个编排档位（free_form / self_dispatch / deterministic）。执行模板自带工作区内置工具面（枚举/读取/检索/只读 git），MCP 作为可选扩展保留。"
+    "version": "2.2.0",
+    "description": "DmaEA 图编排种子包：3 执行模板 × 4 模式，一个模式对应一个编排档位（free_form / self_dispatch / deterministic / solo_dispatch），并且每个模式各自绑定一套提示词管线。执行模板自带工作区内置工具面（枚举/读取/检索/只读 git），MCP 作为可选扩展保留。solo 模式另有一个持工具的对话身份（主从单智能体：主人自己动手改文件，同时在划算时派子智能体）。"
   },
   "compatibility": {
     "minimum_core_version": "0.1.0",
@@ -24,7 +24,7 @@
         "resource_key": "meeting",
         "slug": "meeting",
         "display_name": "会议智能体",
-        "description": "对话身份持有者：理解意图、在声明边或 spawn 白名单内派发执行。",
+        "description": "对话身份持有者：理解意图、在声明边或 spawn 白名单内派发执行。自身不持工具。",
         "layer": "operation",
         "role": "session_coordinator",
         "capabilities": ["user.respond", "task.dispatch", "agent.create_temporary", "agent.spawn"],
@@ -33,6 +33,24 @@
         "system_prompt": "你是用户与系统的对话身份。负责理解用户意图、拆解任务，并只按本模式的编排语义派发：声明边目标或 spawn 白名单内的执行者；对用户保持简洁、先结论后依据。",
         "enabled": true,
         "base_prompt_pipeline_ref": "prompt:seed-base"
+      },
+      {
+        "resource_key": "solo_master",
+        "slug": "solo_master",
+        "display_name": "主从模式对话身份",
+        "description": "solo 模式的对话身份：自己持工具动手改文件，并在划算时派子智能体。",
+        "layer": "operation",
+        "role": "session_coordinator",
+        "capabilities": ["user.respond", "task.dispatch", "agent.create_temporary", "agent.spawn"],
+        "model_strategy": { "kind": "inherit" },
+        "tool_scope": [
+          "ls", "stat", "read_file", "file_search", "git_status", "git_diff", "git_log",
+          "write_file", "shell", "git_commit",
+          "task_dispatch"
+        ],
+        "system_prompt": "你是用户与系统的对话身份，并且亲自下场做事：小范围、单文件的改动由你自己用工具完成，需要并行或专项能力时把子任务派给子智能体。写操作前先读现状；每次写都要用户批准（不要因为被问过就把批准当成已得）；如实报告你实际做了什么、以及有什么没做到。",
+        "enabled": true,
+        "base_prompt_pipeline_ref": "prompt:solo-base"
       },
       {
         "resource_key": "search",
@@ -68,10 +86,70 @@
         "resource_key": "seed-base",
         "slug": "seed-base",
         "display_name": "Graph seed 基线管线",
-        "description": "所有 seed 模板共享的基线提示词管线。",
+        "description": "未被模式级管线覆盖时的兜底基线。",
         "graph": {
           "nodes": [
             { "id": "template", "type": "template", "config": { "content": "DmaEA 图编排基线：按声明拓扑协作，权限只收窄不放宽。" } },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "template", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "solo-base",
+        "slug": "solo-base",
+        "display_name": "主从单智能体管线（solo_dispatch）",
+        "description": "主人自己动手 + 按划算程度派子智能体的协作语义。对主人与子智能体同时生效。",
+        "graph": {
+          "nodes": [
+            { "id": "template", "type": "template", "config": { "content": "本模式是主从单智能体：对话身份（主人）自己持工具动手，并在划算时把子任务派给子智能体。\n主人该怎么做：单文件小改、明确的小范围修复、你自己看一眼就能定下来的事，直接用工具做掉，不要为了形式先派发。可并行拆分、需要专项能力、或会长时间占用你上下文的任务，用 task_dispatch 派给子智能体，然后继续做你自己那部分。\n派发即返回：task_dispatch 只是把子任务入队，子智能体的结果不会回到你这一次调用里。因此不要在回答中声称子任务已完成——子智能体的产出会进入本次运行的证据，由收尾环节一并汇总。\n子智能体（被主人派发时）：你是主人派出的执行者，只做被派的那一件事，按成功判据自验，交出可核对的工件与风险，不要自行扩大范围。\n共同底线：写操作仍逐次需要人工批准；先读后写；路径参数一律传工作区内的绝对路径。" } },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "template", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "vibe-base",
+        "slug": "vibe-base",
+        "display_name": "声明边图协作战管线（self_dispatch）",
+        "description": "任务沿声明边流动、每条边带数据契约的协作语义。",
+        "graph": {
+          "nodes": [
+            { "id": "template", "type": "template", "config": { "content": "本模式是声明边图协作：任务沿模式声明的边流动，每条边带一份数据契约。\n主人该怎么做：把任务沿声明边派发给目标节点，派发时按该边的契约声明请求字段；不要绕过边自行搭建执行层，也不要把一个任务同时扔给多个目标当作提高成功率的手段。\n子智能体：你是声明图上的一个执行者，只接受按边契约派给你的任务，返回契约要求的全部响应字段——缺字段等同于任务未完成，而不是「大致做完」。\n共同底线：先取证再动手；写操作逐次需要人工批准；路径参数一律传工作区内的绝对路径。" } },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "template", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "fixed-base",
+        "slug": "fixed-base",
+        "display_name": "固定管线管线（deterministic）",
+        "description": "拓扑焊死、按阶段推进、派发目标不可扩增的协作语义。",
+        "graph": {
+          "nodes": [
+            { "id": "template", "type": "template", "config": { "content": "本模式是固定管线：拓扑焊死，各阶段按声明边依次推进，派发目标不可扩增。\n主人该怎么做：严格按声明边推进，一次只交给一个阶段；上游阶段没有产出契约要求的字段时，不要假装它完成了然后往下走——那会把缺失的数据带进最终答复。\n子智能体：你是一个固定阶段，只做该阶段的事，产出该阶段契约规定的工件；越界即失败，即使你认为邻段做得不对。\n注意：本模式下工具面被按节点收窄，某个工具不在你的清单里是设计结果而不是缺陷。改用被允许的手段，或如实报告阻塞，不要试图绕过。" } },
+            { "id": "assemble", "type": "assemble" }
+          ],
+          "edges": [
+            { "source": "template", "target": "assemble" }
+          ]
+        }
+      },
+      {
+        "resource_key": "free-base",
+        "slug": "free-base",
+        "display_name": "自由总监管线（free_form）",
+        "description": "无声明边、总监在 spawn 白名单内自行组建执行层的协作语义。",
+        "graph": {
+          "nodes": [
+            { "id": "template", "type": "template", "config": { "content": "本模式是自由总监：没有声明边，主人可在 spawn 白名单内自行组建执行层。\n主人该怎么做：先判断目标需要哪些能力，再从白名单里挑选合适的执行者派发；派发粒度以「能独立验收」为准，不要为了形式把一件事拆成好几件，也不要让同一个目标同时由多个执行者重复劳动。\n子智能体：你是总监临时组建的执行者，只对派给你的目标负责，交出可核验的结果与风险，不要假设后面还有人替你收尾。\n共同底线：先读后写；写操作逐次需要人工批准；路径参数一律传工作区内的绝对路径。" } },
             { "id": "assemble", "type": "assemble" }
           ],
           "edges": [
@@ -86,6 +164,7 @@
         "slug": "free_director",
         "display_name": "自由总监模式（free_form）",
         "description": "单对话节点总监体：无声明边，meeting 在 spawn 白名单（全部执行模板）内自由搭建执行层。",
+        "prompt_pipeline_ref": "prompt:free-base",
         "nodes": [
           {
             "node_key": "meeting",
@@ -135,6 +214,7 @@
         "slug": "vibe_graph",
         "display_name": "Vibe 图模式（self_dispatch）",
         "description": "三节点声明边拓扑：meeting 按边派发 search 与 global_engineering，边携带数据契约。",
+        "prompt_pipeline_ref": "prompt:vibe-base",
         "nodes": [
           {
             "node_key": "meeting",
@@ -235,6 +315,7 @@
         "slug": "fixed_pipeline",
         "display_name": "固定管线模式（deterministic）",
         "description": "拓扑焊死：与 vibe_graph 同三人同边，但 meeting 的 spawn 权被 binding envelope 收窄，任何 spawn 意图都被拒绝（graph_tier_spawn_denied）。",
+        "prompt_pipeline_ref": "prompt:fixed-base",
         "nodes": [
           {
             "node_key": "meeting",
@@ -326,6 +407,57 @@
             "envelope": {
               "resources": { "read": [""], "write": [""] }
             },
+            "includes_core_reserved": false
+          }
+        ],
+        "canvas_layout": {}
+      },
+      {
+        "resource_key": "solo",
+        "slug": "solo",
+        "display_name": "主从单智能体模式（solo_dispatch）",
+        "description": "主人亲自下场：对话身份自己持工具完成小范围改动，同时在 spawn 白名单（search / global_engineering）内把可并行或需专项能力的部分派给子智能体。无声明边。",
+        "prompt_pipeline_ref": "prompt:solo-base",
+        "nodes": [
+          {
+            "node_key": "meeting",
+            "agent_ref": "agent:solo_master",
+            "layer": "operation",
+            "label": "Master",
+            "config": { "conversation": true },
+            "relationship": {
+              "duty": "自己动手完成小范围改动，并把可并行或需专项能力的工作派给子智能体。",
+              "inputs_outputs": { "receives": "user goal", "returns": "final answer" },
+              "allowed_dispatch_targets": ["search", "global_engineering"],
+              "success_criteria": ["自己做的与派出去的工作都在运行证据里可追溯", "目标被满足或明确向用户说明阻塞"],
+              "agent_types": ["search", "global_engineering"]
+            },
+            "position": null
+          }
+        ],
+        "edges": [],
+        "bindings": [
+          {
+            "node_key": "meeting",
+            "agent_ref": "agent:solo_master",
+            "duty_description_ref": "graphseed://relationship/solo_master",
+            "tool_switches": {},
+            "envelope": {
+              "resources": { "read": [""], "write": [""] },
+              "spawn": { "max_depth": 1, "max_agents_per_run": 8, "max_parallel_workers": 4 }
+            },
+            "includes_core_reserved": false
+          },
+          {
+            "agent_ref": "agent:search",
+            "tool_switches": {},
+            "envelope": { "resources": { "read": [""] } },
+            "includes_core_reserved": false
+          },
+          {
+            "agent_ref": "agent:global_engineering",
+            "tool_switches": {},
+            "envelope": { "resources": { "read": [""], "write": [""] } },
             "includes_core_reserved": false
           }
         ],
