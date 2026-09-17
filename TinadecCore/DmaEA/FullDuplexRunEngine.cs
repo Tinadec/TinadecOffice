@@ -364,6 +364,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     }
                 }
 
+                // Sub-tasks the conversation identity queued through task_dispatch. Consumed
+                // on the ORDINARY tick, not at run terminal: a dispatched sub-task has to
+                // actually run, and the master keeps working in its own loop meanwhile.
+                if (await ApplyPendingTaskDispatchesAsync(run, checkpoint, stoppingToken).ConfigureAwait(false))
+                {
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-dispatched", stoppingToken).ConfigureAwait(false);
+                }
+
                 switch (checkpoint.Phase)
                 {
                     case "planning":
@@ -508,6 +516,51 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 }, cancellationToken, idempotencyKey: $"run:{run.RunId}:tier").ConfigureAwait(false);
             checkpoint.GraphTierAnnounced = true;
         }
+
+        // solo_dispatch: the master does the work itself, so there is no task graph to
+        // author — planning a graph and then having one instance execute it would be a
+        // detour with a wasted model call. The master's own work is modelled as ONE task
+        // that it executes, which is what lets it reuse the checkpointed tool-turn loop
+        // (approval parking, failure feedback, loop guard, tool timeline) instead of
+        // needing a second, ungoverned execution path.
+        if (string.Equals(graph.Tier, FrozenGraphTiers.SoloDispatch, StringComparison.Ordinal)
+            && checkpoint.PlanRevision == 0)
+        {
+            checkpoint.Tasks = BuildSoloMasterTask(configuration, checkpoint);
+            SyncLanes(checkpoint);
+            checkpoint.PlanRevision++;
+            checkpoint.Phase = "executing";
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "solo-plan", cancellationToken).ConfigureAwait(false);
+            await TrySetRunStatusAsync(run.RunId, "executing", null, cancellationToken).ConfigureAwait(false);
+            var soloRunId = Guid.Parse(run.RunId);
+            var soloTask = checkpoint.Tasks[0];
+            await AppendEventAsync(soloRunId, "task_graph.created",
+                "1 solo task planned: the conversation identity executes the goal itself.", new
+                {
+                    run_id = run.RunId,
+                    plan_revision = checkpoint.PlanRevision,
+                    task_count = checkpoint.Tasks.Count,
+                    task_keys = checkpoint.Tasks.Select(item => item.TaskKey).ToArray(),
+                    tier = graph.Tier
+                }, cancellationToken).ConfigureAwait(false);
+            // The assignment is pre-resolved (no planner ran), so announce it here: the
+            // ordinary dispatch emits worker.assigned when IT picks the worker, and the
+            // desktop's activity view reads this event to name the active agent.
+            await AppendEventAsync(soloRunId, "worker.assigned",
+                $"Solo master '{plannerDefinition.Id}' takes its own task.", new
+                {
+                    task_id = soloTask.TaskId,
+                    task_key = soloTask.TaskKey,
+                    agent_slug = plannerDefinition.Id,
+                    agent_definition_id = plannerDefinition.AgentDefinitionId,
+                    agent_version_id = plannerDefinition.AgentVersionId,
+                    agent_version_hash = plannerDefinition.VersionContentHash,
+                    reason = soloTask.WorkerAssignmentReason,
+                    required_capabilities = soloTask.RequiredCapabilities,
+                    required_tools = soloTask.RequiredTools
+                }, cancellationToken, soloTask.TaskId).ConfigureAwait(false);
+            return checkpoint;
+        }
         var context = await BuildContextAsync(run, configuration, plannerDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var assembly = await AssemblePromptAsync(configuration, plannerDefinition, context, cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(Guid.Parse(run.RunId), "context.packed", "Planner context assembled.", new
@@ -520,6 +573,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         PlannedTask[] planned = [];
         Exception? lastError = null;
+        var plannerHead = string.Empty;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -532,13 +586,30 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     BuildFrozenPlannerRoster(configuration),
                     PlannerInstructions(checkpoint, assembly.Instructions),
                     cancellationToken).ConfigureAwait(false);
+                plannerHead = planner.LastResponseHead;
                 RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
-                var materialized = ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
+                // A PARSED empty array is a legitimate plan, not a failure: a greeting or a
+                // pure question has no subtasks, and the meeting agent answers it from the
+                // conversation. Two steps must therefore be skipped for it — the fallback
+                // refusal (there is no fallback; the parse succeeded) and materialization
+                // (which rejects an empty list). The run then carries zero tasks, the
+                // dispatch pass finds nothing ready, sees every task terminal, marks the
+                // phase "reviewing" and goes straight to the answer.
+                var noWorkToPlan = planner.LastPlanWasParsed && planned.Length == 0 && checkpoint.PlanRevision == 0;
+                var materialized = noWorkToPlan
+                    ? new List<DurableTaskNode>()
+                    : ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
                     ? materialized
                     : MergeReplannedGraph(checkpoint.Tasks, materialized);
                 SyncLanes(checkpoint);
+                if (noWorkToPlan)
+                {
+                    await AppendEventAsync(Guid.Parse(run.RunId), "task_graph.empty",
+                        "The planner produced an empty plan; this goal needs no execution work.",
+                        new { run_id = run.RunId, user_goal = checkpoint.UserGoal }, cancellationToken).ConfigureAwait(false);
+                }
                 lastError = null;
                 break;
             }
@@ -549,6 +620,19 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         if (lastError is not null)
         {
+            // Carry the planner's actual answer onto the run. The failure message alone
+            // ("not a task array") cannot be acted on: it does not distinguish prose,
+            // truncated JSON, and an empty plan — and an empty plan is legitimate, so
+            // without this the difference is invisible to anyone not holding the console.
+            await AppendEventAsync(Guid.Parse(run.RunId), "run.plan_diagnostic",
+                "Planner raw answer captured because the plan was refused.",
+                new
+                {
+                    run_id = run.RunId,
+                    reason = lastError.Message,
+                    response_head = plannerHead,
+                    response_head_length = plannerHead.Length
+                }, cancellationToken).ConfigureAwait(false);
             await FailRunAsync(Guid.Parse(run.RunId), checkpoint, "invalid_task_graph", lastError.Message, cancellationToken).ConfigureAwait(false);
             return checkpoint;
         }
@@ -780,8 +864,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 return new TaskExecutionResult(task.TaskId, worker.Id, "failed", failed, model.Usage);
             }
             var result = string.IsNullOrWhiteSpace(model.Text)
-                ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [] }
-                : BuildCompletedStepResult(task.TaskId, worker.Id, model.Text);
+                ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [DispatchEvidence(task)] }
+                : BuildCompletedStepResult(task, worker.Id, model.Text);
             return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result, model.Usage);
         }
         catch (Exception ex) when (ex is WorkerAssignmentException or InvalidDataException)
@@ -860,7 +944,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 {
                     if (!TryParseJsonObject(pendingTurn.ArgumentsJson, out var parameters))
                     {
-                        return FailedToolTask(checkpoint, task, worker, RunErrorTaxonomy.InvalidToolArguments, "The worker returned invalid tool arguments.", pendingTurn.ToolId);
+                        // Bad arguments are the single most correctable failure a model
+                        // makes, and this exit used to end the task WITHOUT even writing
+                        // the reason into the turn — the model could not see what it got
+                        // wrong, so it could not fix it.
+                        checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
+                            RunErrorTaxonomy.InvalidToolArguments, "The worker returned invalid tool arguments.",
+                            checkpoint, cancellationToken).ConfigureAwait(false);
+                        continue;
                     }
 
                     var toolCallKey = $"run:{run.RunId}:task:{task.TaskKey}:attempt:{task.Attempt}:round:{task.ToolRounds}:call:{pendingTurn.CallId}";
@@ -896,11 +987,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
                     if (string.IsNullOrWhiteSpace(dispatch.ExecutionId))
                     {
-                        var prepareCategory = dispatch.ErrorCategory ?? RunErrorTaxonomy.ToolPrepareFailed;
-                        var prepareMessage = dispatch.Message ?? "The tool call could not be prepared.";
-                        pendingTurn.ErrorCategory ??= prepareCategory;
-                        pendingTurn.ResultJson = ToolCallFailureJson(pendingTurn.ToolId, prepareCategory, prepareMessage);
-                        return FailedToolTask(checkpoint, task, worker, prepareCategory, prepareMessage, pendingTurn.ToolId);
+                        // A prepare that produced no execution has already written the
+                        // structured reason into the turn; killing the task right after
+                        // was self-contradictory — the reason existed precisely so the
+                        // model could read it and adapt.
+                        checkpoint = await FeedToolFailureBackAsync(run, task, pendingTurn,
+                            dispatch.ErrorCategory ?? RunErrorTaxonomy.ToolPrepareFailed,
+                            dispatch.Message ?? "The tool call could not be prepared.",
+                            checkpoint, cancellationToken).ConfigureAwait(false);
+                        continue;
                     }
                 }
 
@@ -974,23 +1069,50 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-awaiting", cancellationToken).ConfigureAwait(false);
                     return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
                 }
-                if (dispatch.Status == ToolDispatchStatus.OutcomeUnknown)
-                {
-                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-outcome-unknown", cancellationToken).ConfigureAwait(false);
-                    return new ToolTaskExecutionResult(checkpoint, Waiting: true, Result: null);
-                }
                 if (dispatch.Status != ToolDispatchStatus.Completed)
                 {
                     var category = dispatch.ErrorCategory ?? dispatch.Status;
                     var summary = dispatch.Message ?? $"Tool '{pendingTurn.ToolId}' returned {dispatch.Status}.";
-                    // A call that did not complete must come back with a reason, not as
-                    // silence: the unresolved turn keeps the structured tool error (the
-                    // provider wire contract's shape) so a replayed turn shows the model
-                    // why, and the task failure names the tool next to its category so
-                    // supervision and the final answer can state the actual cause.
+                    // A call that did not complete is a tool RESULT, not a terminal
+                    // task outcome. The structured error (the provider wire contract's
+                    // shape) lands on the turn exactly as a successful result would,
+                    // and the pending linkage is dropped so the next pass cannot
+                    // re-drive a dead execution. The worker model then reads why the
+                    // call failed and decides: retry with corrected arguments, switch
+                    // tool, or hand off.
+                    //
+                    // This used to fail the task on the first non-completed dispatch,
+                    // which made the loop non-iterative by construction — the model
+                    // was never told what went wrong, so one refusal, timeout, or bad
+                    // argument ended the work instead of being corrected. The
+                    // outcome_unknown case was worse: it parked the entire run, hiding
+                    // a recoverable ambiguity behind a resume only a human could give.
+                    //
+                    // Convergence is carried by the loop guard (repeated calls,
+                    // consecutive errors, consecutive empty responses) and the token
+                    // budgets — not by killing the task at the first failure.
+                    pendingTurn.DispatchStatus = dispatch.Status;
                     pendingTurn.ErrorCategory ??= category;
                     pendingTurn.ResultJson = ToolCallFailureJson(pendingTurn.ToolId, category, summary);
-                    return FailedToolTask(checkpoint, task, worker, category, summary, pendingTurn.ToolId);
+                    ClearPendingToolExecution(task);
+                    checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-failure", cancellationToken).ConfigureAwait(false);
+                    await AppendEventAsync(Guid.Parse(run.RunId), "worker.tool_failed",
+                        $"Tool '{pendingTurn.ToolId}' failed ({category}); the failure was returned to the worker as a tool result.",
+                        new
+                        {
+                            run_id = run.RunId,
+                            task_id = task.TaskId,
+                            task_key = task.TaskKey,
+                            lane_key = LaneKeyOf(task),
+                            tool_id = pendingTurn.ToolId,
+                            call_id = pendingTurn.CallId,
+                            dispatch_status = dispatch.Status,
+                            error_category = category,
+                            message = summary,
+                            consecutive_errors = TrailingConsecutiveErrors(task),
+                            returned_to_worker = true
+                        }, cancellationToken, task.TaskId, idempotencyKey: $"tool-failure:{task.TaskId}:{pendingTurn.CallId}").ConfigureAwait(false);
+                    continue;
                 }
 
                 var resultJson = dispatch.Result?.GetRawText();
@@ -1160,7 +1282,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 {
                     return new ToolTaskExecutionResult(checkpoint, Waiting: false,
                         new TaskExecutionResult(task.TaskId, worker.Id, "completed",
-                            BuildCompletedStepResult(task.TaskId, worker.Id, model.Text)));
+                            BuildCompletedStepResult(task, worker.Id, model.Text)));
                 }
                 // Blank answer below the streak threshold: give the model another
                 // turn instead of failing the task on one empty response.
@@ -1249,8 +1371,20 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         // wins, then the frozen roster, then (graph tiers) the spawnable whitelist
         // for tasks the roster cannot cover — that fallback IS the spawn demand.
         var spawnable = ResolvePersistedSpawnable(configuration, task);
+        // solo_dispatch: a task assigned to the CONVERSATION IDENTITY is executed by the
+        // master, which lives in the operation roster — ResolveOrSelectWorker below only
+        // searches execution agents and would report the master as unavailable. The master
+        // gets its OWN instance for the task (the conversation instance authored the run
+        // and carries no task id, and VerifyWorkerInstance rightly requires the executing
+        // instance to be bound to the task), which is also what keeps its tool turns, its
+        // approvals and its tool-timeline row attached to a real lineage entry.
+        var soloMaster = ResolveSoloMaster(configuration, graph, task);
         WorkerSelection selected;
-        if (spawnable is not null)
+        if (soloMaster is not null)
+        {
+            selected = soloMaster;
+        }
+        else if (spawnable is not null)
         {
             selected = new WorkerSelection(SpawnableDefinition(spawnable, configuration), task.WorkerAssignmentReason ?? "spawnable_whitelist");
         }
@@ -1270,9 +1404,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 // graph_tier_spawn_denied rejection; otherwise spawn it.
                 var coverage = GraphSpawnAuthority.FindCoverage(graph, task.RequiredTools, task.RequiredCapabilities);
                 if (coverage is null) throw;
+                // Single source of truth: an inline list of spawn-authority tiers here
+                // had to be found and edited separately from GraphSpawnAuthority every
+                // time a tier was added, which is exactly how a new tier silently loses
+                // (or gains) spawn rights.
                 var tierCarriesSpawnAuthority = graph is not null
-                    && (string.Equals(graph.Tier, FrozenGraphTiers.SelfDispatch, StringComparison.Ordinal)
-                        || string.Equals(graph.Tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal));
+                    && GraphSpawnAuthority.CarriesSpawnAuthority(graph.Tier);
                 if (!tierCarriesSpawnAuthority)
                     throw new WorkerAssignmentException(
                         $"Task '{task.TaskKey}' matches spawnable template '{coverage.Slug}', but the {graph?.Tier ?? "declared-graph"} tier denies spawn (graph_tier_spawn_denied).");
@@ -1291,7 +1428,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         // doomed selection must never reach the checkpoint. The instance
         // population also feeds the graph-tier budget guard, so it is loaded
         // before the assignment write instead of after it.
-        if (spawnable is null && graph is not null
+        //
+        // The solo master is exempt: edge authority answers "which worker may this node
+        // dispatch TO", and the master is the conversation node itself, not a target of
+        // its own edges. Asking that question about the master would deny it its own work.
+        if (spawnable is null && soloMaster is null && graph is not null
             && !GraphEdgeAuthority.IsDispatchAllowed(graph, selected.Agent.Id))
             throw new WorkerAssignmentException(
                 $"Task '{task.TaskKey}' worker '{selected.Agent.Id}' is not a declared dispatch target of the mode graph (tier {graph.Tier}).");
@@ -1568,8 +1709,20 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             })
             .Where(candidate => candidate.Eligible)
             .OrderBy(candidate => candidate.IsGeneral)
-            .ThenBy(candidate => Math.Max(0, candidate.Tools.Count - requiredTools.Count))
-            .ThenBy(candidate => Math.Max(0, candidate.Capabilities.Count - requiredCapabilities.Count))
+            // An open-ended task declares nothing to narrow against, so "fewest extra
+            // tools" used to hand it to the NARROWEST worker — which is how a request
+            // to write a file landed on a read-only executor that then reported it had
+            // no way to do the job. With no requirement to satisfy, breadth is the only
+            // meaningful signal left: the most capable worker is the one that can
+            // actually attempt an open goal. A task that DOES declare requirements
+            // keeps the least-privilege ordering (fewest extra tools, then fewest extra
+            // capabilities).
+            .ThenBy(candidate => unclassifiedTask
+                ? -candidate.Tools.Count
+                : Math.Max(0, candidate.Tools.Count - requiredTools.Count))
+            .ThenBy(candidate => unclassifiedTask
+                ? -candidate.Capabilities.Count
+                : Math.Max(0, candidate.Capabilities.Count - requiredCapabilities.Count))
             .ThenBy(candidate => candidate.Agent.RosterOrder)
             .ThenBy(candidate => candidate.Agent.Id, StringComparer.Ordinal)
             .ToArray();
@@ -1704,6 +1857,16 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             && agent.AgentVersionId == task.WorkerAgentVersionId
             && string.Equals(agent.VersionContentHash, task.WorkerAgentVersionHash, StringComparison.OrdinalIgnoreCase));
         if (definition is not null) return definition;
+        // solo_dispatch assigns the conversation identity a task it executes itself, and
+        // the identity lives in the OPERATION roster. Without this lookup the frozen
+        // assignment could not be re-resolved (recovery, resume, verification) and the
+        // master's own task would fail as roster drift.
+        var master = configuration.OperationAgents.SingleOrDefault(agent =>
+            string.Equals(agent.Id, task.WorkerAgentSlug, StringComparison.Ordinal)
+            && agent.AgentDefinitionId == task.WorkerAgentDefinitionId
+            && agent.AgentVersionId == task.WorkerAgentVersionId
+            && string.Equals(agent.VersionContentHash, task.WorkerAgentVersionHash, StringComparison.OrdinalIgnoreCase));
+        if (master is not null) return master;
         var template = configuration.Graph?.SpawnableTemplates.SingleOrDefault(item =>
             string.Equals(item.Slug, task.WorkerAgentSlug, StringComparison.OrdinalIgnoreCase)
             && item.AgentDefinitionId == task.WorkerAgentDefinitionId
@@ -1712,6 +1875,166 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         return template is not null
             ? SpawnableDefinition(template, configuration)
             : throw new InvalidDataException($"Task '{task.TaskKey}' worker assignment is not present in the frozen roster.");
+    }
+
+    /// <summary>
+    /// Materializes sub-tasks queued by the conversation identity through
+    /// <c>task_dispatch</c>. A delivered task node has no dependencies, so the ordinary
+    /// dispatch loop picks it up on its own — worker selection, spawnable templates,
+    /// approval and convergence are exactly the paths a planned task takes.
+    ///
+    /// Each row is drained exactly once (the pending-status filter), and a row with no
+    /// title is rejected rather than turned into an untitled task nobody can act on.
+    /// </summary>
+    private async Task<bool> ApplyPendingTaskDispatchesAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        var pending = await _lifecycle.ListPendingRunDirectivesAsync(checkpoint.RunId, cancellationToken).ConfigureAwait(false);
+        var dispatches = pending
+            .Where(item => string.Equals(item.Kind, "task_dispatch", StringComparison.Ordinal))
+            .ToList();
+        if (dispatches.Count == 0) return false;
+
+        var runId = Guid.Parse(run.RunId);
+        var added = 0;
+        foreach (var directive in dispatches)
+        {
+            string? title = null;
+            string? description = null;
+            string[] criteria = [];
+            string[] tools = [];
+            string[] capabilities = [];
+            try
+            {
+                using var document = JsonDocument.Parse(directive.PayloadJson);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("title", out var titleElement) && titleElement.ValueKind == JsonValueKind.String)
+                        title = titleElement.GetString()?.Trim();
+                    if (root.TryGetProperty("description", out var descriptionElement) && descriptionElement.ValueKind == JsonValueKind.String)
+                        description = descriptionElement.GetString()?.Trim();
+                    criteria = ReadStringArray(root, "success_criteria");
+                    tools = ReadStringArray(root, "required_tools");
+                    capabilities = ReadStringArray(root, "required_capabilities");
+                }
+            }
+            catch (JsonException)
+            {
+                // Falls through to the rejection below, same as a missing title.
+            }
+
+            var status = "consumed";
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                status = "rejected";
+                await AppendEventAsync(runId, "task.dispatch_rejected",
+                    "A queued sub-task carried no title and was rejected.",
+                    new { directive_id = directive.Id, code = "dispatch_payload_unreadable" }, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var key = NormalizeTaskKey(null, title);
+                // Duplicate keys are tolerated rather than fatal: NormalizeTaskKey only
+                // guarantees uniqueness within a plan, and a dispatch can repeat a title.
+                // De-duplicating here would silently swallow a legitimate second request,
+                // so the key is disambiguated instead.
+                if (checkpoint.Tasks.Any(item => string.Equals(item.TaskKey, key, StringComparison.OrdinalIgnoreCase)))
+                {
+                    key = $"{key}-{checkpoint.Tasks.Count(node => node.TaskKey.StartsWith(key, StringComparison.OrdinalIgnoreCase)) + 1}";
+                }
+                checkpoint.DirectiveCursor++;
+                checkpoint.Tasks.Add(new DurableTaskNode
+                {
+                    TaskId = Guid.NewGuid(),
+                    TaskKey = key,
+                    Title = title,
+                    Description = description,
+                    SuccessCriteria = criteria.Length > 0 ? [.. criteria] : ["The sub-task's stated goal is met."],
+                    Dependencies = [],
+                    RequiredCapabilities = [.. capabilities],
+                    RequiredTools = [.. tools],
+                    Priority = 2,
+                    Risk = "medium",
+                    Status = "pending"
+                });
+                added++;
+                await AppendEventAsync(runId, "task.dispatched",
+                    $"Sub-task '{title}' was accepted into the run's task graph.",
+                    new
+                    {
+                        directive_id = directive.Id,
+                        task_key = key,
+                        title,
+                        required_tools = tools,
+                        required_capabilities = capabilities
+                    }, cancellationToken).ConfigureAwait(false);
+            }
+            await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], status, cancellationToken).ConfigureAwait(false);
+        }
+        return added > 0;
+    }
+
+    /// <summary>
+    /// Resolves a task whose assigned worker IS the conversation identity, in the
+    /// solo_dispatch tier. Returns null for every other tier and every other worker, so
+    /// the ordinary execution-roster resolution stays the single path for them.
+    /// </summary>
+    private static WorkerSelection? ResolveSoloMaster(
+        FrozenRunConfigurationV1 configuration,
+        FrozenGraph? graph,
+        DurableTaskNode task)
+    {
+        if (graph is not { Tier: FrozenGraphTiers.SoloDispatch }) return null;
+        if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug)) return null;
+        if (!string.Equals(task.WorkerAgentSlug, graph.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase)) return null;
+        var master = configuration.OperationAgents.SingleOrDefault(agent =>
+            string.Equals(agent.Id, task.WorkerAgentSlug, StringComparison.Ordinal)
+            && agent.AgentDefinitionId == task.WorkerAgentDefinitionId
+            && agent.AgentVersionId == task.WorkerAgentVersionId
+            && string.Equals(agent.VersionContentHash, task.WorkerAgentVersionHash, StringComparison.OrdinalIgnoreCase));
+        return master is null ? null : new WorkerSelection(master, task.WorkerAssignmentReason ?? "solo_master");
+    }
+
+    /// <summary>
+    /// The single task a solo master executes itself: the user's goal, assigned to the
+    /// conversation identity and pre-bound to its frozen agent version so the ordinary
+    /// dispatch path needs no planner.
+    ///
+    /// <c>RequiredTools</c> is deliberately left EMPTY. A non-empty requirement is checked
+    /// tool-by-tool against the instance's authorized catalog (grant ∩ frozen manifest)
+    /// and throws on the first mismatch, which would turn any manifest/grant gap into a
+    /// dead task. Empty instead takes the "offer the whole authorized catalog" path — and
+    /// that catalog IS the master's authority, so the declaration surface matches the
+    /// authority exactly rather than a guess made one layer up.
+    /// </summary>
+    private static List<DurableTaskNode> BuildSoloMasterTask(
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint)
+    {
+        var master = RequiredConversationAgent(configuration);
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "solo",
+            Title = checkpoint.UserGoal,
+            Description = null,
+            SuccessCriteria = ["The goal is satisfied and the answer reports what what actually happened."],
+            Dependencies = [],
+            RequiredCapabilities = master.Capabilities.ToList(),
+            RequiredTools = [],
+            Priority = 1,
+            Risk = "medium",
+            Status = "pending"
+        };
+        task.WorkerAgentSlug = master.Id;
+        task.WorkerAgentDefinitionId = master.AgentDefinitionId;
+        task.WorkerAgentVersionId = master.AgentVersionId;
+        task.WorkerAgentVersionHash = master.VersionContentHash;
+        task.WorkerAssignmentReason = "solo_master";
+        return [task];
     }
 
     private static void VerifyWorkerInstance(
@@ -1903,9 +2226,22 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             // first thing a reader (or the model reviewing evidence) needs, and the
             // per-task evidence used to carry the category alone.
             Evidence = toolId is null
-                ? [$"error_category:{category}"]
-                : [$"error_category:{category}", $"tool:{toolId}"]
+                ? [$"error_category:{category}", DispatchEvidence(task)]
+                : [$"error_category:{category}", $"tool:{toolId}", DispatchEvidence(task)]
         });
+
+    /// <summary>
+    /// Audit evidence for WHY this task landed on this worker. Without it, "the task
+    /// was assigned to X" is the only surviving fact, and the decision rule that chose
+    /// X (declared requirements vs. open-ended breadth, general vs. specialist) is
+    /// invisible in replay — which is exactly how a wrong dispatch stayed undiagnosed.
+    /// </summary>
+    private static string DispatchEvidence(DurableTaskNode task)
+    {
+        var slug = string.IsNullOrWhiteSpace(task.WorkerAgentSlug) ? "unassigned" : task.WorkerAgentSlug;
+        var reason = string.IsNullOrWhiteSpace(task.WorkerAssignmentReason) ? "unknown" : task.WorkerAssignmentReason;
+        return $"dispatch:{slug}:{reason}";
+    }
 
     /// <summary>
     /// The structured tool error stored on a turn whose call did not complete.
@@ -1958,6 +2294,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var text = model.Text?.Trim();
         var evidence = new List<string>();
         if (!string.IsNullOrWhiteSpace(text)) evidence.Add(text);
+        evidence.Add(DispatchEvidence(task));
         evidence.Add($"closeout:{category}");
         evidence.Add($"closeout_reason:{reason}");
         if (task.CloseoutHardCeiling) evidence.Add("hard_ceiling:true");
@@ -2616,6 +2953,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             checkpoint.AssistantMessageId = assistant.Id;
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "assistant-persisted", cancellationToken).ConfigureAwait(false);
         }
+
+        // Persisted BEFORE the turn's closing revision is read, so the evidence message
+        // is part of the turn the next request inherits.
+        await PersistRunEvidenceAsync(runId, run, checkpoint, cancellationToken).ConfigureAwait(false);
 
         var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
         await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, checkpoint.AssistantMessageId, revision, "completed", cancellationToken).ConfigureAwait(false);
@@ -3667,16 +4008,104 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             ? ex.Message
             : "Unexpected runtime failure.";
 
-    private static StepResult BuildCompletedStepResult(Guid taskId, Guid workerId, string text)
+    /// <summary>How many tool rounds the persisted run digest carries, newest last.</summary>
+    private const int MaxRunEvidenceTurns = 12;
+
+    /// <summary>
+    /// Hands a failed tool call back to the worker as a tool RESULT and lets the loop
+    /// continue. Shared by every failure exit that happens BEFORE a dispatch exists
+    /// (unparseable arguments, a prepare that produced no execution), so none of them
+    /// can quietly keep the old behaviour — killing the task on the first failure, with
+    /// the model never told why. Convergence stays with the loop guard and the token
+    /// budgets, not with this exit.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> FeedToolFailureBackAsync(
+        RunState run,
+        DurableTaskNode task,
+        WorkerToolTurn turn,
+        string category,
+        string message,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        turn.DispatchStatus ??= category;
+        turn.ErrorCategory ??= category;
+        turn.ResultJson = ToolCallFailureJson(turn.ToolId, category, message);
+        ClearPendingToolExecution(task);
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-failure", cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(Guid.Parse(run.RunId), "worker.tool_failed",
+            $"Tool '{turn.ToolId}' failed ({category}); the failure was returned to the worker as a tool result.",
+            new
+            {
+                run_id = run.RunId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                lane_key = LaneKeyOf(task),
+                tool_id = turn.ToolId,
+                call_id = turn.CallId,
+                dispatch_status = turn.DispatchStatus,
+                error_category = category,
+                message,
+                consecutive_errors = TrailingConsecutiveErrors(task),
+                returned_to_worker = true
+            }, cancellationToken, task.TaskId, idempotencyKey: $"tool-failure:{task.TaskId}:{turn.CallId}").ConfigureAwait(false);
+        return checkpoint;
+    }
+
+    /// <summary>Per-line cap, so one long result cannot dominate the digest.</summary>
+    private const int MaxRunEvidenceLineLength = 240;
+
+    /// <summary>
+    /// Persists a bounded digest of this run's tool activity as a conversation
+    /// message, so the NEXT turn's history assembly can see what actually happened.
+    ///
+    /// Tool calls and their outcomes used to live only in the checkpoint: the
+    /// conversation kept the prose summary and nothing else, so a follow-up question
+    /// ("why did that fail?") was answered by a model with no memory of its own
+    /// tooling. That is what made a mis-dispatched worker and a refused write
+    /// invisible in the one place the user actually looks.
+    /// </summary>
+    private async Task PersistRunEvidenceAsync(Guid runId, RunState run, FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken)
+    {
+        var turns = checkpoint.Tasks.SelectMany(task => task.ToolTurns).ToList();
+        if (turns.Count == 0) return;
+
+        var rendered = turns
+            .TakeLast(MaxRunEvidenceTurns)
+            .Select(turn =>
+            {
+                var status = string.IsNullOrWhiteSpace(turn.DispatchStatus) ? "completed" : turn.DispatchStatus;
+                var category = string.IsNullOrWhiteSpace(turn.ErrorCategory) ? string.Empty : $" ({turn.ErrorCategory})";
+                return TruncateEvidence($"{turn.ToolId} {status}{category}: {turn.ResultJson ?? string.Empty}");
+            })
+            .ToList();
+
+        var content = $"tool_evidence — {turns.Count} tool round(s), showing the last {rendered.Count}\n"
+            + string.Join('\n', rendered);
+        await _conversations.AppendMessageAsync(checkpoint.SessionId, "tool_evidence", content,
+            runId, checkpoint.TurnId, $"run:{run.RunId}:turn:{checkpoint.TurnId}:tool-evidence:v1", cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(runId, "run.evidence_recorded",
+            "The run's tool activity was persisted into the conversation history.",
+            new { turn_count = turns.Count, recorded = rendered.Count }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string TruncateEvidence(string value)
+    {
+        var collapsed = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return collapsed.Length <= MaxRunEvidenceLineLength ? collapsed : collapsed[..MaxRunEvidenceLineLength] + "…";
+    }
+
+    private static StepResult BuildCompletedStepResult(DurableTaskNode task, Guid workerId, string text)
     {
         var summary = ExtractContextPatch(text, out var patchSummary, out var patchContent);
+        var taskId = task.TaskId;
         return new StepResult
         {
             TaskNodeId = taskId,
             AgentId = workerId.ToString("N"),
             Status = "completed",
             Summary = summary,
-            Evidence = [summary],
+            Evidence = [summary, DispatchEvidence(task)],
             ProposedPatchSummary = patchSummary,
             ProposedPatchContent = patchContent
         };

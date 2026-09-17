@@ -63,7 +63,17 @@ public sealed class ExecutionAgent
             return WorkerModelTurn.Unavailable(resolved.Error ?? "Chat route unavailable.");
         }
 
-        var taskInstructions = $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n只输出完成摘要。";
+        // The solo master executes its own task in this very loop, so the framing has to
+        // say which one it is: a worker summarises work someone else assigned, while the
+        // master owns the goal end to end — it may do the work itself AND hand parts off,
+        // which is the whole point of that mode. Same loop, same governance, different
+        // instruction.
+        var taskInstructions = string.Equals(agent.Layer, "operation", StringComparison.Ordinal)
+            ? $"你是会话智能体（{agent.Name}），正在亲自执行用户的这个目标。你可以直接调用工具把它做掉；"
+                + "遇到可并行拆分或需要专项能力的部分，就派给子智能体去做。\n"
+                + $"标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n"
+                + "完成后简要说明你实际做了什么、以及有什么没做到。"
+            : $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n只输出完成摘要。";
         var instructions = string.IsNullOrWhiteSpace(assembledInstructions)
             ? taskInstructions
             : assembledInstructions.Trim() + "\n\n" + taskInstructions;
@@ -71,7 +81,10 @@ public sealed class ExecutionAgent
         {
             Instructions = instructions,
             ToolMode = ChatToolMode.Auto,
-            AllowMultipleToolCalls = true
+            AllowMultipleToolCalls = true,
+            // A worker turn carries both its tool calls and its summary text; the
+            // provider default truncated them the same way it truncated the planner.
+            MaxOutputTokens = Maf18RuntimeAdapter.DefaultMaxOutputTokens
         };
         if (tools.Count != 0)
         {
