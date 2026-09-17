@@ -48,11 +48,15 @@ public sealed class ToolResourceAllowListTests
     }
 
     [Fact]
-    public void ReadGrant_DoesNotAuthorizeMutations_AndWriteImpliesRead()
+    public void ReadGrant_DoesNotActAsAWriteGrant_SoTheCallUpgradesToAnApproval()
     {
-        var denied = ToolResourceAllowList.Evaluate(["read:src"], "src/app.cs", mutating: true);
-        Assert.False(denied.Allowed);
-        Assert.Equal(ResourceAllowBasis.LevelDenied, denied.Basis);
+        // The envelope never implies write access, but it must not be the thing that
+        // refuses either: refusing here is what made "write a file" unreachable,
+        // because the request never reached the gate that could authorize it.
+        var upgrade = ToolResourceAllowList.Evaluate(["read:src"], "src/app.cs", mutating: true);
+        Assert.False(upgrade.Allowed);
+        Assert.True(upgrade.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.LevelDenied, upgrade.Basis);
 
         Assert.True(ToolResourceAllowList.Evaluate(["write:src"], "src/app.cs", mutating: false).Allowed);
         Assert.True(ToolResourceAllowList.Evaluate(["write:src"], "src/app.cs", mutating: true).Allowed);
@@ -65,26 +69,50 @@ public sealed class ToolResourceAllowListTests
         Assert.True(ToolResourceAllowList.Evaluate(["read:src"], null, mutating: false).Allowed);
         Assert.True(ToolResourceAllowList.Evaluate(["write:src"], null, mutating: true).Allowed);
 
-        // The level still applies: a read-only grant cannot mutate.
-        var denied = ToolResourceAllowList.Evaluate(["read:src"], null, mutating: true);
-        Assert.False(denied.Allowed);
-        Assert.Equal(ResourceAllowBasis.LevelDenied, denied.Basis);
+        // The level still applies: a read-only grant needs approval to mutate.
+        var upgrade = ToolResourceAllowList.Evaluate(["read:src"], null, mutating: true);
+        Assert.False(upgrade.Allowed);
+        Assert.True(upgrade.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.LevelDenied, upgrade.Basis);
     }
 
     [Fact]
-    public void UnregisteredGrantForms_AreNotGrants()
+    public void UnregisteredGrantForms_AreNotGrants_AndNeverUpgrade()
     {
         // The retired coarse tokens ("workspace"/"project") are not level grants.
         Assert.False(ToolResourceAllowList.Evaluate(["workspace"], "src/app.cs", false).Allowed);
         Assert.False(ToolResourceAllowList.Evaluate(["workspace"], null, false).Allowed);
         Assert.Equal(ResourceAllowBasis.LevelDenied, ToolResourceAllowList.Evaluate(["workspace"], null, false).Basis);
+
+        // An envelope whose grants are ALL unrecognized has nothing to upgrade from:
+        // it must refuse rather than ask, or a corrupt grant list would become a
+        // route to an approval the operator never provisioned.
+        var corrupt = ToolResourceAllowList.Evaluate(["workspace"], null, mutating: true);
+        Assert.False(corrupt.Allowed);
+        Assert.False(corrupt.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.LevelDenied, corrupt.Basis);
     }
 
     [Fact]
-    public void EscapingTarget_IsDenied_EvenAgainstAWholeWorkspaceGrant()
+    public void EnvelopeEscapes_AndEmptyEnvelopes_NeverUpgrade()
     {
-        var denied = ToolResourceAllowList.Evaluate(["write:"], "../outside.txt", mutating: true);
-        Assert.False(denied.Allowed);
-        Assert.Equal(ResourceAllowBasis.PathDenied, denied.Basis);
+        // A target outside the workspace is an escape attempt, not a missing grant —
+        // even when a write grant exists at some other prefix.
+        var escape = ToolResourceAllowList.Evaluate(["write:"], "../outside.txt", mutating: true);
+        Assert.False(escape.Allowed);
+        Assert.False(escape.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.PathDenied, escape.Basis);
+
+        // A granted level whose prefix does not cover the target is likewise refused.
+        var outsidePrefix = ToolResourceAllowList.Evaluate(["write:docs"], "src/app.cs", mutating: true);
+        Assert.False(outsidePrefix.Allowed);
+        Assert.False(outsidePrefix.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.PathDenied, outsidePrefix.Basis);
+
+        // No envelope at all: nothing to upgrade, so it never asks.
+        var noGrant = ToolResourceAllowList.Evaluate([], "src/app.cs", mutating: true);
+        Assert.False(noGrant.Allowed);
+        Assert.False(noGrant.RequiresApproval);
+        Assert.Equal(ResourceAllowBasis.NoGrant, noGrant.Basis);
     }
 }

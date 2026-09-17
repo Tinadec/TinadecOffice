@@ -241,9 +241,105 @@ public sealed class AutoApprovePolicyTests
         string idempotencyKey,
         string toolId,
         Guid? runId = null,
-        Guid? agent = null) => new(
+        Guid? agent = null,
+        string action = "tool.invoke",
+        string? permissionMode = null) => new(
             subject, agent ?? Guid.NewGuid(), null,
-            new CapabilityClaim("tool.file", "tool.invoke", $"tool://{toolId}"),
+            new CapabilityClaim("tool.file", action, $"tool://{toolId}"),
             runId, null, TimeSpan.FromMinutes(30), 1, "low", 0,
-            "auto-policy probe", idempotencyKey);
+            "auto-policy probe", idempotencyKey,
+            PermissionMode: permissionMode);
+
+    /// <summary>Allows every claim so the release decision is the only variable under test.</summary>
+    private static void AllowEverything(GovernanceHarness harness) =>
+        harness.Context.Boundaries = [new("hard_policy", [new CapabilityRule("allow", "tool.file", "*", "*")])];
+
+    // ── READ-level claims are released in the ask family ───────────────────────
+
+    /// <summary>
+    /// A READ-level claim in an ask run is released without a human decision. A read
+    /// cannot change the workspace, and the resource envelope plus the tool process's
+    /// own root check already bound which paths it may touch, so the click adds no
+    /// authority — only latency. Gating reads is what stalled a real run for 22
+    /// minutes on a directory listing.
+    /// </summary>
+    [Fact]
+    public async Task ReadClaim_InAskMode_IsReleasedWithoutAHuman()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "read-release", "read_file", action: "read", permissionMode: "ask"));
+
+        Assert.Equal(PermissionRequestStatuses.Granted, resolution.Request.Status);
+        Assert.Equal("read_only_auto_release", resolution.Decision.ReasonCode);
+        Assert.NotNull(resolution.Lease);
+    }
+
+    /// <summary>
+    /// The release is a policy an operator can switch off; the switch does not touch
+    /// the mutating gate either way.
+    /// </summary>
+    [Fact]
+    public async Task ReadClaim_ReleaseIsPolicyControlled()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync(
+            new AutoApproveOptions { ReleaseReadOnlyInAskMode = false });
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "read-release-off", "read_file", action: "read", permissionMode: "ask"));
+
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+        Assert.Equal("user_approval_required", resolution.Decision.ReasonCode);
+    }
+
+    /// <summary>Ask means ask for writes: a MUTATING claim keeps the human gate.</summary>
+    [Fact]
+    public async Task MutatingClaim_InAskMode_StillParksForAHuman()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "mutate-ask", "write_file", action: "mutate", permissionMode: "ask"));
+
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+        Assert.Equal("user_approval_required", resolution.Decision.ReasonCode);
+    }
+
+    /// <summary>
+    /// The human-only list wins over the read-only release. The combination is
+    /// artificial (a human-only tool is mutating in practice) which is exactly why it
+    /// is pinned: the release must never be the thing that reaches a human-only tool.
+    /// </summary>
+    [Fact]
+    public async Task ReadClaim_OnAHumanOnlyTool_StillParks()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "human-only-read", "shell", action: "read", permissionMode: "ask"));
+
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+    }
+
+    /// <summary>
+    /// An unmodeled permission mode keeps its historical "always park" semantics: the
+    /// release is scoped to the ask family, so a mode nobody classified never
+    /// silently gains unattended execution.
+    /// </summary>
+    [Fact]
+    public async Task ReadClaim_InAnUnmodeledMode_StillParks()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "read-unmodeled", "read_file", action: "read", permissionMode: "unmodeled"));
+
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+    }
 }

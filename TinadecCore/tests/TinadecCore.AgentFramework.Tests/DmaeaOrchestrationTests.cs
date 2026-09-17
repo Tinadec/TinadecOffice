@@ -44,6 +44,29 @@ public sealed class DmaeaOrchestrationTests
         Assert.Equal("Task is complete when the goal is satisfied", task.SuccessCriteria[0]);
         // 缺口①修复 C：回落任务必须可被引擎识别，声明边模式下拒绝静默派发。
         Assert.True(task.IsFallback);
+        Assert.False(planner.LastPlanWasParsed);
+    }
+
+    /// <summary>
+    /// 「你好」这类目标，模型会**正确地**返回空数组：没有要执行的子任务，会议智能体直接
+    /// 从对话作答。空数组曾被当成解析失败（`Length > 0` 才算解析成功），于是注入回落目标
+    /// 任务，而声明边模式拒绝派发回落任务——于是一句问候在任何模型、任何 provider 下都必然
+    /// 把 run 打成 plan_parse_failed。空计划是结果，不是错误。
+    /// </summary>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("```json\n[]\n```")]
+    [InlineData("<think>没有需要执行的子任务。</think>\n[]")]
+    [InlineData("好的，这个目标不需要执行任何子任务：\n[]\n以上。")]
+    public async Task PlanningAgent_TreatsParsedEmptyArrayAsNoWorkRatherThanParseFailure(string modelOutput)
+    {
+        var client = new StubChatClient(modelOutput);
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("你好"), [Planner()], CancellationToken.None);
+
+        Assert.Empty(tasks);
+        Assert.True(planner.LastPlanWasParsed);
     }
 
     [Fact]

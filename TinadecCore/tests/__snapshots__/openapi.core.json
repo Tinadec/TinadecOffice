@@ -700,6 +700,12 @@
             },
             "type": "array"
           },
+          "prompt_pipeline_ref": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "resource_key": {
             "type": [
               "null",
@@ -1049,6 +1055,12 @@
             "type": "string"
           },
           "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scope": {
             "type": [
               "null",
               "string"

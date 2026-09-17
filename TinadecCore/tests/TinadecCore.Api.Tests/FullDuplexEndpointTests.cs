@@ -1345,8 +1345,16 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal("graph_tier_lanes_unsupported", conflict.GetProperty("code").GetString());
     }
 
+    /// <summary>
+    /// A queued USER MESSAGE is executed at run terminal, not discarded. The client
+    /// already received 201, and the run that stood in its way has just finished — so
+    /// the only reason it was queued no longer holds. It used to be marked "rejected"
+    /// with code lanes_disabled, which was doubly wrong: lanes have nothing to do with a
+    /// queued conversation turn, and lanes are off by default, so EVERY queued message
+    /// was silently dropped by a configuration default the user never chose.
+    /// </summary>
     [Fact]
-    public async Task RunTerminal_DrainsQueuedDirective_RejectedWhenLanesDisabled()
+    public async Task RunTerminal_ExecutesQueuedInteraction_InsteadOfDiscardingIt()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var script = new ScriptedChatClient()
@@ -1390,20 +1398,24 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             while (DateTimeOffset.UtcNow < drainDeadline)
             {
                 directive = await db.RunDirectives.AsNoTracking().SingleOrDefaultAsync(x => x.Id == directiveId);
-                if (directive is { Status: "rejected", DrainedAt: not null }) break;
+                if (directive is { Status: "executed", DrainedAt: not null }) break;
                 await Task.Delay(150);
                 db.ChangeTracker.Clear();
             }
-            Assert.True(directive is { Status: "rejected", DrainedAt: not null },
-                $"Directive {directiveId} was never drained as rejected; last state: {(directive is null ? "row absent" : directive.Status)}.");
+            Assert.True(directive is { Status: "executed", DrainedAt: not null },
+                $"Directive {directiveId} was never drained as executed; last state: {(directive is null ? "row absent" : directive.Status)}.");
         }
 
+        // The drain reports WHAT it did: the release names the run it admitted, and no
+        // rejection event is written for a queued user message.
         var manager = factory.Services.GetRequiredService<ILifecycleManager>();
         var events = await manager.ReplayEventsAsync(sessionId, 0);
-        var rejection = Assert.Single(events, e => e.EventType == "orchestration.directive.rejected");
-        var payload = (JsonElement)rejection.Payload["payload"]!;
-        Assert.Equal("lanes_disabled", payload.GetProperty("code").GetString());
+        var released = Assert.Single(events, e => e.EventType == "interaction.queued_executed");
+        var payload = (JsonElement)released.Payload["payload"]!;
         Assert.Equal(directiveId.ToString(), payload.GetProperty("directive_id").GetString());
+        var releasedRunId = payload.GetProperty("released_run_id").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(releasedRunId));
+        Assert.DoesNotContain(events, e => e.EventType == "orchestration.directive.rejected");
     }
 
     [Fact]

@@ -14,6 +14,7 @@ using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
+using TinadecCore.Governance;
 using TinadecCore.Lifecycle;
 using TinadecCore.Persistence;
 
@@ -264,13 +265,19 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The dual-layer split must be enforced as permission policy, not as an engine
-    /// convention.  The shipped Office pack still publishes "*" for the meeting agent, so
-    /// the layer rule is the only authority that can deny a governance-layer tool call;
-    /// the execution worker on the same task must still be allowed.
+    /// The operation-layer deny floor is REMOVED BY DESIGN (2026-09-17). A mode may arm
+    /// its conversation identity with tools so the agent that talks to the user also edits
+    /// the workspace (the solo/master-slave shape), which means layer membership can no
+    /// longer be the thing that denies a governance-layer tool call.
+    ///
+    /// This replaces the former
+    /// <c>OperationLayerToolInvoke_IsDeniedByLayerPolicy_WhileWorkerIsAllowed</c>, which
+    /// pinned the opposite. What must still hold is that the operation instance is not
+    /// let through for free: it resolves through the same boundary path as the worker,
+    /// and the boundaries that actually authorize the call are present.
     /// </summary>
     [Fact]
-    public async Task OperationLayerToolInvoke_IsDeniedByLayerPolicy_WhileWorkerIsAllowed()
+    public async Task OperationLayerToolInvoke_ResolvesLikeWorker_NoLayerDenyFloor()
     {
         var (provider, client, _, runId, approvalId, _) = await StartFakeProviderRunAsync("layer-policy");
         Assert.Equal(0, provider.CallCount);
@@ -288,8 +295,12 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var governanceBoundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
             scope.TenantId, scope.WorkspaceId, scope.PrincipalId,
             meeting.GetProperty("id").GetGuid(), claim, runId, taskId)).ConfigureAwait(false);
-        var denial = Assert.Single(governanceBoundaries, boundary => boundary.Name == "operation_layer_cannot_invoke_tools");
-        Assert.Equal("deny", Assert.Single(denial.Rules).Effect);
+
+        // The floor is gone, so the operation instance must NOT be denied by layer. It
+        // walks the ordinary path and gets the same authorizing boundaries the worker gets.
+        Assert.DoesNotContain(governanceBoundaries, boundary => boundary.Name == "operation_layer_cannot_invoke_tools");
+        Assert.NotEmpty(governanceBoundaries.Where(boundary => boundary.Name != "run")
+            .Where(boundary => boundary.Rules.Any(rule => rule.Effect == "allow")));
 
         var workerBoundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
             scope.TenantId, scope.WorkspaceId, scope.PrincipalId,
@@ -322,6 +333,251 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             new CapabilityClaim("tool.git", "tool.invoke", "tool://git_commit"), runId, taskId)).ConfigureAwait(false);
         var refused = Assert.Single(outside, boundary => boundary.Name == "agent_version");
         Assert.Equal("deny", Assert.Single(refused.Rules).Effect);
+    }
+
+    /// <summary>
+    /// Three-tier resource decision, pinned at the boundary that implements it.
+    /// A MUTATING claim on an instance whose envelope holds only read-level grants
+    /// must clear resource_access as an UPGRADE — carrying the operator-facing
+    /// reason — and not as a deny. Denying happened before the approval gate, so
+    /// the write was structurally unreachable rather than asked for.
+    ///
+    /// The reachable production shape is a SPAWNABLE template: the freeze derives
+    /// the whole-workspace read level for any template that declared no grants while
+    /// its tool ceiling still names a mutating tool. Mode bindings are guarded
+    /// against that inconsistency by ModePublishGate rule ③; spawnable templates
+    /// are not, which is exactly the envelope a real v1 incident denied.
+    /// </summary>
+    [Fact]
+    public async Task ReadOnlyEnvelope_MutatingClaim_ClearsResourceBoundaryAsAnUpgrade()
+    {
+        var (_, client, _, runId, _, _) = await StartFakeProviderRunAsync("resource-upgrade");
+        var services = _factory!.Services;
+        var resolver = services.GetRequiredService<IAuthorizationContextResolver>();
+        var scope = services.GetRequiredService<ITenantContextAccessor>().Current;
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var worker = Assert.Single(lineage, item => item.GetProperty("layer").GetString() == "execution"
+            && item.GetProperty("task_id").ValueKind == JsonValueKind.String);
+        var workerId = worker.GetProperty("id").GetGuid();
+        var taskId = worker.GetProperty("task_id").GetGuid();
+        // The claim shape the dispatcher sends for a mutating tool: the ACTION is the
+        // level ("mutate"/"read"), which is what the resource envelope keys off.
+        var mutate = new CapabilityClaim("tool.invoke", "mutate", "tool://write_file");
+
+        // Baseline: the fixture's binding declares read+write, so the envelope
+        // authorizes the mutation outright and carries no upgrade text.
+        var granted = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, workerId, mutate, runId, taskId)).ConfigureAwait(false);
+        var grantedResource = Assert.Single(granted, boundary => boundary.Name == "resource_access");
+        Assert.Equal("allow", Assert.Single(grantedResource.Rules).Effect);
+        Assert.Null(grantedResource.UpgradeReason);
+
+        // Drop the instance envelope to read-only: the shape a spawnable template
+        // gets when it declared no grants of its own.
+        var readBack = await RewriteInstanceResourcesAsync(workerId, ["read:"]).ConfigureAwait(false);
+        Assert.Equal(["read:"], readBack);
+
+        var upgraded = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, workerId, mutate, runId, taskId)).ConfigureAwait(false);
+        var resource = Assert.Single(upgraded, boundary => boundary.Name == "resource_access");
+        Assert.Equal("allow", Assert.Single(resource.Rules).Effect);
+        Assert.True(resource.UpgradeReason is not null,
+            $"no upgrade reason; readBack=[{string.Join(",", readBack)}] rules=[{string.Join(",", resource.Rules.Select(rule => rule.Effect + ":" + rule.Action))}]");
+        Assert.Contains("needs approval", resource.UpgradeReason!, StringComparison.Ordinal);
+        Assert.Contains("write-level grant", resource.UpgradeReason!, StringComparison.Ordinal);
+
+        // A READ claim on the same read-only envelope keeps its plain allow: the
+        // upgrade is only ever for the level the envelope is missing.
+        var readBoundaries = await resolver.ResolveBoundariesAsync(new AuthorizationContextRequest(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, workerId,
+            new CapabilityClaim("tool.invoke", "read", "tool://read_file"), runId, taskId)).ConfigureAwait(false);
+        var readResource = Assert.Single(readBoundaries, boundary => boundary.Name == "resource_access");
+        Assert.Equal("allow", Assert.Single(readResource.Rules).Effect);
+        Assert.Null(readResource.UpgradeReason);
+
+        // Application level: the same claim now reaches the HUMAN GATE instead of
+        // being refused by policy. Before the three-tier decision this request came
+        // back denied (explicit_deny) with the tool never executing — the shape the
+        // v1 incident recorded for a mutating call on a read-only envelope.
+        var authorization = services.GetRequiredService<IAuthorizationService>();
+        var resolution = await authorization.RequestPermissionAsync(new PermissionRequestCommand(
+            scope.PrincipalId,
+            workerId,
+            null,
+            mutate,
+            runId,
+            taskId,
+            TimeSpan.FromMinutes(30),
+            1,
+            "high",
+            0m,
+            "tool-chain three-tier probe",
+            $"tier-probe:{runId:N}",
+            PermissionMode: "ask")).ConfigureAwait(false);
+
+        Assert.Equal("awaiting_user", resolution.Request.Status);
+        Assert.Equal("user_approval_required", resolution.Decision.ReasonCode);
+
+        // The upgrade reason is persisted on the request so the approval prompt can
+        // say WHAT the envelope is missing instead of a bare "approval required".
+        await using (var governance = await services
+            .GetRequiredService<IDbContextFactory<GovernanceDbContext>>().CreateDbContextAsync())
+        {
+            var persisted = await governance.PermissionRequests.AsNoTracking()
+                .SingleAsync(item => item.Id == resolution.Request.Id);
+            Assert.Contains("needs approval", persisted.Rationale ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("write-level grant", persisted.Rationale ?? string.Empty, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Rewrites an instance's frozen resource grants in place: the definition body
+    /// is re-stored with the same shape the instance service wrote and the row's
+    /// reference/hash/length are updated, so the PDP reads the new envelope. Returns
+    /// what the store actually holds afterwards, so a silent no-op cannot pass for a
+    /// successful rewrite.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> RewriteInstanceResourcesAsync(Guid instanceId, IReadOnlyList<string> grants)
+    {
+        var services = _factory!.Services;
+        var content = services.GetRequiredService<IContentStore>();
+        var instances = services.GetRequiredService<IDbContextFactory<AgentControlDbContext>>();
+        var scope = services.GetRequiredService<ITenantContextAccessor>().Current;
+
+        await using var db = await instances.CreateDbContextAsync();
+        var row = await db.Instances.SingleAsync(item => item.Id == instanceId);
+        await using var source = await content.OpenReadAsync(
+            new ContentReference(row.DefinitionReference, row.DefinitionHash, row.DefinitionLength, "application/json"));
+        using var document = await JsonDocument.ParseAsync(source);
+
+        using var rewritten = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(rewritten))
+        {
+            writer.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                var name = property.Name;
+                if (name.Equals("allowedResources", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("allowed_resources", StringComparison.OrdinalIgnoreCase)) continue;
+                property.WriteTo(writer);
+            }
+            writer.WritePropertyName("allowedResources");
+            writer.WriteStartArray();
+            foreach (var grant in grants) writer.WriteStringValue(grant);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        rewritten.Position = 0;
+        var stored = await content.PutAsync(new ContentWriteRequest(
+            scope.TenantId, scope.WorkspaceId, "agent-instance", "application/json", rewritten));
+        row.DefinitionReference = stored.Value;
+        row.DefinitionHash = stored.Sha256;
+        row.DefinitionLength = stored.Length;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        await using var verifyDb = await instances.CreateDbContextAsync();
+        var persistedRow = await verifyDb.Instances.AsNoTracking().SingleAsync(item => item.Id == instanceId);
+        Assert.Equal(stored.Value, persistedRow.DefinitionReference);
+        Assert.Equal(stored.Sha256, persistedRow.DefinitionHash);
+
+        await using var persisted = await content.OpenReadAsync(
+            new ContentReference(persistedRow.DefinitionReference, persistedRow.DefinitionHash, persistedRow.DefinitionLength, "application/json"));
+        using var document2 = await JsonDocument.ParseAsync(persisted);
+        if (!document2.RootElement.TryGetProperty("allowedResources", out var stored0)
+            || stored0.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return stored0.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString()!).ToArray();
+    }
+
+    /// <summary>
+    /// "Always allow for this session", end to end at the decision endpoint. One
+    /// human decision must stop the SAME tool from asking again for the rest of the
+    /// run, which needs two durable envelopes because two separate gates ask: the
+    /// PDP wants a capability grant before it will lease, and the tool-approval layer
+    /// wants a pre-authorization before it will mint. And the decision must release
+    /// what is already parked, not only what comes next — a scope that covered only
+    /// the future would leave an already-waiting sibling blocked on the very click
+    /// the user just declined to make.
+    /// </summary>
+    [Fact]
+    public async Task RunScopedApproval_MintsBothEnvelopes_AndReleasesParkedSiblings()
+    {
+        var (_, client, _, runId, approvalId, _) = await StartFakeProviderRunAsync("run-scope");
+        var services = _factory!.Services;
+        var scope = services.GetRequiredService<ITenantContextAccessor>().Current;
+
+        // A second, already-parked request for the SAME tool in the SAME run.
+        var lineage = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/runs/{runId}/agent-lineage").ConfigureAwait(false);
+        Assert.NotNull(lineage);
+        var worker = Assert.Single(lineage, item => item.GetProperty("layer").GetString() == "execution"
+            && item.GetProperty("task_id").ValueKind == JsonValueKind.String);
+        var workerId = worker.GetProperty("id").GetGuid();
+        var taskId = worker.GetProperty("task_id").GetGuid();
+        var authorization = services.GetRequiredService<IAuthorizationService>();
+        var sibling = await authorization.RequestPermissionAsync(new PermissionRequestCommand(
+            scope.PrincipalId, workerId, null,
+            new CapabilityClaim("tool.invoke", "mutate", "tool://write_file"),
+            runId, taskId, TimeSpan.FromMinutes(30), 1, "high", 0m,
+            "second call of the same tool", $"run-scope-sibling:{runId:N}",
+            PermissionMode: "ask")).ConfigureAwait(false);
+        Assert.True(sibling.Request.Status == "awaiting_user",
+            $"sibling status={sibling.Request.Status} reason={sibling.Decision.ReasonCode}: {sibling.Decision.Reason}");
+
+        var decide = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision",
+            new { decision = "approved", scope = "run", reason = "总是允许" });
+        Assert.Equal(HttpStatusCode.OK, decide.StatusCode);
+        var decided = await decide.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("run", decided.GetProperty("scope").GetString());
+        Assert.Equal(1, decided.GetProperty("run_scope_released").GetInt32());
+        Assert.NotEqual(Guid.Empty, decided.GetProperty("pre_authorization_id").GetGuid());
+        Assert.NotEqual(Guid.Empty, decided.GetProperty("capability_grant_id").GetGuid());
+
+        // Both envelopes exist. The pre-authorization is capped at the risk class the
+        // human actually approved — a session approval never widens the ceiling it was
+        // given — and its scope is exactly the one tool, never a wildcard.
+        var decidedRequest = await authorization.GetPermissionRequestAsync(approvalId).ConfigureAwait(false);
+        Assert.NotNull(decidedRequest);
+        await using (var db = await services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync())
+        {
+            var preAuth = Assert.Single(await db.PreAuthorizations.AsNoTracking().Where(x => x.RunId == runId).ToListAsync());
+            var scoped = JsonSerializer.Deserialize<string[]>(preAuth.ToolScopeJson);
+            Assert.NotNull(scoped);
+            Assert.Equal(["write_file"], scoped);
+            Assert.Equal(decidedRequest.Request.Risk, preAuth.RiskMax);
+            Assert.False(preAuth.Revoked);
+            Assert.True(preAuth.MaxUses > 1);
+        }
+
+        // The parked sibling is granted: the user's intent covers what is already
+        // waiting, not only what comes next.
+        var released = await authorization.GetPermissionRequestAsync(sibling.Request.Id).ConfigureAwait(false);
+        Assert.Equal("granted", released!.Request.Status);
+    }
+
+    /// <summary>
+    /// The default decision stays a one-shot: without an explicit run scope nothing
+    /// session-wide is minted, so "approve" never silently becomes "always approve".
+    /// </summary>
+    [Fact]
+    public async Task ApprovalDecision_WithoutScope_StaysOnce()
+    {
+        var (_, client, _, runId, approvalId, _) = await StartFakeProviderRunAsync("run-scope-once");
+        var services = _factory!.Services;
+
+        var decide = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision",
+            new { decision = "approved" });
+        Assert.Equal(HttpStatusCode.OK, decide.StatusCode);
+        var decided = await decide.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("once", decided.GetProperty("scope").GetString());
+        Assert.Equal(0, decided.GetProperty("run_scope_released").GetInt32());
+
+        await using var db = await services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>().CreateDbContextAsync();
+        Assert.Empty(await db.PreAuthorizations.AsNoTracking().Where(x => x.RunId == runId).ToListAsync());
     }
 
     // ── Full-duplex engine hardening regressions (C1–C5) ─────────────────────
@@ -431,73 +687,72 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     /// C2: lane main escalates in the same tick in which lane l2's tool task parks on
     /// an approval. The run is already awaiting_user, so the approval park must skip
     /// <summary>
-    /// C3: a task that fails terminally (tool dispatch failed after approval) drops
-    /// its pending execution linkage; later engine passes must neither resume the
-    /// dead execution nor emit the failure again.
+    /// C3: a tool dispatch that fails mid-run is handed back to the worker as a tool
+    /// RESULT, not turned into a terminal task failure — this is what lets the model
+    /// read the error and adapt. The turn is not re-dispatched on a later engine pass
+    /// either: the fed-back failure is durable, so the dead execution is never
+    /// resumed and the failure is never re-emitted.
     /// </summary>
     [Fact]
-    public async Task FailedToolTask_IsNotResumedOrReEventedOnLaterTicks()
+    public async Task FailedToolDispatch_IsFedBackToWorker_AndNotReDispatchedOnLaterTicks()
     {
         var workspace = Path.Combine(_root, "workspace-c3");
         Directory.CreateDirectory(workspace);
         var provider = new FakeToolProvider { FailOnCallNumber = 2 };
         var script = new ToolScriptedClient()
             .WhenPlanner("[{\"task_key\":\"t1\",\"title\":\"写一\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"},"
-                + "{\"task_key\":\"t2\",\"title\":\"写二\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":2,\"risk\":\"low\"},"
-                + "{\"task_key\":\"t3\",\"title\":\"写三\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":3,\"risk\":\"low\"}]")
+                + "{\"task_key\":\"t2\",\"title\":\"写二\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":2,\"risk\":\"low\"}]")
             .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
             .WhenMeeting("完成。")
             .WhenWorkerTurns(
                 [new FunctionCallContent("call-t1", "write_file", new Dictionary<string, object?> { ["filepath"] = "t1.txt", ["content"] = "1" })],
                 [new TextContent("t1 完成")],
                 [new FunctionCallContent("call-t2", "write_file", new Dictionary<string, object?> { ["filepath"] = "t2.txt", ["content"] = "2" })],
-                [new FunctionCallContent("call-t3", "write_file", new Dictionary<string, object?> { ["filepath"] = "t3.txt", ["content"] = "3" })],
-                [new TextContent("t3 完成")]);
+                // Consumed after t2's dispatch failure is fed back: the model reads
+                // the error and hands off instead of retrying blindly.
+                [new TextContent("t2 写入失败，我据实汇报")]);
 
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
         await InstallToolChainPackAsync(client);
-        var (sessionId, runId, active) = await StartRunAsync(client, workspace, "c3", "写三个文件");
+        var (sessionId, runId, active) = await StartRunAsync(client, workspace, "c3", "写两个文件");
 
         var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
 
         // t1 parks → approved → dispatches → completes; t2 parks → approved → the
-        // provider fails the dispatch → t2 reaches its terminal failed state; t3
-        // parks on its own decision.
+        // provider fails that dispatch → the failure goes back to the worker.
         var firstApproval = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{firstApproval}/decision", new { decision = "approved" })).StatusCode);
         var secondApproval = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
         Assert.NotEqual(firstApproval, secondApproval);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{secondApproval}/decision", new { decision = "approved" })).StatusCode);
-        var thirdApproval = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
-        await WaitForEventCountAsync(manager, sessionId, "worker.failed", 1);
+        await WaitForEventCountAsync(manager, sessionId, "worker.tool_failed", 1);
 
-        // Force an extra engine pass over the same checkpoint: before the fix the
-        // failed task kept its PendingToolExecutionId, so this pass resumed the
-        // dead execution and emitted a duplicate worker.failed.
+        // Force an extra engine pass over the same checkpoint: the fed-back turn
+        // already carries its result, so this pass must not resume the dead
+        // execution, re-dispatch it, or emit the failure a second time.
+        var callsBeforeExtraPass = provider.CallCount;
         await _factory.Services.GetRequiredService<IFullDuplexRunEngine>().EnqueueAsync(runId);
 
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{thirdApproval}/decision", new { decision = "approved" })).StatusCode);
         var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
         var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
         Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
 
         var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
-        var failures = events
-            .Where(e => e.EventType == "worker.failed")
-            .Select(e => (JsonElement)e.Payload["payload"]!)
-            .Where(payload => payload.GetProperty("task_key").GetString() == "t2")
-            .ToArray();
-        Assert.Single(failures);
-        Assert.Equal(3, provider.CallCount);
-        // The failure names the call that failed, not just its category: without the
-        // tool id a reader (and the model reviewing the evidence) cannot tell which
-        // call did not complete, which is how a failed tool reached the conversation
-        // as "nothing came back".
-        var failedEvidence = failures[0].GetProperty("evidence").EnumerateArray()
-            .Select(item => item.GetString()).ToArray();
-        Assert.Contains("tool:write_file", failedEvidence);
-        Assert.Contains(failedEvidence, item => item!.StartsWith("error_category:", StringComparison.Ordinal));
+
+        // The dispatch failure is reported once, names the tool, and is flagged as
+        // having been returned to the worker rather than ending the task.
+        var returned = Assert.Single(events, item => item.EventType == "worker.tool_failed");
+        var payload = Assert.IsType<JsonElement>(returned.Payload["payload"]);
+        Assert.Equal("t2", payload.GetProperty("task_key").GetString());
+        Assert.Equal("write_file", payload.GetProperty("tool_id").GetString());
+        Assert.True(payload.GetProperty("returned_to_worker").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(payload.GetProperty("error_category").GetString()));
+
+        // No task was failed by the dispatch error, and the tool was not re-called.
+        Assert.DoesNotContain(events, item => item.EventType == "worker.failed");
+        Assert.Equal(callsBeforeExtraPass, provider.CallCount);
+        Assert.Equal(2, provider.CallCount);
     }
 
     /// <summary>
@@ -587,13 +842,16 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
 
     /// <summary>
     /// Wake-path pinning (graph orchestration acceptance): a parked awaiting_user
-    /// run whose approval row is decided REJECTED must wake, fail only its own
-    /// task, and reach a terminal state — never hang. The approval-row branch of
-    /// ControlPlaneService.DecideApproval enqueues the run for approved AND
-    /// rejected decisions; this pins the rejected side.
+    /// run whose approval row is decided REJECTED must wake and reach a terminal
+    /// state — never hang. The approval-row branch of ControlPlaneService.DecideApproval
+    /// enqueues the run for approved AND rejected decisions; this pins the rejected
+    /// side. The rejection is handed to the worker as a tool result
+    /// (<c>not_approved</c>), so the task adapts instead of being killed: the tool
+    /// never executes, the model hands off, and the run completes rather than
+    /// failing or stalling.
     /// </summary>
     [Fact]
-    public async Task RejectedApproval_WakesParkedRun_TaskFails_RunReachesTerminal()
+    public async Task RejectedApproval_WakesParkedRun_FailureFedBackToWorker_RunReachesTerminal()
     {
         var workspace = Path.Combine(_root, "workspace-wake-approval");
         Directory.CreateDirectory(workspace);
@@ -604,7 +862,8 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             .WhenMeeting("完成。")
             .WhenWorkerTurns(
                 [new FunctionCallContent("call-r1", "write_file", new Dictionary<string, object?> { ["filepath"] = "r1.txt", ["content"] = "x" })],
-                [new TextContent("r1 完成")]);
+                // Consumed after the rejection is fed back.
+                [new TextContent("r1 未获授权，我没有写入任何文件")]);
 
         _factory = new ToolChainFactory(_root, script, provider);
         var client = _factory.CreateClient();
@@ -616,11 +875,12 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.Equal("awaiting_user", parked);
         Assert.Equal(0, provider.CallCount);
 
-        // REJECTED: the run must wake and drive the task to its failure terminal.
+        // REJECTED: the run must wake, hand the refusal to the worker, and reach a
+        // terminal state under its own power.
         var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "rejected" });
         Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
 
-        await WaitForReplayTaskStatusAsync(client, runId, "r1", "failed");
+        await WaitForReplayTaskStatusAsync(client, runId, "r1", "completed");
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -631,13 +891,18 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         }
         var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
         var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
-        var failures = events
-            .Where(e => e.EventType == "worker.failed")
-            .Select(e => (JsonElement)e.Payload["payload"]!)
-            .Where(payload => payload.GetProperty("task_key").GetString() == "r1")
-            .ToArray();
-        Assert.Single(failures);
+
+        // The refusal reached the worker as a tool result, so the task was not
+        // failed by it — and the tool itself never ran.
+        var returned = Assert.Single(events, e => e.EventType == "worker.tool_failed");
+        var payload = Assert.IsType<JsonElement>(returned.Payload["payload"]);
+        Assert.Equal("r1", payload.GetProperty("task_key").GetString());
+        Assert.Equal("write_file", payload.GetProperty("tool_id").GetString());
+        Assert.Equal(RunErrorTaxonomy.ApproverRejected, payload.GetProperty("error_category").GetString());
+        Assert.True(payload.GetProperty("returned_to_worker").GetBoolean());
+
         Assert.Equal(0, provider.CallCount);
+        Assert.DoesNotContain(events, e => e.EventType == "worker.failed");
         Assert.DoesNotContain(events, e => e.EventType == "run.failed");
     }
 
@@ -833,13 +1098,17 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         var runId = ack.GetProperty("run_id").GetGuid();
 
-        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
-        var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
-        Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
-
-        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+        // git_status is a READ-level tool: in the ask family it is released without a
+        // human decision, so the run reaches its terminal state on its own. The
+        // steward gate keys off the run having TOUCHED a git tool, not off an
+        // approval — gating the read was pure latency on the user's side.
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(120)).ConfigureAwait(false);
         var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
         Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+
+        var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        Assert.DoesNotContain(events, item => item.EventType == "approval.requested");
 
         // The steward bypass runs after the terminal done chunk is durable.
         var deadline = DateTimeOffset.UtcNow.AddSeconds(20);

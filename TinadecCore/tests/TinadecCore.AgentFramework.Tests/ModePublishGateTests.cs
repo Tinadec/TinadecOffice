@@ -6,11 +6,12 @@ namespace TinadecCore.AgentFramework.Tests;
 /// <summary>
 /// Gate 2 (mode publish) pinning: binding envelopes may only narrow — capability
 /// and tool grants outside the template are rejected, spawn budgets above the
-/// runtime ceilings are rejected, the operation-layer effective tool surface must
-/// be empty (deny floor), and a binding that keeps a workspace-mutating tool must
-/// declare a write-level resource grant (otherwise the run would freeze a mutating
-/// tool face and deny every call of it before the approval gate is consulted).
-/// Tool switches legitimately remove tools.
+/// runtime ceilings are rejected, and a binding that keeps a workspace-mutating
+/// tool must declare a write-level resource grant (otherwise the run would freeze
+/// a mutating tool face and deny every call of it before the approval gate is
+/// consulted). The operation-layer deny floor no longer exists: a mode may arm its
+/// conversation identity with tools, and the write-grant rule above is what applies
+/// to it instead. Tool switches legitimately remove tools.
 /// </summary>
 public sealed class ModePublishGateTests
 {
@@ -69,12 +70,40 @@ public sealed class ModePublishGateTests
             new ModePublishGate.SpawnCeilings(MaxDepth: 2, MaxAgentsPerRun: 16, MaxParallelWorkers: 4));
     }
 
+    /// <summary>
+    /// The operation-layer tool floor is REMOVED BY DESIGN (2026-09-17): a mode may give
+    /// its conversation identity a tool surface of its own so the agent that talks to the
+    /// user also edits the workspace. An operation layer holding tools is now a supported
+    /// configuration. This test replaces the former
+    /// <c>OperationLayerWithEffectiveTools_IsRejected_DenyFloor</c>, which pinned the
+    /// opposite — the change is deliberate, not a regression.
+    /// </summary>
     [Fact]
-    public void OperationLayerWithEffectiveTools_IsRejected_DenyFloor()
+    public void OperationLayerWithEffectiveTools_Passes_FloorRemoved()
     {
-        var exception = Assert.Throws<InvalidDataException>(() =>
-            ModePublishGate.ValidateBindings("mode", [Binding(layer: "operation")], null));
-        Assert.Contains("operation_tool_floor_violation", exception.Message);
+        ModePublishGate.ValidateBindings("mode", [Binding(layer: "operation")], null);
+        ModePublishGate.ValidateBindings("mode",
+            [Binding(layer: "operation", tools: ["read_file", "file_search"])], null);
+    }
+
+    /// <summary>
+    /// The floor's replacement is not "no gate for operation" but the SAME gate execution
+    /// already faced: a mutating tool needs an explicit write grant. Operation bindings
+    /// used to `continue` past this check, so removing the floor without removing that
+    /// skip would have let a conversation identity keep write_file while declaring no
+    /// write authorization at all.
+    /// </summary>
+    [Fact]
+    public void OperationLayerKeepingMutatingTool_NeedsAWriteGrant_LikeExecution()
+    {
+        var withoutGrant = Assert.Throws<InvalidDataException>(() =>
+            ModePublishGate.ValidateBindings("mode",
+                [Binding(layer: "operation", tools: ["write_file"], envelope: """{"resources":{"read":[""]}}""")], null));
+        Assert.Contains("mutating_tool_without_write_grant", withoutGrant.Message);
+        Assert.Contains("write_file", withoutGrant.Message);
+
+        ModePublishGate.ValidateBindings("mode",
+            [Binding(layer: "operation", tools: ["write_file"], envelope: """{"resources":{"write":[""]}}""")], null);
     }
 
     [Fact]

@@ -6,7 +6,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions.Ports;
+using TinadecCore.AgentConfiguration;
 using Xunit;
 
 namespace TinadecCore.Api.Tests;
@@ -69,6 +73,157 @@ public sealed class VibeGraphPackTests
         var meetingNode = graph.GetProperty("nodes").EnumerateArray()
             .Single(node => node.GetProperty("node_key").GetString() == "meeting");
         Assert.True(meetingNode.GetProperty("is_conversation").GetBoolean());
+    }
+
+    /// <summary>
+    /// A mode-level prompt pipeline wins over every node's agent-level binding.
+    ///
+    /// Prompts used to be bound per AGENT only, so several modes shared one set of
+    /// instructions and nothing on the mode could say "this mode collaborates
+    /// differently". The mode's pipeline describes the COLLABORATION SEMANTICS, so it
+    /// must reach the conversation identity and the execution-layer workers alike —
+    /// otherwise four modes cannot have four prompt sets.
+    /// </summary>
+    [Fact]
+    public async Task ModePromptPipelineRef_OverridesEveryNodePromptForTheMode()
+    {
+        using var factory = new VibePackFactory();
+        using var client = factory.CreateClient();
+        var envelope = VibeEnvelope(mutate: manifest =>
+        {
+            var resources = manifest["resources"]!.AsObject();
+            ClearSpawnableAgentTypes(manifest);
+            resources["prompt_pipelines"]!.AsArray().Add(new JsonObject
+            {
+                ["resource_key"] = "solo-base",
+                ["slug"] = "solo-base",
+                ["display_name"] = "Solo base pipeline",
+                ["graph"] = new JsonObject
+                {
+                    ["nodes"] = new JsonArray
+                    {
+                        new JsonObject { ["id"] = "template", ["type"] = "template", ["config"] = new JsonObject { ["content"] = "You work directly and dispatch only when it pays off." } },
+                        new JsonObject { ["id"] = "assemble", ["type"] = "assemble" }
+                    },
+                    ["edges"] = new JsonArray { new JsonObject { ["source"] = "template", ["target"] = "assemble" } }
+                }
+            });
+            // The agents keep pointing at prompt:vibe-base; the mode overrides them all.
+            resources["modes"]!.AsArray()[0]!.AsObject()["prompt_pipeline_ref"] = "prompt:solo-base";
+        });
+
+        var modeVersionId = await InstallAndResolveModeVersionAsync(client, envelope, "mode-prompt-override");
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+        var soloPipeline = await db.PromptPipelines.AsNoTracking().SingleAsync(item => item.Slug == "solo-base");
+        var soloVersionId = await db.PromptVersions.AsNoTracking()
+            .Where(item => item.PromptPipelineId == soloPipeline.Id)
+            .OrderByDescending(item => item.Version)
+            .Select(item => item.Id)
+            .FirstAsync();
+
+        var session = await CreateSessionOnModeAsync(client, modeVersionId);
+        var roster = await factory.Services.GetRequiredService<IFormalModeResolver>().ResolveRosterAsync(session);
+        Assert.NotNull(roster);
+
+        var agents = roster!.Operation.Concat(roster.Execution).Where(agent => agent.Enabled).ToArray();
+        Assert.NotEmpty(agents);
+        Assert.All(agents, agent => Assert.Equal(soloVersionId, agent.PromptVersionId));
+        // The pipeline CONTENT, not just its id, has to be the mode's.
+        Assert.All(agents, agent => Assert.Contains("dispatch only when it pays off", agent.PromptGraphJson, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Without a mode-level ref the historical behaviour is untouched: every node keeps
+    /// the prompt version its agent declared. This is the regression guard for the three
+    /// modes that predate the field.
+    /// </summary>
+    [Fact]
+    public async Task WithoutModePromptPipelineRef_NodesKeepTheirAgentBinding()
+    {
+        using var factory = new VibePackFactory();
+        using var client = factory.CreateClient();
+
+        var modeVersionId = await InstallAndResolveModeVersionAsync(client,
+            VibeEnvelope(mutate: ClearSpawnableAgentTypes), "mode-prompt-fallback");
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+        var vibePipeline = await db.PromptPipelines.AsNoTracking().SingleAsync(item => item.Slug == "vibe-base");
+        var vibeVersionId = await db.PromptVersions.AsNoTracking()
+            .Where(item => item.PromptPipelineId == vibePipeline.Id)
+            .OrderByDescending(item => item.Version)
+            .Select(item => item.Id)
+            .FirstAsync();
+
+        var session = await CreateSessionOnModeAsync(client, modeVersionId);
+        var roster = await factory.Services.GetRequiredService<IFormalModeResolver>().ResolveRosterAsync(session);
+        Assert.NotNull(roster);
+        Assert.All(roster!.Operation.Concat(roster.Execution).Where(agent => agent.Enabled),
+            agent => Assert.Equal(vibeVersionId, agent.PromptVersionId));
+    }
+
+    /// <summary>An untyped or unknown mode-level pipeline reference fails closed at install.</summary>
+    [Fact]
+    public async Task ModePromptPipelineRef_UntypedOrUnknown_IsRejected()
+    {
+        foreach (var badRef in new[] { "solo-base", "prompt:does-not-exist" })
+        {
+            using var factory = new VibePackFactory();
+            using var client = factory.CreateClient();
+            var envelope = VibeEnvelope(mutate: manifest =>
+                manifest["resources"]!.AsObject()["modes"]!.AsArray()[0]!.AsObject()["prompt_pipeline_ref"] = badRef);
+
+            using var response = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("invalid_agent_pack_manifest", problem.GetProperty("code").GetString());
+        }
+    }
+
+    /// <summary>
+    /// Empties the fixture's relationship <c>agent_types</c>.
+    ///
+    /// The shared fixture declares <c>agent_types: ["orchestrator"]</c>, a name no agent
+    /// in the pack uses, so roster resolution fails closed on spawnable-template
+    /// resolution ("no such enabled agent definition exists"). Pack INSTALL never
+    /// resolves spawnable templates, which is why the original tests never tripped over
+    /// it — any test that actually resolves a roster for this pack must first remove the
+    /// dangling declaration. An empty list is legal: the mode still declares an
+    /// execution-layer node, so the free-form director exemption is not needed.
+    /// </summary>
+    private static void ClearSpawnableAgentTypes(JsonObject manifest)
+    {
+        var meetingNode = manifest["resources"]!.AsObject()["modes"]!.AsArray()[0]!.AsObject()["nodes"]!.AsArray()
+            .Select(node => node!.AsObject())
+            .First(node => node["node_key"]!.GetValue<string>() == "meeting");
+        meetingNode["relationship"]!.AsObject()["agent_types"] = new JsonArray();
+    }
+
+    private static async Task<Guid> InstallAndResolveModeVersionAsync(HttpClient client, JsonElement envelope, string idempotencyKey)
+    {
+        using var previewResponse = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        Assert.True(previewResponse.StatusCode == HttpStatusCode.OK, $"preview: {previewResponse.StatusCode} {await previewResponse.Content.ReadAsStringAsync()}");
+        var preview = await previewResponse.Content.ReadFromJsonAsync<JsonElement>();
+
+        using var installRequest = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/agent-packs/{PackId}")
+        {
+            Content = JsonContent.Create(new { preview_id = preview.GetProperty("preview_id").GetGuid(), envelope })
+        };
+        installRequest.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        using var installResponse = await client.SendAsync(installRequest);
+        Assert.True(installResponse.StatusCode == HttpStatusCode.Created, $"install: {installResponse.StatusCode} {await installResponse.Content.ReadAsStringAsync()}");
+
+        var detail = await (await client.GetAsync($"/api/v1/agent-packs/{PackId}")).Content.ReadFromJsonAsync<JsonElement>();
+        return detail.GetProperty("resources").EnumerateArray()
+            .Where(resource => resource.GetProperty("kind").GetString() == "mode")
+            .Select(resource => resource.GetProperty("version_id").GetGuid())
+            .Single();
+    }
+
+    private static async Task<Guid> CreateSessionOnModeAsync(HttpClient client, Guid modeVersionId)
+    {
+        using var sessionResponse = await client.PostAsJsonAsync("/api/v1/sessions", new { title = "prompt resolution session", mode_version_id = modeVersionId });
+        Assert.True(sessionResponse.StatusCode == HttpStatusCode.Created, $"session: {sessionResponse.StatusCode} {await sessionResponse.Content.ReadAsStringAsync()}");
+        var session = await sessionResponse.Content.ReadFromJsonAsync<JsonElement>();
+        return session.GetProperty("id").GetGuid();
     }
 
     [Fact]
