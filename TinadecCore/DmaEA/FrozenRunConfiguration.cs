@@ -137,6 +137,21 @@ public static class FrozenGraphTiers
 
     /// <summary>No declared dispatch edges — single-director free-form orchestration; the director spawns workers from the frozen spawnable-template set and edges are prompt material only.</summary>
     public const string FreeForm = "free_form";
+
+    /// <summary>
+    /// The conversation identity holds a TOOL SURFACE OF ITS OWN: the master does the
+    /// work itself (read/write/exec in one continuous tool loop, the classic
+    /// single-agent CLI shape) while keeping full spawn authority to hand work to
+    /// sub-agents.
+    ///
+    /// Outranks every other branch. "The master executes" is a statement about WHO
+    /// works, not about topology, so it holds whether or not the mode declares
+    /// dispatch edges — a solo mode may keep a declared graph (dispatch along it) or
+    /// none (dispatch freely). Derived from the frozen operation roster's declared
+    /// tool_scope, never from a bespoke marker field, so no pack has to opt in
+    /// explicitly and no digest can drift silently.
+    /// </summary>
+    public const string SoloDispatch = "solo_dispatch";
 }
 
 /// <summary>
@@ -343,20 +358,26 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
     }
 
     /// <summary>
-    /// Three-branch tier derivation, decided only from frozen inputs:
-    /// no declared dispatch edges → free_form (the director builds its own
-    /// workers); declared edges + a conversation identity holding a
-    /// dispatchable-worker spawn authority (agent.create_temporary, or the
-    /// agent.spawn alias) → self_dispatch; declared edges without spawn
-    /// authority (including create_persistent-only, which mints candidates not
-    /// dispatchable workers) → deterministic.
+    /// Four-branch tier derivation, decided only from frozen inputs, first match wins:
+    /// the conversation identity declares a tool surface → solo_dispatch (the master
+    /// executes; topology-independent); no declared dispatch edges → free_form (the
+    /// director builds its own workers); declared edges + a conversation identity
+    /// holding a dispatchable-worker spawn authority (agent.create_temporary, or the
+    /// agent.spawn alias) → self_dispatch; declared edges without spawn authority
+    /// (including create_persistent-only, which mints candidates not dispatchable
+    /// workers) → deterministic.
     /// </summary>
     internal static string DeriveGraphTier(IReadOnlyList<RuntimeAgentDefinition> operation, bool hasDeclaredEdges, string? conversationSlug)
     {
-        if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var conversation = conversationSlug is { } slug
             ? operation.FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))
             : null;
+        // First branch: the conversation identity holds tools. Placed first because it
+        // answers a different question than the two that follow — who EXECUTES, not how
+        // dispatch is shaped. The three modes that predate it declare an empty meeting
+        // tool_scope and therefore land on their original branches unchanged.
+        if (conversation is { AllowedTools.Count: > 0 }) return FrozenGraphTiers.SoloDispatch;
+        if (!hasDeclaredEdges) return FrozenGraphTiers.FreeForm;
         var capabilities = conversation?.Capabilities ?? [];
         return capabilities.Any(capability =>
             string.Equals(capability, ThreeNamespaceMap.SpawnTemporaryCapability, StringComparison.OrdinalIgnoreCase)

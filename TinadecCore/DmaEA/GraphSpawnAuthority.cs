@@ -54,16 +54,46 @@ public static class GraphSpawnAuthority
         var capabilities = requiredCapabilities
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return graph.SpawnableTemplates
+        var covering = graph.SpawnableTemplates
             .Where(template => Covers(template.ToolCeiling, tools) && Covers(template.Capabilities, capabilities))
-            .OrderBy(template => template.ToolCeiling.Contains("*", StringComparer.Ordinal) ? int.MaxValue : template.ToolCeiling.Count)
+            .ToArray();
+        if (covering.Length == 0) return null;
+
+        // A task that DECLARED requirements is already covered; among the templates
+        // that cover it, the narrowest ceiling is the least-privilege choice.
+        if (tools.Count > 0 || capabilities.Count > 0)
+        {
+            return covering
+                .OrderBy(template => template.ToolCeiling.Contains("*", StringComparer.Ordinal) ? int.MaxValue : template.ToolCeiling.Count)
+                .ThenBy(template => template.Slug, StringComparer.Ordinal)
+                .FirstOrDefault();
+        }
+
+        // An open-ended task declares nothing to narrow against. "Fewest tools" then
+        // picks the NARROWEST template, which is how a goal that needed to write a
+        // file was handed to the read-only search worker — verified in a real run
+        // whose worker then reported it had no way to do the job while the run closed
+        // as completed. Breadth is the only signal left, and it is the honest one:
+        // the widest ceiling is the template that can actually attempt an open goal.
+        // Deterministic: widest first, then slug order.
+        return covering
+            .OrderByDescending(template => template.ToolCeiling.Contains("*", StringComparer.Ordinal))
+            .ThenByDescending(template => template.ToolCeiling.Count)
+            .ThenByDescending(template => template.Capabilities.Count)
             .ThenBy(template => template.Slug, StringComparer.Ordinal)
             .FirstOrDefault();
     }
 
+    /// <summary>
+    /// Tiers whose conversation identity may build workers from the frozen spawnable
+    /// whitelist. solo_dispatch keeps spawn authority even though the master executes
+    /// itself: "更积极地派子智能体" is the point of that tier, so it must be able to
+    /// hand work off, not only do it.
+    /// </summary>
     internal static bool CarriesSpawnAuthority(string tier) =>
         string.Equals(tier, FrozenGraphTiers.SelfDispatch, StringComparison.Ordinal)
-        || string.Equals(tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal);
+        || string.Equals(tier, FrozenGraphTiers.FreeForm, StringComparison.Ordinal)
+        || string.Equals(tier, FrozenGraphTiers.SoloDispatch, StringComparison.Ordinal);
 
     private static bool Covers(IReadOnlyList<string> ceiling, HashSet<string> required) =>
         ceiling.Contains("*", StringComparer.Ordinal) || required.All(required0 => ceiling.Contains(required0, StringComparer.OrdinalIgnoreCase));

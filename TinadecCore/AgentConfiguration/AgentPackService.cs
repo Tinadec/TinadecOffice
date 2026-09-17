@@ -1039,14 +1039,25 @@ public sealed class AgentPackService : IAgentPackService
                 && binding.ToolSwitches is { } switches && switches.ValueKind == JsonValueKind.Object)
             .GroupBy(binding => binding.NodeKey!, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().ToolSwitches!.Value, StringComparer.Ordinal);
+        // Mode-level prompt pipeline (source priority: mode > agent > workspace default).
+        // Resolved once and preferred over every node's agent-level binding, because a
+        // mode's pipeline describes the COLLABORATION SEMANTICS of that mode — it must
+        // reach the conversation identity and the execution-layer workers alike, or the
+        // four modes would keep sharing one set of instructions (what the mode contract
+        // says they no longer do). Publishing it into each node's snapshot keeps the
+        // frozen roster, the run bindings and the assembler source unchanged: the mode
+        // version already carries a prompt version per node.
+        PublishedResource? modePrompt = resource.PromptPipelineRef is { Length: > 0 } modePromptRef
+            ? prompts[ReferenceKey(modePromptRef, "prompt", $"mode '{resource.ResourceKey}' prompt_pipeline_ref")]
+            : null;
         var snapshotNodes = resource.Nodes.OrderBy(item => item.NodeKey, StringComparer.Ordinal).Select(node =>
         {
             var agentKey = ReferenceKey(node.AgentRef, "agent", $"mode '{resource.ResourceKey}' node '{node.NodeKey}' agent_ref");
             var agentResource = agentDefinitions[agentKey];
             var agent = agents[agentKey];
-            PublishedResource? prompt = agentResource.BasePromptPipelineRef is { Length: > 0 } promptRef
+            PublishedResource? prompt = modePrompt ?? (agentResource.BasePromptPipelineRef is { Length: > 0 } promptRef
                 ? prompts[ReferenceKey(promptRef, "prompt", $"agent '{agentResource.ResourceKey}' base_prompt_pipeline_ref")]
-                : null;
+                : null);
             var effectiveTools = EffectiveTools(agentResource.ToolScope, node.Config);
             if (switchesByNode.TryGetValue(node.NodeKey!, out var switches))
             {
@@ -1547,6 +1558,15 @@ public sealed class AgentPackService : IAgentPackService
             if (mode.Nodes.Count == 0) Invalid($"mode '{mode.ResourceKey}' must contain nodes.");
             EnsureUnique(mode.Nodes.Select(item => RequiredToken(item.NodeKey, $"mode '{mode.ResourceKey}' node_key", 128)), $"mode '{mode.ResourceKey}' node_key");
             EnsureUnique(mode.Edges.Select(item => RequiredToken(item.EdgeKey, $"mode '{mode.ResourceKey}' edge_key", 128)), $"mode '{mode.ResourceKey}' edge_key");
+            // Mode-level prompt pipeline: typed reference to a pipeline declared by the
+            // same pack. Same contract as an agent's base_prompt_pipeline_ref — the
+            // "prompt:" prefix is mandatory and an unknown target fails closed. Absent
+            // is legal and means "keep binding prompts per agent".
+            if (mode.PromptPipelineRef is { Length: > 0 } modePromptRef)
+            {
+                var modePromptKey = ReferenceKey(modePromptRef, "prompt", $"mode '{mode.ResourceKey}' prompt_pipeline_ref");
+                if (!prompts.ContainsKey(modePromptKey)) Invalid($"mode '{mode.ResourceKey}' references unknown prompt pipeline '{modePromptRef}'.");
+            }
 
             // Graph semantics shared with manual mode publish (one implementation so
             // the two historical meeting-enforcement sites cannot drift): resolvable

@@ -124,6 +124,13 @@ internal sealed class PromptAssembler : IPromptAssembler
             warnings.Add("Agent profile could not fit in the configured context budget.");
         }
 
+        // The pipeline content comes WITH the request: the caller (the run's frozen
+        // roster) has already resolved WHICH pipeline version applies, so the assembler
+        // never re-resolves it per agent here. Source priority is decided at freeze time
+        // and is, in order: the mode version's prompt pipeline > the agent's
+        // base_prompt_pipeline_ref > the workspace default. A mode-level pipeline
+        // therefore reaches every agent of that mode — it describes how the mode
+        // collaborates, while per-agent role wording stays on request.SystemPrompt.
         if (request.PromptVersionId is { } promptVersionId)
         {
             fragmentIds.Add($"prompt-version:{promptVersionId}:{request.PromptVersionContentHash}");

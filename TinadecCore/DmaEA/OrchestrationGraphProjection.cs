@@ -15,7 +15,7 @@ internal static class OrchestrationGraphProjection
 {
     /// <summary>
     /// <paramref name="tier"/> is the run's frozen graph tier (deterministic |
-    /// self_dispatch | free_form); null at session scope where no frozen
+    /// self_dispatch | solo_dispatch | free_form); null at session scope where no frozen
     /// configuration exists yet.
     /// </summary>
     public static object? FromSnapshot(string? snapshotJson, string? tier = null)

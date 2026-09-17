@@ -76,22 +76,23 @@ public static class ModePublishGate
                 }
             }
 
-            // ① operation deny floor over the EFFECTIVE surface (template scope −
-            // envelope − switches) — enforced regardless of whether the binding
-            // carries an envelope: an operation template that declares tools is
-            // already a violation a binding cannot repair (it may only remove).
+            // The operation-layer tool floor is REMOVED BY DESIGN (2026-09-17). A mode may
+            // now give its conversation identity a tool surface of its own — the
+            // solo/master-slave shape, where the agent that talks to the user also edits
+            // the workspace. An operation layer holding tools is therefore a supported
+            // configuration, not a publish violation.
+            //
+            // What replaces the floor is not a weaker gate but a SHARPER one: operation
+            // bindings no longer `continue` past the check below, so a mutating tool on
+            // the conversation identity must declare an explicit write grant exactly like
+            // any execution-layer worker's. The resource envelope and per-write human
+            // approval are what still stand between the governance layer and the
+            // workspace; layer membership is no longer one of the defences.
             var effective = (envelopeTools ?? binding.TemplateTools.ToHashSet(StringComparer.OrdinalIgnoreCase))
                 .Where(tool => !IsSwitchedOff(binding.ToolSwitches, tool))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (string.Equals(binding.Layer, "operation", StringComparison.Ordinal))
-            {
-                if (effective.Count > 0)
-                    throw Fail("operation_tool_floor_violation",
-                        $"mode '{modeKey}' operation node '{binding.NodeKey}' has an effective tool surface ({string.Join(", ", effective.OrderBy(t => t, StringComparer.Ordinal))}); operation-layer agents cannot invoke tools.");
-                continue;
-            }
 
-            // ③ A kept mutating tool needs a write-level grant to be reachable.
+            // A kept mutating tool needs a write-level grant to be reachable.
             var mutating = WorkspaceToolCatalog.MutatingMembers(effective);
             if (mutating.Count > 0 && !DeclaresWriteGrant(binding.Envelope))
             {

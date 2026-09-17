@@ -56,22 +56,25 @@ public static class RunFreezeGate
                     $"Conversation identity holder '{holder.Id}' does not carry a conversation capability.");
         }
 
-        // ② topology: the frozen roster must retain an execution layer, unless the
-        // graph is the free_form shape (no declared edges) and the conversation
-        // identity holds dispatchable-worker spawn authority — the single-director
-        // mode builds its own execution layer at runtime from the spawnable
-        // templates frozen into the graph.
+        // ② topology: the frozen roster must retain an execution layer, with two
+        // exemptions that both describe a master that can operate alone. Either the
+        // graph is the free_form shape (no declared edges) and the conversation identity
+        // holds dispatchable-worker spawn authority — the single-director mode builds its
+        // execution layer at runtime from the spawnable templates frozen into the graph —
+        // or the tier is solo_dispatch, where the master has a tool surface of its own
+        // and simply does the work without any worker at all.
         if (execution.Count == 0)
         {
+            var soloMaster = graph is { Tier: FrozenGraphTiers.SoloDispatch };
             var freeFormWithSpawnAuthority = graph is { Tier: FrozenGraphTiers.FreeForm }
                 && operation.FirstOrDefault(agent =>
                     string.Equals(agent.Id, graph.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase)) is { } director
                 && director.Capabilities.Any(capability =>
                     string.Equals(capability, ThreeNamespaceMap.SpawnTemporaryCapability, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(capability, ThreeNamespaceMap.SpawnAliasCapability, StringComparison.OrdinalIgnoreCase));
-            if (!freeFormWithSpawnAuthority)
+            if (!soloMaster && !freeFormWithSpawnAuthority)
                 throw new RunAdmissionException("mode_topology_invalid",
-                    "The frozen roster has no execution-layer agent (and the mode is not a free-form director with spawn authority).");
+                    "The frozen roster has no execution-layer agent (and the mode is neither a free-form director with spawn authority nor a solo master that holds its own tools).");
         }
 
         // ③ lanes × declared-graph tiers — fail fast at admission (the frozen
