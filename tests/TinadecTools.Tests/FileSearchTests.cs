@@ -225,7 +225,12 @@ public sealed class FileSearchTests : IDisposable
 
             Assert.False(resp.Success);
             Assert.NotNull(resp.Error);
-            Assert.Contains("ripgrep not found", resp.Error, StringComparison.OrdinalIgnoreCase);
+            // The failure must be actionable, not just true: a caller has to learn that
+            // ripgrep is missing AND how to supply it, without reading the source.
+            Assert.Contains("no ripgrep binary was found", resp.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(RipgrepRunner.RgPathEnvVar, resp.Error, StringComparison.Ordinal);
+            Assert.Contains("PATH", resp.Error, StringComparison.Ordinal);
+            Assert.Contains("Every other tool works without ripgrep", resp.Error, StringComparison.Ordinal);
         }
         finally
         {

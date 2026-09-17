@@ -52,6 +52,19 @@ public sealed class ToolManifestTests
         Assert.Equal("unsafe", byId["write_file"].GetProperty("retry_safety").GetString());
         Assert.True(byId["write_file"].GetProperty("input_schema").GetProperty("properties").TryGetProperty("filepath", out _));
         Assert.True(byId["write_file"].GetProperty("input_schema").GetProperty("properties").TryGetProperty("content", out _));
+
+        // An edit tool's anchor must be DESCRIBED, not collapsed into a bare
+        // {"type":"object"}: the model has to be able to learn the {content, hash}
+        // pair from the schema, and it needs prose for the parameters that carry a
+        // rule (which hash, which range).
+        var replaceProperties = byId["replace_lines"].GetProperty("input_schema").GetProperty("properties");
+        var anchors = replaceProperties.GetProperty("content");
+        Assert.Equal("array", anchors.GetProperty("type").GetString());
+        Assert.True(anchors.GetProperty("items").GetProperty("properties").TryGetProperty("content", out _));
+        Assert.True(anchors.GetProperty("items").GetProperty("properties").TryGetProperty("hash", out var anchorHash));
+        Assert.False(string.IsNullOrWhiteSpace(anchorHash.GetProperty("description").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(replaceProperties.GetProperty("start_row").GetProperty("description").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(byId["replace_lines"].GetProperty("description").GetString()));
         Assert.False(byId["read_file"].GetProperty("requires_approval").GetBoolean());
         Assert.False(byId["read_file"].GetProperty("mutates_workspace").GetBoolean());
         Assert.Equal("safe", byId["read_file"].GetProperty("retry_safety").GetString());

@@ -83,7 +83,15 @@ internal static class RipgrepRunner
         var searchPath = WorkspacePathResolver.ResolveDirectory(args.Path);
         var rgPath = ResolveRgPath();
         if (!File.Exists(rgPath))
-            return Fail($"ripgrep not found at '{rgPath}'. Set {RgPathEnvVar} or place rg next to the executable.");
+            // Name every way out and say what is NOT affected: the failure used to read
+            // like a broken tool, so a caller could not tell a missing optional
+            // dependency from a defect.
+            return Fail(
+                $"file_search could not run: no ripgrep binary was found (looked for '{rgPath}'). "
+                + $"Fix any ONE of: set {RgPathEnvVar} to an existing rg executable; place rg "
+                + "(rg.exe on Windows) next to the TinadecTools executable; or put rg on PATH. "
+                + "Binaries: https://github.com/BurntSushi/ripgrep/releases. "
+                + "Every other tool works without ripgrep.");
 
         var psi = BuildProcessStartInfo(rgPath, args, searchPath);
         using var process = new Process { StartInfo = psi };

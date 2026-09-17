@@ -120,7 +120,7 @@ internal static class ToolManifestHash
             builder.Append(tool.Id).Append('\0')
                 .Append(tool.Description).Append('\0')
                 .Append(tool.RequiresApproval).Append('\0')
-                .Append(tool.InputSchema.GetRawText()).Append('\0')
+                .Append(CanonicalSchema(tool.InputSchema)).Append('\0')
                 .Append(tool.Risk).Append('\0')
                 .Append(tool.MutatesWorkspace).Append('\0')
                 .Append(tool.RetrySafety).Append('\0')
@@ -128,6 +128,27 @@ internal static class ToolManifestHash
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// The schema text both processes hash. CANONICAL (re-written) rather than raw,
+    /// because Core hashes the schema it parsed off the wire while this side hashes the
+    /// one it parsed from its own literal: those texts legitimately differ in escaping
+    /// (a description carrying an apostrophe or a quote is literal on one side and
+    /// \u-escaped on the other) and in whitespace, so raw-text hashing made an identical
+    /// manifest look tampered and admission refused every call.
+    ///
+    /// Written through a Utf8JsonWriter rather than JsonSerializer: this process runs with
+    /// reflection-based serialization disabled, so the serializer overload is not an
+    /// option here. Core's ToolManifestHasher.GetRawSchema uses the identical approach,
+    /// which is what makes the two hashes agree.
+    /// </summary>
+    private static string CanonicalSchema(JsonElement schema)
+    {
+        if (schema.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return string.Empty;
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer)) schema.WriteTo(writer);
+        return Encoding.UTF8.GetString(buffer.ToArray());
     }
 }
 

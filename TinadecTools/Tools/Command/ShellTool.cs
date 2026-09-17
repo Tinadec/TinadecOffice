@@ -78,7 +78,13 @@ internal static class ShellToolRegistration
 
         string command;
         string? cwd = null;
-        var timeoutMs = 120_000;
+        // A build, test, or install run on a real repository routinely outlives two
+        // minutes, and the tool's own deadline is what ends the command. The former
+        // 120s default cut those commands off and reported a timeout for work that
+        // was still progressing. This stays in step with Core's frozen
+        // `tools.default_timeout_seconds` (600), and Core's wire budget adds its own
+        // margin on top, so the tool always gets to report the outcome its own way.
+        var timeoutMs = 600_000;
         var longLived = false;
         try
         {

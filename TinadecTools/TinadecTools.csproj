@@ -47,4 +47,15 @@
     </None>
   </ItemGroup>
 
+  <!--
+    ripgrep is not vendored in this repository, and file_search is the only tool that
+    needs it: without a binary it fails at RUN time with a message that does not say
+    what to do, and the failure looks like a broken tool rather than a missing
+    dependency. Warn at build time instead, and name every way out.
+  -->
+  <Target Name="WarnWhenRipgrepIsMissing" AfterTargets="Build">
+    <Warning Condition="!Exists('..\native\rg\rg.exe') And !Exists('..\native\rg\rg')"
+             Text="file_search has no ripgrep binary. Fix any one of: place rg (rg.exe on Windows) at native/rg/ — binaries at https://github.com/BurntSushi/ripgrep/releases — or set TINADEC_TOOLS_RG_PATH to an existing rg, or put rg on PATH. Every other tool works without it." />
+  </Target>
+
 </Project>
