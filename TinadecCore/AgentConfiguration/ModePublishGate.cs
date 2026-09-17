@@ -11,17 +11,22 @@ namespace TinadecCore.AgentConfiguration;
 /// authoritative fail-closed comparison runs again at run freeze.
 ///
 /// Rules:
-/// ① operation_tool_floor_violation — the effective tool surface of an
-///    operation-layer node (template scope − envelope narrowing − tool_switches
-///    removals) must be empty. The deny floor is not relaxable.
-/// ② envelope_exceeds_boundary — envelope.capabilities ⊆ template capabilities,
+/// ① envelope_exceeds_boundary — envelope.capabilities ⊆ template capabilities,
 ///    envelope.tools ⊆ template tool scope (narrowing only, never widening), and
 ///    envelope.spawn numbers must sit inside the runtime ceilings when supplied.
-/// ③ mutating_tool_without_write_grant — a binding whose EFFECTIVE tool surface
+/// ② mutating_tool_without_write_grant — a binding whose EFFECTIVE tool surface
 ///    still holds a workspace-mutating tool must declare a write-level resource
 ///    grant. Otherwise the run freezes a mutating tool face and then denies every
 ///    call of it before the approval gate is ever consulted — the contradiction
 ///    that made a denied tool look like "the tool returned nothing".
+///
+/// The operation-layer tool floor (ex-rule ① "operation_tool_floor_violation") is
+/// REMOVED BY DESIGN (2026-09-17): a mode may arm its conversation identity with
+/// tools so the agent that talks to the user also edits the workspace (the
+/// solo/master-slave shape). Rule ② is what applies to an operation binding now —
+/// operation bindings used to `continue` past it, so removing the floor without
+/// removing that skip would have let a conversation identity keep write_file while
+/// declaring no write authorization at all.
 /// </summary>
 public static class ModePublishGate
 {

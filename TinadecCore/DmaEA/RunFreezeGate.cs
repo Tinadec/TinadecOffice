@@ -20,13 +20,15 @@ namespace TinadecCore.DmaEA;
 ///    the frozen configuration is the authority, so the combination is rejected
 ///    at admission instead of failing mid-run.
 ///
-/// Deliberately NOT here: the operation-layer tool floor. Template-level
-/// tool_scope entries on operation agents only contribute the frozen manifest
-/// ceiling (a legitimate existing configuration shape); the hard deny floor is
-/// CoreAuthorizationContextResolver's operation_layer_cannot_invoke_tools at
-/// dispatch time, and binding-level narrowing is ModePublishGate's
-/// operation_tool_floor_violation. Rejecting declared-but-never-authoritative
-/// operation template tools here would break workspaces that predate the floor.
+/// Deliberately NOT here: tool surfaces. Template-level tool_scope entries on any
+/// layer only contribute the frozen manifest ceiling. The operation-layer tool
+/// floor that used to be enforced at dispatch time
+/// (CoreAuthorizationContextResolver's operation_layer_cannot_invoke_tools) and at
+/// publish time (ModePublishGate's operation_tool_floor_violation) was REMOVED BY
+/// DESIGN (2026-09-17) — a mode may now give its conversation identity a tool
+/// surface of its own. The surviving defences are the explicit pack declaration,
+/// the write-grant rule, and per-write human approval, none of which belong in an
+/// admission gate.
 /// </summary>
 public static class RunFreezeGate
 {

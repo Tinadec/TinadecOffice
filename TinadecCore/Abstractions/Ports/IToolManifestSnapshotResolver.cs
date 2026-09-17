@@ -23,6 +23,16 @@ public interface IToolManifestSnapshotResolver
 /// no tools. <paramref name="SpawnableToolIds"/> carries the graph-tier spawnable
 /// templates' tool ceilings: they join the frozen manifest even though they are
 /// not part of any roster node's effective tool surface.
+///
+/// <para>
+/// <paramref name="AllowedToolIds"/> is a HINT, not the authority: when the session
+/// is governed by a published mode version, the resolver prefers that mode's
+/// effective-tool union (IFormalModeResolver), which spans every node of every layer.
+/// That union is how a solo_dispatch mode's tool-holding conversation identity gets
+/// its tools into the frozen manifest — see ToolManifestSnapshotResolver for the
+/// precedence and for how declared Core-owned virtual tools survive a live-manifest
+/// filter they are absent from by construction.
+/// </para>
 /// </summary>
 public sealed record ToolManifestSnapshotRequest(
     Guid SessionId,

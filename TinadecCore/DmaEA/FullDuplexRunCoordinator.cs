@@ -260,11 +260,25 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         FrozenRunConfigurationV1 configuration,
         CancellationToken cancellationToken)
     {
-        // The run-frozen manifest is the execution ceiling.  The governance layer never
-        // contributes to it: an operation-layer declaration must not be able to widen what
-        // execution workers may reach. Spawnable worker templates (graph tiers) contribute
-        // their tool scope too — a free-form director mode has an empty execution roster,
-        // so without this the manifest would authorize nothing for its spawned workers.
+        // The run-frozen manifest is the run's TOOL CEILING. This list is the request's
+        // hint; the AUTHORITATIVE set is the mode version's effective-tool union, which
+        // ToolManifestSnapshotResolver reads back through IFormalModeResolver and prefers.
+        //
+        // That union spans ALL nodes regardless of layer, and it must: a solo_dispatch
+        // mode arms its conversation identity with tools, and the master's surface is
+        // exactly what the master's instance resolves its catalog from. Do NOT "fix" this
+        // by excluding operation agents downstream — doing so silently leaves the solo
+        // master holding a tool_scope it can never see.
+        //
+        // The security property the old comment here described still holds, just at a
+        // different level: a declaration cannot widen what a WORKER reaches, because each
+        // instance's declaration surface is its own grant ∩ this manifest
+        // (IFrozenToolManifestCatalog.ListAuthorizedAsync). The ceiling being a union does
+        // not hand one agent another's tools.
+        //
+        // Spawnable worker templates (graph tiers) contribute their tool scope too — a
+        // free-form director mode has an empty execution roster, so without this the
+        // manifest would authorize nothing for its spawned workers.
         var definitions = configuration.ExecutionAgents.ToArray();
         var spawnable = configuration.Graph?.SpawnableTemplates ?? [];
         var allowedToolIds = definitions
