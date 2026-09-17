@@ -84,7 +84,7 @@ describe('connectEvents normalization', () => {
     }
   }
 
-  it('delivers normalized envelopes for named Core events and swallows malformed frames', () => {
+  it('delivers normalized envelopes for the real Core event names and swallows malformed frames', () => {
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
     try {
@@ -93,17 +93,36 @@ describe('connectEvents normalization', () => {
       const source = FakeEventSource.instances[0]
       expect(source.url).toContain('/api/v1/events?session_id=s-1')
 
-      // Core wire shape on a named event the UI subscribes to.
-      source.emit('message.created', JSON.stringify({
-        version: '1.0', event_id: 'e1', event_type: 'message.created',
+      // Core emits NAMED frames; the browser drops any named frame with no listener
+      // of that name. These are the names that were missing, which is why tool
+      // outcomes, approval decisions, and run failures never reached the UI.
+      for (const name of [
+        'tool.execution.requested',
+        'tool.execution.completed',
+        'tool.execution.failed',
+        'tool.execution.outcome_unknown',
+        'worker.assigned',
+        'worker.failed',
+        'approval.decided',
+        'run.failed',
+      ]) {
+        expect(source.listeners.has(name), `missing listener for ${name}`).toBe(true)
+      }
+      // A name Core has never produced must not be subscribed to: a dead listener is
+      // what hides the fact that a real fact has no rendering.
+      expect(source.listeners.has('project.created')).toBe(false)
+
+      // Core wire shape on a real named event.
+      source.emit('tool.execution.failed', JSON.stringify({
+        version: '1.0', event_id: 'e1', event_type: 'tool.execution.failed',
         timestamp: '2026-08-27T00:00:00Z', session_id: 's-1', run_id: 'r-1',
-        payload: { sequence: 12 },
+        payload: { sequence: 12, tool_id: 'write_file', error_category: 'not_approved' },
       }), '12')
       // Malformed JSON must not throw (would trip the renderer crash overlay).
-      expect(() => source.emit('run.started', '{not json')).not.toThrow()
+      expect(() => source.emit('run.failed', '{not json')).not.toThrow()
 
       expect(received).toHaveLength(1)
-      expect(received[0].type).toBe('message.created')
+      expect(received[0].type).toBe('tool.execution.failed')
       expect(received[0].seq).toBe(12)
       expect(received[0].ts).toBe('2026-08-27T00:00:00Z')
     } finally {

@@ -367,6 +367,25 @@ const streamingText = ref<Map<string, string>>(new Map())
 const invokeError = ref<string | null>(null)
 const lastCursor = ref<number | null>(null)
 
+/**
+ * The run a "stop" would cancel: the newest run that has not reached a terminal
+ * state. Parked runs (awaiting_user) are included on purpose — a run waiting on an
+ * approval the user no longer wants is exactly the one they most need to stop, and
+ * the composer offered no way to do it.
+ */
+const stoppableRunId = computed(
+  () => runs.value.find((r) => !['completed', 'failed', 'cancelled'].includes(r.status))?.id ?? null,
+)
+
+/**
+ * The live text of that run. The controller has accumulated this per delta all along
+ * but nothing ever rendered it, so a user saw nothing at all until the entire reply
+ * was persisted — which reads as a hung agent.
+ */
+const streamingReply = computed(() =>
+  stoppableRunId.value ? streamingText.value.get(stoppableRunId.value) ?? '' : '',
+)
+
 
 async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; permission_mode?: PermissionLevel }) {
   await run('send message', async () => {
@@ -513,9 +532,35 @@ async function requestShellApproval() {
   })
 }
 
-async function decideApproval(approval: ApprovalDto, decision: 'approved' | 'rejected') {
+async function decideApproval(
+  approval: ApprovalDto,
+  decision: 'approved' | 'rejected',
+  scope?: 'once' | 'run',
+) {
   await run('decide approval', async () => {
-    await api.decideApproval(approval.id, decision)
+    await api.decideApproval(approval.id, decision, null, scope)
+    await loadMessagesAndApprovals()
+  })
+}
+
+/**
+ * Decide by id, for the chat's inline approve/reject buttons. Those buttons sit on a
+ * tool card, which knows the approval id but not the whole approval record, and the
+ * chat had no handler at all before — the button existed and clicked into nothing.
+ */
+async function decideApprovalById(approvalId: string, decision: 'approved' | 'rejected', scope?: 'once' | 'run') {
+  await run('decide approval', async () => {
+    await api.decideApproval(approvalId, decision, null, scope)
+    await loadMessagesAndApprovals()
+  })
+}
+
+/** Cancel the run the composer is currently bound to. */
+async function stopRun() {
+  const runId = stoppableRunId.value
+  if (!runId) return
+  await run('stop run', async () => {
+    await api.controlRun(runId, 'cancel')
     await loadMessagesAndApprovals()
   })
 }
@@ -651,6 +696,10 @@ export const homeController = {
   handleWelcomeSend: (payload: { content: string; permission_mode: PermissionLevel; mode_version_id?: string | null }) => handleSend(payload.content, payload),
   requestShellApproval,
   decideApproval,
+  decideApprovalById,
+  stopRun,
+  stoppableRunId,
+  streamingReply,
   recordApproval,
   loadMessagesAndApprovals,
   updateDraft: (value: string) => { draft.value = value },

@@ -1,4 +1,5 @@
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
+import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 
 export interface ProjectDto {
   id: string;
@@ -1992,9 +1993,19 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
-  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null) => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
+  /**
+   * Decide a pending approval. `scope: 'run'` is "always allow this tool for this
+   * session": Core mints a run-scoped pre-authorization plus a run-scoped capability
+   * grant, and releases the run's other pending requests for the same tool. Without
+   * a scope the decision stays a one-shot.
+   */
+  decideApproval: (approvalId: string, decision: 'approved' | 'rejected', reason?: string | null, scope?: 'once' | 'run') => request<ApprovalDto>(`/api/v1/approvals/${approvalId}/decision`, {
     method: 'POST',
-    body: JSON.stringify(reason ? { decision, reason } : { decision })
+    body: JSON.stringify({
+      decision,
+      ...(reason ? { reason } : {}),
+      ...(scope ? { scope } : {}),
+    })
   }),
   createPreAuthorization: (input: CreatePreAuthorizationInput) => request<PreAuthorizationDto>('/api/v1/approvals/pre-authorizations', {
     method: 'POST',
@@ -2400,25 +2411,13 @@ export const api = {
       }
     };
     source.onmessage = handle;
-    source.addEventListener('project.created', handle as EventListener);
-    source.addEventListener('session.created', handle as EventListener);
-    source.addEventListener('message.created', handle as EventListener);
-    source.addEventListener('approval.requested', handle as EventListener);
-    source.addEventListener('approval.approved', handle as EventListener);
-    source.addEventListener('approval.rejected', handle as EventListener);
-    source.addEventListener('tool.shell.approval_required', handle as EventListener);
-    source.addEventListener('run.started', handle as EventListener);
-    source.addEventListener('task_graph.created', handle as EventListener);
-    source.addEventListener('task.assigned', handle as EventListener);
-    source.addEventListener('step.result.created', handle as EventListener);
-    source.addEventListener('supervision.checked', handle as EventListener);
-    source.addEventListener('context.pack.created', handle as EventListener);
-    // Agent terminal stream (shell tool → tool-core-gateway → run event journal).
-    source.addEventListener('terminal.command', handle as EventListener);
-    source.addEventListener('terminal.stdout', handle as EventListener);
-    source.addEventListener('terminal.exit', handle as EventListener);
-    source.addEventListener('terminal.stdin', handle as EventListener);
-    source.addEventListener('terminal.session.killed', handle as EventListener);
+    // Core writes NAMED SSE frames, and the browser drops any named frame with no
+    // listener of the same name — so the subscription list has to be the real event
+    // vocabulary, not a hand-maintained guess. See events/coreEventTypes.ts for why
+    // the previous list left tools, approvals, and run failures permanently invisible.
+    for (const eventType of CORE_EVENT_TYPES) {
+      source.addEventListener(eventType, handle as EventListener);
+    }
     return source;
   },
 

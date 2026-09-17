@@ -90,6 +90,15 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
       </div>
     </template>
 
+    <!-- 运行工具证据：写进会话历史是为了让下一条消息能读到上一轮的工具体验，
+         它不是用户说的话。渲染成静默证据块，不提供复制/编辑等「用户消息」操作。 -->
+    <template v-else-if="message.role === 'tool_evidence'">
+      <details class="tool-evidence-block" data-testid="tool-evidence">
+        <summary>{{ $t('chat.toolEvidence') }}</summary>
+        <pre class="tool-evidence-body">{{ message.content }}</pre>
+      </details>
+    </template>
+
     <!-- 用户消息：对话框气泡 + 左侧操作按钮 -->
     <template v-else>
       <div class="user-message-row">

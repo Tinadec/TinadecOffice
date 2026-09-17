@@ -66,6 +66,12 @@ export interface ThinkingStep {
     | 'supervision'
     | 'context_pack'
     | 'step_result'
+    // A tool dispatch that failed or came back with an unknown outcome. It is a
+    // step of its own because it is fed back to the worker as a result — the model
+    // reads it and decides — so it belongs in the visible reasoning trail.
+    | 'tool'
+    // A terminal run failure.
+    | 'run'
   title: string
   description: string
   timestamp: string
@@ -383,8 +389,12 @@ export function useAgentActivity(
   }
 
   function processApprovalRequested(event: EventEnvelope) {
-    const approvalId = extractString(event.payload, 'id')
-    const summary = extractString(event.payload, 'summary') ?? '需要审批'
+    // Core publishes the id under approval_id; older shapes used id. Reading only
+    // 'id' meant the pending call was never marked, so the chat could not offer the
+    // approve/reject buttons it already had markup for.
+    const approvalId = extractString(event.payload, 'approval_id') ?? extractString(event.payload, 'id')
+    const toolId = extractString(event.payload, 'tool_id')
+    const summary = extractString(event.payload, 'summary') ?? (toolId ? `工具 ${toolId} 需要审批` : '需要审批')
 
     activity.value = {
       ...activity.value,
@@ -394,17 +404,21 @@ export function useAgentActivity(
 
     if (approvalId) {
       toolCalls.value = toolCalls.value.map((call) =>
-        call.approvalId === approvalId
-          ? { ...call, status: 'waiting_approval' as ToolCallStatus }
+        call.approvalId === approvalId || (toolId != null && call.toolId === toolId)
+          ? { ...call, status: 'waiting_approval' as ToolCallStatus, approvalId }
           : call,
       )
     }
+
+    // The timeline is the authoritative source for a row's approval id; pull it so a
+    // park that arrived before the row existed still becomes actionable.
+    void refreshToolExecutions()
 
     addProgressEvent(event.seq, event.type, 'alert-circle', `等待审批：${summary}`)
   }
 
   function processApprovalDecided(event: EventEnvelope, decision: 'approved' | 'rejected') {
-    const approvalId = extractString(event.payload, 'id')
+    const approvalId = extractString(event.payload, 'approval_id') ?? extractString(event.payload, 'id')
 
     activity.value = {
       ...activity.value,
@@ -423,11 +437,122 @@ export function useAgentActivity(
       )
     }
 
+    void refreshToolExecutions()
+
     addProgressEvent(
       event.seq,
       event.type,
       decision === 'approved' ? 'check' : 'x',
       decision === 'approved' ? '审批已通过' : '审批已拒绝',
+    )
+  }
+
+  /**
+   * A tool dispatch outcome. Every one of these used to be unsubscribed, so the
+   * timeline only ever moved when the whole run finished — a call could fail, be
+   * fed back to the model, and be retried with nothing shown in between.
+   */
+  function processToolExecution(event: EventEnvelope) {
+    const toolId = extractString(event.payload, 'tool_id') ?? ''
+    const category = extractString(event.payload, 'error_category')
+    const embeddedFailure = event.payload?.['tool_success'] === false
+
+    if (event.type === 'tool.execution.requested') {
+      addProgressEvent(event.seq, event.type, 'wrench', `调用工具 ${toolId}`)
+    } else if (event.type === 'tool.execution.completed') {
+      addProgressEvent(
+        event.seq,
+        event.type,
+        embeddedFailure ? 'alert-triangle' : 'check',
+        embeddedFailure ? `工具 ${toolId} 返回失败结果` : `工具 ${toolId} 完成`,
+      )
+    } else {
+      // failed / outcome_unknown: name the category, because "the tool failed" gives
+      // a reader nothing to act on and the category is what the model acted on.
+      const label = category ? `${toolId} 失败（${category}）` : `${toolId} 失败`
+      thinkingSteps.value = [
+        ...thinkingSteps.value,
+        {
+          id: `${event.seq}-tool-${event.type}`,
+          type: 'tool',
+          title: event.type === 'tool.execution.outcome_unknown' ? '工具结果未知' : '工具执行失败',
+          description: label,
+          timestamp: event.ts,
+          durationMs: null,
+          severity: 'warning',
+          details: { toolId, category },
+        },
+      ]
+      addProgressEvent(event.seq, event.type, 'alert-triangle', label)
+    }
+
+    void refreshToolExecutions()
+  }
+
+  /** A terminal run failure — previously invisible, so a failed run just stopped. */
+  function processRunFailed(event: EventEnvelope) {
+    const category = extractString(event.payload, 'error_category') ?? ''
+    const message = extractString(event.payload, 'message') ?? extractString(event.payload, 'summary') ?? ''
+
+    activity.value = {
+      ...activity.value,
+      status: 'error',
+      lastUpdated: event.ts,
+    }
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      {
+        id: `${event.seq}-run-failed`,
+        type: 'run',
+        title: '运行失败',
+        description: [category, message].filter(Boolean).join(' · ') || '运行失败',
+        timestamp: event.ts,
+        durationMs: null,
+        severity: 'error',
+        details: { category },
+      },
+    ]
+    addProgressEvent(event.seq, event.type, 'x', `运行失败${category ? `：${category}` : ''}`)
+  }
+
+  /**
+   * Execution-layer instance events: who got the task, who finished or failed, and
+   * where the tool loop stands. Insufficient on its own to drive the icons, but the
+   * activity line and the progress list are what tell a watching user that work is
+   * still moving.
+   */
+  function processWorkerEvent(event: EventEnvelope) {
+    const slug = extractString(event.payload, 'agent_slug') ?? extractString(event.payload, 'worker_agent_id') ?? 'worker'
+    const reason = extractString(event.payload, 'reason')
+    const category = extractString(event.payload, 'error_category')
+    const message = extractString(event.payload, 'summary') ?? extractString(event.payload, 'message') ?? ''
+
+    activity.value = {
+      ...activity.value,
+      status: event.type === 'worker.failed' ? 'error' : 'working',
+      activeAgentName: slug,
+      lastUpdated: event.ts,
+    }
+
+    if (event.type === 'worker.assigned') {
+      addProgressEvent(event.seq, event.type, 'user-check', `${slug} 接单${reason ? `（${reason}）` : ''}`)
+      return
+    }
+    if (event.type === 'worker.tool_failed') {
+      // A fed-back tool failure is not a dead end any more: it is an iteration.
+      const label = category ? `${slug} 的调用失败（${category}），已交回模型` : `${slug} 的调用失败，已交回模型`
+      addProgressEvent(event.seq, event.type, 'alert-triangle', label)
+      return
+    }
+    if (event.type === 'worker.budget_exhausted') {
+      addProgressEvent(event.seq, event.type, 'hourglass', `${slug} 收敛收尾：${message || category || '预算耗尽'}`)
+      return
+    }
+    addProgressEvent(
+      event.seq,
+      event.type,
+      event.type === 'worker.failed' ? 'x' : 'check-circle',
+      message || (event.type === 'worker.failed' ? `${slug} 失败` : `${slug} 完成`),
     )
   }
 
@@ -489,7 +614,12 @@ export function useAgentActivity(
 
   function processEvent(event: EventEnvelope) {
     switch (event.type) {
+      // Lifecycle. The real Core names come first; run.started is kept because the
+      // envelope mapper still produces it for older frames.
       case 'run.started':
+      case 'task.accepted':
+      case 'interaction.created':
+      case 'run.queued':
         processRunStarted(event)
         break
       case 'task_graph.created':
@@ -498,14 +628,33 @@ export function useAgentActivity(
       case 'task.assigned':
         processTaskAssigned(event)
         break
+      case 'worker.assigned':
+      case 'worker.completed':
+      case 'worker.failed':
+      case 'worker.tool_failed':
+      case 'worker.budget_exhausted':
+        processWorkerEvent(event)
+        break
       case 'step.result.created':
         processStepResult(event)
         break
       case 'supervision.checked':
+      case 'supervision.requested':
+      case 'supervision.completed':
+      case 'supervision.skipped':
         processSupervision(event)
         break
       case 'context.pack.created':
+      case 'context.packed':
         processContextPack(event)
+        break
+      // Tool outcomes: subscribed to but never handled before, so the timeline only
+      // moved at the end of the run.
+      case 'tool.execution.requested':
+      case 'tool.execution.completed':
+      case 'tool.execution.failed':
+      case 'tool.execution.outcome_unknown':
+        processToolExecution(event)
         break
       case 'approval.requested':
       case 'tool.shell.approval_required':
@@ -520,6 +669,17 @@ export function useAgentActivity(
         break
       case 'approval.rejected':
         processApprovalDecided(event, 'rejected')
+        break
+      case 'approval.decided':
+      case 'governance.permission_decided': {
+        // Core's real names for a decision; the outcome vocabulary differs between
+        // the approval layer (approved/rejected) and the PDP (allowed/denied).
+        const outcome = extractString(event.payload, 'outcome') ?? extractString(event.payload, 'decision') ?? ''
+        processApprovalDecided(event, outcome === 'approved' || outcome === 'allowed' ? 'approved' : 'rejected')
+        break
+      }
+      case 'run.failed':
+        processRunFailed(event)
         break
       case 'message.created':
         processMessageCreated(event)

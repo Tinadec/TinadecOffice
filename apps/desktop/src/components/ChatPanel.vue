@@ -28,6 +28,13 @@ const props = defineProps<{
   panelDataAttrs?: Record<string, string>
   // new: pass runs for insert picker
   runsForComposer?: Array<{ id: string; status: string }>
+  /**
+   * Live text of the run currently in flight. The controller accumulated it per
+   * delta but nothing rendered it, so the reply appeared only once it was persisted.
+   */
+  streamingReply?: string
+  /** True while a run can still be cancelled — drives the composer's stop button. */
+  canStop?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +46,7 @@ const emit = defineEmits<{
   'select-project': [id: string | null]
   'approve': [approvalId: string]
   'reject': [approvalId: string]
+  'stop': []
 }>()
 
 // meeting_model_override 原样透传。此前这里把它读成 `payload.meeting_model`（字符串）
@@ -131,6 +139,12 @@ function handleReject(approvalId: string) {
           @approve="handleApprove"
           @reject="handleReject"
         />
+        <!-- Live reply bubble: rendered from the stream while it is still arriving,
+             in the same shape as a persisted assistant message. -->
+        <div v-if="streamingReply" class="chat-streaming-bubble" data-testid="chat-streaming-reply">
+          <span class="chat-streaming-text">{{ streamingReply }}</span>
+          <span class="chat-streaming-caret" aria-hidden="true" />
+        </div>
       </div>
     </Transition>
 
@@ -154,8 +168,44 @@ function handleReject(approvalId: string) {
       @update:mode-version-id="modeVersionId = $event"
       @welcome-submit="onWelcomeSubmit"
       @submit="onComposerSubmit"
+      @stop="emit('stop')"
       @create-project="emit('create-project')"
       @select-project="emit('select-project', $event)"
     />
   </section>
 </template>
+
+<style scoped>
+/* The live reply while it is still arriving. It sits in the message column with the
+   same measure as a persisted assistant bubble so the text does not jump when the
+   real message replaces it. */
+.chat-streaming-bubble {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin: 8px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-streaming-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chat-streaming-caret {
+  flex: 0 0 auto;
+  width: 2px;
+  height: 14px;
+  background: var(--text-secondary);
+  animation: chat-streaming-blink 1s steps(2, start) infinite;
+}
+@keyframes chat-streaming-blink {
+  to { visibility: hidden; }
+}
+</style>

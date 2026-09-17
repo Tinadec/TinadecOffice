@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ShieldX, Terminal } from '@lucide/vue'
+import { Check, Infinity as InfinityIcon, ShieldX, Terminal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '../api'
 
@@ -14,7 +14,8 @@ defineProps<{
 
 const emit = defineEmits<{
   'request-approval': []
-  'decide-approval': [approval: ApprovalDto, decision: 'approved' | 'rejected']
+  /** `scope: 'run'` is "always allow this tool for this session". */
+  'decide-approval': [approval: ApprovalDto, decision: 'approved' | 'rejected', scope?: 'once' | 'run']
   'update:shellCommand': [value: string]
 }>()
 
@@ -44,6 +45,16 @@ const pendingApprovals = (approvals: ApprovalDto[]) =>
         <p>{{ approval.summary }}</p>
       </div>
       <div class="approval-actions">
+        <!-- "Always allow for this session": one tool, this run. Only offered for a
+             policy park, whose escalation is a tool id the scope can name exactly. -->
+        <button
+          v-if="approval.kind === 'permission'"
+          class="icon-button always"
+          :title="t('approval.alwaysAllow')"
+          @click="emit('decide-approval', approval, 'approved', 'run')"
+        >
+          <InfinityIcon :size="14" />
+        </button>
         <button class="icon-button approve" :title="t('approval.approve')" @click="emit('decide-approval', approval, 'approved')">
           <Check :size="14" />
         </button>

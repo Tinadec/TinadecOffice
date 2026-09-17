@@ -12,7 +12,7 @@ const c = homeController
     :busy="c.busy.value"
     :selected-session-id="c.selectedSessionId.value"
     @request-approval="c.requestShellApproval()"
-    @decide-approval="(approval, decision) => c.decideApproval(approval, decision)"
+    @decide-approval="(approval, decision, scope) => c.decideApproval(approval, decision, scope)"
     @update:shell-command="c.shellCommand.value = $event"
   />
 </template>

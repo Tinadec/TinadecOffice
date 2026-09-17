@@ -21,11 +21,16 @@ const c = homeController
     :thinking-steps="c.agentThinkingSteps.value"
     :tool-calls="c.agentToolCalls.value"
     :runs-for-composer="c.runs.value"
+    :streaming-reply="c.streamingReply.value"
+    :can-stop="Boolean(c.stoppableRunId.value)"
     @update:draft="c.updateDraft($event)"
     @update:permission="c.updatePermission($event)"
     @send="c.sendMessage($event)"
     @welcome-send="c.handleWelcomeSend($event as never)"
     @create-project="c.openProject()"
     @select-project="c.setSelectedProject($event)"
+    @approve="c.decideApprovalById($event, 'approved')"
+    @reject="c.decideApprovalById($event, 'rejected')"
+    @stop="c.stopRun()"
   />
 </template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings, Sparkles } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -29,6 +29,12 @@ const props = defineProps<{
   meetingModelOverride?: MeetingModelOverrideDto | null
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
+  /**
+   * True while a run can still be cancelled. The composer only showed a spinner,
+   * so "the agent is doing something I no longer want" had no answer in the one
+   * place the user was already looking.
+   */
+  canStop?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -41,6 +47,7 @@ const emit = defineEmits<{
   'select-project': [id: string | null]
   'add-image': []
   'add-file': []
+  'stop': []
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -263,6 +270,18 @@ function confirmSteer(id: string) {
 
         <div ref="sendTriggerRef" class="composer-send-wrapper">
           <UiButton
+            v-if="busy && canStop"
+            variant="ghost"
+            size="icon"
+            class="composer-stop-button"
+            data-testid="composer-stop"
+            :aria-label="t('chat.stopRun')"
+            :title="t('chat.stopRun')"
+            @click="emit('stop')"
+          >
+            <Square :size="14" />
+          </UiButton>
+          <UiButton
             variant="ghost"
             size="icon"
             class="welcome-dialog-send"
@@ -402,6 +421,13 @@ function confirmSteer(id: string) {
   border-top-color: var(--text-primary);
   border-radius: 50%;
   animation: composer-spin 0.8s linear infinite;
+}
+.composer-stop-button {
+  margin-right: 2px;
+  color: var(--text-secondary);
+}
+.composer-stop-button:hover {
+  color: var(--text-primary);
 }
 @keyframes composer-spin {
   to { transform: rotate(360deg); }
