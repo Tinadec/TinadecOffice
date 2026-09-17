@@ -1219,6 +1219,76 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The 2026-09-17 plan_parse_failed cluster (feb146e4/05a89fc3): the planner's
+    /// first answer writes an array-typed field as a scalar string, the declared-edge
+    /// guard refuses the fallback, and attempt 2 used to resend the byte-identical
+    /// prompt so the run died. Now attempt 1's scalar shape is repaired in the parser;
+    /// this test pins that a run through a DECLARED-EDGE mode completes when attempt 1
+    /// is unrecoverable and the retry hint steers attempt 2 into a valid array.
+    /// </summary>
+    [Fact]
+    public async Task DeclaredEdge_PlannerRetryHint_SteersSecondAttemptIntoValidGraph()
+    {
+        var workspace = Path.Combine(_root, "workspace-vibe-retry");
+        Directory.CreateDirectory(workspace);
+        var provider = new FakeToolProvider();
+        var script = new ToolScriptedClient()
+            // Attempt 1: success_criteria is a scalar — the live failure shape, made
+            // unrecoverable on purpose (a number, not a string) so only the retry path
+            // can save the run.
+            .WhenPlanner("[{\"task_key\":\"v1\",\"title\":\"写vibe文件\",\"description\":\"\",\"success_criteria\":42,\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .ThenPlanner("[{\"task_key\":\"v1\",\"title\":\"写vibe文件\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[\"write_file\"],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenMeeting("vibe 完成。")
+            .WhenWorkerText("已写入 vibe.txt");
+
+        _factory = new ToolChainFactory(_root, script, provider);
+        var client = _factory.CreateClient();
+
+        var envelope = VibeRunPackEnvelope();
+        using var preview = await client.PostAsJsonAsync("/api/v1/agent-packs/install-preview", envelope);
+        Assert.True(preview.StatusCode == HttpStatusCode.Created || preview.StatusCode == HttpStatusCode.OK,
+            $"vibe preview: {preview.StatusCode} {await preview.Content.ReadAsStringAsync()}");
+        var previewBody = await preview.Content.ReadFromJsonAsync<JsonElement>();
+        using var apply = new HttpRequestMessage(HttpMethod.Put, "/api/v1/agent-packs/tinadec.tests.vibe-run-pack")
+        {
+            Content = JsonContent.Create(new { preview_id = previewBody.GetProperty("preview_id").GetGuid(), envelope })
+        };
+        apply.Headers.TryAddWithoutValidation("Idempotency-Key", "vibe-retry-install");
+        using var applyResponse = await client.SendAsync(apply);
+        Assert.Equal(HttpStatusCode.Created, applyResponse.StatusCode);
+        var packDetail = await client.GetFromJsonAsync<JsonElement>("/api/v1/agent-packs/tinadec.tests.vibe-run-pack");
+        var modeVersionId = packDetail.GetProperty("resources").EnumerateArray()
+            .Where(resource => resource.GetProperty("kind").GetString() == "mode")
+            .Select(resource => resource.GetProperty("version_id").GetGuid())
+            .Single();
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "vibe retry project", path = workspace }))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new
+        {
+            project_id = project.GetProperty("id").GetGuid(),
+            title = "vibe retry",
+            mode_version_id = modeVersionId
+        })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一个 vibe 文件", client_message_id = "vibe-retry-c-1" });
+        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+        var done = chunks.Last(c => KindOf(c) is "done" or "error");
+        Assert.Equal("done", KindOf(done));
+        Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
+        Assert.Equal(2, script.PlannerCalls);
+
+        // The retry hint travels to the model on attempt 2 only, and carries the
+        // parse detail + the shape contract.
+        Assert.Equal(2, script.PlannerInstructions.Count);
+        Assert.DoesNotContain("【重试纠正】", script.PlannerInstructions[0], StringComparison.Ordinal);
+        Assert.Contains("【重试纠正】", script.PlannerInstructions[1], StringComparison.Ordinal);
+        Assert.Contains("plan_parse_failed", script.PlannerInstructions[1], StringComparison.Ordinal);
+        Assert.Contains("success_criteria", script.PlannerInstructions[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Generic vibe run-pack fixture (never Office content). The digest covers the
     /// Core DTO re-serialization — Core digests its own round-tripped shape, so the
     /// fixture must hash exactly what Core will hash.
@@ -2177,6 +2247,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
     {
         private readonly Queue<string> _supervisorVerdicts = new();
         private string? _planner;
+        private readonly Queue<string> _plannerFollowUps = new();
         private string? _meeting;
         private (string ToolId, Dictionary<string, object?> Arguments)? _firstWorkerTool;
         private string? _workerFollowUp;
@@ -2184,6 +2255,16 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         private readonly Queue<AIContent[]> _workerTurns = new();
         public int WorkerCalls;
         public int StewardCalls;
+        public int PlannerCalls;
+        private readonly object _instructionsGate = new();
+        private readonly List<string> _plannerInstructions = [];
+        /// <summary>Every planner turn's instructions, in order — the retry-hint
+        /// contract (attempt 2 carries the first attempt's failure back to the
+        /// model) is observable only here.</summary>
+        public IReadOnlyList<string> PlannerInstructions
+        {
+            get { lock (_instructionsGate) return _plannerInstructions.ToArray(); }
+        }
         /// <summary>Tokens reported on every worker turn; 0 leaves usage unreported.
         /// Budget tests need deterministic usage, which a provider-less script
         /// otherwise never produces.</summary>
@@ -2199,6 +2280,10 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         public TaskCompletionSource? WorkerStarted { get; set; }
 
         public ToolScriptedClient WhenPlanner(string script) { _planner = script; return this; }
+        /// <summary>Planner script consumed by the NEXT planner call after the
+        /// first, in order — for retry-hint tests where attempt 1 fails and
+        /// attempt 2 must recover.</summary>
+        public ToolScriptedClient ThenPlanner(string script) { _plannerFollowUps.Enqueue(script); return this; }
         public ToolScriptedClient WhenSupervisor(string verdict) { _supervisorVerdicts.Enqueue(verdict); return this; }
         public ToolScriptedClient WhenMeeting(string script) { _meeting = script; return this; }
         public ToolScriptedClient WhenWorkerTool(string toolId, Dictionary<string, object?>? arguments = null)
@@ -2241,7 +2326,15 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             if (instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal))
-                return new ChatResponse(new ChatMessage(ChatRole.Assistant, _planner ?? "[]"));
+            {
+                lock (_instructionsGate) _plannerInstructions.Add(instructions ?? string.Empty);
+                Interlocked.Increment(ref PlannerCalls);
+                // Serve queued follow-ups only AFTER the first planner call (mirror
+                // ScriptedChatClient's PlannerCalls > 0 gate), so WhenPlanner is the
+                // attempt-1 script and ThenPlanner the attempt-2 recovery script.
+                var followUp = PlannerCalls > 1 && _plannerFollowUps.Count > 0 ? _plannerFollowUps.Dequeue() : null;
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant, followUp ?? _planner ?? "[]"));
+            }
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant,
                     _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}"));

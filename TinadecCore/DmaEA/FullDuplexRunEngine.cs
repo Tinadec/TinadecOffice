@@ -583,6 +583,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         PlannedTask[] planned = [];
         Exception? lastError = null;
         var plannerHead = string.Empty;
+        var plannerParseError = string.Empty;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -590,12 +591,20 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var contextForPlanner = CreateRunContext(run, checkpoint);
                 var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
                     checkpoint.PlannerAgentId, null), _logger);
+                // Attempt 2 carries the first attempt's failure back to the model: a
+                // byte-identical blind resend re-commits the same mistake (the 2026-09-17
+                // plan_parse_failed cluster failed both attempts with the same scalar
+                // success_criteria shape).
+                var instructionsForAttempt = attempt == 0
+                    ? PlannerInstructions(checkpoint, assembly.Instructions)
+                    : PlannerInstructions(checkpoint, assembly.Instructions) + BuildPlannerRetryHint(lastError, plannerParseError);
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
-                    PlannerInstructions(checkpoint, assembly.Instructions),
+                    instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
                 plannerHead = planner.LastResponseHead;
+                plannerParseError = planner.LastParseErrorDetail;
                 RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 // A PARSED empty array is a legitimate plan, not a failure: a greeting or a
@@ -639,6 +648,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 {
                     run_id = run.RunId,
                     reason = lastError.Message,
+                    parse_error = plannerParseError,
                     response_head = plannerHead,
                     response_head_length = plannerHead.Length
                 }, cancellationToken).ConfigureAwait(false);
@@ -1854,6 +1864,20 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 + "refusing to dispatch the silent fallback goal-task along declared edges.");
     }
 
+    // 2026-09-17 plan_parse_failed 集群（feb146e4/05a89fc3，qwen3.8-27b 把 success_criteria
+    // 写成标量字符串）：两个 attempt 逐字节盲发同一提示词，模型必然重犯同一错误。重试必须携带
+    // 上一次失败的具体原因（解析详情或图校验错误），并把形状约束重复一次。
+    internal static string BuildPlannerRetryHint(Exception? lastError, string parseErrorDetail)
+    {
+        var detail = !string.IsNullOrWhiteSpace(parseErrorDetail) ? $"（解析错误: {parseErrorDetail}）" : string.Empty;
+        var reason = lastError?.Message ?? "unknown";
+        return "\n\n【重试纠正】你上一次的输出未能构成合法任务图（" + reason + "）" + detail + "。再次输出时："
+            + "只输出一个裸 JSON 任务数组，不要用散文拒绝或解释；"
+            + "success_criteria、dependencies、required_capabilities、required_tools 四个字段必须写成字符串数组（例如 \"success_criteria\": [\"判据\"]），绝不能写成单个字符串；"
+            + "dependencies 只能引用本次已声明的 task_key，不得成环；"
+            + "若目标无需执行任何子任务，直接输出 []。";
+    }
+
     private static RuntimeAgentDefinition GetAssignedWorkerDefinition(
         FrozenRunConfigurationV1 configuration,
         DurableTaskNode task)
@@ -2665,6 +2689,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         PlannedTask[] planned = [];
         Exception? lastError = null;
+        var replanParseError = string.Empty;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -2672,11 +2697,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var contextForPlanner = CreateRunContext(run, checkpoint);
                 var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
                     checkpoint.PlannerAgentId, null), _logger);
+                var instructionsForAttempt = attempt == 0
+                    ? PlannerInstructions(checkpoint, instructions)
+                    : PlannerInstructions(checkpoint, instructions) + BuildPlannerRetryHint(lastError, replanParseError);
                 planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
-                    PlannerInstructions(checkpoint, instructions),
+                    instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
+                replanParseError = planner.LastParseErrorDetail;
                 RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 checkpoint.Tasks = MergeReplannedGraph(checkpoint.Tasks,

@@ -1340,6 +1340,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }, cancellationToken).ConfigureAwait(false);
 
         Exception? lastError = null;
+        var laneParseError = string.Empty;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -1347,11 +1348,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var contextForPlanner = CreateRunContext(run, checkpoint);
                 var planner = new PlanningAgent(CreateModelFactory(configuration, checkpoint, plannerDefinition,
                     lanePlanner.Id, null), _logger);
+                var instructionsForAttempt = attempt == 0
+                    ? PlannerInstructions(checkpoint, assembly.Instructions, laneKey)
+                    : PlannerInstructions(checkpoint, assembly.Instructions, laneKey) + BuildPlannerRetryHint(lastError, laneParseError);
                 var planned = await planner.PlanAsync(
                     contextForPlanner,
                     BuildFrozenPlannerRoster(configuration),
-                    PlannerInstructions(checkpoint, assembly.Instructions, laneKey),
+                    instructionsForAttempt,
                     cancellationToken).ConfigureAwait(false);
+                laneParseError = planner.LastParseErrorDetail;
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane);
             }

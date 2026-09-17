@@ -140,6 +140,113 @@ public sealed class DmaeaOrchestrationTests
     }
 
     // ──────────────────────────────────────────────────────────
+    // Planner output leniency (2026-09-17 plan_parse_failed cluster)
+    // ──────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("success_criteria")]
+    [InlineData("dependencies")]
+    [InlineData("required_capabilities")]
+    [InlineData("required_tools")]
+    public async Task PlanningAgent_RepairsScalarArrayFieldsInsteadOfFailing(string field)
+    {
+        // Live failure shape (runs feb146e4/05a89fc3, qwen3.8-27b): the JSON is
+        // well-formed but an array-typed field carries a single scalar string.
+        // System.Text.Json does not coerce scalar → array, so the whole plan used
+        // to die as plan_parse_failed even though the intent was fully readable.
+        var scalarValue = field == "dependencies" ? "" : "列出关键目录";
+        var shape = $$"""
+            [{"task_key":"t1","title":"任务A","description":"读取 README",
+              "success_criteria":{{(field == "success_criteria" ? $"\"{scalarValue}\"" : "[\"列出关键目录\"]")}},
+              "dependencies":{{(field == "dependencies" ? $"\"{scalarValue}\"" : "[]")}},
+              "required_capabilities":{{(field == "required_capabilities" ? $"\"{scalarValue}\"" : "[]")}},
+              "required_tools":{{(field == "required_tools" ? $"\"{scalarValue}\"" : "[]")}},
+              "priority":1,"risk":"low"}]
+            """;
+        var client = new StubChatClient(shape);
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("介绍项目"), [Planner()], CancellationToken.None);
+
+        var task = Assert.Single(tasks);
+        Assert.True(planner.LastPlanWasParsed, shape);
+        Assert.Equal("任务A", task.Title);
+        var repaired = field switch
+        {
+            "success_criteria" => task.SuccessCriteria,
+            "dependencies" => task.Dependencies,
+            "required_capabilities" => task.RequiredCapabilities,
+            _ => task.RequiredTools
+        };
+        var expected = field == "dependencies" ? Array.Empty<string>() : new[] { "列出关键目录" };
+        Assert.Equal(expected, repaired);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_DropsNullAndNonStringArrayEntries()
+    {
+        // Array form with junk entries: nulls, empties, and nested junk are dropped
+        // instead of throwing the whole plan away.
+        var client = new StubChatClient("""[{"task_key":"t1","title":"任务A","description":"","success_criteria":["判据",null,"","完成",["嵌套"]],"dependencies":[null,""],"required_capabilities":[42],"priority":1,"risk":"low"}]""");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        var task = Assert.Single(tasks);
+        Assert.True(planner.LastPlanWasParsed);
+        Assert.Equal(new[] { "判据", "完成" }, task.SuccessCriteria);
+        Assert.Empty(task.Dependencies);
+        Assert.Empty(task.RequiredCapabilities);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_CapturesParseErrorDetailForDiagnostics()
+    {
+        // An unrecoverable shape must carry the JSON-level reason, not just
+        // "not a task array": the retry hint and plan_diagnostic consume it.
+        var client = new StubChatClient("""[{"task_key":"t1","title":"任务A","description":"","success_criteria":42,"dependencies":[],"required_capabilities":[],"required_tools":[],"priority":1,"risk":"low"}]""");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        Assert.False(planner.LastPlanWasParsed);
+        // The converter-level detail names the shape it rejected (the property name
+        // itself is only available at the object layer, so the JSON path is not
+        // reproduced here — the response_head still carries the full shape).
+        Assert.Contains("expected a string array or a string", planner.LastParseErrorDetail, StringComparison.Ordinal);
+        Assert.Single(tasks);
+        Assert.True(tasks[0].IsFallback);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_ReportsNoArrayCandidateWhenAnswerCarriesNoJson()
+    {
+        var client = new StubChatClient("你好！很高兴见到你。");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        var tasks = await planner.PlanAsync(Context("你好"), [Planner()], CancellationToken.None);
+
+        Assert.False(planner.LastPlanWasParsed);
+        Assert.Contains("no balanced JSON array candidate", planner.LastParseErrorDetail, StringComparison.Ordinal);
+        Assert.Single(tasks);
+    }
+
+    [Fact]
+    public async Task PlanningAgent_InstructionsPinArrayFieldTypesAndEmptyPlanContract()
+    {
+        // The 2026-09-17 cluster also exposed two prompt gaps: no type constraint on
+        // the four array fields, and no "greeting → []" contract.
+        var client = new StubChatClient("[]");
+        var planner = new PlanningAgent(new FakeFactory(new FakeChatResolver(true), client));
+
+        _ = await planner.PlanAsync(Context("目标"), [Planner()], CancellationToken.None);
+
+        Assert.NotNull(client.LastInstructions);
+        Assert.Contains("四个字段必须是字符串数组", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("直接输出 []", client.LastInstructions, StringComparison.Ordinal);
+    }
+
+    // ──────────────────────────────────────────────────────────
     // Execution layer
     // ──────────────────────────────────────────────────────────
 

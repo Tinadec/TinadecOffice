@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -25,12 +26,18 @@ public sealed class PlanningAgent
         + "让引擎只能按能力面宽窄推断。"
         + "success_criteria 必须是可外部验证的判据（可观察的文件、命令输出或状态），不要写「完成即可」这类自指描述；"
         + "title 用一句话说明做什么，不要复述用户原话。"
+        + "success_criteria、dependencies、required_capabilities、required_tools 四个字段必须是字符串数组（例如 \"success_criteria\": [\"判据\"]），绝不能写成单个字符串；priority 必须是整数。"
+        + "若目标不需要执行任何子任务（问候、闲聊、纯提问），直接输出 []，不要用散文回答。"
+        + "JSON 字符串里写 Windows 路径必须转义反斜杠（C:\\\\dir）或改用正斜杠（C:/dir）。"
         + "仅输出 JSON 数组，每个元素必须包含 task_key（稳定、唯一、仅小写字母数字和短横线）、title、description、success_criteria、dependencies（task_key 数组）、required_capabilities、required_tools、priority、risk 字段。不要输出其他文字。";
 
     /// <summary>Bound on the diagnostic head, so one runaway answer cannot bloat a run.</summary>
-    private const int MaxResponseHeadLength = 400;
+    private const int MaxResponseHeadLength = 2000;
 
-    private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions ParseOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new LenientStringArrayConverter() }
+    };
 
     private readonly IAgentChatClientFactory _chatClients;
     private readonly ILogger? _logger;
@@ -58,6 +65,16 @@ public sealed class PlanningAgent
     /// instead of only from whoever holds the console.
     /// </summary>
     public string LastResponseHead { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// JSON-level reason the last answer failed to parse (the first
+    /// <see cref="JsonException"/> message, or "no balanced JSON array candidate
+    /// found…" when the answer carried no parseable array at all). Empty after a
+    /// successful parse. "Not a task array" alone is undiagnosable and a blind
+    /// retry re-commits the same mistake, so this detail travels with the retry
+    /// hint and the run's plan_diagnostic event.
+    /// </summary>
+    public string LastParseErrorDetail { get; private set; } = string.Empty;
 
     public PlanningAgent(IAgentChatClientFactory chatClients, ILogger? logger = null)
     {
@@ -96,13 +113,15 @@ public sealed class PlanningAgent
         LastUsage = Maf18RuntimeAdapter.NormalizeUsage(response.Usage);
         var answer = ModelOutputText.AnswerText(response.Text);
         LastResponseHead = answer.Length <= MaxResponseHeadLength ? answer : answer[..MaxResponseHeadLength];
-        var tasks = TryParseTasks(response.Text, out var parsed);
+        var tasks = TryParseTasks(response.Text, out var parsed, out var parseError);
+        LastParseErrorDetail = parseError;
         LastPlanWasParsed = parsed;
         if (!parsed)
         {
             _logger?.LogWarning(
                 "Planning response could not be parsed as a task array (plan_parse_failed); falling back to a single goal-task. "
-                + "Declared-edge tiers refuse to dispatch this fallback (graph plan guard). Response head: {ResponseHead}",
+                + "Declared-edge tiers refuse to dispatch this fallback (graph plan guard). Parse error: {ParseError} Response head: {ResponseHead}",
+                parseError,
                 LastResponseHead.ReplaceLineEndings(" "));
             tasks = [new PlannedTask
             {
@@ -145,14 +164,22 @@ public sealed class PlanningAgent
     /// separates "the model planned nothing" from "the model did not answer in the
     /// expected shape" — the two used to be the same value and the same outcome.
     /// </summary>
-    private static PlannedTask[] TryParseTasks(string? text, out bool parsed)
+    private static PlannedTask[] TryParseTasks(string? text, out bool parsed, out string parseError)
     {
         parsed = false;
+        parseError = string.Empty;
         // Reasoning models wrap the task array in <think> blocks, prose, and markdown
         // fences. ExtractJsonCandidates strips reasoning and returns each balanced
         // top-level array, so we keep the first candidate that actually deserializes
         // instead of naively spanning the first '[' to the last ']'.
-        foreach (var candidate in ModelOutputText.ExtractJsonCandidates(text, array: true))
+        var candidates = ModelOutputText.ExtractJsonCandidates(text, array: true);
+        if (candidates.Count == 0)
+        {
+            parseError = "no balanced JSON array candidate found in the response";
+            return [];
+        }
+        string? firstError = null;
+        foreach (var candidate in candidates)
         {
             try
             {
@@ -161,11 +188,64 @@ public sealed class PlanningAgent
                 parsed = true;
                 return tasks;
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
-                // Not the payload array; try the next balanced candidate.
+                // Keep the first detail: it names the exact field/shape the model got
+                // wrong, which is what the retry hint and plan_diagnostic need.
+                firstError ??= ex.Message;
             }
         }
+        parseError = firstError ?? string.Empty;
         return [];
+    }
+
+    /// <summary>
+    /// Models write array-typed plan fields as a single scalar string ("success_criteria":
+    /// "判据" instead of ["判据"]) far more often than they write broken JSON — that was
+    /// the 2026-09-17 plan_parse_failed cluster (runs feb146e4/05a89fc3, qwen3.8-27b).
+    /// This converter accepts the scalar form and repairs it instead of throwing the
+    /// whole array away: string → one-element array, null → empty, array elements keep
+    /// non-empty strings and drop null/empty/non-string entries. Shapes that carry no
+    /// recoverable meaning (numbers, nested containers) still throw.
+    /// </summary>
+    private sealed class LenientStringArrayConverter : JsonConverter<string[]>
+    {
+        public override string[] Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null) return [];
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var value = reader.GetString();
+                return string.IsNullOrWhiteSpace(value) ? [] : [value];
+            }
+            if (reader.TokenType != JsonTokenType.StartArray) throw new JsonException($"expected a string array or a string, got {reader.TokenType}");
+            var values = new List<string>();
+            var depth = 0;
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndArray && depth == 0) return [.. values];
+                switch (reader.TokenType)
+                {
+                    case JsonTokenType.StartArray or JsonTokenType.StartObject:
+                        // A nested container can never become a task criterion; skip it whole.
+                        depth++;
+                        break;
+                    case JsonTokenType.EndArray or JsonTokenType.EndObject:
+                        depth--;
+                        break;
+                    case JsonTokenType.String when depth == 0 && !string.IsNullOrWhiteSpace(reader.GetString()):
+                        values.Add(reader.GetString()!);
+                        break;
+                }
+            }
+            throw new JsonException("unterminated string array");
+        }
+
+        public override void Write(Utf8JsonWriter writer, string[] value, JsonSerializerOptions options)
+        {
+            writer.WriteStartArray();
+            foreach (var item in value) writer.WriteStringValue(item);
+            writer.WriteEndArray();
+        }
     }
 }
