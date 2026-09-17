@@ -325,6 +325,26 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 
 **本批未完成**：真实模型三剧本 live 冒烟（①主人自己 write_file 全链路 ②自己动手 + 派子智能体 ③四模式各自解析到不同管线版本的可观测证据）**阻塞于 provider** —— 该轮 run 在模型调用处收到 `HTTP 500 (upstream_error)`，且 `/api/v1/readiness` 的 `model_probe = unavailable`（chat 路由的模型名该端点已不再服务；`model_route = ready` 但实际调用失败）。剧本③已用**模式快照**这条不依赖模型的证据链完成。另：桌面 UI 侧的可见性（solo 出现在模式列表、主人写操作弹审批卡）只做到 API 级证据（`GET /api/v1/agent-modes` 返回 `solo` published），playwright 交互级验证未执行。
 
+## MODEL FAILURE RESILIENCE — 「Unexpected runtime failure.」的排查结论（2026-09-17）
+
+用户报告：任何模式都**概率性**出现 `Unexpected runtime failure.`，之后对话无法继续。取证结论（`model_invocations` / `run_stream` / 事件账本三方对齐）：
+
+**成因链（四段，每段都有数据支撑）：**
+1. **触发**：provider 侧瞬时失败 —— 429 `rate_limited` ×2、5xx `provider_server_error` ×2、4xx `request_error` ×1。与模式无关（每个模式都要调模型），「概率性」正是限流的形状。
+2. **放大**：`chat` 路由**只有一个候选**（`model_route_candidates` 里 chat v1–v6 每个 `candidates=1`），而 44 次 `model_invocations` 的 `attempt` 全部为 1 —— **同候选从不重试**。`ModelInvocationFailure.Classify` 早已把 429/5xx/timeout 标为 `CanFallback=true`，但回退只沿候选链前进（`index == Count-1` 立即抛出），单候选路由下**整条韧性机制是死的**。一次 429 ⇒ 整条 run 判死。
+3. **遮蔽**：引擎的 `SafeError` 只对 4 个异常类型放行真实消息，其余一律压成 `"Unexpected runtime failure."`。于是 `model_invocations` 里明明写着「被限流」，用户看到的却是不透明文案 —— 诊断信息在最后一米被丢弃。
+4. **体验**：失败的 run 流只发 `kind=error` 帧，**16/16 无 `finish_reason`**（对比 `done`/`control` 全有）。Core 侧 `FollowAsync` 把 `error` 视为终结（不挂死），桌面 `HomeController` 也处理 `error` 并断流 —— 所以**输入框并没有被锁**（发送只由 `!modelValue.trim()` 门控）。用户感到「无法继续」，实际是**每次重发都撞同一堵墙**，且原因不可读。
+
+**已修（接线既有意图，不发明新策略）：**
+- `ModelInvocationChatFactory`：候选链耗尽时抛新的 `ModelInvocationExhaustedException : InvalidOperationException`，携带分类器给出的类别与**受控文案**（原始 provider 异常作为 InnerException 保留）。因为 `SafeError` 本就信任 `InvalidOperationException` 家族，用户现在看到「模型提供方达到速率限制」而非那句不透明文案；`OperationCanceledException` 形态的异常**保持原样抛出**（停止路径依赖它，重新定型会把取消变成失败）。
+- 引擎失败码改用 `RunErrorTaxonomy.Model` / `ModelUnavailable` —— 这两个常量**早已定义**（注释明说「让 runtime 失败可分类而不是塌缩进 runtime」），只是一直没人写入。
+- **同候选有界重试**：`MaxAttemptsPerCandidate = 3`，仅对 `CanFallback` 类别（限流/5xx/timeout/连接失败）生效，退避 400ms → 1.2s；4xx/授权类确定性失败**不重试**（快速失败）。`attempt` 从「候选位置」改为「跨候选运行计数器」—— `(call_id, attempt)` 唯一索引不受影响，且这才符合该列的本意。
+- 测试 `ModelInvocationFailureTests`（7 例）：限流透出真实原因 / 5xx / 候选不可用命名原因 / **取消不被重新定型** / 多候选先回退后耗尽 / **单候选限流重试后存活** / 4xx 快速失败不重试。
+
+**仍然成立的结构性建议（未实施，属策略决策）：** 给 `chat` 路由配第二个候选（`PUT /api/v1/model-routes/chat`）才能让跨候选回退真正生效；当前路由模型名该端点已不服务（`model_probe = unavailable`），换可用模型名仍是第一优先。
+
+**核实为「非缺陷」的一处**：`HomeController.attachRun` 的 `onError` 分支只写错误文案、不像终态分支那样 `disconnect + delete` —— 初看像不对称，实为**持久流契约的正常工作方式**：`createRunStream.scheduleReconnect` 会按指数退避**无限重连**（上限仅延迟 30s，无次数上限），直到 Core 恢复后从 cursor 重放出终结帧、`isTerminal` 命中才真正关闭。断流会把这种自愈打断。Core 侧的兜底同样是自愈的：`FollowAsync` 观察到终态后短暂宽限即关闭，重连时会重放 `error` 帧。故「`working` 恒真」只存在于 Core 不可达的窗口内，恢复后收敛 —— 不要「修」它。
+
 ## F# INTEROP RULES
 - F# modules compile to static classes in C#.
 - Use `using TinadecCore.Strategies;` then `LoopDetection.detectRepeatCalls(...)`.

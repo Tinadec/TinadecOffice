@@ -22,6 +22,28 @@ internal sealed record ModelInvocationContext(
 /// </summary>
 internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
 {
+    /// <summary>
+    /// Attempts allowed against ONE candidate before the chain moves on. Three is the
+    /// smallest number that survives a busy-provider burst without meaningfully
+    /// extending a doomed call: total added latency is capped at 1.6s of backoff, and
+    /// only fallback-eligible categories (rate limit / 5xx / timeout / connection) ever
+    /// consume one. A 4xx or an authorization failure is deterministic — retrying it
+    /// would just burn the same rejection four times.
+    /// </summary>
+    internal const int MaxAttemptsPerCandidate = 3;
+
+    internal static TimeSpan RetryBackoff(int index) => index switch
+    {
+        0 => TimeSpan.FromMilliseconds(400),
+        _ => TimeSpan.FromMilliseconds(1200),
+    };
+
+    internal const int RetryBackoffCount = 2;
+
+    /// <summary>Whether <paramref name="attemptOnCandidate"/> (1-based) earns another try.</summary>
+    internal static bool ShouldRetrySame(ModelInvocationFailure classification, int attemptOnCandidate) =>
+        classification.CanFallback && attemptOnCandidate < MaxAttemptsPerCandidate;
+
     private readonly IAgentModelResolver _resolver;
     private readonly IAgentChatClientFactory _inner;
     private readonly FrozenModelPlan _plan;
@@ -99,37 +121,60 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
             var materialized = messages as IReadOnlyList<ChatMessage> ?? messages.ToArray();
             var callId = Guid.NewGuid();
             Exception? lastError = null;
+            ModelInvocationFailure? lastFailure = null;
+            // (call_id, attempt) is unique, so attempt is a running counter across the whole
+            // call rather than a candidate position: retries of the same candidate are
+            // separately recorded attempts, which is what the column was always meant for.
+            var attempt = 0;
             for (var index = 0; index < _resolutions.Count; index++)
             {
                 var resolution = _resolutions[index];
-                var invocationId = await StartAsync(callId, index + 1, resolution, cancellationToken).ConfigureAwait(false);
-                if (!resolution.IsAvailable)
+                for (var attemptOnCandidate = 1; ; attemptOnCandidate++)
                 {
-                    lastError = new ModelCandidateUnavailableException(resolution.Error ?? "Model candidate is unavailable.");
-                    await _resolver.CompleteInvocationAsync(invocationId, "failed", errorCategory: "candidate_unavailable",
-                        safeErrorMessage: lastError.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
+                    var invocationId = await StartAsync(callId, ++attempt, resolution, cancellationToken).ConfigureAwait(false);
+                    if (!resolution.IsAvailable)
+                    {
+                        lastError = new ModelCandidateUnavailableException(resolution.Error ?? "Model candidate is unavailable.");
+                        lastFailure = new ModelInvocationFailure(true, false, "candidate_unavailable", lastError.Message);
+                        await _resolver.CompleteInvocationAsync(invocationId, "failed", errorCategory: "candidate_unavailable",
+                            safeErrorMessage: lastError.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
 
-                try
-                {
-                    var client = await _inner.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
-                    var response = await client.GetResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false);
-                    await _resolver.CompleteInvocationAsync(invocationId, "succeeded",
-                        Maf18RuntimeAdapter.NormalizeUsage(response.Usage), cancellationToken: cancellationToken).ConfigureAwait(false);
-                    return response;
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex;
-                    var classification = ModelInvocationFailure.Classify(ex, cancellationToken);
-                    await _resolver.CompleteInvocationAsync(invocationId, classification.Cancelled ? "cancelled" : "failed",
-                        errorCategory: classification.Category, safeErrorMessage: classification.SafeMessage,
-                        cancellationToken: CancellationToken.None).ConfigureAwait(false);
-                    if (!classification.CanFallback || index == _resolutions.Count - 1) throw;
+                    try
+                    {
+                        var client = await _inner.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
+                        var response = await client.GetResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false);
+                        await _resolver.CompleteInvocationAsync(invocationId, "succeeded",
+                            Maf18RuntimeAdapter.NormalizeUsage(response.Usage), cancellationToken: cancellationToken).ConfigureAwait(false);
+                        return response;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                        var classification = ModelInvocationFailure.Classify(ex, cancellationToken);
+                        await _resolver.CompleteInvocationAsync(invocationId, classification.Cancelled ? "cancelled" : "failed",
+                            errorCategory: classification.Category, safeErrorMessage: classification.SafeMessage,
+                            cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                        // Cancellation-shaped exceptions escape raw: upstream handlers (including
+                        // the stop path) key off OperationCanceledException, and re-typing one
+                        // would turn a cancel into a failure.
+                        if (classification.Cancelled || ex is OperationCanceledException) throw;
+                        lastFailure = classification;
+                        // A rate limit or a 5xx is usually gone in a second. Retrying the SAME
+                        // candidate before walking the chain is what makes a single-candidate
+                        // route survivable — and multi-candidate routes often point at the same
+                        // provider, where the delay buys more than the switch does.
+                        if (ShouldRetrySame(classification, attemptOnCandidate))
+                        {
+                            await Task.Delay(RetryBackoff(Math.Min(attemptOnCandidate - 1, RetryBackoffCount - 1)), cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                        break;   // next candidate, or the chain is exhausted
+                    }
                 }
             }
-            throw lastError ?? new InvalidOperationException("The frozen model plan has no usable candidate.");
+            throw new ModelInvocationExhaustedException(lastFailure?.Category, lastFailure?.SafeMessage, lastError);
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -140,45 +185,61 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
             var materialized = messages as IReadOnlyList<ChatMessage> ?? messages.ToArray();
             var callId = Guid.NewGuid();
             Exception? lastError = null;
+            ModelInvocationFailure? lastFailure = null;
+            var attempt = 0;
             IReadOnlyList<ChatResponseUpdate>? completed = null;
             for (var index = 0; index < _resolutions.Count; index++)
             {
                 var resolution = _resolutions[index];
-                var invocationId = await StartAsync(callId, index + 1, resolution, cancellationToken).ConfigureAwait(false);
-                if (!resolution.IsAvailable)
+                for (var attemptOnCandidate = 1; ; attemptOnCandidate++)
                 {
-                    lastError = new ModelCandidateUnavailableException(resolution.Error ?? "Model candidate is unavailable.");
-                    await _resolver.CompleteInvocationAsync(invocationId, "failed", errorCategory: "candidate_unavailable",
-                        safeErrorMessage: lastError.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
+                    var invocationId = await StartAsync(callId, ++attempt, resolution, cancellationToken).ConfigureAwait(false);
+                    if (!resolution.IsAvailable)
+                    {
+                        lastError = new ModelCandidateUnavailableException(resolution.Error ?? "Model candidate is unavailable.");
+                        lastFailure = new ModelInvocationFailure(true, false, "candidate_unavailable", lastError.Message);
+                        await _resolver.CompleteInvocationAsync(invocationId, "failed", errorCategory: "candidate_unavailable",
+                            safeErrorMessage: lastError.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
 
-                try
-                {
-                    var client = await _inner.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
-                    var updates = new List<ChatResponseUpdate>();
-                    await foreach (var update in client.GetStreamingResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false))
-                        updates.Add(update);
-                    var usage = updates
-                        .SelectMany(update => update.Contents.OfType<UsageContent>())
-                        .Select(content => Maf18RuntimeAdapter.NormalizeUsage(content.Details))
-                        .Aggregate<ModelUsage?, ModelUsage?>(null, Maf18RuntimeAdapter.AddUsage);
-                    await _resolver.CompleteInvocationAsync(invocationId, "succeeded", usage, cancellationToken: cancellationToken).ConfigureAwait(false);
-                    completed = updates;
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    lastError = ex;
-                    var classification = ModelInvocationFailure.Classify(ex, cancellationToken);
-                    await _resolver.CompleteInvocationAsync(invocationId, classification.Cancelled ? "cancelled" : "failed",
-                        errorCategory: classification.Category, safeErrorMessage: classification.SafeMessage,
-                        cancellationToken: CancellationToken.None).ConfigureAwait(false);
-                    if (!classification.CanFallback || index == _resolutions.Count - 1) throw;
+                    try
+                    {
+                        var client = await _inner.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
+                        var updates = new List<ChatResponseUpdate>();
+                        await foreach (var update in client.GetStreamingResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false))
+                            updates.Add(update);
+                        var usage = updates
+                            .SelectMany(update => update.Contents.OfType<UsageContent>())
+                            .Select(content => Maf18RuntimeAdapter.NormalizeUsage(content.Details))
+                            .Aggregate<ModelUsage?, ModelUsage?>(null, Maf18RuntimeAdapter.AddUsage);
+                        await _resolver.CompleteInvocationAsync(invocationId, "succeeded", usage, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        completed = updates;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                        var classification = ModelInvocationFailure.Classify(ex, cancellationToken);
+                        await _resolver.CompleteInvocationAsync(invocationId, classification.Cancelled ? "cancelled" : "failed",
+                            errorCategory: classification.Category, safeErrorMessage: classification.SafeMessage,
+                            cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                        // See GetResponseAsync: cancellation-shaped exceptions escape raw.
+                        if (classification.Cancelled || ex is OperationCanceledException) throw;
+                        lastFailure = classification;
+                        if (ShouldRetrySame(classification, attemptOnCandidate))
+                        {
+                            await Task.Delay(RetryBackoff(Math.Min(attemptOnCandidate - 1, RetryBackoffCount - 1)), cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                        break;   // next candidate, or the chain is exhausted
+                    }
                 }
             }
 
-            if (completed is null) throw lastError ?? new InvalidOperationException("The frozen model plan has no usable candidate.");
+            // Streamed to a local buffer on purpose: a candidate that fails midway must not
+            // have already emitted a partial completion to the caller's durable stream.
+            if (completed is null) throw new ModelInvocationExhaustedException(lastFailure?.Category, lastFailure?.SafeMessage, lastError);
             foreach (var update in completed) yield return update;
         }
 
@@ -207,6 +268,28 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
 }
 
 internal sealed class ModelCandidateUnavailableException(string message) : InvalidOperationException(message);
+
+/// <summary>
+/// The frozen candidate chain is exhausted: every candidate either was unavailable or
+/// failed a call. Carries the CLASSIFIED failure so the durable run can record WHY
+/// instead of collapsing to <c>runtime</c>.
+///
+/// It derives from <see cref="InvalidOperationException"/> deliberately. The engine's
+/// failure reporter surfaces the message for exactly that family and replaces every
+/// other exception type with "Unexpected runtime failure." — which is how a plain
+/// provider 429 used to reach the user as an unactionable string while the model
+/// invocation row right next to it already said "rate limit was reached". The message
+/// is the classifier's curated text, never the raw provider payload.
+/// </summary>
+internal sealed class ModelInvocationExhaustedException : InvalidOperationException
+{
+    public ModelInvocationExhaustedException(string? category, string? safeMessage, Exception? inner)
+        : base(safeMessage ?? "The frozen model plan has no usable candidate.", inner) =>
+        Category = category ?? "candidate_unavailable";
+
+    /// <summary>The classifier's category for the last failure (429 → <c>rate_limited</c>, …).</summary>
+    public string Category { get; }
+}
 
 internal sealed record ModelInvocationFailure(bool CanFallback, bool Cancelled, string Category, string SafeMessage)
 {

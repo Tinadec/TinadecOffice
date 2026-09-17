@@ -430,7 +430,16 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             _logger.TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
             var checkpoint = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
-            var failureCode = ex is WorkerUnavailableException ? RunErrorTaxonomy.WorkerUnavailable : RunErrorTaxonomy.Runtime;
+            // The taxonomy already had model categories; nothing ever wrote them, so a
+            // provider outage and a genuine engine defect were indistinguishable in the
+            // durable record AND in what the user was told. Classify instead of collapsing.
+            var failureCode = ex switch
+            {
+                WorkerUnavailableException => RunErrorTaxonomy.WorkerUnavailable,
+                ModelInvocationExhaustedException { Category: "candidate_unavailable" } => RunErrorTaxonomy.ModelUnavailable,
+                ModelInvocationExhaustedException => RunErrorTaxonomy.Model,
+                _ => RunErrorTaxonomy.Runtime
+            };
             if (checkpoint is not null) await FailRunAsync(runId, checkpoint, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
             else await FailLegacyRunAsync(runId, run, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
         }
