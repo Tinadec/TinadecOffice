@@ -614,8 +614,16 @@ public sealed class ControlPlaneService
                             : StatusCodes.Status200OK);
                 }
             }
+            // "Always allow for this session" is applied AFTER the decision is
+            // committed, so the scope can only ever cover a tool the human actually
+            // approved — never a broader one.
+            var runScope = approve && IsRunScope(input.Scope);
+            RunScopeOutcome? runScopeOutcome = null;
             if (resolved.Request.Status == PermissionRequestStatuses.Granted && resolved.Request.RunId is { } permissionRun)
             {
+                if (runScope)
+                    runScopeOutcome = await ApplyRunScopeAsync(resolved.Request, ct).ConfigureAwait(false);
+
                 await using var db = await _lifecycle.CreateDbContextAsync(ct);
                 var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
                 if (execution is not null)
@@ -654,7 +662,16 @@ public sealed class ControlPlaneService
                     await _engine.EnqueueAsync(deniedRun, ct).ConfigureAwait(false);
                 }
             }
-            return Results.Ok(new { id, status = resolved.Request.Status, decided_at = resolved.Decision.CreatedAt });
+            return Results.Ok(new
+            {
+                id,
+                status = resolved.Request.Status,
+                decided_at = resolved.Decision.CreatedAt,
+                scope = runScope ? "run" : "once",
+                run_scope_released = runScopeOutcome?.Released ?? 0,
+                pre_authorization_id = runScopeOutcome?.PreAuthorizationId,
+                capability_grant_id = runScopeOutcome?.GrantId
+            });
         }
         var approveAction = string.Equals(input.Decision, "approved", StringComparison.OrdinalIgnoreCase)
             || string.Equals(input.Decision, "approve", StringComparison.OrdinalIgnoreCase)
@@ -684,6 +701,128 @@ public sealed class ControlPlaneService
             await _engine.EnqueueAsync(runId, ct);
         }
         return Results.Ok(new { id = decision.ApprovalId, status = decision.Status, decided_at = decision.DecidedAt });
+    }
+
+    private static bool IsRunScope(string? scope) =>
+        string.Equals(scope, "run", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(scope, "session", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(scope, "always", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The risk the session allowance is capped at, fail-closed on an unknown value.</summary>
+    private static string RiskCeiling(string? risk) => risk?.Trim().ToLowerInvariant() switch
+    {
+        "low" or "medium" or "high" or "elevated" or "critical" => risk!.Trim().ToLowerInvariant(),
+        _ => "low"
+    };
+
+    /// <summary>How many calls a session approval covers before it must be renewed.</summary>
+    private const int RunScopeMaxUses = 512;
+
+    private sealed record RunScopeOutcome(Guid PreAuthorizationId, Guid GrantId, int Released);
+
+    /// <summary>
+    /// "Always allow for this session", applied as two durable envelopes because two
+    /// separate gates ask:
+    /// <list type="bullet">
+    /// <item>the run-scoped PRE-AUTHORIZATION is what stops the tool-approval layer
+    /// from asking again — it mints an approval for a matching call with no human,
+    /// and its risk ceiling is the class the human actually approved, so a session
+    /// approval never widens the risk it was given;</item>
+    /// <item>the run-scoped CAPABILITY GRANT is what stops the PDP from asking again —
+    /// without it the next call has no grant to lease and parks before the approval
+    /// layer is ever consulted.</item>
+    /// </list>
+    /// The scope is always exactly one tool. A wildcard, an empty tool id, or a
+    /// non-tool claim is never widened by a decision. Finally, pending sibling
+    /// requests for the same tool are released with it: a decision that only applied
+    /// to the future would leave an already-parked sibling waiting for the very click
+    /// the user just declined to make.
+    /// </summary>
+    private async Task<RunScopeOutcome?> ApplyRunScopeAsync(PermissionRequestSnapshot decided, CancellationToken ct)
+    {
+        var resource = decided.Claim.Resource;
+        if (!resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)) return null;
+        var toolId = resource["tool://".Length..];
+        if (string.IsNullOrWhiteSpace(toolId) || toolId == "*") return null;
+        if (decided.RunId is not { } runId) return null;
+
+        var now = DateTimeOffset.UtcNow;
+        // The envelopes are run-scoped, so they cannot outlive the run's authority
+        // even if the window is generous; it only has to cover a long session.
+        var expiresAt = now.AddHours(8);
+        await using var db = await _lifecycle.CreateDbContextAsync(ct);
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == runId
+            && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
+        if (run?.InitiatedByPrincipalId is not { } principal || principal == Guid.Empty) return null;
+
+        var row = new PreAuthorizationRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Tenant.TenantId,
+            WorkspaceId = Tenant.WorkspaceId,
+            RunId = runId,
+            LaneKey = null,
+            ToolScopeJson = JsonSerializer.Serialize(new[] { toolId }),
+            ParameterConstraintHash = null,
+            RiskMax = RiskCeiling(decided.Risk),
+            MaxUses = RunScopeMaxUses,
+            UseCount = 0,
+            ExpiresAt = expiresAt,
+            GrantedByPrincipalId = Tenant.PrincipalId,
+            Summary = $"Run-scoped approval for '{toolId}'.",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.PreAuthorizations.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        // SubjectAgentInstanceId stays null so the allowance covers every worker of
+        // this run, which is what "for this session" means to the user.
+        var grant = await _authorization.GrantCapabilityAsync(new GrantCapabilityCommand(
+            principal,
+            SubjectAgentInstanceId: null,
+            new CapabilityClaim("tool.invoke", "*", resource),
+            runId,
+            TaskId: null,
+            expiresAt,
+            Math.Clamp(RunScopeMaxUses * 8, RunScopeMaxUses, 10_000),
+            Transferable: false,
+            ParentGrantId: null,
+            Reason: $"Run-scoped approval for '{toolId}'."), ct).ConfigureAwait(false);
+
+        var released = 0;
+        var pending = await _authorization.ListPermissionRequestsAsync(null, runId, null, ct).ConfigureAwait(false);
+        foreach (var sibling in pending)
+        {
+            if (sibling.Id == decided.Id) continue;
+            if (sibling.Status is not (PermissionRequestStatuses.AwaitingUser or PermissionRequestStatuses.AwaitingDelegate)) continue;
+            if (!string.Equals(sibling.Claim.Resource, resource, StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                await _authorization.DecidePermissionAsync(new PermissionDecisionCommand(
+                    sibling.Id, true, null, null, $"Released by a run-scoped approval for '{toolId}'."), ct).ConfigureAwait(false);
+                released++;
+            }
+            catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+            {
+                // A sibling another actor decided first is not a failure of this
+                // decision: the user's intent is already satisfied either way.
+                Debug.WriteLine($"Sibling permission request {sibling.Id} was not released by the run scope: {ex.Message}");
+            }
+        }
+
+        await _runs.AppendEventAsync(runId, "approval.run_scope_granted", new
+        {
+            tool_id = toolId,
+            pre_authorization_id = row.Id,
+            capability_grant_id = grant.Id,
+            risk_max = row.RiskMax,
+            max_uses = row.MaxUses,
+            expires_at = expiresAt,
+            released_pending = released
+        }, $"Run-scoped approval granted for '{toolId}'.", "info", null, null, cancellationToken: ct).ConfigureAwait(false);
+
+        return new RunScopeOutcome(row.Id, grant.Id, released);
     }
 
     private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row) => new()

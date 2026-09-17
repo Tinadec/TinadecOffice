@@ -10,6 +10,17 @@ public sealed class ApprovalDecisionRequestDto
 
     [JsonPropertyName("reason")]
     public string? Reason { get; init; }
+
+    /// <summary>
+    /// How far this decision reaches. <c>once</c> (the default) decides only the
+    /// request in hand. <c>run</c> means "always allow this tool for this session":
+    /// the decision additionally mints a run-scoped capability grant for that tool,
+    /// so later calls of it stop asking, and the run's other pending requests for
+    /// the same tool are released with it. The scope is always per tool — a
+    /// wildcard is never minted from a decision.
+    /// </summary>
+    [JsonPropertyName("scope")]
+    public string? Scope { get; init; }
 }
 
 /// <summary>

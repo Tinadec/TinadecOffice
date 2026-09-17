@@ -72,19 +72,25 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
 
         var claim = request.Claim;
 
-        // Dual-layer invariant, enforced as policy rather than as a call-site convention:
-        // the governance layer coordinates, reviews, and proposes; it never executes a side
-        // effect. A published operation agent that still declares a broad tool scope cannot
-        // use it, because every external action must be owned by an execution-layer instance.
-        if (string.Equals(instance.Layer, "operation", StringComparison.Ordinal))
-            return [DenyBoundary("operation_layer_cannot_invoke_tools", claim)];
-
+        // The former operation-layer deny floor ("the governance layer coordinates, reviews
+        // and proposes; it never executes a side effect") is REMOVED BY DESIGN
+        // (2026-09-17). A mode may now arm its conversation identity with tools so it can
+        // edit the workspace directly — the solo/master-slave shape — which means "this
+        // instance is operation-layer" can no longer be a blanket denial.
+        //
+        // The effect is that operation instances now walk the SAME path as execution
+        // instances below: frozen configuration, resource rules, run/task/instance
+        // boundaries. Nothing is relaxed for them beyond layer membership: their tool
+        // surface still has to be declared by the pack, a mutating call still needs a
+        // declared write grant (WorkspaceGrantDefaults never implies one), and every write
+        // still needs approval. Layer identity stopped being a defence; the envelope and
+        // the approval gate are the defences.
         var frozen = await _lifecycle.GetFrozenRunConfigurationAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
         if (frozen is null) return [DenyBoundary("frozen_configuration_missing", claim)];
         // A resource denial quotes the frozen root so the message stays actionable;
         // a body without the workspace section (projectless) simply omits it.
         var workspaceRoot = ReadFrozenWorkspaceRoot(frozen.Content);
-        var (resourceRules, resourceDenyReason) = await ResourceRulesAsync(
+        var (resourceRules, resourceDenyReason, resourceUpgradeReason) = await ResourceRulesAsync(
             instance, claim, request.ResourceClaim, workspaceRoot, cancellationToken).ConfigureAwait(false);
 
         var rules = new List<AuthorizationBoundary>
@@ -100,7 +106,7 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
             // the grant strings ("read:prefix"/"write:prefix"), and — when the
             // call carries a resource claim — the concrete target must fall
             // inside a matching prefix.
-            new("resource_access", resourceRules) { DenyReason = resourceDenyReason }
+            new("resource_access", resourceRules) { DenyReason = resourceDenyReason, UpgradeReason = resourceUpgradeReason }
         };
 
         if (await TryInstanceDefinitionRulesAsync(instance, claim, cancellationToken).ConfigureAwait(false) is { } instanceScopeRules)
@@ -199,7 +205,7 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
     /// Core-reserved virtual tools (create_workspace) are the projectless
     /// bootstrap channel and are exempt: the approval gate authorizes them.
     /// </summary>
-    private async Task<(IReadOnlyList<CapabilityRule> Rules, string? DenyReason)> ResourceRulesAsync(
+    private async Task<(IReadOnlyList<CapabilityRule> Rules, string? DenyReason, string? UpgradeReason)> ResourceRulesAsync(
         AgentInstanceRecord instance,
         CapabilityClaim claim,
         CapabilityClaim? resourceClaim,
@@ -207,21 +213,35 @@ internal sealed class CoreAuthorizationContextResolver : IAuthorizationContextRe
         CancellationToken cancellationToken)
     {
         if (IsCoreReservedClaim(claim.Resource))
-            return ([new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)], null);
+            return ([new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)], null, null);
 
         var grants = await ReadInstanceResourceGrantsAsync(instance, cancellationToken).ConfigureAwait(false);
         var mutating = string.Equals(claim.Action, "mutate", StringComparison.OrdinalIgnoreCase);
         var target = ToolResourcePathRegistry.TryReadResourceClaimPath(resourceClaim);
         var decision = ToolResourceAllowList.Evaluate(grants, target, mutating);
-        if (decision.Allowed)
-            return ([new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)], null);
-
         var toolId = claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
             ? claim.Resource[7..]
             : claim.Resource;
+        if (decision.Allowed)
+            return ([new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)], null, null);
+        if (decision.RequiresApproval)
+        {
+            // Three-tier decision: a mutating claim the envelope does not grant at
+            // write level is NOT a refusal. It clears this boundary so the request
+            // reaches the approval gate, which is the only place that can issue the
+            // write — once, with a decision behind it. Every other boundary must
+            // still allow, and the tool's own mutating/approval flags are what make
+            // the gate actually run, so clearing here widens nothing by itself.
+            return (
+                [new CapabilityRule("allow", "tool.invoke", claim.Action, claim.Resource)],
+                null,
+                ResourceDenialExplanation.DescribeUpgrade(grants, toolId, workspaceRoot, target));
+        }
+
         return (
             [new CapabilityRule("deny", "tool.invoke", claim.Action, claim.Resource)],
-            ResourceDenialExplanation.Describe(decision, grants, toolId, workspaceRoot, target));
+            ResourceDenialExplanation.Describe(decision, grants, toolId, workspaceRoot, target),
+            null);
     }
 
     /// <summary>The frozen workspace root, when the run carries one (projectless runs do not).</summary>

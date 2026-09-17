@@ -37,39 +37,47 @@ internal static class ToolResourceAllowList
     /// </summary>
     public static ResourceAllowDecision Evaluate(IReadOnlyList<string> grants, string? relativePath, bool mutating)
     {
-        if (grants.Count == 0) return new ResourceAllowDecision(false, ResourceAllowBasis.NoGrant, null);
+        // An empty envelope is the fail-closed "no workspace authorization"
+        // state. There is no grant to upgrade from, so it never asks.
+        if (grants.Count == 0) return ResourceAllowDecision.Refused(ResourceAllowBasis.NoGrant);
 
         if (string.IsNullOrEmpty(relativePath))
         {
+            var sawGrant = false;
             foreach (var grant in grants)
             {
                 if (!TryParseGrant(grant, out var write, out _)) continue;
+                sawGrant = true;
                 if (mutating && !write) continue;
-                return new ResourceAllowDecision(true, ResourceAllowBasis.Granted, grant);
+                return ResourceAllowDecision.Granted(grant);
             }
 
-            return new ResourceAllowDecision(false, ResourceAllowBasis.LevelDenied, null);
+            return ResourceAllowDecision.LevelNotGranted(mutating, sawGrant);
         }
 
-        // A grant string carries a normalized prefix already; the target is
-        // normalized the same way so the comparison is purely ordinal.
+        // A target that cannot be expressed inside the workspace sits outside the
+        // envelope whatever level was granted, so it never upgrades.
         var normalizedTarget = ToolResourcePathRegistry.NormalizeRelativePath(relativePath);
-        if (normalizedTarget is null) return new ResourceAllowDecision(false, ResourceAllowBasis.PathDenied, null);
+        if (normalizedTarget is null) return ResourceAllowDecision.Refused(ResourceAllowBasis.PathDenied);
 
         var sawLevelMatch = false;
+        var sawAnyGrant = false;
         foreach (var grant in grants)
         {
             if (!TryParseGrant(grant, out var write, out var prefix)) continue;
+            sawAnyGrant = true;
             if (mutating && !write) continue;
             sawLevelMatch = true;
-            if (CoversPrefix(prefix, normalizedTarget))
-                return new ResourceAllowDecision(true, ResourceAllowBasis.Granted, grant);
+            if (CoversPrefix(prefix, normalizedTarget)) return ResourceAllowDecision.Granted(grant);
         }
 
         // Distinguish "the level was never granted" from "the level was granted
-        // but no prefix covers this target": both deny, but the basis is the
-        // operator-visible reason.
-        return new ResourceAllowDecision(false, sawLevelMatch ? ResourceAllowBasis.PathDenied : ResourceAllowBasis.LevelDenied, null);
+        // but no prefix covers this target": both refuse, but only the first may
+        // upgrade to an approval. A granted level whose prefix does not cover the
+        // target is an envelope escape, not a missing grant.
+        return sawLevelMatch
+            ? ResourceAllowDecision.Refused(ResourceAllowBasis.PathDenied)
+            : ResourceAllowDecision.LevelNotGranted(mutating, sawAnyGrant);
     }
 
     /// <summary>Parse "read:/write:" level prefix. Unknown forms are not grants.</summary>
@@ -145,6 +153,29 @@ internal static class ResourceDenialExplanation
             _ => $"{tool} was denied by the resource boundary for {workspace}. Frozen grants: {frozen}."
         };
     }
+
+    /// <summary>
+    /// Operator/model-facing explanation of an upgrade-to-approval decision. It rides
+    /// on the permission request so the approval prompt states WHY it is being asked
+    /// (which level is missing, which grants were frozen) instead of a bare
+    /// "approval required" that hides whether the envelope can ever authorize it.
+    /// </summary>
+    public static string DescribeUpgrade(
+        IReadOnlyList<string> grants,
+        string? toolId,
+        string? workspaceRoot,
+        string? relativePath)
+    {
+        var tool = string.IsNullOrWhiteSpace(toolId) ? "the tool" : $"'{toolId}'";
+        var workspace = string.IsNullOrWhiteSpace(workspaceRoot)
+            ? "the run workspace"
+            : $"the workspace rooted at '{workspaceRoot}'";
+        var frozen = grants.Count == 0 ? "(none)" : string.Join(", ", grants.Select(grant => $"'{grant}'"));
+        var target = string.IsNullOrWhiteSpace(relativePath) ? "the workspace" : $"'{relativePath}'";
+
+        return $"{tool} needs approval: it changes {target} in {workspace}, but the instance holds no write-level grant "
+            + $"(frozen grants: {frozen}). Approving issues a one-use write authorization for this call.";
+    }
 }
 
 internal enum ResourceAllowBasis
@@ -155,4 +186,49 @@ internal enum ResourceAllowBasis
     PathDenied
 }
 
-internal sealed record ResourceAllowDecision(bool Allowed, ResourceAllowBasis Basis, string? MatchedGrant);
+/// <summary>
+/// What the resource envelope decided for one tool claim. <see cref="Allowed"/>
+/// and <see cref="RequiresApproval"/> both clear the decision point; they differ in
+/// whether the call may proceed on its own or must reach the approval gate first.
+/// Only <see cref="Denied"/> stops the call here.
+/// </summary>
+internal enum ResourceAllowDisposition
+{
+    Allowed,
+    RequiresApproval,
+    Denied
+}
+
+internal sealed record ResourceAllowDecision(ResourceAllowDisposition Disposition, ResourceAllowBasis Basis, string? MatchedGrant)
+{
+    /// <summary>The claim may act without a human decision.</summary>
+    public bool Allowed => Disposition == ResourceAllowDisposition.Allowed;
+
+    /// <summary>
+    /// The claim may only act behind an approval decision. A MUTATING claim against
+    /// an envelope that does hold parseable grants upgrades instead of refusing: the
+    /// envelope never implied write access, but the approval gate is exactly the
+    /// mechanism that can grant it once with a decision behind it. Refusing here is
+    /// what made "write a file" structurally unreachable for every instance whose
+    /// envelope defaulted to read-only — the request never reached the gate that
+    /// could have authorized it.
+    /// </summary>
+    public bool RequiresApproval => Disposition == ResourceAllowDisposition.RequiresApproval;
+
+    internal static ResourceAllowDecision Granted(string grant) =>
+        new(ResourceAllowDisposition.Allowed, ResourceAllowBasis.Granted, grant);
+
+    /// <summary>Stops the call at the decision point: no envelope at all, or a target outside it.</summary>
+    internal static ResourceAllowDecision Refused(ResourceAllowBasis basis) =>
+        new(ResourceAllowDisposition.Denied, basis, null);
+
+    /// <summary>
+    /// The requested level was never granted. A mutating claim over an envelope that
+    /// holds at least one parseable grant upgrades to an approval; everything else
+    /// (a read claim, or an envelope whose grants are all unrecognized) refuses.
+    /// </summary>
+    internal static ResourceAllowDecision LevelNotGranted(bool mutating, bool hasParseableGrant) =>
+        mutating && hasParseableGrant
+            ? new(ResourceAllowDisposition.RequiresApproval, ResourceAllowBasis.LevelDenied, null)
+            : new(ResourceAllowDisposition.Denied, ResourceAllowBasis.LevelDenied, null);
+}

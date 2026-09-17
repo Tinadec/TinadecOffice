@@ -188,6 +188,17 @@ public sealed record AuthorizationBoundary(
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? DenyReason { get; init; }
+
+    /// <summary>
+    /// Actionable reason for a decision that clears this boundary but only behind an
+    /// approval: the level is missing from the frozen envelope, so the call must be
+    /// decided by a human instead of being refused. Like <see cref="DenyReason"/> it
+    /// is diagnostic rather than policy material, and it is likewise excluded from
+    /// the boundary hash so adding it cannot invalidate an admitted run's policy
+    /// snapshot.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? UpgradeReason { get; init; }
 }
 
 public sealed record CreatePolicyBundleCommand(

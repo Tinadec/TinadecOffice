@@ -21,6 +21,17 @@ public sealed class AutoApproveOptions
     /// <summary>Automatic approvals per run before the request escalates to a human.</summary>
     public int AutoApproveMaxPerRun { get; set; } = 5;
 
+    /// <summary>
+    /// Release READ-level tool claims in an <c>ask</c> run without a human decision.
+    /// A read cannot change the workspace, and the resource envelope plus the tool
+    /// process's own root check already bound which paths it may touch, so a click
+    /// adds no authority — it only adds latency. Gating reads was what stalled a real
+    /// run for 22 minutes on a directory listing and what made an exploratory loop
+    /// impractical. Mutating claims are untouched by this switch, and a tool on the
+    /// human-only list is never released.
+    /// </summary>
+    public bool ReleaseReadOnlyInAskMode { get; set; } = true;
+
     /// <summary>Tool ids that the policy refuses to auto-approve. Any tool id ending in
     /// "_delete" or starting with "delete_" is additionally refused regardless of this list.
     /// "shell" is the registered id of the command tool ("command_run" predates it and stays
