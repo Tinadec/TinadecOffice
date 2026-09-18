@@ -3,6 +3,7 @@
 > 状态：产品与架构基线（Baseline）
 > 文档状态：持续维护的产品基线（不使用递增文档版本号）
 > 日期：2026-08-22
+> TinaChat 增量更新：2026-09-18；用户确认作为 `TinadecCore/TinaChat` 内部模块，后端首批已实现并通过下述验证，尚未发布。
 > 适用范围：TinadecCore、DmaEA，以及 TinadecOffice 四产品之间的契约边界
 > 事实基线：截至 2026-08-22，当前工作树统一以 MAF `1.18.0` 为规范基线；实现状态仍须按本文标记区分，未提交工作树不等同于已发布能力。TinadecOffice 尚未发布首个正式版，公开 API 固定为 `/api/v1`。
 
@@ -312,8 +313,8 @@ DmaEA 用“专业化 + 双层治理 + 受控演化”解决这一矛盾：
 
 ### 6.2 不变量
 
-1. 每个正式模式至少包含一个会议智能体和一个受 Core 管控的执行层派发边界。支持任务分解、并发、副作用、重试、重规划或子智能体生成的模式必须配置 `task_planner`；`simple_qa` 可由确定性的单任务派发器代替模型规划智能体。
-2. 只有会议智能体拥有 `direct_user_output`。
+1. 正式模式通过对话标记或能力解析对话身份；当前 Core 为每个运行冻结一名负责答复的对话身份。图模式由该身份编制任务图，solo 模式允许其在授权内执行和派发，不要求名为 `meeting` 或 `task_planner` 的全局固定实例。
+2. `direct_user_output` 属于当前运行绑定的对话职责。TinaChat 会话可以有多个具有对话理解能力的参与者，各自以稳定身份发言和提交意图；这不自动赋予运行调度或工具授权。
 3. 执行层只能在任务、上下文切片、工具范围和预算内工作。
 4. 子智能体的有效权限不得超过父实例与当前 run 的交集。
 5. 模型输出是建议或内容，不是授权凭证、事务提交或审计事实。
@@ -329,7 +330,7 @@ DmaEA 用“专业化 + 双层治理 + 受控演化”解决这一矛盾：
 
 | 智能体 | 目标职责 | 允许做 | 不允许做 | 默认触发 |
 | --- | --- | --- | --- | --- |
-| 会议智能体 `meeting` | 唯一用户入口、意图分类、粗计划、派发、汇总 | 创建/绑定 run，向执行层派发，形成正式答复 | 直接执行高风险工具、自行授权 | 用户消息、任务事件、监督结果 |
+| 对话理解智能体（`meeting` 是既有模板名） | 理解用户目标、识别含糊或未核实陈述、整理可修订的意图、派发与答复 | 在配置能力与授权内提出简报、创建/绑定 run、提交结果 | 把猜测当成事实或授权、扩大消息受众、自行绕过工具审批 | 获授权的用户消息、协作请求、任务事件 |
 | 上下文压缩智能体 `context_compressor` | 维护可验证的结构化摘要 | 提交带来源的 context patch | 覆盖新版本目标、删除原始证据 | token 阈值、里程碑、任务结束 |
 | 能力推荐智能体 `capability_advisor` | 推荐模型、工具、技能或专业 worker | 产生候选和理由 | 直接授予能力 | 新任务、能力缺口、重规划 |
 | 监督智能体 `supervisor` | 检查目标、证据、质量和风险 | `pass/revise/escalate`，提出修正 | 伪造执行证据、突破硬策略 | 产物完成、风险事件、最终输出前 |
@@ -771,7 +772,7 @@ stateDiagram-v2
 - 观测面：readiness 已实现（`GET /api/v1/readiness`、`tool-layer-readiness`）；`traces`/`metrics` 目前是返回空数组的桩（`StubEndpoints.cs:378-381`），`evaluations` 与 `audit export` 尚无任何路由或实现。
 - 所有公开 JSON 使用 `snake_case`、RFC 9457 Problem Details、幂等键和并发 revision。
 - Agent Pack 使用 `GET /api/v1/agent-packs`、`GET /api/v1/agent-packs/{pack_id}`、`POST /api/v1/agent-packs/install-preview` 和 `PUT /api/v1/agent-packs/{pack_id}`；Gateway 只能原样代理，App 不能直接写 Core 数据库。
-- 当前 v1 客户端以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，运行输出经 `GET /api/v1/runs/{runId}/stream` 读取；这是唯一的全双工入口。旧 `invoke-stream` 路由**已退役并返回 404**，不再是 `/api/v1` 契约的一部分。
+- 普通 v1 会话以 `POST /sessions/{id}/interactions` 提交 `queued/insert/parallel` 交互，运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。TinaChat 通过 §14.4 的已采纳意图入口调用同一 Core 准入器，其隔离执行会话拒绝普通 interaction/insert。旧 `invoke-stream` 路由**已退役并返回 404**，不再是 `/api/v1` 契约的一部分。
 
 ### 14.2 南向接口
 
@@ -787,6 +788,24 @@ stateDiagram-v2
 - 不保留历史兼容路由、legacy 别名、迁移入口或弃用周期。破坏性变更直接修改 `/api/v1` 的端点、DTO、事件、测试、客户端生成物和中文文档。
 - provider 可以通过 capability negotiation 描述当前实现能力，但这不是 API 版本协商，也不产生旧契约兼容义务。
 - `AgentVersion` 等领域版本、内部 schema revision 和内容哈希用于冻结与审计，不得被解释为 HTTP API 版本迭代。
+
+### 14.4 TinaChat：具名参与者、通信权限与意图交接
+
+**2026-09-18，首批工作树实现。** TinaChat 放在 `TinadecCore/TinaChat`，作为 Core 内部 .NET 模块加载，通信数据仍由 Core 拥有。CLI、MCP 与独立项目交付是后续入口，不把通信平台放入工具子进程。源码接入与调用说明见 [`TinadecCore/TinaChat/README.md`](../TinadecCore/TinaChat/README.md)。
+
+参与者包含 human/agent、稳定 ID、工作区内唯一 handle、显示名字、职位、说明与可选 Core 定义映射。对话理解、群管理员、原文接收和执行权限分别配置。注册者可管理自己的具名参与者；每次操作验证实际主体与租户/工作区成员记录，单纯声明 actor_id 或职位不能冒充其他主体。
+
+`/api/v1/tina-chat` 提供原有 participants、conversations、members、messages、inbox/ack、workspace-policy、intents/generate/decision/execute 21 个操作，以及 observer 下4个管理员读取，共25个操作。普通群成员先邀请后本人接受，新加入或重新加入的成员不自动获取此前历史。消息受众随发送冻结，后续读取重新验证成员和跨工作区策略；引用和整理材料受来源限制。普通通信默认关闭跨区发现/通信，confidential 内容不跨区。
+
+用户可作为最高权限观察者，在侧边栏“聊天室”查看其管理范围内全部群聊、私聊、保密/限定受众原文及发送/接收身份。租户 owner/admin 观察本租户全部活跃工作区，工作区 owner/admin 只观察管理范围，均由实际成员记录核验且不跨租户。观察不要求入群，不改变其他智能体可见范围、接收确认或执行权限；会话观察记入管理员审计。界面支持搜索、类型/工作区筛选、历史翻页和自动刷新，权限撤回后清空受保护内容。只呈现已经保存到 TinaChat 的通信。
+
+独立执行体可以配置不接收人类原文，但在消息显式允许向既定受众分享整理材料时接收意图简报。简报保留用户陈述、约束、假设、未决问题、阻塞问题和验收条件。支持多个不同名字的理解者；模型生成只产生提案，不直接执行。owner/admin 按会话 revision 采纳，旧版本被替代；blocking_questions 未解决时拒绝执行。
+
+执行入口为已采纳简报与接收参与者建立稳定的隔离 Core session，重试复用相同 session/run。上下文读取、运行准入、恢复和旧式目标补丁均尊重该绑定；不读取原始群聊、无关 session 历史或长期记忆。工具和模型执行复用现有 Core 路径，首版执行权限为 ask，禁用 Agent Pack 仍阻断准入。TinaChat 不把普通聊天文字直接当成已确认的目标变更。
+
+首批验证：API 定向回归 71/71（含 11 个 TinaChat 用例）、AgentFramework 309/309、Architecture 17/17；Gateway 49/49 与构建通过。捕获实际模型请求证明原文、无关历史与运行中注入的旧式补丁没有进入隔离执行。模型为脚本替身，数据库为隔离 SQLite；没有真实供应商或 PostgreSQL 演练。
+
+当前边界：已经提供管理员只读聊天观察 UI；消息发送/群组管理 UI、自动唤醒/推送、结果自动回群、附件与访客问答、工作区级智能体委托、独立 agent 凭据、CLI/MCP 或独立宿主尚未实现。普通 Core 历史未迁移。当前一个主体可管理自己的多个参与者，不能把这等同于不可信外部智能体之间的凭据隔离。意图生成使用已配置 chat 路由；资料中的定义映射不自动决定模型与模式。受众规则不等同于任意自然语言内容的自动脱敏。
 
 ## 15. 安全、可靠性与可观测性
 
