@@ -249,7 +249,11 @@ export function useAgentActivity(
   function processTaskGraphCreated(event: EventEnvelope) {
     const title = extractString(event.payload, 'title')
     const nodes = extractArray(event.payload, 'nodes')
-    const nodeCount = nodes.length
+    // Core's durable task_graph.created contract carries task_count/task_keys;
+    // older preview fixtures carried an inline nodes array. Prefer the explicit
+    // count so a real one-task run never renders as "0 个任务节点" merely because
+    // the event intentionally avoids duplicating the whole graph.
+    const nodeCount = extractNumber(event.payload, 'task_count') ?? nodes.length
     activity.value = {
       ...activity.value,
       status: 'thinking',
