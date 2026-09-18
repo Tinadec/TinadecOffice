@@ -13,6 +13,7 @@ using TinadecCore.Models;
 using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
+using TinadecCore.TinaChat;
 using TinadecCore.Tools;
 using TinadecCore.VectorStore;
 
@@ -46,6 +47,11 @@ public static class TinadecCoreServiceCollectionExtensions
         new LoopGuardModuleRegistrar().Register(builder);
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
+
+        new TinaChatModuleRegistrar().Register(builder);
+        services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
+        services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
+        services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
 
         // Governance is registered before DmaEA so it can remain independently
         // packageable. The composition root replaces its fail-closed placeholder

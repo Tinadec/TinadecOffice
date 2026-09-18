@@ -50,4 +50,5 @@ public sealed record ContextBuildRequest(
     string? TaskContext = null,
     int? TokenBudget = null,
     int? RecentMessageLimit = null,
-    int? ReviewedMemoryLimit = null);
+    int? ReviewedMemoryLimit = null,
+    TinaChatInputBinding? TinaChatInput = null);

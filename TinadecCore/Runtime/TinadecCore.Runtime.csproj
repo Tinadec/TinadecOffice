@@ -33,6 +33,7 @@
     <ProjectReference Include="..\Lifecycle\TinadecCore.Lifecycle.csproj" />
     <ProjectReference Include="..\Governance\TinadecCore.Governance.csproj" />
     <ProjectReference Include="..\Tools\TinadecCore.Tools.csproj" />
+    <ProjectReference Include="..\TinaChat\TinadecCore.TinaChat.csproj" />
     <ProjectReference Include="..\Storage.Migrations.Sqlite\TinadecCore.Storage.Migrations.Sqlite.csproj" />
     <ProjectReference Include="..\Storage.Migrations.PostgreSql\TinadecCore.Storage.Migrations.PostgreSql.csproj" />
   </ItemGroup>

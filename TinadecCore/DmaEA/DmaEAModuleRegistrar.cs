@@ -22,6 +22,7 @@ public sealed class DmaEAModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<IAgentRuntimeConfigurationResolver, AgentRuntimeConfigurationResolver>();
         builder.Services.AddSingleton<IRuntimeContextSettings, RuntimeContextSettingsAdapter>();
         builder.Services.AddSingleton<IAgentChatClientFactory, AgentChatClientFactory>();
+        builder.Services.AddSingleton<ITinaChatIntentInterpreter, TinaChatIntentInterpreter>();
         builder.Services.AddSingleton<CliRuntime.CliProcessManager>();
         builder.Services.AddSingleton<CliRuntime.ICliProcessManager>(sp => sp.GetRequiredService<CliRuntime.CliProcessManager>());
         builder.Services.AddSingleton<AgentInstanceService>();

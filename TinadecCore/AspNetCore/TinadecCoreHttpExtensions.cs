@@ -73,6 +73,7 @@ public static class TinadecCoreHttpExtensions
                 // invalid_request, context_conflict, model_not_configured, run_not_found, forbidden, conflict
                 var (status, code, detail) = exception switch
                 {
+                    TinadecCore.Abstractions.Ports.TinaChatException chat => (chat.StatusCode, chat.Code, chat.Message),
                     TinadecCore.AgentConfiguration.AgentPackDomainException ape => (ape.StatusCode, ape.Code, ape.Message),
                     TinadecCore.DmaEA.RunAdmissionException rae when rae.Code == "CONTEXT_REVISION_CONFLICT" => (StatusCodes.Status409Conflict, "context_conflict", rae.Message),
                     TinadecCore.DmaEA.RunAdmissionException rae => (StatusCodes.Status409Conflict, "conflict", rae.Message),

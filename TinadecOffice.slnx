@@ -25,6 +25,7 @@
     <Project Path="TinadecCore/Lifecycle/TinadecCore.Lifecycle.csproj" />
     <Project Path="TinadecCore/Governance/TinadecCore.Governance.csproj" />
     <Project Path="TinadecCore/Tools/TinadecCore.Tools.csproj" />
+    <Project Path="TinadecCore/TinaChat/TinadecCore.TinaChat.csproj" />
   </Folder>
   <Folder Name="/TinadecCore/host/">
     <Project Path="TinadecCore/Runtime/TinadecCore.Runtime.csproj" />

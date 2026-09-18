@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <Description>Named participants, governed conversations, durable inboxes and intent handoffs.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Abstractions\TinadecCore.Abstractions.csproj" />
+    <ProjectReference Include="..\Persistence\TinadecCore.Persistence.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+</Project>

@@ -112,6 +112,10 @@ public sealed record FrozenRunConfigurationV1(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public FrozenWorkspaceBinding? Workspace { get; init; }
 
+    /// <summary>Optional trusted communication binding. Absent on ordinary runs; never caller-supplied HTTP data.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public TinaChatInputBinding? TinaChatInput { get; init; }
+
     /// <summary>
     /// The frozen-body schema this Core writes and reads. v2 introduced the
     /// always-present Graph section (free_form tier on disk) and spawnable

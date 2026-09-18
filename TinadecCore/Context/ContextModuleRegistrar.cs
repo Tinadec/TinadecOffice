@@ -37,12 +37,14 @@ internal sealed class ContextProvider : IContextProvider
     private readonly IConversationStore _conversations;
     private readonly IMemoryStore _memory;
     private readonly IRuntimeContextSettings _settings;
+    private readonly ITinaChatRunInput? _chatInputs;
 
-    public ContextProvider(IConversationStore conversations, IMemoryStore memory, IRuntimeContextSettings settings)
+    public ContextProvider(IConversationStore conversations, IMemoryStore memory, IRuntimeContextSettings settings, ITinaChatRunInput? chatInputs = null)
     {
         _conversations = conversations;
         _memory = memory;
         _settings = settings;
+        _chatInputs = chatInputs;
     }
 
     public async Task<ContextPack> BuildContextAsync(
@@ -55,6 +57,26 @@ internal sealed class ContextProvider : IContextProvider
         }
 
         var settings = _settings.Current;
+        var boundInput = _chatInputs is null ? null : await _chatInputs.GetForSessionAsync(parsedSessionId, cancellationToken).ConfigureAwait(false);
+        if (request.TinaChatInput is not null || boundInput is not null)
+        {
+            var input = boundInput;
+            var binding = request.TinaChatInput ?? new TinaChatInputBinding(input!.Execution.Id, input.Execution.ParticipantId, input.Execution.IntentId);
+            if (input is null || input.Execution.Id != binding.ExecutionId || input.Execution.ParticipantId != binding.ParticipantId
+                || input.Execution.IntentId != binding.IntentId)
+                throw new TinaChatException(403, "tina_chat_input_unavailable", "The execution handoff is no longer authorized.");
+            var text = input.Content + (string.IsNullOrWhiteSpace(request.TaskContext) ? "" : "\n\nAssigned task:\n" + request.TaskContext);
+            var budget = Math.Clamp(request.TokenBudget ?? settings.DefaultTokenBudget, 512, 262144);
+            var estimate = EstimateTokens(text);
+            if (estimate > budget) throw new TinaChatException(409, "tina_chat_context_budget", "The authorized brief exceeds the context budget; shorten the brief before execution.");
+            return new ContextPack
+            {
+                SessionId = request.SessionId, RunId = request.RunId, TokenBudget = budget, EstimatedTokens = estimate,
+                Evidence = [new ContextEvidence { Source = "accepted_intent", Content = text, EstimatedTokens = estimate,
+                    Metadata = new Dictionary<string, string> { ["intent_id"] = binding.IntentId.ToString(), ["participant_id"] = binding.ParticipantId.ToString() } }],
+                Metadata = new Dictionary<string, string> { ["input_scope"] = "tina_chat_intent", ["agent_id"] = request.AgentId }
+            };
+        }
         // A run passes the values captured at admission. The live settings remain a
         // backwards-compatible fallback for callers outside the durable engine.
         var tokenBudget = Math.Clamp(request.TokenBudget ?? settings.DefaultTokenBudget, 512, 262144);

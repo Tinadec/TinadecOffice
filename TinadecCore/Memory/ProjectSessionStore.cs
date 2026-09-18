@@ -80,7 +80,8 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         SessionModelOverride? meetingModelOverride = null,
         string? conversationNodeKey = null,
         string? conversationTemplateSlug = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? stableSessionId = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var scope = _tenantContext.Current;
@@ -91,9 +92,15 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
 
         var now = DateTimeOffset.UtcNow;
         if (modeVersionId == Guid.Empty) throw new ArgumentException("A published Agent Mode version is required.", nameof(modeVersionId));
+        if (stableSessionId == Guid.Empty) throw new ArgumentException("Stable session id must not be empty.", nameof(stableSessionId));
+        if (stableSessionId is { } existingId)
+        {
+            var existing = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == existingId, cancellationToken).ConfigureAwait(false);
+            if (existing is not null) return ValidateBoundSession(existing);
+        }
         var session = new SessionRecord
         {
-            Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
+            Id = stableSessionId ?? Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId,
             ProjectId = projectId, Title = string.IsNullOrWhiteSpace(title) ? "New session" : title.Trim(),
             ModeVersionId = modeVersionId,
             MeetingModelOverrideProviderInstanceId = meetingModelOverride?.ProviderInstanceId,
@@ -103,8 +110,28 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
             CreatedAt = now, UpdatedAt = now
         };
         db.Sessions.Add(session);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException) when (stableSessionId.HasValue)
+        {
+            db.ChangeTracker.Clear();
+            var winner = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == stableSessionId.Value, cancellationToken).ConfigureAwait(false);
+            if (winner is null) throw;
+            return ValidateBoundSession(winner);
+        }
         return session;
+
+        SessionRecord ValidateBoundSession(SessionRecord existing)
+        {
+            if (existing.TenantId != scope.TenantId || existing.WorkspaceId != scope.WorkspaceId
+                || existing.ProjectId != projectId || existing.ModeVersionId != modeVersionId
+                || existing.ConversationNodeKey != conversationNodeKey || existing.ConversationTemplateSlug != conversationTemplateSlug
+                || existing.LifecycleStatus != LifecycleStatuses.Active)
+                throw new InvalidOperationException("The stable session identifier is already bound to different inputs.");
+            return existing;
+        }
     }
 
     public async Task<IReadOnlyList<SessionRecord>> ListSessionsAsync(Guid? projectId, string lifecycleStatus = LifecycleStatuses.Active, CancellationToken cancellationToken = default)

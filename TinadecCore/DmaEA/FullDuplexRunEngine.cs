@@ -440,8 +440,32 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 return;
             }
 
+            TinaChatExecutionReservation? chatInput = null;
+            try
+            {
+                if (_services.GetService(typeof(ITinaChatRunInput)) is ITinaChatRunInput chatInputs)
+                    chatInput = await chatInputs.GetForSessionAsync(sessionId, stoppingToken).ConfigureAwait(false);
+                if (configuration.TinaChatInput is not null || chatInput is not null)
+                {
+                    var binding = configuration.TinaChatInput;
+                    if (chatInput is null || binding is null || binding.ExecutionId != chatInput.Execution.Id
+                        || binding.IntentId != chatInput.Execution.IntentId || binding.ParticipantId != chatInput.Execution.ParticipantId
+                        || trigger.Content != chatInput.Content || trigger.ClientMessageId != chatInput.ClientMessageId)
+                        throw new TinaChatException(403, "tina_chat_input_locked", "The run input does not match its authorized communication handoff.");
+                }
+            }
+            catch (TinaChatException ex)
+            {
+                await FailLegacyRunAsync(runId, run, ex.Code, ex.Message, stoppingToken).ConfigureAwait(false);
+                return;
+            }
             var checkpoint = await LoadOrCreateCheckpointAsync(runId, run, sessionId, turnId, trigger, stoppingToken).ConfigureAwait(false);
             if (checkpoint is null) return;
+            if (chatInput is not null && checkpoint.UserGoal != chatInput.Content)
+            {
+                await FailRunAsync(runId, checkpoint, "tina_chat_input_locked", "The checkpoint goal no longer matches the accepted intent.", stoppingToken).ConfigureAwait(false);
+                return;
+            }
 
             // A prior model call exhausted its short in-call retry budget. The
             // checkpoint is the durable schedule authority; the in-memory queue is
@@ -3708,6 +3732,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
+        // A TinaChat handoff is an immutable accepted brief. Legacy session
+        // patches are retained as evidence but cannot replace its input goal.
+        // New requirements must be proposed and accepted as another intent.
+        if (_services.GetService(typeof(ITinaChatRunInput)) is ITinaChatRunInput chatInputs
+            && await chatInputs.GetForSessionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false) is not null)
+            return false;
         var patches = await _conversations.ListAppliedContextPatchesAsync(
             checkpoint.SessionId,
             checkpoint.RunId,
@@ -4268,7 +4298,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             taskContext,
             config.Context.DefaultTokenBudget,
             config.Context.RecentMessageLimit,
-            config.Memory.RetrievalLimit), cancellationToken).ConfigureAwait(false);
+            config.Memory.RetrievalLimit,
+            config.TinaChatInput), cancellationToken).ConfigureAwait(false);
 
     private async Task<string> GenerateMeetingResponseAsync(
         FrozenRunConfigurationV1 configuration,
@@ -4285,7 +4316,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             ? "\n\nIMPORTANT: supervision escalated this run. Explain the unresolved decision clearly and ask the user for direction."
             : string.Empty;
         var evidence = string.Join("\n", checkpoint.Tasks.Select(item => $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
-        var instructions = assembly.Instructions + "\n\nYou are the meeting agent, the only user-facing agent. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
+        var instructions = assembly.Instructions + "\n\nYou are the conversation agent responsible for this run's reply. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}";
         using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
             await factory.CreateAsync(resolution, cancellationToken).ConfigureAwait(false),

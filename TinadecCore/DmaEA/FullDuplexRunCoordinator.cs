@@ -79,6 +79,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
     private readonly IToolManifestSnapshotResolver _toolManifestResolver;
     private readonly IFullDuplexRunEngine _engine;
     private readonly IReadOnlyList<IRunInFlightToolCancellation> _runToolCancellations;
+    private readonly ITinaChatRunInput? _chatInputs;
 
     public FullDuplexRunCoordinator(
         IConversationStore conversations,
@@ -86,7 +87,8 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         IAgentRuntimeConfigurationResolver configurationResolver,
         IToolManifestSnapshotResolver toolManifestResolver,
         IFullDuplexRunEngine engine,
-        IEnumerable<IRunInFlightToolCancellation> runToolCancellations)
+        IEnumerable<IRunInFlightToolCancellation> runToolCancellations,
+        ITinaChatRunInput? chatInputs = null)
     {
         _conversations = conversations;
         _lifecycle = lifecycle;
@@ -94,6 +96,7 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         _toolManifestResolver = toolManifestResolver;
         _engine = engine;
         _runToolCancellations = runToolCancellations.ToArray();
+        _chatInputs = chatInputs;
     }
 
     public async Task<RunSubmission> SubmitAsync(FullDuplexInvocation invocation, CancellationToken cancellationToken = default)
@@ -101,6 +104,18 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         if (string.IsNullOrWhiteSpace(invocation.Content))
         {
             throw new RunAdmissionException("INVALID_MESSAGE", "Message content is required.");
+        }
+
+        var chatInput = _chatInputs is null ? null : await _chatInputs.GetForSessionAsync(invocation.SessionId, cancellationToken).ConfigureAwait(false);
+        if (chatInput is not null)
+        {
+            if (!string.Equals(invocation.Content, chatInput.Content, StringComparison.Ordinal)
+                || invocation.ClientMessageId != chatInput.ClientMessageId || invocation.TargetRunId.HasValue
+                || invocation.MeetingModelOverride is not null
+                || (invocation.ModeVersionId.HasValue && invocation.ModeVersionId != chatInput.ModeVersionId)
+                || (invocation.PermissionMode is not null && invocation.PermissionMode != "ask"))
+                throw new TinaChatException(403, "tina_chat_input_locked", "This isolated execution session accepts only its authorized intent handoff. Use the chat to propose a new intent revision.");
+            invocation = invocation with { ModeVersionId = chatInput.ModeVersionId, PermissionMode = "ask" };
         }
 
         // A repeated client message must return the original run. Do this before
@@ -162,6 +177,9 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
         }
 
         var configuration = await ResolveConfigurationAsync(invocation, cancellationToken).ConfigureAwait(false);
+        if (chatInput is not null)
+            configuration = configuration with { TinaChatInput = new TinaChatInputBinding(
+                chatInput.Execution.Id, chatInput.Execution.ParticipantId, chatInput.Execution.IntentId) };
 
         var active = await _lifecycle.CountActiveRunsAsync(invocation.SessionId.ToString(), cancellationToken).ConfigureAwait(false);
         if (turnKind is not ("status_query" or "clarification") && active >= configuration.Scheduling.MaxActiveRunsPerSession)

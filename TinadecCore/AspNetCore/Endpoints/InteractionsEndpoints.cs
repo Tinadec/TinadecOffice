@@ -13,6 +13,9 @@ namespace TinadecCore.AspNetCore.Endpoints;
 
 public static class InteractionsEndpoints
 {
+    private const string TinaChatInputLockedCode = "tina_chat_input_locked";
+    private const string TinaChatInputLockedDetail = "Use the TinaChat intent execution endpoint for this isolated handoff. New instructions belong in a new intent revision.";
+
     public static IEndpointRouteBuilder MapInteractionsEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions", CreateInteraction);
@@ -63,6 +66,13 @@ public static class InteractionsEndpoints
         // session existence + session's default mode handling
         var session = await sessions.FindAsync(sessionId, ct);
         if (session is null) return Results.NotFound(new { code = "not_found", message = "Session not found" });
+
+        // An insertion bypasses coordinator admission, so enforce the communication
+        // binding here too, before persisting any context patch or mutable mode.
+        var chatInputs = req.HttpContext.RequestServices.GetService<ITinaChatRunInput>();
+        var chatInput = chatInputs is null ? null : await chatInputs.GetForSessionAsync(sessionId, ct);
+        if (chatInput is not null)
+            return TinaChatInputLocked(req);
 
         // mode_version validation if provided
         if (modeVersionId.HasValue)
@@ -318,6 +328,18 @@ public static class InteractionsEndpoints
         var admissionCursor = await RunStreamCursorAsync(lifecycleDbFactory, admission.RunId, ct).ConfigureAwait(false);
         return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{admission.TurnId}", new { interaction_id = admission.TurnId, session_id = sessionId, run_id = admission.RunId, turn_id = admission.TurnId, dispatch_mode = dispatchMode, status, mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, client_message_id = clientMessageId, context_revision = admission.ContextRevision, stream_cursor = admissionCursor, correlation_id = clientMessageId });
     }
+
+    private static IResult TinaChatInputLocked(HttpRequest request) => Results.Problem(
+        type: $"https://tinadec.dev/errors/{TinaChatInputLockedCode}",
+        title: TinaChatInputLockedCode,
+        statusCode: StatusCodes.Status403Forbidden,
+        detail: TinaChatInputLockedDetail,
+        instance: request.Path.Value,
+        extensions: new Dictionary<string, object?>
+        {
+            ["code"] = TinaChatInputLockedCode,
+            ["trace_id"] = request.HttpContext.TraceIdentifier
+        });
 
     /// <summary>
     /// The receipt cursor is the last assigned seq of the run's durable stream:
