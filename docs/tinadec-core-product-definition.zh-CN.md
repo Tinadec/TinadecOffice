@@ -239,7 +239,7 @@ flowchart TB
 - 每次升级必须通过编译、架构、checkpoint 恢复、人工介入、工具循环上限和 OpenTelemetry 契约测试。
 - 实验性上下文压缩和 RC 声明式配置只能位于 Tinadec 适配器之后，不得成为公共配置格式。
 - Core 自身必须维持模型轮次、工具调用、工具轮次、token、时间、成本、副作用次数和递归深度硬预算。这些预算属于 Tinadec 产品策略，必须独立版本化，不得从 MAF 默认常量推导。
-- MAF 自动审批轮次只可作为 Core `max_tool_rounds` 的安全上限，不能授予权限、替代 Action Approval 或绕过持久 Tool Dispatcher。两者计数语义不同，Core 仍须独立记录工具轮次和审批状态。
+- MAF 自动审批轮次只可作为 Core `max_tool_rounds` 的安全上限，不能授予权限、替代 Action Approval 或绕过持久 Tool Dispatcher。两者计数语义不同，Core 仍须独立记录工具轮次和审批状态。Core 的 `max_tool_rounds <= 0` 表示不启用 round gate；只有正值才受安全上限约束，`max_tool_calls` 继续作为独立的绝对调用保险丝。
 - 若接入 MAF Workflow checkpoint，应将其 JSON 作为 Core `RunCheckpoint` 引用的不透明 sidecar；Core 继续拥有 tenant scope、CAS、事件水位、审批、租约和副作用 receipt。
 - Workflow 恢复必须冻结稳定且唯一的 agent `Id`/`Name` 与拓扑。MAF executor identity 由规范化的 `Name_Id` 构成，身份或拓扑漂移应使恢复失败关闭。
 - MAF HITL 使用非阻塞 pending-request 路径：先持久化 external request 与 checkpoint，再释放请求线程；恢复时由 Core 校验 tenant、授权、过期、请求哈希和一次性消费。
@@ -658,6 +658,7 @@ flowchart TD
 3. 策略自动批准默认关闭：`auto_approve_enabled` 默认 `false`；仅当无委托且调用者无人类权限时介入；human-only 工具（`git_push`、`command_run`、`git_worktree_remove`、`mcp_invoke` 及 `*_delete`/`delete_*`）与超过风险上限（默认 medium）的请求永不自动批准；per-run 预算耗尽时**升级为 `awaiting_user` 而非拒绝**——拒绝是终态，之后不可能再由人补批，升级保留了人工兜底。
 4. 决策可归因、不可冒充：自动批准的决策 `DecisionSource="auto_policy"`，两个 `DecidedBy*` 列置空——策略决定永远不冒充人或 agent；每次决策追加 `approval.auto_decided` 审计事件，治理决策记录可区分 user/agent/delegation/auto_policy 四种来源。
 5. 执行窗口仍是硬边界：决策窗口到期 park（`approval.park_expired` 事件，执行保持 `awaiting_approval`），执行窗口到期仍 fail-closed（`approval_expired`，执行失败）——旁路不改变"过窗不跑"。
+6. 自动 run 的工具执行必须携带当前 run 的执行 epoch（`LeaseOwner + RecoveryCount`）。Lifecycle 在同一数据库事务里先校验并锁定该 epoch，再消费一次性 ActionApproval、把 ToolExecution 置为 `running`；旧 owner、过期 lease、terminal/paused run 均以 `run_lease_lost` 或对应终态 fail-closed，且不得调用 provider。进程内 in-flight 注册必须早于 execution start claim；cancel 的终态提交一旦成功，立即广播本机工具取消。若 provider 已经可能接收了 mutating 请求，则仍按 `outcome_unknown` 处理，绝不自动重放。
 
 **残余风险**
 
