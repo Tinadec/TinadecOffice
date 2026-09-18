@@ -1634,11 +1634,11 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var ack = await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
         var runId = ack.GetProperty("run_id").GetGuid();
 
-        // The denial is scoped to the task (WorkerAssignmentException), so the run
-        // completes — but the probe task failed terminally with the explicit code
-        // and no worker was ever spawned.
-        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
-        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+        // The denial is scoped to the task (WorkerAssignmentException), but a
+        // failed task is now a code-owned fact: supervision may not wash it into a
+        // successful run. After the finite revision budget the run parks for user
+        // review, preserving the explicit failure and spawning no worker.
+        Assert.Equal("awaiting_user", await WaitForRunStatusAsync(client, runId, "awaiting_user"));
         Assert.Equal(0, provider.CallCount);
 
         var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay").ConfigureAwait(false);
@@ -1778,15 +1778,17 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         await InstallToolChainPackAsync(client);
         var (sessionId, runId, active) = await StartRunAsync(client, workspace, "fuse", "读取探针文件");
 
-        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
-        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+        // hard_ceiling is an abnormal stop. Even if the close-out model claims
+        // completion, the code-owned outcome remains blocked and the finite
+        // supervision budget ultimately parks the run for user review.
+        Assert.Equal("awaiting_user", await WaitForRunStatusAsync(client, runId, "awaiting_user"));
         Assert.Equal(0, provider.CallCount);
 
         // The guard was consulted on the FIRST round: ToolRounds was still inside the
         // `> MaxToolRounds` blind zone the old precondition created, and every budget
         // field now arrives populated (tokens/calls/iteration used to default to 0,
         // which made the token and error checks dead code).
-        var context = Assert.Single(guard.Contexts);
+        var context = Assert.IsType<LoopGuardContext>(guard.Contexts.First());
         Assert.Equal(0, context.Iteration);
         Assert.Equal(4, context.MaxIterations);
         Assert.Equal(7, context.TokensUsed);
@@ -1797,25 +1799,26 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
 
         var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay").ConfigureAwait(false);
         var task = Assert.Single(replay.GetProperty("tasks").EnumerateArray(), item => item.GetProperty("task_key").GetString() == "read-probe");
-        Assert.Equal("completed", task.GetProperty("status").GetString());
+        Assert.Equal("blocked", task.GetProperty("status").GetString());
         var evidence = task.GetProperty("evidence").EnumerateArray().Select(item => item.GetString()).ToArray();
         Assert.Contains("closeout:tool_call_ceiling", evidence);
         Assert.Contains("hard_ceiling:true", evidence);
 
-        var reasons = Assert.Single(replay.GetProperty("supervision_rounds").EnumerateArray())
-            .GetProperty("reasons").EnumerateArray().Select(item => item.GetString()).ToArray();
-        Assert.Contains(reasons, reason => reason!.Contains("closeout:read-probe:tool_call_ceiling (hard_ceiling)", StringComparison.Ordinal));
+        var supervisionRounds = replay.GetProperty("supervision_rounds").EnumerateArray().ToArray();
+        Assert.NotEmpty(supervisionRounds);
+        Assert.Contains(supervisionRounds, round => round.GetProperty("reasons").EnumerateArray()
+            .Select(item => item.GetString())
+            .Any(reason => reason!.Contains("closeout:read-probe:tool_call_ceiling (hard_ceiling)", StringComparison.Ordinal)));
 
         var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
         var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
-        var stop = Assert.Single(events, item => item.EventType == "worker.budget_exhausted");
+        var stop = events.First(item => item.EventType == "worker.budget_exhausted");
         var payload = Assert.IsType<JsonElement>(stop.Payload["payload"]);
         Assert.Equal("tool_call_ceiling", payload.GetProperty("category").GetString());
         Assert.True(payload.GetProperty("hard_ceiling").GetBoolean());
 
-        var round = Assert.Single(
-            events.Where(item => item.EventType == "worker.tool_round"),
-            item => string.Equals(item.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase));
+        var round = events.First(item => item.EventType == "worker.tool_round"
+            && string.Equals(item.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase));
         var roundPayload = Assert.IsType<JsonElement>(round.Payload["payload"]);
         Assert.Equal(1, roundPayload.GetProperty("round").GetInt32());
         Assert.Equal(1, roundPayload.GetProperty("calls_this_round").GetInt32());
@@ -2361,7 +2364,11 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             }
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                    _supervisorVerdicts.Count > 0 ? _supervisorVerdicts.Dequeue() : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}"));
+                    CompleteSupervisorVerdict(
+                        _supervisorVerdicts.Count > 0
+                            ? _supervisorVerdicts.Dequeue()
+                            : "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}",
+                        prompt)));
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant, _meeting ?? "完成"));
             WorkerStarted?.TrySetResult();
@@ -2369,26 +2376,130 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             var isFirstWorkerTurn = Interlocked.Increment(ref WorkerCalls) == 1;
             WorkerToolCounts.Add(options?.Tools?.Count ?? 0);
             if (_workerTurns.Count > 0)
-                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()));
+                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerTurns.Dequeue()), instructions);
             if (_workerText is not null)
-                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerText));
+                return WorkerResponse(new ChatMessage(ChatRole.Assistant, _workerText), instructions);
             var contents = isFirstWorkerTurn
                 ? new AIContent[] { new FunctionCallContent(
                     "call-1",
                     _firstWorkerTool?.ToolId ?? "write_file",
                     _firstWorkerTool?.Arguments ?? new Dictionary<string, object?> { ["filepath"] = "probe.txt", ["content"] = "hello" }) }
                 : new AIContent[] { new TextContent(_workerFollowUp ?? "已写入 probe.txt") };
-            return WorkerResponse(new ChatMessage(ChatRole.Assistant, contents));
+            return WorkerResponse(new ChatMessage(ChatRole.Assistant, contents), instructions);
         }
 
-        private ChatResponse WorkerResponse(ChatMessage message)
+        private ChatResponse WorkerResponse(ChatMessage message, string? instructions)
         {
+            if (!message.Contents.OfType<FunctionCallContent>().Any()
+                && !string.IsNullOrWhiteSpace(message.Text))
+            {
+                var lines = message.Text.Replace("\r\n", "\n").TrimEnd().Split('\n').ToList();
+                var markerIndex = lines.FindLastIndex(line =>
+                    line.Trim().StartsWith(WorkerOutcomeProtocol.Marker, StringComparison.OrdinalIgnoreCase));
+                var insertAt = markerIndex >= 0 ? markerIndex : lines.Count;
+                foreach (var criterion in SuccessCriteriaOf(instructions))
+                {
+                    if (lines.Any(line => line.Contains(
+                        WorkerOutcomeProtocol.CriterionMarker + " " + criterion,
+                        StringComparison.Ordinal))) continue;
+                    lines.Insert(insertAt++, $"{WorkerOutcomeProtocol.CriterionMarker} {criterion} || scripted evidence");
+                }
+                if (markerIndex < 0) lines.Add(WorkerOutcomeProtocol.Marker + " completed");
+                message = new ChatMessage(ChatRole.Assistant, string.Join("\n", lines));
+            }
             var response = new ChatResponse(message);
             if (UsageTokensPerTurn > 0)
             {
                 response.Usage = new UsageDetails { InputTokenCount = UsageTokensPerTurn, OutputTokenCount = 0 };
             }
             return response;
+        }
+
+        private static IReadOnlyList<string> SuccessCriteriaOf(string? instructions)
+        {
+            if (string.IsNullOrWhiteSpace(instructions)) return [];
+            const string marker = "成功标准：";
+            var start = instructions.LastIndexOf(marker, StringComparison.Ordinal);
+            if (start < 0) return [];
+            start += marker.Length;
+            var end = instructions.IndexOf('\n', start);
+            var value = end < 0 ? instructions[start..] : instructions[start..end];
+            return value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        private static string CompleteSupervisorVerdict(string verdict, string prompt)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(verdict);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return verdict;
+                if (root.TryGetProperty("criteria_verdicts", out var existing)
+                    && existing.ValueKind == JsonValueKind.Array
+                    && existing.GetArrayLength() > 0)
+                {
+                    return verdict;
+                }
+
+                var decision = root.TryGetProperty("decision", out var decisionNode)
+                    ? decisionNode.GetString() ?? "pass"
+                    : "pass";
+                var reasons = root.TryGetProperty("reasons", out var reasonsNode)
+                    ? JsonSerializer.Deserialize<string[]>(reasonsNode.GetRawText()) ?? []
+                    : [];
+                var reviseIndexes = root.TryGetProperty("revise_task_indexes", out var indexesNode)
+                    ? JsonSerializer.Deserialize<int[]>(indexesNode.GetRawText()) ?? []
+                    : [];
+                var criteria = SupervisorCriteriaOf(prompt)
+                    .Select(item => new
+                    {
+                        task_key = item.TaskKey,
+                        criterion = item.Criterion,
+                        satisfied = true,
+                        evidence = "scripted supervisor evidence"
+                    })
+                    .ToArray();
+                return JsonSerializer.Serialize(new
+                {
+                    decision,
+                    reasons,
+                    revise_task_indexes = reviseIndexes,
+                    criteria_verdicts = criteria
+                });
+            }
+            catch (JsonException)
+            {
+                return verdict;
+            }
+        }
+
+        private static IReadOnlyList<(string TaskKey, string Criterion)> SupervisorCriteriaOf(string prompt)
+        {
+            const string tasksMarker = "任务列表:\n";
+            const string evidenceMarker = "\n\n执行证据";
+            var start = prompt.IndexOf(tasksMarker, StringComparison.Ordinal);
+            if (start < 0) return [];
+            start += tasksMarker.Length;
+            var end = prompt.IndexOf(evidenceMarker, start, StringComparison.Ordinal);
+            var section = end < 0 ? prompt[start..] : prompt[start..end];
+            var result = new List<(string TaskKey, string Criterion)>();
+            foreach (var line in section.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                const string keyMarker = "key=";
+                const string titleMarker = " | title=";
+                const string criteriaMarker = " | criteria: ";
+                var keyStart = line.IndexOf(keyMarker, StringComparison.Ordinal);
+                var titleStart = line.IndexOf(titleMarker, StringComparison.Ordinal);
+                var criteriaStart = line.IndexOf(criteriaMarker, StringComparison.Ordinal);
+                if (keyStart < 0 || titleStart <= keyStart || criteriaStart <= titleStart) continue;
+                var taskKey = line[(keyStart + keyMarker.Length)..titleStart].Trim();
+                var criteriaText = line[(criteriaStart + criteriaMarker.Length)..].Trim();
+                foreach (var criterion in criteriaText.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    result.Add((taskKey, criterion));
+                }
+            }
+            return result;
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(

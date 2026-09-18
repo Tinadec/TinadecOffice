@@ -248,6 +248,122 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal("cancelled", row.Status);
     }
 
+    [Fact]
+    public async Task ResumeAsync_StaleRunLeaseOwner_NeverCallsProvider()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:stale-owner:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var first = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-owner-a", TimeSpan.FromMinutes(1));
+        Assert.True(first.Acquired);
+        await storage.ReleaseRunLeaseAsync(run.Id, first.OwnerId);
+        var second = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-owner-b", TimeSpan.FromMinutes(1));
+        Assert.True(second.Acquired);
+        Assert.True(second.RecoveryCount > first.RecoveryCount);
+
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var result = await fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(first.OwnerId, first.RecoveryCount));
+
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.RunLeaseLost, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("requested", row.Status);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_StaleRunLeaseOwner_DoesNotConsumeApprovedWrite()
+    {
+        var tools = new[] { Tool("write_file", "medium", mutates: true, requiresApproval: true, retrySafety: "unsafe") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareApprovedMutatingExecutionAsync(
+            tools, provider, "disp:stale-owner-write:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var first = await storage.TryAcquireRunLeaseAsync(run.Id, "write-owner-a", TimeSpan.FromMinutes(1));
+        Assert.True(first.Acquired);
+        await storage.ReleaseRunLeaseAsync(run.Id, first.OwnerId);
+        var second = await storage.TryAcquireRunLeaseAsync(run.Id, "write-owner-b", TimeSpan.FromMinutes(1));
+        Assert.True(second.Acquired);
+
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var result = await fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(first.OwnerId, first.RecoveryCount));
+
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.RunLeaseLost, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var approval = await verify.ApprovalRequests.AsNoTracking().SingleAsync(x => x.Id == execution.ApprovalId);
+        Assert.Equal("approved", approval.Status);
+        Assert.Null(approval.ConsumedByExecutionId);
+        Assert.Null(approval.ConsumedAt);
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.NotEqual("running", row.Status);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_CancelAfterExecutionClaim_BeforeProvider_NeverCallsProvider()
+    {
+        var tools = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(tools, OkResult());
+        var (_, projectId, sessionId, run, execution) = await PrepareReadOnlyExecutionAsync(
+            tools, provider, "disp:cancel-before-provider:0:0");
+        var storage = _factory!.Services.GetRequiredService<StorageLifecycleService>();
+        var lease = await storage.TryAcquireRunLeaseAsync(run.Id, "tool-cancel-owner", TimeSpan.FromMinutes(1));
+        Assert.True(lease.Acquired);
+
+        var inner = Assert.IsAssignableFrom<ILeaseFencedToolExecutionCoordinator>(ExecutionCoordinator());
+        var gated = new GatedLeaseExecutionCoordinator(inner);
+        var dispatcher = CreateDispatcher(
+            provider,
+            ScopeFor(tools, run, projectId, sessionId, execution.TaskId, execution.AgentInstanceId),
+            gated);
+        var fenced = Assert.IsAssignableFrom<ILeaseFencedToolDispatcher>(dispatcher);
+        var resumeTask = fenced.ResumeAsync(
+            execution.Id.ToString(),
+            new RunExecutionAuthority(lease.OwnerId, lease.RecoveryCount));
+
+        var reachedStart = await Task.WhenAny(
+            gated.Started.Task,
+            resumeTask,
+            Task.Delay(TimeSpan.FromSeconds(15)));
+        if (reachedStart == resumeTask)
+        {
+            var early = await resumeTask;
+            Assert.Fail($"Fenced resume exited before the start gate: status={early.Status}, category={early.ErrorCategory}, message={early.Message}");
+        }
+        Assert.Same(gated.Started.Task, reachedStart);
+        var signalled = 0;
+        try
+        {
+            // The execution is durably running at this point, but the dispatcher
+            // has not yet reached the provider. This was the old cancellation gap.
+            await LifecycleManager().SetRunStatusAsync(run.Id.ToString(), "cancelled", "cancel in claim/provider gap");
+            signalled = _factory.Services.GetRequiredService<IRunInFlightToolCancellation>().CancelForRun(run.Id);
+        }
+        finally
+        {
+            gated.Continue.TrySetResult();
+        }
+
+        var result = await resumeTask.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(1, signalled);
+        Assert.Equal(ToolDispatchStatus.Blocked, result.Status);
+        Assert.Equal(RunErrorTaxonomy.Cancelled, result.ErrorCategory);
+        Assert.Equal(0, provider.CallCount);
+        await using var verify = await DbFactory().CreateDbContextAsync();
+        var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
+        Assert.Equal("cancelled", row.Status);
+        var runRow = await verify.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+        Assert.Equal("cancelled", runRow.Status);
+    }
+
     // ── B4: wire timeout covers the tool's own budget ──────────────────────
 
     [Theory]
@@ -339,14 +455,14 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ResumeAsync_NonShellTool_DoesNotReadEmbeddedSuccess()
+    public async Task ResumeAsync_NonShellTool_RecordsEmbeddedSuccessFalse()
     {
         var tools = new[] { Tool("read_file") };
         var provider = new ConfigurableToolProvider(tools, (request, _, _) => Task.FromResult(new ToolWireResponseDto
         {
             CallId = request.ToolCallId,
             IsSuccess = true,
-            Result = JsonSerializer.SerializeToElement(new { success = false, note = "not a shell-shaped payload we honour" })
+            Result = JsonSerializer.SerializeToElement(new { success = false, note = "business-level tool failure" })
         }));
         var (dispatcher, _, sessionId, _, execution) = await PrepareReadOnlyExecutionAsync(
             tools, provider, "disp:nonshell:0:0");
@@ -356,11 +472,12 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal(ToolDispatchStatus.Completed, result.Status);
         await using var verify = await DbFactory().CreateDbContextAsync();
         var row = await verify.ToolExecutions.AsNoTracking().SingleAsync(x => x.Id == execution.Id);
-        Assert.Null(row.ToolSuccess);
+        Assert.False(row.ToolSuccess);
         var events = await LifecycleManager().ReplayEventsAsync(sessionId, 0);
         var completedEvent = Assert.Single(events, e => e.EventType == "tool.execution.completed");
         var payload = Assert.IsType<JsonElement>(completedEvent.Payload["payload"]);
-        Assert.Equal(JsonValueKind.Null, payload.GetProperty("tool_success").ValueKind);
+        Assert.False(payload.GetProperty("tool_success").GetBoolean());
+        Assert.Equal("warning", Assert.IsType<string>(completedEvent.Payload["severity"]));
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -422,10 +539,13 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
-    private ToolDispatcher CreateDispatcher(IToolProvider provider, ToolInvocationScope scope) => new(
+    private ToolDispatcher CreateDispatcher(
+        IToolProvider provider,
+        ToolInvocationScope scope,
+        IToolExecutionCoordinator? executions = null) => new(
         provider,
         new FakeScopeResolver(scope),
-        ExecutionCoordinator(),
+        executions ?? ExecutionCoordinator(),
         new FakeAuthorization(),
         _factory!.Services.GetRequiredService<IWorkspaceSnapshotService>(),
         LifecycleManager(),
@@ -584,6 +704,70 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     {
         public Task<ToolInvocationScope> ResolveAsync(ToolInvocationScopeRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(scope);
+    }
+
+    /// <summary>
+    /// Test seam that pauses only after Lifecycle has atomically committed the
+    /// execution-start claim. It recreates the exact old gap between "running"
+    /// and the first provider byte without weakening production synchronization.
+    /// </summary>
+    private sealed class GatedLeaseExecutionCoordinator(ILeaseFencedToolExecutionCoordinator inner)
+        : ILeaseFencedToolExecutionCoordinator
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Continue { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<ToolExecutionPreparation> PrepareAsync(ToolExecutionPrepareRequest request, CancellationToken cancellationToken = default) =>
+            inner.PrepareAsync(request, cancellationToken);
+
+        public Task<ToolExecutionSnapshot?> FindAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.FindAsync(executionId, cancellationToken);
+
+        public Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, bool allowStaleRunningReset = false, CancellationToken cancellationToken = default) =>
+            inner.TryStartAsync(executionId, allowStaleRunningReset, cancellationToken);
+
+        public async Task<ToolExecutionStartDecision> TryStartUnderRunLeaseAsync(
+            Guid executionId,
+            RunExecutionAuthority authority,
+            bool allowStaleRunningReset = false,
+            CancellationToken cancellationToken = default)
+        {
+            var decision = await inner.TryStartUnderRunLeaseAsync(
+                executionId, authority, allowStaleRunningReset, cancellationToken);
+            if (decision.Status == "running")
+            {
+                Started.TrySetResult();
+                await Continue.Task.WaitAsync(cancellationToken);
+            }
+            return decision;
+        }
+
+        public Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, bool? toolSuccess = null, CancellationToken cancellationToken = default) =>
+            inner.CompleteAsync(executionId, resultJson, toolSuccess, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> FailAsync(Guid executionId, string status, string errorCategory, string safeMessage, CancellationToken cancellationToken = default) =>
+            inner.FailAsync(executionId, status, errorCategory, safeMessage, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> BindAuthorizationAsync(Guid executionId, Guid? permissionRequestId, Guid? authorizationDecisionId, Guid? capabilityLeaseId, string status, CancellationToken cancellationToken = default) =>
+            inner.BindAuthorizationAsync(executionId, permissionRequestId, authorizationDecisionId, capabilityLeaseId, status, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> BindWorkspaceSnapshotAsync(Guid executionId, Guid snapshotId, string snapshotHash, CancellationToken cancellationToken = default) =>
+            inner.BindWorkspaceSnapshotAsync(executionId, snapshotId, snapshotHash, cancellationToken);
+
+        public Task<ToolExecutionSnapshot> EnsureApprovalAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.EnsureApprovalAsync(executionId, cancellationToken);
+
+        public Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.TryMintPreAuthorizedApprovalAsync(executionId, cancellationToken);
+
+        public Task<bool> TryConsumeApprovalAsync(Guid approvalId, string executionId, string expectedRequestHash, CancellationToken cancellationToken = default) =>
+            inner.TryConsumeApprovalAsync(approvalId, executionId, expectedRequestHash, cancellationToken);
+
+        public Task<ToolExecutionRecoveryResult> ApplyRecoveryDecisionAsync(Guid executionId, string decision, CancellationToken cancellationToken = default) =>
+            inner.ApplyRecoveryDecisionAsync(executionId, decision, cancellationToken);
+
+        public Task CancelPendingForRunAsync(Guid runId, CancellationToken cancellationToken = default) =>
+            inner.CancelPendingForRunAsync(runId, cancellationToken);
     }
 
     private sealed class ConfigurableToolProvider : IToolProvider

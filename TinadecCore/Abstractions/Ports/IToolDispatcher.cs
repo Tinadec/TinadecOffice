@@ -104,6 +104,26 @@ public interface IToolDispatcher
 }
 
 /// <summary>
+/// Exact run-execution epoch held by the durable run engine. Tool side effects
+/// use the pair as a fencing token: a host that lost the lease may still have
+/// stale in-memory work, but it can no longer move a tool execution to running.
+/// </summary>
+public sealed record RunExecutionAuthority(string LeaseOwner, int RecoveryCount);
+
+/// <summary>
+/// Optional stronger dispatcher contract used by the durable run engine. The
+/// base <see cref="IToolDispatcher"/> remains source-compatible for embedders and
+/// manual tool callers; autonomous run execution requires this lease-fenced port.
+/// </summary>
+public interface ILeaseFencedToolDispatcher : IToolDispatcher
+{
+    Task<ToolDispatchResultDto> ResumeAsync(
+        string executionId,
+        RunExecutionAuthority authority,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Resolves a tool call's trusted run/session/project/agent scope. Callers never
 /// supply a workspace root or session id to the tools process.
 /// </summary>
@@ -242,6 +262,29 @@ public interface IToolExecutionCoordinator
         CancellationToken cancellationToken = default);
     Task<ToolExecutionRecoveryResult> ApplyRecoveryDecisionAsync(Guid executionId, string decision, CancellationToken cancellationToken = default);
     Task CancelPendingForRunAsync(Guid runId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Strong execution-start contract for autonomous runs. The lifecycle module
+/// atomically validates the caller's run lease epoch before an execution may
+/// become <c>running</c> (and before an approval may be consumed).
+/// </summary>
+public interface ILeaseFencedToolExecutionCoordinator : IToolExecutionCoordinator
+{
+    Task<ToolExecutionStartDecision> TryStartUnderRunLeaseAsync(
+        Guid executionId,
+        RunExecutionAuthority authority,
+        bool allowStaleRunningReset = false,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Process-local cancellation bridge used after a run cancellation is durably
+/// committed. It deliberately exposes no provider/session details to DmaEA.
+/// </summary>
+public interface IRunInFlightToolCancellation
+{
+    int CancelForRun(Guid runId);
 }
 
 public sealed record ToolExecutionPrepareRequest(

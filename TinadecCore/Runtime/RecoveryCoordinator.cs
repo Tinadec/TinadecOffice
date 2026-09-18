@@ -70,24 +70,35 @@ public sealed class RecoveryCoordinator : BackgroundService
             _logger.TryLogError(ex, "Recovery coordinator startup passes failed.");
         }
 
-        // Approval expiry has no other observer: TryStartAsync only evaluates the
-        // decision window when a run happens to resume, and the recovery scans
-        // skip awaiting_* runs by design. Sweep at startup and then periodically
-        // so a parked run escalates to awaiting_user instead of waiting forever.
-        if (!_approvalOptions.ExpirySweepEnabled) return;
-        await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
-        var interval = TimeSpan.FromSeconds(Math.Clamp(_approvalOptions.ExpirySweepIntervalSeconds, 5, 3600));
+        // Terminal turn/stream tails and queued interactions need a live repair
+        // observer even when approval expiry is disabled. A host can stop after a
+        // terminal status or done frame but before the remaining idempotent closure
+        // work. Keep this cadence short and independent from the policy-configured
+        // approval sweep cadence.
+        var repairInterval = TimeSpan.FromSeconds(15);
+        var approvalInterval = TimeSpan.FromSeconds(Math.Clamp(_approvalOptions.ExpirySweepIntervalSeconds, 5, 3600));
+        var nextApprovalSweep = DateTimeOffset.UtcNow;
+        if (_approvalOptions.ExpirySweepEnabled)
+        {
+            await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
+            nextApprovalSweep = DateTimeOffset.UtcNow.Add(approvalInterval);
+        }
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
+                await Task.Delay(repairInterval, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
-            await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
+            await RepairTerminalRunClosuresAsync(stoppingToken).ConfigureAwait(false);
+            if (_approvalOptions.ExpirySweepEnabled && DateTimeOffset.UtcNow >= nextApprovalSweep)
+            {
+                await SweepApprovalExpiryAsync(stoppingToken).ConfigureAwait(false);
+                nextApprovalSweep = DateTimeOffset.UtcNow.Add(approvalInterval);
+            }
         }
     }
 
@@ -130,8 +141,48 @@ public sealed class RecoveryCoordinator : BackgroundService
     /// <summary>Public for deterministic test and tooling invocation.</summary>
     public async Task RunStartupPassesAsync(CancellationToken cancellationToken = default)
     {
+        await RepairTerminalRunClosuresAsync(cancellationToken).ConfigureAwait(false);
         await RecoverOrphanRunsAsync(cancellationToken).ConfigureAwait(false);
         await RecoverUserToolActionsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RepairTerminalRunClosuresAsync(CancellationToken cancellationToken)
+    {
+        if (_services.GetService<IFullDuplexRunEngine>() is not { } engine) return;
+        try
+        {
+            var cancelled = await _storage.ListCancelledRunsMissingTerminalStreamAsync(cancellationToken).ConfigureAwait(false);
+            var failed = await _storage.ListFailedRunsMissingTerminalStreamAsync(cancellationToken).ConfigureAwait(false);
+            var queued = await _storage.ListTerminalRunsWithPendingQueuedInteractionsAsync(cancellationToken).ConfigureAwait(false);
+            var incomplete = cancelled.Concat(failed).Concat(queued).Distinct().ToArray();
+            foreach (var runId in incomplete)
+            {
+                try
+                {
+                    await engine.ReconcileTerminalRunAsync(runId, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    _logger.TryLogWarning(ex, "Could not repair terminal run closure {RunId}.", runId);
+                }
+            }
+            if (incomplete.Length > 0)
+            {
+                _logger.TryLogInformation(
+                    "Repaired or attempted {Count} terminal run closure(s) ({Cancelled} cancelled, {Failed} failed, {Queued} queued-message owners).",
+                    incomplete.Length,
+                    cancelled.Count,
+                    failed.Count,
+                    queued.Count);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.TryLogWarning(ex, "Terminal run closure recovery failed.");
+        }
     }
 
     private async Task RecoverOrphanRunsAsync(CancellationToken cancellationToken)

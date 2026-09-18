@@ -21,6 +21,13 @@ namespace TinadecCore.DmaEA;
 public interface IFullDuplexRunEngine
 {
     ValueTask EnqueueAsync(Guid runId, CancellationToken cancellationToken = default);
+    Task FinalizeCancelledRunAsync(Guid runId, CancellationToken cancellationToken = default);
+    Task FinalizeFailedRunAsync(
+        Guid runId,
+        string? errorCategory = null,
+        string? safeErrorMessage = null,
+        CancellationToken cancellationToken = default);
+    Task ReconcileTerminalRunAsync(Guid runId, CancellationToken cancellationToken = default);
 }
 
 internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDuplexRunEngine
@@ -51,6 +58,26 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// rebuilding the whole transcript and turning a long task quadratic.
     /// </summary>
     private const int FingerprintTail = 3;
+
+    /// <summary>
+    /// One model call already performs three short same-candidate attempts. If that
+    /// entire call still ends in a transient provider failure, keep the durable run
+    /// alive and retry the phase later instead of turning a brief 429/5xx/network
+    /// outage into an irreversible user-visible run failure.
+    /// </summary>
+    internal const int MaxDurableModelRetries = 5;
+
+    internal static bool IsDurableModelRetryCategory(string? category) => category is
+        "rate_limited" or "provider_server_error" or "timeout" or "connection_failed" or "provider_error";
+
+    internal static TimeSpan DurableModelRetryBackoff(int retryNumber) => retryNumber switch
+    {
+        <= 1 => TimeSpan.FromSeconds(2),
+        2 => TimeSpan.FromSeconds(5),
+        3 => TimeSpan.FromSeconds(15),
+        4 => TimeSpan.FromSeconds(30),
+        _ => TimeSpan.FromSeconds(60)
+    };
 
     /// <summary>Task-level failure category for a declaration surface that cannot be resolved.</summary>
     private const string ToolManifestUnavailableCategory = RunErrorTaxonomy.ToolManifestUnavailable;
@@ -83,6 +110,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         AllowSynchronousContinuations = false
     });
     private readonly ConcurrentDictionary<Guid, byte> _queued = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _scheduledModelRetries = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _terminalFinalizationGates = new();
+    private readonly AsyncLocal<RunLeaseEpoch?> _currentLeaseEpoch = new();
     // A decision can enqueue a run during the small window in which the prior
     // owner is unwinding. Keep that wake-up durable until the owner has left the
     // running set; otherwise the queue item is consumed and silently discarded.
@@ -127,6 +157,136 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         return ValueTask.CompletedTask;
     }
 
+    public async Task FinalizeCancelledRunAsync(Guid runId, CancellationToken cancellationToken = default)
+    {
+        var gate = _terminalFinalizationGates.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (state.Status != RunStatus.Cancelled) return;
+            var checkpoint = await ResolveTerminalCheckpointAsync(runId, state, cancellationToken).ConfigureAwait(false);
+            if (checkpoint is null)
+            {
+                await ReleaseRunInstancesBestEffortAsync(runId, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            await PersistCancellationTerminalAsync(runId, checkpoint, cancellationToken).ConfigureAwait(false);
+            await ReleaseTerminalQueuedInteractionsAsync(state, cancellationToken).ConfigureAwait(false);
+            await ReleaseRunInstancesBestEffortAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task FinalizeFailedRunAsync(
+        Guid runId,
+        string? errorCategory = null,
+        string? safeErrorMessage = null,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = _terminalFinalizationGates.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (state.Status != RunStatus.Failed) return;
+            var checkpoint = await ResolveTerminalCheckpointAsync(runId, state, cancellationToken).ConfigureAwait(false);
+            if (checkpoint is null)
+            {
+                await ReleaseRunInstancesBestEffortAsync(runId, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            var category = string.IsNullOrWhiteSpace(errorCategory)
+                ? string.IsNullOrWhiteSpace(state.TerminalErrorCategory)
+                    ? RunErrorTaxonomy.Runtime
+                    : state.TerminalErrorCategory
+                : errorCategory.Trim();
+            var message = string.IsNullOrWhiteSpace(safeErrorMessage)
+                ? string.IsNullOrWhiteSpace(state.Summary) ? "The run failed before producing a final response." : state.Summary
+                : safeErrorMessage.Trim();
+            await PersistFailureTerminalAsync(runId, checkpoint, category, message, cancellationToken).ConfigureAwait(false);
+            await ReleaseTerminalQueuedInteractionsAsync(state, cancellationToken).ConfigureAwait(false);
+            await ReleaseRunInstancesBestEffortAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task ReconcileTerminalRunAsync(Guid runId, CancellationToken cancellationToken = default)
+    {
+        var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+        switch (state.Status)
+        {
+            case RunStatus.Cancelled:
+                await FinalizeCancelledRunAsync(runId, cancellationToken).ConfigureAwait(false);
+                break;
+            case RunStatus.Failed:
+                await FinalizeFailedRunAsync(runId, cancellationToken: cancellationToken).ConfigureAwait(false);
+                break;
+            case RunStatus.Completed:
+                await ReleaseTerminalQueuedInteractionsAsync(state, cancellationToken).ConfigureAwait(false);
+                await ReleaseRunInstancesBestEffortAsync(runId, cancellationToken).ConfigureAwait(false);
+                break;
+        }
+    }
+
+    private async Task<FullDuplexCheckpointV1?> ResolveTerminalCheckpointAsync(
+        Guid runId,
+        RunState state,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(state.SessionId, out var sessionId)
+            || !Guid.TryParse(state.TurnId, out var turnId))
+        {
+            _logger.TryLogWarning("Terminal run {RunId} has no valid session/turn identity for finalization.", runId);
+            return null;
+        }
+
+        var fallback = new FullDuplexCheckpointV1
+        {
+            RunId = runId,
+            SessionId = sessionId,
+            TurnId = turnId,
+            TriggerMessageId = Guid.TryParse(state.TriggerMessageId, out var triggerId) ? triggerId : Guid.Empty,
+            ContextRevision = state.ContextRevision
+        };
+        try
+        {
+            var stored = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
+            if (stored is not null
+                && stored.RunId == runId
+                && stored.SessionId == sessionId
+                && stored.TurnId == turnId)
+            {
+                return stored;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex,
+                "Terminal run {RunId} has an unreadable checkpoint; authoritative run identity will close the turn and stream.",
+                runId);
+        }
+        return fallback;
+    }
+
+    private async Task ReleaseRunInstancesBestEffortAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not release agent instances for terminal run {RunId}.", runId);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var running = new Dictionary<Guid, Task>();
@@ -134,6 +294,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            await EnqueueDueModelRetriesAsync(stoppingToken).ConfigureAwait(false);
+
             if (DateTimeOffset.UtcNow >= nextScan)
             {
                 try
@@ -211,6 +373,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         if (lease is null or { Acquired: false }) return;
 
+        var releaseLease = true;
+        _currentLeaseEpoch.Value = new RunLeaseEpoch(runId, _ownerId, lease.RecoveryCount);
+
         try
         {
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), stoppingToken).ConfigureAwait(false);
@@ -278,6 +443,56 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             var checkpoint = await LoadOrCreateCheckpointAsync(runId, run, sessionId, turnId, trigger, stoppingToken).ConfigureAwait(false);
             if (checkpoint is null) return;
 
+            // A prior model call exhausted its short in-call retry budget. The
+            // checkpoint is the durable schedule authority; the in-memory queue is
+            // only an acceleration so a live host need not wait for the recovery
+            // scan. A retained lease prevents the scan from reacquiring this same
+            // run every two seconds and inflating RecoveryCount while it is cooling
+            // down. If the host dies, the retained lease expires shortly after the
+            // retry time and normal recovery resumes the run.
+            if (checkpoint.ModelRetryNotBefore is { } retryNotBefore)
+            {
+                var now = DateTimeOffset.UtcNow;
+                if (retryNotBefore > now)
+                {
+                    ScheduleModelRetryInMemory(runId, retryNotBefore);
+                    releaseLease = !await TryRetainLeaseUntilAsync(
+                        runId,
+                        retryNotBefore,
+                        lease.RecoveryCount,
+                        stoppingToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var retryNumber = checkpoint.TransientModelRetryCount;
+                var retryCategory = checkpoint.LastTransientModelErrorCategory;
+                checkpoint.ModelRetryNotBefore = null;
+                checkpoint = await SaveCheckpointAsync(
+                    checkpoint,
+                    checkpoint.CheckpointRevision,
+                    $"model-retry-resumed-{retryNumber}",
+                    stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await AppendEventAsync(runId, "run.model_retry_resumed",
+                        $"Transient model retry {retryNumber}/{MaxDurableModelRetries} resumed.",
+                        new
+                        {
+                            run_id = runId,
+                            retry_number = retryNumber,
+                            retry_limit = MaxDurableModelRetries,
+                            error_category = retryCategory
+                        }, stoppingToken,
+                        idempotencyKey: $"run:{runId}:model-retry:{retryNumber}:resumed").ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+                {
+                    // The checkpoint already cleared the durable retry deadline.
+                    // Audit is a side channel and must not fail the resumed run.
+                    _logger.TryLogWarning(ex, "Could not append the model retry resumed event for run {RunId}.", runId);
+                }
+            }
+
             // Lease recovery compensation (plan §4.3 item 5): "running" tasks with
             // no pending tool execution are orphans of a previous owner's dispatch
             // (e.g. a host crash mid-call). Reset them for re-execution before the
@@ -330,7 +545,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 run = await _lifecycle.GetRunStateAsync(runId.ToString(), stoppingToken).ConfigureAwait(false);
                 if (run.Status == RunStatus.Cancelled)
                 {
-                    await FinalizeCancellationAsync(runId, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
+                    await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, stoppingToken).ConfigureAwait(false);
                     return;
                 }
                 if (run.Status == RunStatus.Paused
@@ -388,10 +603,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         break;
                     case "awaiting_user":
                         // A resumed escalation is an explicit user choice to
-                        // continue. Corrections are applied above as context
-                        // patches and move the checkpoint back to planning.
-                        checkpoint.SupervisionDecision = null;
-                        checkpoint.SupervisionReasons = [];
+                        // continue with the recorded incomplete outcome. Corrections
+                        // are applied above as context patches and move the checkpoint
+                        // back to planning instead.
+                        checkpoint.SupervisionDecision = "user_accepted";
+                        checkpoint.UserAcceptedIncompleteOutcome = true;
                         checkpoint.Phase = "finalizing";
                         await AppendEventAsync(Guid.Parse(run.RunId), "supervision.user_decision", "User chose to continue after supervision escalation.", new
                         {
@@ -407,6 +623,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         await FailRunAsync(runId, checkpoint, "recovery_checkpoint_invalid", "The persisted run phase is not recognized.", stoppingToken).ConfigureAwait(false);
                         return;
                 }
+
+                checkpoint = await ResetTransientModelRetryAfterProgressAsync(
+                    runId,
+                    checkpoint,
+                    stoppingToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -425,11 +646,62 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         catch (Exception ex)
         {
-            // A logging provider failure must not prevent the durable failure
-            // transition below from publishing the terminal stream event.
-            _logger.TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             var run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
             var checkpoint = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
+            // A user cancellation/terminal decision can win while a provider call is
+            // still in flight. Its late 429/5xx must never resurrect the run by
+            // appending retry state to a terminal checkpoint.
+            if (IsTerminal(run.Status)
+                || RecoveryPolicy.IsAwaitingDecision(run.Status)
+                || run.Status == RunStatus.Paused
+                || IsCompletionClaimed(run))
+            {
+                return;
+            }
+            if (ex is ModelInvocationExhaustedException modelFailure
+                && checkpoint is not null
+                && IsDurableModelRetryCategory(modelFailure.Category)
+                && checkpoint.TransientModelRetryCount < MaxDurableModelRetries)
+            {
+                var scheduled = await TryScheduleModelRetryAsync(
+                    runId,
+                    checkpoint,
+                    modelFailure,
+                    lease.RecoveryCount).ConfigureAwait(false);
+                if (scheduled.Scheduled)
+                {
+                    releaseLease = !scheduled.LeaseRetained;
+                    return;
+                }
+                if (scheduled.ExitWithoutFailure) return;
+            }
+
+            // A model call or other external operation can outlive the ordinary
+            // lease. Terminal failure is just as stateful as retry scheduling, so a
+            // stale owner must not fail a run that a newer owner is already
+            // progressing. Fence ownership first, then re-read user-controlled
+            // pause/decision/terminal state under the renewed lease.
+            if (!await TryRetainLeaseUntilAsync(
+                    runId,
+                    DateTimeOffset.UtcNow.Add(LeaseDuration),
+                    lease.RecoveryCount,
+                    CancellationToken.None).ConfigureAwait(false))
+            {
+                return;
+            }
+            run = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
+            if (IsTerminal(run.Status)
+                || RecoveryPolicy.IsAwaitingDecision(run.Status)
+                || run.Status == RunStatus.Paused
+                || IsCompletionClaimed(run))
+            {
+                return;
+            }
+            // A logging provider failure must not prevent the durable failure
+            // transition below from publishing the terminal stream event. Retryable
+            // model outages return above and therefore do not masquerade as terminal
+            // engine crashes in the operational log.
+            _logger.TryLogError(ex, "Full-duplex run {RunId} failed in durable engine.", runId);
             // The taxonomy already had model categories; nothing ever wrote them, so a
             // provider outage and a genuine engine defect were indistinguishable in the
             // durable record AND in what the user was told. Classify instead of collapsing.
@@ -437,7 +709,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             {
                 WorkerUnavailableException => RunErrorTaxonomy.WorkerUnavailable,
                 ModelInvocationExhaustedException { Category: "candidate_unavailable" } => RunErrorTaxonomy.ModelUnavailable,
-                ModelInvocationExhaustedException => RunErrorTaxonomy.Model,
+                ModelInvocationExhaustedException exhausted => ModelFailureCategory(exhausted.Category),
                 _ => RunErrorTaxonomy.Runtime
             };
             if (checkpoint is not null) await FailRunAsync(runId, checkpoint, failureCode, SafeError(ex), CancellationToken.None).ConfigureAwait(false);
@@ -445,8 +717,322 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         finally
         {
-            try { await _lifecycle.ReleaseRunLeaseAsync(runId.ToString(), _ownerId, CancellationToken.None).ConfigureAwait(false); }
-            catch (Exception ex) { _logger.TryLogDebug(ex, "Could not release run lease {RunId}.", runId); }
+            if (releaseLease)
+            {
+                try { await _lifecycle.ReleaseRunLeaseAsync(runId.ToString(), _ownerId, CancellationToken.None).ConfigureAwait(false); }
+                catch (Exception ex) { _logger.TryLogDebug(ex, "Could not release run lease {RunId}.", runId); }
+            }
+            if (_currentLeaseEpoch.Value is { RunId: var currentRunId } && currentRunId == runId)
+            {
+                _currentLeaseEpoch.Value = null;
+            }
+        }
+    }
+
+    private async Task EnqueueDueModelRetriesAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var scheduled in _scheduledModelRetries.ToArray())
+        {
+            if (scheduled.Value > now) continue;
+            if (_scheduledModelRetries.TryRemove(scheduled.Key, out _))
+            {
+                await EnqueueAsync(scheduled.Key, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void ScheduleModelRetryInMemory(Guid runId, DateTimeOffset retryAt) =>
+        _scheduledModelRetries.AddOrUpdate(
+            runId,
+            retryAt,
+            (_, current) => current <= retryAt ? current : retryAt);
+
+    private async Task<ModelRetryScheduleResult> TryScheduleModelRetryAsync(
+        Guid runId,
+        FullDuplexCheckpointV1 checkpoint,
+        ModelInvocationExhaustedException failure,
+        int leaseRecoveryCount)
+    {
+        var retryNumber = checkpoint.TransientModelRetryCount + 1;
+        var delay = DurableModelRetryBackoff(retryNumber);
+        var retryAt = DateTimeOffset.UtcNow.Add(delay);
+
+        // Fence the write before touching the checkpoint. A provider call can
+        // outlive the ordinary 30-second lease; in that case another host may have
+        // acquired and progressed the run. Heartbeat/reacquire proves this owner is
+        // still authoritative and extends the lease through the cooling-off window.
+        var leaseRetained = await TryRetainLeaseUntilAsync(
+            runId,
+            retryAt,
+            leaseRecoveryCount,
+            CancellationToken.None).ConfigureAwait(false);
+        if (!leaseRetained)
+        {
+            _logger.TryLogWarning(
+                "Transient model failure for run {RunId} arrived after lease ownership was lost; the current owner will recover it.",
+                runId);
+            return new ModelRetryScheduleResult(false, false, true);
+        }
+
+        var fencedRun = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
+        if (IsTerminal(fencedRun.Status)
+            || RecoveryPolicy.IsAwaitingDecision(fencedRun.Status)
+            || fencedRun.Status == RunStatus.Paused
+            || IsCompletionClaimed(fencedRun))
+        {
+            // Control/status writes are authoritative. In particular, cancel owns
+            // its own terminal finalization path, so a provider response arriving
+            // afterwards must not persist a retry checkpoint over that decision.
+            return new ModelRetryScheduleResult(false, true, true);
+        }
+
+        checkpoint.TransientModelRetryCount = retryNumber;
+        checkpoint.ModelRetryNotBefore = retryAt;
+        checkpoint.LastTransientModelErrorCategory = failure.Category;
+
+        var expectedRevision = checkpoint.CheckpointRevision;
+        var checkpointKey = $"model-retry-scheduled-{retryNumber}";
+        var expectedRunStatus = RunStatusStorageValue(fencedRun.Status);
+        try
+        {
+            checkpoint = await SaveCheckpointAsync(
+                checkpoint,
+                expectedRevision,
+                checkpointKey,
+                CancellationToken.None,
+                expectedRunStatus: expectedRunStatus,
+                requireCompletionUnclaimed: true).ConfigureAwait(false);
+        }
+        catch (RunCheckpointConflictException ex)
+        {
+            _logger.TryLogDebug(ex,
+                "Transient model retry checkpoint for run {RunId} lost a CAS race; another owner made progress.",
+                runId);
+            return new ModelRetryScheduleResult(false, true, true);
+        }
+        catch (Exception firstSaveException)
+        {
+            // A database/content-store acknowledgement can be lost after the
+            // checkpoint transaction committed. Retry the exact same idempotent
+            // write once; if its acknowledgement is also ambiguous, read the
+            // current checkpoint and accept it only when the retry state matches.
+            try
+            {
+                checkpoint = await SaveCheckpointAsync(
+                    checkpoint,
+                    expectedRevision,
+                    checkpointKey,
+                    CancellationToken.None,
+                    expectedRunStatus: expectedRunStatus,
+                    requireCompletionUnclaimed: true).ConfigureAwait(false);
+            }
+            catch (Exception retrySaveException)
+            {
+                FullDuplexCheckpointV1? confirmed = null;
+                var confirmationReadSucceeded = false;
+                FullDuplexCheckpointV1? observed = null;
+                try
+                {
+                    observed = await TryReadCheckpointAsync(runId).ConfigureAwait(false);
+                    confirmationReadSucceeded = true;
+                    if (observed is not null
+                        && observed.TransientModelRetryCount == retryNumber
+                        && observed.ModelRetryNotBefore == retryAt
+                        && string.Equals(
+                            observed.LastTransientModelErrorCategory,
+                            failure.Category,
+                            StringComparison.Ordinal))
+                    {
+                        confirmed = observed;
+                    }
+                }
+                catch (Exception confirmationException)
+                {
+                    _logger.TryLogWarning(confirmationException,
+                        "Could not confirm the ambiguous model retry checkpoint for run {RunId}.",
+                        runId);
+                }
+
+                if (confirmed is null)
+                {
+                    _logger.TryLogWarning(firstSaveException,
+                        "The first model retry checkpoint write for run {RunId} returned an ambiguous failure.",
+                        runId);
+                    if (!confirmationReadSucceeded)
+                    {
+                        _logger.TryLogWarning(retrySaveException,
+                            "The idempotent retry checkpoint write for run {RunId} also failed and its commit outcome could not be read; releasing the lease for recovery instead of emitting a contradictory terminal failure.",
+                            runId);
+                        return new ModelRetryScheduleResult(false, false, true);
+                    }
+
+                    if (observed is not null && observed.CheckpointRevision > expectedRevision)
+                    {
+                        _logger.TryLogDebug(retrySaveException,
+                            "A newer checkpoint won while scheduling a model retry for run {RunId}; the current execution will stop without failing that progress.",
+                            runId);
+                        return new ModelRetryScheduleResult(false, true, true);
+                    }
+
+                    _logger.TryLogWarning(retrySaveException,
+                        "The retry checkpoint for run {RunId} was confirmed absent after two failed writes; the run will fail closed so the finite model retry fuse cannot be bypassed.",
+                        runId);
+                    return new ModelRetryScheduleResult(false, true, false);
+                }
+
+                checkpoint = confirmed;
+            }
+        }
+
+        var stateAfterCheckpoint = await _lifecycle.GetRunStateAsync(runId.ToString(), CancellationToken.None).ConfigureAwait(false);
+        if (IsTerminal(stateAfterCheckpoint.Status)
+            || RecoveryPolicy.IsAwaitingDecision(stateAfterCheckpoint.Status)
+            || stateAfterCheckpoint.Status == RunStatus.Paused
+            || IsCompletionClaimed(stateAfterCheckpoint))
+        {
+            return new ModelRetryScheduleResult(false, true, true);
+        }
+
+        ScheduleModelRetryInMemory(runId, retryAt);
+        try
+        {
+            await AppendEventAsync(runId, "run.model_retry_scheduled",
+                $"The model provider is temporarily unavailable; retry {retryNumber}/{MaxDurableModelRetries} is scheduled.",
+                new
+                {
+                    run_id = runId,
+                    retry_number = retryNumber,
+                    retry_limit = MaxDurableModelRetries,
+                    retry_at = retryAt,
+                    delay_ms = (long)delay.TotalMilliseconds,
+                    error_category = failure.Category,
+                    message = failure.Message
+                }, CancellationToken.None,
+                idempotencyKey: $"run:{runId}:model-retry:{retryNumber}:scheduled").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The checkpoint and queue already carry the retry. Event logging is a
+            // side channel and must not turn a recoverable provider outage into a
+            // terminal run failure.
+            _logger.TryLogWarning(ex, "Could not append the model retry event for run {RunId}.", runId);
+        }
+
+        return new ModelRetryScheduleResult(true, true, false);
+    }
+
+    private async Task<FullDuplexCheckpointV1> ResetTransientModelRetryAfterProgressAsync(
+        Guid runId,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
+        if (checkpoint.TransientModelRetryCount <= 0 || checkpoint.ModelRetryNotBefore is not null)
+        {
+            return checkpoint;
+        }
+
+        var recoveredRetryCount = checkpoint.TransientModelRetryCount;
+        var recoveredCategory = checkpoint.LastTransientModelErrorCategory;
+        checkpoint.TransientModelRetryCount = 0;
+        checkpoint.LastTransientModelErrorCategory = null;
+        checkpoint = await SaveCheckpointAsync(
+            checkpoint,
+            checkpoint.CheckpointRevision,
+            $"model-retry-recovered-{recoveredRetryCount}",
+            cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await AppendEventAsync(runId, "run.model_retry_recovered",
+                "The run made durable progress after a transient model outage; the consecutive retry fuse was reset.",
+                new
+                {
+                    run_id = runId,
+                    recovered_retry_count = recoveredRetryCount,
+                    error_category = recoveredCategory
+                }, cancellationToken,
+                idempotencyKey: $"run:{runId}:model-retry-recovered:{checkpoint.CheckpointRevision}").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not append the model retry recovered event for run {RunId}.", runId);
+        }
+
+        return checkpoint;
+    }
+
+    private async Task<bool> TryRetainLeaseUntilAsync(
+        Guid runId,
+        DateTimeOffset retryAt,
+        int expectedRecoveryCount,
+        CancellationToken cancellationToken)
+    {
+        var remaining = retryAt - DateTimeOffset.UtcNow;
+        if (remaining < TimeSpan.FromSeconds(1)) remaining = TimeSpan.FromSeconds(1);
+        var duration = remaining + TimeSpan.FromSeconds(5);
+        try
+        {
+            if (await _lifecycle.HeartbeatRunLeaseAsync(
+                runId.ToString(),
+                _ownerId,
+                duration,
+                cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            // The lease may have expired during a long provider call without being
+            // taken by another host. Reacquire it atomically; a false result means a
+            // different owner won and this stale execution must stop writing.
+            var reacquired = await _lifecycle.TryAcquireRunLeaseAsync(
+                runId.ToString(),
+                _ownerId,
+                duration,
+                cancellationToken).ConfigureAwait(false);
+            if (!reacquired.Acquired) return false;
+            if (reacquired.RecoveryCount == expectedRecoveryCount + 1)
+            {
+                if (_currentLeaseEpoch.Value is { RunId: var epochRunId } epoch && epochRunId == runId)
+                {
+                    // AsyncLocal value replacement inside this awaited child method
+                    // would not flow back to the caller's ExecutionContext. Mutate
+                    // the shared token object so every parent frame observes R+1.
+                    epoch.RecoveryCount = reacquired.RecoveryCount;
+                }
+                else
+                {
+                    _currentLeaseEpoch.Value = new RunLeaseEpoch(runId, _ownerId, reacquired.RecoveryCount);
+                }
+                return true;
+            }
+
+            // The lease was acquired and released by at least one other execution
+            // epoch while this model call was in flight. OwnerId is process-wide, so
+            // matching it is not a sufficient fence; RecoveryCount distinguishes the
+            // obsolete call from the newer execution. Release the accidentally
+            // reacquired lease immediately and let the current checkpoint owner win.
+            try
+            {
+                await _lifecycle.ReleaseRunLeaseAsync(
+                    runId.ToString(),
+                    _ownerId,
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception releaseException)
+            {
+                _logger.TryLogDebug(releaseException,
+                    "Could not release stale reacquired lease for run {RunId}.",
+                    runId);
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex,
+                "Could not retain the run lease through {RetryAt}; recovery scanning remains the fallback.",
+                retryAt);
+            return false;
         }
     }
 
@@ -884,8 +1470,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }
             var result = string.IsNullOrWhiteSpace(model.Text)
                 ? new StepResult { TaskNodeId = task.TaskId, AgentId = worker.Id.ToString("N"), Status = "failed", Summary = "Execution returned no output.", Evidence = [DispatchEvidence(task)] }
-                : BuildCompletedStepResult(task, worker.Id, model.Text);
-            return new TaskExecutionResult(task.TaskId, worker.Id, result.Status == "completed" ? "completed" : "failed", result, model.Usage);
+                : BuildWorkerStepResult(task, worker.Id, model.Text);
+            return new TaskExecutionResult(task.TaskId, worker.Id, result.Status, result, model.Usage);
         }
         catch (Exception ex) when (ex is WorkerAssignmentException or InvalidDataException)
         {
@@ -1018,7 +1604,28 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     }
                 }
 
-                dispatch = await dispatcher.ResumeAsync(pendingTurn.ExecutionId!, cancellationToken).ConfigureAwait(false);
+                if (dispatcher is not ILeaseFencedToolDispatcher fencedDispatcher)
+                {
+                    throw new InvalidOperationException(
+                        "The configured tool dispatcher does not support run-lease fenced execution.");
+                }
+                var executionAuthority = await RequireToolExecutionAuthorityAsync(
+                    Guid.Parse(run.RunId),
+                    cancellationToken).ConfigureAwait(false);
+                dispatch = await fencedDispatcher.ResumeAsync(
+                    pendingTurn.ExecutionId!,
+                    executionAuthority,
+                    cancellationToken).ConfigureAwait(false);
+                if (string.Equals(dispatch.ErrorCategory, RunErrorTaxonomy.RunLeaseLost, StringComparison.Ordinal))
+                {
+                    // This engine instance is stale. Do not turn the fence rejection
+                    // into a tool result and then try to checkpoint it under the old
+                    // epoch; leave the durable run to the current owner instead.
+                    throw new RunCheckpointConflictException(
+                        run.RunId,
+                        checkpoint.CheckpointRevision,
+                        checkpoint.CheckpointRevision);
+                }
                 pendingTurn.DispatchStatus = dispatch.Status;
                 // A parked approval is not the same as one still waiting for a
                 // human: the decision window already elapsed, so leaving the lane
@@ -1134,14 +1741,22 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     continue;
                 }
 
+                // The dispatch DTO intentionally stays transport-shaped: a provider
+                // response may be wire-successful while the tool's own payload says
+                // { success:false }. Pull the durable execution row so that business
+                // outcome becomes a code-owned checkpoint fact instead of being left
+                // only inside opaque result JSON for the model to interpret.
+                var snapshot = await executionCoordinator.FindAsync(
+                    Guid.Parse(pendingTurn.ExecutionId!), cancellationToken).ConfigureAwait(false);
                 var resultJson = dispatch.Result?.GetRawText();
-                if (string.IsNullOrWhiteSpace(resultJson))
-                {
-                    var snapshot = await executionCoordinator.FindAsync(Guid.Parse(pendingTurn.ExecutionId!), cancellationToken).ConfigureAwait(false);
-                    resultJson = snapshot?.ResultJson ?? "null";
-                }
+                if (string.IsNullOrWhiteSpace(resultJson)) resultJson = snapshot?.ResultJson ?? "null";
                 pendingTurn.ResultJson = resultJson;
                 pendingTurn.DispatchStatus = ToolDispatchStatus.Completed;
+                pendingTurn.ToolSuccess = snapshot?.ToolSuccess;
+                if (pendingTurn.ToolSuccess == false)
+                {
+                    pendingTurn.ErrorCategory = RunErrorTaxonomy.ToolError;
+                }
                 task.PendingToolExecutionId = null;
                 task.PendingToolApprovalId = null;
                 checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tool-result", cancellationToken).ConfigureAwait(false);
@@ -1299,9 +1914,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             {
                 if (!string.IsNullOrWhiteSpace(model.Text))
                 {
+                    var result = BuildWorkerStepResult(task, worker.Id, model.Text);
                     return new ToolTaskExecutionResult(checkpoint, Waiting: false,
-                        new TaskExecutionResult(task.TaskId, worker.Id, "completed",
-                            BuildCompletedStepResult(task, worker.Id, model.Text)));
+                        new TaskExecutionResult(task.TaskId, worker.Id, result.Status, result));
                 }
                 // Blank answer below the streak threshold: give the model another
                 // turn instead of failing the task on one empty response.
@@ -2154,6 +2769,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         task.ResultStatus = execution.Result.Status;
         task.ResultSummary = execution.Result.Summary;
         task.Evidence = execution.Result.Evidence.ToList();
+        foreach (var verdict in execution.Result.CriterionVerdicts)
+        {
+            task.CriteriaVerdicts.Add(new CriterionVerdict(
+                verdict.Criterion,
+                verdict.Satisfied,
+                verdict.Evidence,
+                $"worker:{execution.WorkerAgentId?.ToString("N") ?? "unknown"}",
+                checkpoint.SupervisionRound));
+        }
         task.CompletedAt = execution.Status is "completed" or "failed" or "blocked" ? DateTimeOffset.UtcNow : null;
         if (execution.WorkerAgentId is { } workerId) task.WorkerAgentId = workerId;
         if (execution.Status is "completed" or "failed" or "blocked")
@@ -2182,9 +2806,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             worker_agent_id = task.WorkerAgentId,
             result_summary = task.ResultSummary,
             evidence = task.Evidence,
+            criteria_verdicts = task.CriteriaVerdicts,
             updated_at = DateTimeOffset.UtcNow
         }, cancellationToken).ConfigureAwait(false);
-        var eventType = execution.Status == "completed" ? "worker.completed" : "worker.failed";
+        var eventType = execution.Status switch
+        {
+            "completed" => "worker.completed",
+            "blocked" => "worker.blocked",
+            _ => "worker.failed"
+        };
         await AppendEventAsync(runId, eventType, execution.Result.Summary, new
         {
             task_id = task.TaskId,
@@ -2192,7 +2822,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             agent_instance_id = execution.WorkerAgentId,
             status = execution.Result.Status,
             summary = execution.Result.Summary,
-            evidence = execution.Result.Evidence
+            evidence = execution.Result.Evidence,
+            criteria_verdicts = execution.Result.CriterionVerdicts
         }, cancellationToken, task.TaskId).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(execution.Result.ProposedPatchContent))
@@ -2310,11 +2941,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     }
 
     /// <summary>
-    /// Ends a task that a budget, fuse, or loop guard stopped. The task is recorded
-    /// as completed on purpose: the hand-off text is the explicit channel for
-    /// "stopped early, here is what is left", and failing the task would bury the
-    /// partial work behind a generic failure. The stop reason travels in the
-    /// evidence either way so supervision and the final answer can see it.
+    /// Ends a task that a budget, fuse, or loop guard stopped. The hand-off text is
+    /// still preserved, but an early stop is never silently promoted to completion:
+    /// without an explicit completed outcome it remains blocked, and a hard ceiling
+    /// remains blocked even when the model claims success because the loop itself was
+    /// abnormal and requires review.
     /// </summary>
     private static ToolTaskExecutionResult CompleteCloseout(
         FullDuplexCheckpointV1 checkpoint,
@@ -2325,9 +2956,35 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var category = task.CloseoutCategory ?? RunErrorTaxonomy.Runtime;
         var reason = task.CloseoutReason ?? "The worker budget was exhausted before the task could finish.";
         var text = model.Text?.Trim();
+        var outcome = string.IsNullOrWhiteSpace(text)
+            ? new WorkerOutcomeProtocol.Parsed(
+                "blocked",
+                $"Stopped before completion ({category}): {reason}",
+                Criteria: [],
+                Explicit: false)
+            : WorkerOutcomeProtocol.Parse(text, requireExplicit: true);
+        var evaluation = EvaluateWorkerOutcome(task, outcome);
+        var status = task.CloseoutHardCeiling && evaluation.Status == "completed"
+            ? "blocked"
+            : evaluation.Status;
+        var summary = outcome.Summary;
+        if (evaluation.MissingCriteria.Count > 0)
+        {
+            summary += "\nMissing criterion evidence: " + string.Join("; ", evaluation.MissingCriteria);
+        }
+        if (outcome.Status == "completed" && evaluation.UnresolvedToolFailure)
+        {
+            summary += "\nCompletion rejected: the latest explicit tool outcome reports success=false and no later successful tool outcome resolved it.";
+        }
         var evidence = new List<string>();
-        if (!string.IsNullOrWhiteSpace(text)) evidence.Add(text);
+        if (!string.IsNullOrWhiteSpace(summary)) evidence.Add(summary);
         evidence.Add(DispatchEvidence(task));
+        evidence.Add($"worker_outcome:{status}:{OutcomeBasis(outcome)}");
+        evidence.AddRange(outcome.Criteria.Select(item =>
+            $"criterion_evidence:{item.Criterion}||{item.Evidence}"));
+        evidence.AddRange(evaluation.MissingCriteria.Select(item =>
+            $"missing_criterion_evidence:{item}"));
+        if (evaluation.UnresolvedToolFailure) evidence.Add("tool_outcome_fact:unresolved_failure");
         evidence.Add($"closeout:{category}");
         evidence.Add($"closeout_reason:{reason}");
         if (task.CloseoutHardCeiling) evidence.Add("hard_ceiling:true");
@@ -2335,16 +2992,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             TaskNodeId = task.TaskId,
             AgentId = worker.Id.ToString("N"),
-            Status = "completed",
-            // Without hand-off text the system still knows why it stopped, so the
-            // reason becomes the summary rather than an empty "no output".
-            Summary = string.IsNullOrWhiteSpace(text)
-                ? $"Stopped before completion ({category}): {reason}"
-                : text,
-            Evidence = evidence
+            Status = status,
+            Summary = summary,
+            Evidence = evidence,
+            CriterionVerdicts = evaluation.Verdicts
         };
         return new ToolTaskExecutionResult(checkpoint, Waiting: false,
-            new TaskExecutionResult(task.TaskId, worker.Id, "completed", result, model.Usage));
+            new TaskExecutionResult(task.TaskId, worker.Id, status, result, model.Usage));
     }
 
     /// <summary>Adds one model call's tokens to the task's own budget counter.</summary>
@@ -2526,6 +3180,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             result_count = results.Length
         }, cancellationToken).ConfigureAwait(false);
         SupervisionVerdict verdict;
+        var supervisionSkipped = false;
         if (configuration.Supervision.RequiredBeforeFinal)
         {
             // Modes without a supervisor in their frozen roster (e.g.
@@ -2535,6 +3190,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 .SingleOrDefault(item => string.Equals(item.Id, "supervisor", StringComparison.Ordinal));
             if (supervisorDefinition is null || !supervisorDefinition.Enabled)
             {
+                supervisionSkipped = true;
                 verdict = new SupervisionVerdict(SupervisionDecision.Pass,
                     ["The frozen roster carries no supervisor; the review gate is skipped for this mode."], []);
                 await AppendEventAsync(runId, "supervision.skipped", "Supervision skipped: no supervisor in the frozen roster.", new
@@ -2558,9 +3214,34 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         else
         {
+            supervisionSkipped = true;
             verdict = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+            await AppendEventAsync(runId, "supervision.skipped", "Supervision skipped: the frozen mode does not require a supervisor.", new
+            {
+                run_id = run.RunId,
+                revision_round = checkpoint.SupervisionRound,
+                reason = "not_required"
+            }, cancellationToken).ConfigureAwait(false);
         }
-        checkpoint.SupervisionDecision = verdict.DecictionString();
+        MapCriterionVerdicts(checkpoint, verdict);
+        verdict = EnforceTaskOutcomeFacts(
+            checkpoint.Tasks,
+            verdict,
+            checkpoint.SupervisionRound,
+            configuration.Supervision.MaxRevisionRounds);
+        verdict = EnforceCriterionFacts(
+            checkpoint.Tasks,
+            verdict,
+            checkpoint.SupervisionRound,
+            configuration.Supervision.MaxRevisionRounds,
+            requireSupervisorEvidence: !supervisionSkipped);
+        verdict = EnforceRevisionBudget(
+            verdict,
+            checkpoint.SupervisionRound,
+            configuration.Supervision.MaxRevisionRounds);
+        checkpoint.SupervisionDecision = supervisionSkipped && verdict.Decision == SupervisionDecision.Pass
+            ? "skipped"
+            : verdict.DecictionString();
         checkpoint.SupervisionReasons = verdict.Reasons.ToList();
         // A task that stopped on a budget, fuse, or loop trigger must not read as an
         // ordinary pass. Surfacing the trigger in the supervision reasons keeps
@@ -2573,7 +3254,6 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 + $" — {stopped.CloseoutReason}";
             if (!checkpoint.SupervisionReasons.Contains(reason, StringComparer.Ordinal)) checkpoint.SupervisionReasons.Add(reason);
         }
-        MapCriterionVerdicts(checkpoint, verdict);
         foreach (var lane in checkpoint.Lanes)
         {
             lane.SupervisionRound = checkpoint.SupervisionRound;
@@ -2650,6 +3330,153 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         checkpoint.Phase = "finalizing";
         return await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "reviewed", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Code-owned task outcomes outrank a model verdict. A supervisor cannot pass a
+    /// graph that still contains blocked/failed tasks, and modes without a supervisor
+    /// cannot turn the absence of review into a fabricated success. We replan while
+    /// the configured revision budget remains; afterwards the user must decide.
+    /// </summary>
+    internal static SupervisionVerdict EnforceTaskOutcomeFacts(
+        IReadOnlyList<DurableTaskNode> tasks,
+        SupervisionVerdict verdict,
+        int revisionRound,
+        int maxRevisionRounds)
+    {
+        var incomplete = tasks
+            .Select((task, index) => (Task: task, Index: index))
+            .Where(item => !string.Equals(item.Task.Status, "completed", StringComparison.Ordinal))
+            .ToArray();
+        if (incomplete.Length == 0) return verdict;
+
+        var reasons = verdict.Reasons.ToList();
+        foreach (var item in incomplete)
+        {
+            var summary = string.IsNullOrWhiteSpace(item.Task.ResultSummary)
+                ? "No completion evidence was recorded."
+                : TruncateEvidence(item.Task.ResultSummary);
+            var reason = $"task_outcome:{item.Task.TaskKey}:{item.Task.Status} — {summary}";
+            if (!reasons.Contains(reason, StringComparer.Ordinal)) reasons.Add(reason);
+        }
+
+        if (verdict.Decision == SupervisionDecision.Escalate)
+        {
+            return verdict with { Reasons = reasons };
+        }
+
+        if (revisionRound < maxRevisionRounds)
+        {
+            var reviseIndexes = verdict.ReviseTaskIndexes
+                .Concat(incomplete.Select(item => item.Index))
+                .Where(index => index >= 0 && index < tasks.Count)
+                .Distinct()
+                .Order()
+                .ToArray();
+            return verdict with
+            {
+                Decision = SupervisionDecision.Revise,
+                Reasons = reasons,
+                ReviseTaskIndexes = reviseIndexes
+            };
+        }
+
+        reasons.Add("Automatic revision budget is exhausted; incomplete task outcomes require user review.");
+        return verdict with
+        {
+            Decision = SupervisionDecision.Escalate,
+            Reasons = reasons,
+            ReviseTaskIndexes = []
+        };
+    }
+
+    /// <summary>
+    /// A completed status is only a claim. Every declared success criterion must
+    /// have a satisfied verdict with non-empty evidence. Modes with a supervisor
+    /// require a verdict from the current supervisor round; modes that intentionally
+    /// skip supervision rely on the worker's structured criterion evidence.
+    /// </summary>
+    internal static SupervisionVerdict EnforceCriterionFacts(
+        IReadOnlyList<DurableTaskNode> tasks,
+        SupervisionVerdict verdict,
+        int revisionRound,
+        int maxRevisionRounds,
+        bool requireSupervisorEvidence)
+    {
+        var issues = new List<(int Index, string Reason)>();
+        for (var index = 0; index < tasks.Count; index++)
+        {
+            var task = tasks[index];
+            if (!string.Equals(task.Status, "completed", StringComparison.Ordinal)) continue;
+            foreach (var criterion in task.SuccessCriteria)
+            {
+                var candidates = task.CriteriaVerdicts
+                    .Where(item => string.Equals(item.Criterion, criterion, StringComparison.Ordinal));
+                candidates = requireSupervisorEvidence
+                    ? candidates.Where(item => string.Equals(item.ReviewedBy, "supervisor", StringComparison.Ordinal)
+                        && item.Round == revisionRound)
+                    : candidates.Where(item => item.ReviewedBy?.StartsWith("worker:", StringComparison.Ordinal) == true);
+                var latest = candidates.OrderBy(item => item.Round).LastOrDefault();
+                if (latest is { Satisfied: true } && !string.IsNullOrWhiteSpace(latest.Evidence)) continue;
+                var source = requireSupervisorEvidence ? "supervisor" : "worker";
+                var detail = latest is null
+                    ? $"no {source} verdict"
+                    : latest.Satisfied ? "satisfied verdict has no evidence" : "criterion was not satisfied";
+                issues.Add((index, $"criterion:{task.TaskKey}:{criterion} — {detail}"));
+            }
+        }
+        if (issues.Count == 0) return verdict;
+
+        var reasons = verdict.Reasons.ToList();
+        foreach (var issue in issues)
+        {
+            if (!reasons.Contains(issue.Reason, StringComparer.Ordinal)) reasons.Add(issue.Reason);
+        }
+        if (verdict.Decision == SupervisionDecision.Escalate)
+        {
+            return verdict with { Reasons = reasons };
+        }
+        if (revisionRound < maxRevisionRounds)
+        {
+            return verdict with
+            {
+                Decision = SupervisionDecision.Revise,
+                Reasons = reasons,
+                ReviseTaskIndexes = verdict.ReviseTaskIndexes
+                    .Concat(issues.Select(issue => issue.Index))
+                    .Where(index => index >= 0 && index < tasks.Count)
+                    .Distinct()
+                    .OrderBy(index => index)
+                    .ToArray()
+            };
+        }
+        reasons.Add("Automatic revision budget is exhausted; unresolved success criteria require user review.");
+        return verdict with
+        {
+            Decision = SupervisionDecision.Escalate,
+            Reasons = reasons,
+            ReviseTaskIndexes = []
+        };
+    }
+
+    internal static SupervisionVerdict EnforceRevisionBudget(
+        SupervisionVerdict verdict,
+        int revisionRound,
+        int maxRevisionRounds)
+    {
+        if (verdict.Decision != SupervisionDecision.Revise || revisionRound < maxRevisionRounds)
+        {
+            return verdict;
+        }
+        var reasons = verdict.Reasons.ToList();
+        const string reason = "Supervision still requires revision, but the automatic revision budget is exhausted; user review is required.";
+        if (!reasons.Contains(reason, StringComparer.Ordinal)) reasons.Add(reason);
+        return verdict with
+        {
+            Decision = SupervisionDecision.Escalate,
+            Reasons = reasons,
+            ReviseTaskIndexes = []
+        };
     }
 
     /// <summary>
@@ -2824,7 +3651,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
         var factory = CreateModelFactory(configuration, checkpoint, meetingDefinition, checkpoint.MeetingAgentId, null);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
-        if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
+        if (!resolution.IsAvailable)
+        {
+            throw new MeetingResponseUnavailableException(
+                RunErrorTaxonomy.ModelUnavailable,
+                resolution.Error ?? "Chat route is unavailable.");
+        }
         var assembly = await AssemblePromptAsync(configuration, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
 
         var targetSummary = "No active target run.";
@@ -2898,6 +3730,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 checkpoint.Phase = "planning";
                 checkpoint.SupervisionDecision = null;
                 checkpoint.SupervisionReasons = [];
+                checkpoint.UserAcceptedIncompleteOutcome = false;
                 checkpoint.MeetingResponse = null;
                 foreach (var lane in checkpoint.Lanes)
                 {
@@ -2936,20 +3769,49 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         var runId = Guid.Parse(run.RunId);
 
-        // This is a defensive invariant for legacy or partially committed
-        // checkpoints. An unresolved supervision escalation must never produce a
-        // meeting response or terminal success, even if its phase was corrupted
-        // to finalizing during recovery.
-        if (checkpoint.SupervisionDecision == "escalate")
+        // Defensive finalization gate for legacy or partially committed checkpoints.
+        // Unless the user explicitly accepted an incomplete outcome, finalization
+        // requires a resolved pass/skipped decision plus completed tasks and evidence
+        // for every success criterion. A corrupted phase cannot manufacture success.
+        if (!checkpoint.UserAcceptedIncompleteOutcome)
         {
-            checkpoint.Phase = "awaiting_user";
-            checkpoint.MeetingResponse = null;
-            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
-            if (run.Status != RunStatus.AwaitingUser)
+            var supervisorRequired = configuration.Supervision.RequiredBeforeFinal
+                && configuration.OperationAgents.Any(agent =>
+                    agent.Enabled && string.Equals(agent.Id, "supervisor", StringComparison.Ordinal));
+            var facts = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+            facts = EnforceTaskOutcomeFacts(
+                checkpoint.Tasks,
+                facts,
+                checkpoint.SupervisionRound,
+                checkpoint.SupervisionRound);
+            facts = EnforceCriterionFacts(
+                checkpoint.Tasks,
+                facts,
+                checkpoint.SupervisionRound,
+                checkpoint.SupervisionRound,
+                requireSupervisorEvidence: supervisorRequired);
+            var unresolvedDecision = checkpoint.SupervisionDecision is not ("pass" or "skipped");
+            if (unresolvedDecision || facts.Decision != SupervisionDecision.Pass)
             {
-                await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+                checkpoint.SupervisionDecision = "escalate";
+                checkpoint.SupervisionReasons = checkpoint.SupervisionReasons
+                    .Concat(facts.Reasons)
+                    .Where(reason => !string.IsNullOrWhiteSpace(reason))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (unresolvedDecision)
+                {
+                    checkpoint.SupervisionReasons.Add("The persisted supervision decision is unresolved; user review is required.");
+                }
+                checkpoint.Phase = "awaiting_user";
+                checkpoint.MeetingResponse = null;
+                checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "finalization-facts-rejected", cancellationToken).ConfigureAwait(false);
+                if (run.Status != RunStatus.AwaitingUser)
+                {
+                    await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Completion facts require user review before this run can finish.", cancellationToken).ConfigureAwait(false);
+                }
+                return;
             }
-            return;
         }
 
         if (string.IsNullOrWhiteSpace(checkpoint.MeetingResponse))
@@ -2961,23 +3823,105 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             var stateBeforeMeeting = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
             if (stateBeforeMeeting.Status == RunStatus.Cancelled)
             {
-                await FinalizeCancellationAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+                await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
                 return;
             }
+            await PersistRunEvidenceAsync(runId, run, checkpoint, cancellationToken).ConfigureAwait(false);
             var meetingDefinition = RequiredConversationAgent(configuration);
             var context = await BuildContextAsync(run, configuration, meetingDefinition.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-            checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(configuration, checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                checkpoint.MeetingResponse = await GenerateMeetingResponseAsync(configuration, checkpoint, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ModelInvocationExhaustedException modelFailure) when (CanUseMeetingEvidenceFallback(checkpoint, modelFailure))
+            {
+                checkpoint.MeetingResponse = BuildMeetingEvidenceFallback(checkpoint, modelFailure.Category);
+                await AppendEventAsync(runId, "meeting.response_fallback",
+                    "The final meeting model was unavailable; persisted execution evidence was returned directly.",
+                    new
+                    {
+                        run_id = runId,
+                        error_category = modelFailure.Category,
+                        retry_count = checkpoint.TransientModelRetryCount,
+                        task_count = checkpoint.Tasks.Count
+                    }, cancellationToken,
+                    idempotencyKey: $"run:{runId}:meeting-response-fallback").ConfigureAwait(false);
+            }
+            catch (MeetingResponseUnavailableException meetingFailure) when (CanUseMeetingEvidenceFallback(checkpoint))
+            {
+                checkpoint.MeetingResponse = BuildMeetingEvidenceFallback(checkpoint, meetingFailure.Category);
+                await AppendEventAsync(runId, "meeting.response_fallback",
+                    "The final meeting response was unavailable; persisted execution evidence was returned directly.",
+                    new
+                    {
+                        run_id = runId,
+                        error_category = meetingFailure.Category,
+                        retry_count = checkpoint.TransientModelRetryCount,
+                        task_count = checkpoint.Tasks.Count
+                    }, cancellationToken,
+                    idempotencyKey: $"run:{runId}:meeting-response-fallback").ConfigureAwait(false);
+            }
             var stateAfterMeeting = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
             if (stateAfterMeeting.Status == RunStatus.Cancelled)
             {
                 checkpoint.MeetingResponse = null;
-                await FinalizeCancellationAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+                await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (IsTerminal(stateAfterMeeting.Status)
+                || RecoveryPolicy.IsAwaitingDecision(stateAfterMeeting.Status)
+                || stateAfterMeeting.Status == RunStatus.Paused)
+            {
+                checkpoint.MeetingResponse = null;
                 return;
             }
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "meeting-response", cancellationToken).ConfigureAwait(false);
         }
 
         var meetingResponse = checkpoint.MeetingResponse ?? throw new InvalidDataException("Meeting response is missing from finalization checkpoint.");
+
+        // Claim successful completion before publishing any success-only artifact.
+        // The claim is the run's CompletedAt written while status remains active:
+        // cancel/fail can no longer win, but a host crash still leaves the run
+        // lease-eligible so recovery can finish the turn/stream from this checkpoint.
+        var completionSource = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+        if (completionSource.Status == RunStatus.Cancelled)
+        {
+            await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (IsTerminal(completionSource.Status)
+            || RecoveryPolicy.IsAwaitingDecision(completionSource.Status)
+            || completionSource.Status == RunStatus.Paused)
+        {
+            return;
+        }
+        var expectedCompletionStatus = RunStatusStorageValue(completionSource.Status);
+        if (expectedCompletionStatus is not ("executing" or "reviewing")) return;
+        var claimedCompletion = await _lifecycle.TryClaimRunCompletionAsync(
+            run.RunId,
+            expectedCompletionStatus,
+            LeaseEpochFor(runId)?.OwnerId,
+            LeaseEpochFor(runId)?.RecoveryCount,
+            cancellationToken).ConfigureAwait(false);
+        var claimedState = await _lifecycle.GetRunStateAsync(run.RunId, cancellationToken).ConfigureAwait(false);
+        if (!claimedCompletion && claimedState.CompletedAt is null)
+        {
+            if (claimedState.Status == RunStatus.Cancelled)
+            {
+                await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
+        if (claimedState.Status is RunStatus.Cancelled or RunStatus.Failed)
+        {
+            if (claimedState.Status == RunStatus.Cancelled)
+            {
+                await FinalizeCancellationCoreAsync(runId, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
+
         await _lifecycle.AppendRunStreamAsync(run.RunId, new DurableRunStreamAppend(
             checkpoint.TurnId,
             "delta",
@@ -3017,23 +3961,62 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task FinalizeCancellationAsync(
+    private async Task FinalizeCancellationCoreAsync(
         Guid runId,
         FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
         CancellationToken cancellationToken)
     {
-        var state = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+        await FinalizeCancelledRunAsync(runId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PersistCancellationTerminalAsync(
+        Guid runId,
+        FullDuplexCheckpointV1 checkpoint,
+        CancellationToken cancellationToken)
+    {
         var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
         await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, null, revision, "cancelled", cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "task.cancelled", "The run was cancelled.", new { run_id = runId }, cancellationToken, idempotencyKey: $"run:{runId}:event:task.cancelled").ConfigureAwait(false);
         await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
             checkpoint.TurnId,
             "done",
             FinishReason: "cancelled",
             IdempotencyKey: $"run:{runId}:turn:{checkpoint.TurnId}:cancelled"), cancellationToken).ConfigureAwait(false);
-        await DrainRunDirectivesAsync(state, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
-        await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await AppendEventAsync(runId, "task.cancelled", "The run was cancelled.", new { run_id = runId }, cancellationToken,
+                idempotencyKey: $"run:{runId}:event:task.cancelled").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not append the cancellation audit event for run {RunId}.", runId);
+        }
+    }
+
+    private async Task PersistFailureTerminalAsync(
+        Guid runId,
+        FullDuplexCheckpointV1 checkpoint,
+        string category,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
+        await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, null, revision, "failed", cancellationToken).ConfigureAwait(false);
+        await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
+            checkpoint.TurnId,
+            "error",
+            ErrorCategory: category,
+            SafeErrorMessage: message,
+            IdempotencyKey: $"run:{runId}:turn:{checkpoint.TurnId}:error:{category}"), cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken,
+                idempotencyKey: $"run:{runId}:event:run.failed").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not append the failure audit event for run {RunId}.", runId);
+        }
     }
 
 
@@ -3058,34 +4041,59 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private async Task FailRunAsync(Guid runId, FullDuplexCheckpointV1 checkpoint, string category, string message, CancellationToken cancellationToken)
     {
         var run = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
-        if (!IsTerminal(run.Status))
+        if (IsTerminal(run.Status)
+            || RecoveryPolicy.IsAwaitingDecision(run.Status)
+            || run.Status == RunStatus.Paused)
         {
-            await _lifecycle.SetRunStatusAsync(runId.ToString(), "failed", message, cancellationToken).ConfigureAwait(false);
+            return;
         }
-        var revision = await _conversations.GetContextRevisionAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
-        await _conversations.CompleteTurnAsync(checkpoint.TurnId, runId, null, revision, "failed", cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken, idempotencyKey: $"run:{runId}:event:run.failed").ConfigureAwait(false);
-        await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
-            checkpoint.TurnId,
-            "error",
-            ErrorCategory: category,
-            SafeErrorMessage: message,
-            IdempotencyKey: $"run:{runId}:turn:{checkpoint.TurnId}:error:{category}"), cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SetRunFailedFencedAsync(runId.ToString(), message, category, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            // A user cancellation/pause or another owner can win between the fresh
+            // read above and the status transition. Re-read before deciding whether
+            // this is a genuine transition bug; protected state always wins and
+            // must not receive a failed turn/event/stream afterwards.
+            run = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (IsTerminal(run.Status)
+                || RecoveryPolicy.IsAwaitingDecision(run.Status)
+                || run.Status == RunStatus.Paused)
+            {
+                return;
+            }
+            throw;
+        }
+        await FinalizeFailedRunAsync(runId, category, message, CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task FailLegacyRunAsync(Guid runId, RunState run, string category, string message, CancellationToken cancellationToken)
     {
-        if (!IsTerminal(run.Status)) await _lifecycle.SetRunStatusAsync(runId.ToString(), "failed", message, cancellationToken).ConfigureAwait(false);
-        await AppendEventAsync(runId, "run.failed", message, new { run_id = runId, error_category = category }, cancellationToken, idempotencyKey: $"run:{runId}:event:run.failed").ConfigureAwait(false);
-        if (Guid.TryParse(run.TurnId, out var turnId))
+        run = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+        if (IsTerminal(run.Status)
+            || RecoveryPolicy.IsAwaitingDecision(run.Status)
+            || run.Status == RunStatus.Paused)
         {
-            await _lifecycle.AppendRunStreamAsync(runId.ToString(), new DurableRunStreamAppend(
-                turnId,
-                "error",
-                ErrorCategory: category,
-                SafeErrorMessage: message,
-                IdempotencyKey: $"run:{runId}:turn:{turnId}:error:{category}"), cancellationToken).ConfigureAwait(false);
+            return;
         }
+        try
+        {
+            await SetRunFailedFencedAsync(runId.ToString(), message, category, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            run = await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false);
+            if (IsTerminal(run.Status)
+                || RecoveryPolicy.IsAwaitingDecision(run.Status)
+                || run.Status == RunStatus.Paused)
+            {
+                return;
+            }
+            throw;
+        }
+        await FinalizeFailedRunAsync(runId, category, message, CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task<FullDuplexCheckpointV1> SaveCheckpointAsync(
@@ -3093,7 +4101,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         long expectedRevision,
         string key,
         CancellationToken cancellationToken,
-        string laneKey = "main")
+        string laneKey = "main",
+        string? expectedRunStatus = null,
+        bool requireCompletionUnclaimed = false)
     {
         // The lane segment keeps same-purpose saves from distinct lanes from
         // colliding on one idempotency row, which would return the first body
@@ -3102,7 +4112,11 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             expectedRevision,
             checkpoint.Phase,
             JsonSerializer.Serialize(checkpoint, JsonOptions),
-            IdempotencyKey: $"run:{checkpoint.RunId}:{laneKey}:{key}:{expectedRevision + 1}"), cancellationToken).ConfigureAwait(false);
+            IdempotencyKey: $"run:{checkpoint.RunId}:{laneKey}:{key}:{expectedRevision + 1}",
+            ExpectedRunStatus: expectedRunStatus,
+            RequireCompletionUnclaimed: requireCompletionUnclaimed,
+            ExpectedLeaseOwner: LeaseEpochFor(checkpoint.RunId)?.OwnerId,
+            ExpectedRecoveryCount: LeaseEpochFor(checkpoint.RunId)?.RecoveryCount), cancellationToken).ConfigureAwait(false);
         checkpoint.CheckpointRevision = stored.Revision;
         return checkpoint;
     }
@@ -3285,8 +4299,69 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             Maf18RuntimeAdapter.NormalizeUsage(response.Usage));
         // Strip inline reasoning so the only user-facing answer never carries thinking markup.
         var answer = ModelOutputText.AnswerText(response.Text);
-        if (string.IsNullOrWhiteSpace(answer)) throw new InvalidOperationException("Meeting agent returned no output.");
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            throw new MeetingResponseUnavailableException("empty_model_response", "Meeting agent returned no output.");
+        }
         return answer;
+    }
+
+    internal static bool CanUseMeetingEvidenceFallback(FullDuplexCheckpointV1 checkpoint)
+    {
+        if (checkpoint.Tasks.Count == 0) return false;
+        var terminal = checkpoint.Tasks.All(task => task.Status is "completed" or "failed" or "blocked");
+        return terminal && (checkpoint.Tasks.All(task => task.Status == "completed")
+            || checkpoint.UserAcceptedIncompleteOutcome);
+    }
+
+    internal static bool CanUseMeetingEvidenceFallback(
+        FullDuplexCheckpointV1 checkpoint,
+        ModelInvocationExhaustedException failure) =>
+        CanUseMeetingEvidenceFallback(checkpoint)
+        && (!IsDurableModelRetryCategory(failure.Category)
+            || checkpoint.TransientModelRetryCount >= MaxDurableModelRetries);
+
+    internal static string BuildMeetingEvidenceFallback(FullDuplexCheckpointV1 checkpoint, string errorCategory)
+    {
+        var chinese = checkpoint.UserGoal.Any(character => character is >= '\u4e00' and <= '\u9fff');
+        var allCompleted = checkpoint.Tasks.All(task => task.Status == "completed");
+        var lines = new List<string>
+        {
+            chinese
+                ? allCompleted
+                    ? "执行任务已经完成，但负责生成最终汇总的模型在重试后仍不可用。下面内容直接来自已持久化的执行证据："
+                    : "用户已选择在部分任务未完成的情况下继续，但最终汇总模型不可用。下面内容直接来自已持久化的执行证据："
+                : allCompleted
+                    ? "The execution tasks completed, but the model responsible for the final summary remained unavailable after retry. The following comes directly from persisted execution evidence:"
+                    : "The user chose to continue with incomplete tasks, but the final summary model was unavailable. The following comes directly from persisted execution evidence:"
+        };
+        foreach (var task in checkpoint.Tasks)
+        {
+            var summary = string.IsNullOrWhiteSpace(task.ResultSummary)
+                ? (chinese ? "已完成，但没有留下摘要。" : "Completed without a stored summary.")
+                : TruncateEvidence(task.ResultSummary);
+            lines.Add($"- [{task.Status}] {task.Title}: {summary}");
+            foreach (var evidence in task.Evidence
+                .Where(item => !string.IsNullOrWhiteSpace(item)
+                    && !string.Equals(item, task.ResultSummary, StringComparison.Ordinal)
+                    && !item.StartsWith("dispatch:", StringComparison.Ordinal))
+                .Take(2))
+            {
+                lines.Add(chinese
+                    ? $"  证据：{TruncateEvidence(evidence)}"
+                    : $"  Evidence: {TruncateEvidence(evidence)}");
+            }
+        }
+        foreach (var reason in checkpoint.SupervisionReasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Take(3))
+        {
+            lines.Add(chinese
+                ? $"- 验收说明：{TruncateEvidence(reason)}"
+                : $"- Review note: {TruncateEvidence(reason)}");
+        }
+        lines.Add(chinese
+            ? $"说明：这份答复未经过 meeting 模型润色；模型错误类别为 {errorCategory}。"
+            : $"Note: this response was not rewritten by the meeting model; model error category: {errorCategory}.");
+        return string.Join("\n", lines);
     }
 
 
@@ -3449,6 +4524,33 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             throw new RunCheckpointConflictException(runId.ToString(), 0, 0);
         }
+    }
+
+    /// <summary>
+    /// Refreshes (or safely reacquires) the run lease immediately before an
+    /// external tool execution and returns the exact epoch the dispatcher must
+    /// present to Lifecycle. A model/tool-manifest turn may outlive the ordinary
+    /// 30-second lease, so relying on the loop-top heartbeat is not sufficient.
+    /// </summary>
+    private async Task<RunExecutionAuthority> RequireToolExecutionAuthorityAsync(
+        Guid runId,
+        CancellationToken cancellationToken)
+    {
+        var epoch = LeaseEpochFor(runId)
+            ?? throw new RunCheckpointConflictException(runId.ToString(), 0, 0);
+        var expectedRecoveryCount = epoch.RecoveryCount;
+        if (!await TryRetainLeaseUntilAsync(
+                runId,
+                DateTimeOffset.UtcNow.Add(LeaseDuration),
+                expectedRecoveryCount,
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new RunCheckpointConflictException(runId.ToString(), 0, 0);
+        }
+
+        epoch = LeaseEpochFor(runId)
+            ?? throw new RunCheckpointConflictException(runId.ToString(), 0, 0);
+        return new RunExecutionAuthority(epoch.OwnerId, epoch.RecoveryCount);
     }
 
     private async Task EvaluateAndDispatchOperationsAsync(
@@ -3986,6 +5088,38 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
     private static bool IsTerminal(RunStatus status) => status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled;
 
+    private static string ModelFailureCategory(string category) => category switch
+    {
+        RunErrorTaxonomy.RateLimited => RunErrorTaxonomy.RateLimited,
+        RunErrorTaxonomy.ProviderServerError => RunErrorTaxonomy.ProviderServerError,
+        RunErrorTaxonomy.ConnectionFailed => RunErrorTaxonomy.ConnectionFailed,
+        RunErrorTaxonomy.ProviderError => RunErrorTaxonomy.ProviderError,
+        RunErrorTaxonomy.RequestError => RunErrorTaxonomy.RequestError,
+        RunErrorTaxonomy.AuthenticationOrAuthorization => RunErrorTaxonomy.AuthenticationOrAuthorization,
+        RunErrorTaxonomy.ToolTimeout => RunErrorTaxonomy.ToolTimeout,
+        _ => RunErrorTaxonomy.Model
+    };
+
+    private static bool IsCompletionClaimed(RunState run) =>
+        run.CompletedAt is not null && !IsTerminal(run.Status);
+
+    private static string RunStatusStorageValue(RunStatus status) => status switch
+    {
+        RunStatus.Planning => "planning",
+        RunStatus.Understanding => "understanding",
+        RunStatus.Executing => "executing",
+        RunStatus.Replanning => "replanning",
+        RunStatus.AwaitingApproval => "awaiting_approval",
+        RunStatus.AwaitingDelegate => "awaiting_delegate",
+        RunStatus.AwaitingUser => "awaiting_user",
+        RunStatus.Paused => "paused",
+        RunStatus.Reviewing => "reviewing",
+        RunStatus.Completed => "completed",
+        RunStatus.Failed => "failed",
+        RunStatus.Cancelled => "cancelled",
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown run status.")
+    };
+
     private static bool IsTaskTerminal(DurableTaskNode task) =>
         task.Status is "completed" or "failed" or "blocked";
 
@@ -4016,13 +5150,58 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 _logger.TryLogDebug("Run {RunId} status write '{Status}' skipped: current state is {Current}.", runId, status, current.Status);
                 return;
             }
-            await _lifecycle.SetRunStatusAsync(runId, status, message, cancellationToken).ConfigureAwait(false);
+            await SetRunStatusFencedAsync(runId, status, message, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.TryLogWarning(ex, "Could not move run {RunId} to {Status}; the durable checkpoint remains authoritative.", runId, status);
         }
     }
+
+    private Task SetRunStatusFencedAsync(
+        string runId,
+        string status,
+        string? message,
+        CancellationToken cancellationToken)
+    {
+        if (Guid.TryParse(runId, out var parsedRunId)
+            && LeaseEpochFor(parsedRunId) is { } epoch)
+        {
+            return _lifecycle.SetRunStatusUnderLeaseAsync(
+                runId,
+                status,
+                message,
+                epoch.OwnerId,
+                epoch.RecoveryCount,
+                cancellationToken);
+        }
+        return _lifecycle.SetRunStatusAsync(runId, status, message, cancellationToken);
+    }
+
+    private Task SetRunFailedFencedAsync(
+        string runId,
+        string message,
+        string category,
+        CancellationToken cancellationToken)
+    {
+        if (Guid.TryParse(runId, out var parsedRunId)
+            && LeaseEpochFor(parsedRunId) is { } epoch)
+        {
+            return _lifecycle.SetRunFailedUnderLeaseAsync(
+                runId,
+                message,
+                category,
+                epoch.OwnerId,
+                epoch.RecoveryCount,
+                cancellationToken);
+        }
+        return _lifecycle.SetRunStatusAsync(runId, "failed", message, cancellationToken);
+    }
+
+    private RunLeaseEpoch? LeaseEpochFor(Guid runId) =>
+        _currentLeaseEpoch.Value is { RunId: var epochRunId } epoch && epochRunId == runId
+            ? epoch
+            : null;
 
     private static string ToStatusVocabulary(RunStatus status) => status switch
     {
@@ -4106,9 +5285,17 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private async Task PersistRunEvidenceAsync(Guid runId, RunState run, FullDuplexCheckpointV1 checkpoint, CancellationToken cancellationToken)
     {
         var turns = checkpoint.Tasks.SelectMany(task => task.ToolTurns).ToList();
-        if (turns.Count == 0) return;
-
-        var rendered = turns
+        var taskEvidence = checkpoint.Tasks
+            .Where(task => !string.IsNullOrWhiteSpace(task.ResultSummary) || task.Evidence.Count > 0)
+            .TakeLast(MaxRunEvidenceTurns)
+            .Select(task => TruncateEvidence(
+                $"task {task.TaskKey} {task.Status}: {task.ResultSummary ?? string.Empty}; "
+                + string.Join(" | ", task.Evidence
+                    .Where(item => !string.IsNullOrWhiteSpace(item)
+                        && !string.Equals(item, task.ResultSummary, StringComparison.Ordinal))
+                    .Take(2))))
+            .ToList();
+        var toolEvidence = turns
             .TakeLast(MaxRunEvidenceTurns)
             .Select(turn =>
             {
@@ -4117,14 +5304,32 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 return TruncateEvidence($"{turn.ToolId} {status}{category}: {turn.ResultJson ?? string.Empty}");
             })
             .ToList();
+        if (taskEvidence.Count == 0 && toolEvidence.Count == 0) return;
 
-        var content = $"tool_evidence — {turns.Count} tool round(s), showing the last {rendered.Count}\n"
-            + string.Join('\n', rendered);
+        var sections = new List<string>();
+        if (taskEvidence.Count > 0)
+        {
+            sections.Add($"task_evidence — {checkpoint.Tasks.Count} task(s), showing {taskEvidence.Count}\n"
+                + string.Join('\n', taskEvidence));
+        }
+        if (toolEvidence.Count > 0)
+        {
+            sections.Add($"tool_evidence — {turns.Count} tool round(s), showing the last {toolEvidence.Count}\n"
+                + string.Join('\n', toolEvidence));
+        }
+        var content = string.Join("\n\n", sections);
         await _conversations.AppendMessageAsync(checkpoint.SessionId, "tool_evidence", content,
             runId, checkpoint.TurnId, $"run:{run.RunId}:turn:{checkpoint.TurnId}:tool-evidence:v1", cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(runId, "run.evidence_recorded",
             "The run's tool activity was persisted into the conversation history.",
-            new { turn_count = turns.Count, recorded = rendered.Count }, cancellationToken).ConfigureAwait(false);
+            new
+            {
+                task_count = checkpoint.Tasks.Count,
+                task_evidence_recorded = taskEvidence.Count,
+                turn_count = turns.Count,
+                tool_evidence_recorded = toolEvidence.Count
+            }, cancellationToken,
+            idempotencyKey: $"run:{runId}:turn:{checkpoint.TurnId}:evidence-recorded").ConfigureAwait(false);
     }
 
     private static string TruncateEvidence(string value)
@@ -4133,21 +5338,109 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         return collapsed.Length <= MaxRunEvidenceLineLength ? collapsed : collapsed[..MaxRunEvidenceLineLength] + "…";
     }
 
-    private static StepResult BuildCompletedStepResult(DurableTaskNode task, Guid workerId, string text)
+    private static StepResult BuildWorkerStepResult(DurableTaskNode task, Guid workerId, string text)
     {
-        var summary = ExtractContextPatch(text, out var patchSummary, out var patchContent);
+        var outcome = WorkerOutcomeProtocol.Parse(text, requireExplicit: true);
+        var evaluation = EvaluateWorkerOutcome(task, outcome);
+        var summary = ExtractContextPatch(outcome.Summary, out var patchSummary, out var patchContent);
+        if (evaluation.MissingCriteria.Count > 0)
+        {
+            summary += "\nMissing criterion evidence: " + string.Join("; ", evaluation.MissingCriteria);
+        }
+        if (outcome.Status == "completed" && evaluation.UnresolvedToolFailure)
+        {
+            summary += "\nCompletion rejected: the latest explicit tool outcome reports success=false and no later successful tool outcome resolved it.";
+        }
         var taskId = task.TaskId;
+        var evidence = new List<string>
+        {
+            summary,
+            DispatchEvidence(task),
+            $"worker_outcome:{evaluation.Status}:{OutcomeBasis(outcome)}"
+        };
+        evidence.AddRange(outcome.Criteria.Select(item =>
+            $"criterion_evidence:{item.Criterion}||{item.Evidence}"));
+        evidence.AddRange(evaluation.MissingCriteria.Select(item =>
+            $"missing_criterion_evidence:{item}"));
+        if (evaluation.UnresolvedToolFailure) evidence.Add("tool_outcome_fact:unresolved_failure");
         return new StepResult
         {
             TaskNodeId = taskId,
             AgentId = workerId.ToString("N"),
-            Status = "completed",
+            Status = evaluation.Status,
             Summary = summary,
-            Evidence = [summary, DispatchEvidence(task)],
+            Evidence = evidence,
+            CriterionVerdicts = evaluation.Verdicts,
             ProposedPatchSummary = patchSummary,
             ProposedPatchContent = patchContent
         };
     }
+
+    private static string OutcomeBasis(WorkerOutcomeProtocol.Parsed outcome) =>
+        outcome.ContradictedCompletion ? "explicit_contradiction"
+            : outcome.Explicit ? "explicit"
+            : outcome.MissingRequiredMarker ? "missing_marker"
+            : "legacy_inferred";
+
+    private static WorkerOutcomeEvaluation EvaluateWorkerOutcome(
+        DurableTaskNode task,
+        WorkerOutcomeProtocol.Parsed outcome)
+    {
+        var criteria = outcome.Criteria
+            .Where(item => !string.IsNullOrWhiteSpace(item.Criterion) && !string.IsNullOrWhiteSpace(item.Evidence))
+            .GroupBy(item => item.Criterion.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().Evidence.Trim(), StringComparer.Ordinal);
+        var verdicts = task.SuccessCriteria
+            .Select(criterion =>
+            {
+                var normalized = criterion.Trim();
+                var found = criteria.TryGetValue(normalized, out var evidence);
+                return new LaneCriterionVerdict(task.TaskKey, criterion, found, found ? evidence : null);
+            })
+            .ToArray();
+        var missing = verdicts
+            .Where(item => !item.Satisfied || string.IsNullOrWhiteSpace(item.Evidence))
+            .Select(item => item.Criterion)
+            .ToArray();
+        var unresolvedToolFailure = LatestEmbeddedToolOutcome(task) == false;
+        var status = EnforceLatestToolOutcomeFact(task,
+            outcome.Status == "completed" && missing.Length > 0 ? "blocked" : outcome.Status);
+        return new WorkerOutcomeEvaluation(status, verdicts, missing, unresolvedToolFailure);
+    }
+
+    /// <summary>
+    /// A model cannot close a task as completed while the most recent explicit
+    /// business-level tool outcome is a failure. A later explicit tool success is
+    /// evidence that the worker actually attempted a correction and clears this
+    /// particular fence; criterion/supervision gates still decide whether the whole
+    /// task goal was satisfied.
+    /// </summary>
+    internal static string EnforceLatestToolOutcomeFact(DurableTaskNode task, string proposedStatus) =>
+        string.Equals(proposedStatus, "completed", StringComparison.Ordinal)
+        && LatestEmbeddedToolOutcome(task) == false
+            ? "failed"
+            : proposedStatus;
+
+    /// <summary>
+    /// Returns the most recent explicit business-level tool outcome. A failed tool
+    /// result remains unresolved until the worker performs a later tool call that
+    /// explicitly succeeds. Results without an embedded success flag are neutral:
+    /// they cannot erase a known failure merely because their transport completed.
+    /// </summary>
+    internal static bool? LatestEmbeddedToolOutcome(DurableTaskNode task)
+    {
+        for (var index = task.ToolTurns.Count - 1; index >= 0; index--)
+        {
+            if (task.ToolTurns[index].ToolSuccess is { } success) return success;
+        }
+        return null;
+    }
+
+    private sealed record WorkerOutcomeEvaluation(
+        string Status,
+        IReadOnlyList<LaneCriterionVerdict> Verdicts,
+        IReadOnlyList<string> MissingCriteria,
+        bool UnresolvedToolFailure);
 
     /// <summary>
     /// Extracts the optional worker-proposed patch line. Returns the text with
@@ -4216,6 +5509,16 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         FullDuplexCheckpointV1 Checkpoint,
         bool Waiting,
         TaskExecutionResult? Result);
+    private readonly record struct ModelRetryScheduleResult(
+        bool Scheduled,
+        bool LeaseRetained,
+        bool ExitWithoutFailure);
+    private sealed class RunLeaseEpoch(Guid runId, string ownerId, int recoveryCount)
+    {
+        public Guid RunId { get; } = runId;
+        public string OwnerId { get; } = ownerId;
+        public int RecoveryCount { get; set; } = recoveryCount;
+    }
 }
 
 internal sealed class FullDuplexCheckpointV1
@@ -4253,10 +5556,34 @@ internal sealed class FullDuplexCheckpointV1
     public int SupervisionRound { get; set; }
     public string? SupervisionDecision { get; set; }
     public List<string> SupervisionReasons { get; set; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UserAcceptedIncompleteOutcome { get; set; }
     public string? MeetingResponse { get; set; }
     public List<RecommendedCapability> RecommendedCapabilities { get; set; } = [];
     public ModelUsage? ModelUsage { get; set; }
     public Guid? AssistantMessageId { get; set; }
+
+    /// <summary>
+    /// Number of consecutive full model calls that exhausted their own short
+    /// retry/fallback chain without durable phase progress. This is a finite fuse,
+    /// not a model-call attempt counter: each increment already represents up to
+    /// three provider attempts recorded in model_invocations. Any successful phase
+    /// transition resets it, so unrelated outages across a long run do not add up.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int TransientModelRetryCount { get; set; }
+
+    /// <summary>
+    /// Durable cooling-off deadline after a transient model outage. A live host
+    /// also mirrors it in an in-memory scheduler; after restart the checkpoint is
+    /// sufficient for the recovery scan to resume at or after this time.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? ModelRetryNotBefore { get; set; }
+
+    /// <summary>The last retryable model failure category, retained for audit events.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LastTransientModelErrorCategory { get; set; }
 
     /// <summary>
     /// Lateral execution lanes (swim lanes) beyond the implicit "main" lane.
@@ -4397,3 +5724,8 @@ internal sealed record StaleTaskEvidence(
 internal sealed class RunAwaitingExternalDecisionException : Exception;
 
 internal sealed class WorkerUnavailableException(string message) : Exception(message);
+
+internal sealed class MeetingResponseUnavailableException(string category, string message) : Exception(message)
+{
+    public string Category { get; } = category;
+}

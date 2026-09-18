@@ -38,7 +38,22 @@ public sealed record ToolManifestSnapshotRequest(
     Guid SessionId,
     IReadOnlyList<string> AllowedToolIds,
     bool AllowAllTools,
-    IReadOnlyList<string>? SpawnableToolIds = null);
+    IReadOnlyList<string>? SpawnableToolIds = null,
+    Guid? ModeVersionId = null)
+{
+    /// <summary>
+    /// Preserves the pre-ModeVersionId constructor signature for already compiled
+    /// host integrations. New admission code should pass the explicit frozen mode.
+    /// </summary>
+    public ToolManifestSnapshotRequest(
+        Guid sessionId,
+        IReadOnlyList<string> allowedToolIds,
+        bool allowAllTools,
+        IReadOnlyList<string>? spawnableToolIds)
+        : this(sessionId, allowedToolIds, allowAllTools, spawnableToolIds, null)
+    {
+    }
+}
 
 /// <summary>
 /// Immutable v2 tool metadata retained in the run's frozen configuration.  It is

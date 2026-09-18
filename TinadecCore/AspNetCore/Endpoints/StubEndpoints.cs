@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
@@ -154,13 +155,15 @@ public static class StubEndpoints
             });
         });
 
-        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration runtime, CancellationToken ct) =>
+        app.MapGet("/api/v1/tool-layer-readiness", async (IToolRegistry registry, IAgentRuntimeConfiguration runtime, IConfiguration configuration, CancellationToken ct) =>
         {
             IReadOnlyList<ToolManifestEntryDto> tools = [];
             string[] notes = [];
             try
             {
-                tools = await registry.ListToolsAsync(cancellationToken: ct).ConfigureAwait(false);
+                var workspaceRoot = configuration["TinadecTools:DefaultWorkspaceRoot"];
+                if (string.IsNullOrWhiteSpace(workspaceRoot)) workspaceRoot = Directory.GetCurrentDirectory();
+                tools = await registry.ListToolsAsync(workspaceRoot, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

@@ -153,19 +153,27 @@ public static class InteractionsEndpoints
         // queued / parallel: normal admission via coordinator
         RunSubmission? admission = null;
         string admissionStatus = "queued";
+        var permissionMode = el.TryGetProperty("permission_mode", out var pm) && !string.IsNullOrWhiteSpace(pm.GetString())
+            ? pm.GetString()!.Trim().ToLowerInvariant()
+            : "default";
+        var invocationOverride = meetingModelOverride is null
+            ? null
+            : new SessionModelOverride(meetingModelOverride.ProviderInstanceId, meetingModelOverride.Model);
         try
         {
             // Mode identity is frozen from the session's bound/persisted mode
             // version; no legacy application-mode/agent-mode admission surface
             // exists anymore. Unattended permission policies ride on
             // permission_mode alone.
-            var permissionMode = el.TryGetProperty("permission_mode", out var pm) && !string.IsNullOrWhiteSpace(pm.GetString())
-                ? pm.GetString()!.Trim().ToLowerInvariant()
-                : "default";
-            var invocationOverride = meetingModelOverride is null
-                ? null
-                : new SessionModelOverride(meetingModelOverride.ProviderInstanceId, meetingModelOverride.Model);
-            admission = await coordinator.SubmitAsync(new FullDuplexInvocation(sessionId, content, clientMessageId!, permissionMode, targetRunId, expectedRev, invocationOverride), ct);
+            admission = await coordinator.SubmitAsync(new FullDuplexInvocation(
+                sessionId,
+                content,
+                clientMessageId!,
+                permissionMode,
+                targetRunId,
+                expectedRev,
+                invocationOverride,
+                modeVersionId), ct);
             admissionStatus = dispatchMode == "parallel" ? "assigned" : "queued";
         }
         catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")
@@ -176,41 +184,105 @@ public static class InteractionsEndpoints
             // branch fabricated a transient id and lost all three.
             var idempotencyKey = $"session:{sessionId}:queued:{clientMessageId}";
             await using var lifecycleDb = await lifecycleDbFactory.CreateDbContextAsync(ct);
-            var replay = await lifecycleDb.RunDirectives.AsNoTracking()
+            var replay = await lifecycleDb.RunDirectives
                 .FirstOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, ct);
-            if (replay is not null)
+            if (replay is { RunId: not null })
             {
                 var replayRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
                 var replayCursor = await RunStreamCursorAsync(lifecycleDbFactory, replay.RunId, ct).ConfigureAwait(false);
                 return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction", client_message_id = clientMessageId, context_revision = replayRevision, stream_cursor = replayCursor, correlation_id = clientMessageId });
             }
-            var queuedId = Guid.NewGuid();
+
             var runs = await lifecycle.ListRunsAsync(sessionId, ct);
             var activeRun = runs.FirstOrDefault(run => run.Status is not ("completed" or "failed" or "cancelled"));
-            var message = await conversations.AppendMessageAsync(sessionId, "user", content.Trim(), clientMessageId: $"queued:{clientMessageId}", cancellationToken: ct);
-            lifecycleDb.RunDirectives.Add(new RunDirectiveRecord
+            if (activeRun is null)
             {
-                Id = queuedId,
-                TenantId = session.TenantId,
-                WorkspaceId = session.WorkspaceId,
-                SessionId = sessionId,
-                RunId = activeRun?.Id,
-                MessageId = message.Id,
-                Kind = "queued_interaction",
-                Status = "pending",
-                PayloadJson = JsonSerializer.Serialize(new { content, client_message_id = clientMessageId, dispatch_mode = dispatchMode, mode_version_id = modeVersionId }),
-                IdempotencyKey = idempotencyKey,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
-            await lifecycleDb.SaveChangesAsync(ct);
-            if (activeRun is { } target)
-            {
-                await lifecycle.AppendEventAsync(target.Id, "run.queued", new { interaction_id = queuedId, directive_id = queuedId, message_id = message.Id, content, dispatch_mode = dispatchMode }, "Interaction queued behind the active run", "info", cancellationToken: ct);
+                // The limiting run may have crossed terminal between admission and
+                // queue persistence. Retry once instead of creating an orphan
+                // directive with no owner for the repair loop to discover.
+                try
+                {
+                    admission = await coordinator.SubmitAsync(new FullDuplexInvocation(
+                        sessionId,
+                        content,
+                        clientMessageId!,
+                        permissionMode,
+                        targetRunId,
+                        expectedRev,
+                        invocationOverride,
+                        modeVersionId), ct).ConfigureAwait(false);
+                    admissionStatus = "queued";
+                }
+                catch (RunAdmissionException retry) when (retry.Code == "ACTIVE_RUN_LIMIT")
+                {
+                    runs = await lifecycle.ListRunsAsync(sessionId, ct).ConfigureAwait(false);
+                    activeRun = runs.FirstOrDefault(run => run.Status is not ("completed" or "failed" or "cancelled"));
+                }
             }
-            var overflowRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
-            var overflowCursor = await RunStreamCursorAsync(lifecycleDbFactory, activeRun?.Id, ct).ConfigureAwait(false);
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{queuedId}", new { interaction_id = queuedId, session_id = sessionId, run_id = activeRun?.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message, client_message_id = clientMessageId, context_revision = overflowRevision, stream_cursor = overflowCursor, correlation_id = clientMessageId });
+
+            if (admission is null)
+            {
+                if (activeRun is null)
+                {
+                    return Results.Conflict(new
+                    {
+                        code = "queue_owner_changed",
+                        message = "The active run changed while the interaction was being queued. Retry the same client_message_id."
+                    });
+                }
+
+                var message = await conversations.AppendMessageAsync(
+                    sessionId,
+                    "user",
+                    content.Trim(),
+                    clientMessageId: clientMessageId,
+                    cancellationToken: ct).ConfigureAwait(false);
+                var directive = replay ?? new RunDirectiveRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = session.TenantId,
+                    WorkspaceId = session.WorkspaceId,
+                    SessionId = sessionId,
+                    Kind = "queued_interaction",
+                    Status = "pending",
+                    IdempotencyKey = idempotencyKey,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                directive.RunId = activeRun.Id;
+                directive.MessageId = message.Id;
+                directive.PayloadJson = JsonSerializer.Serialize(new
+                {
+                    content,
+                    client_message_id = clientMessageId,
+                    dispatch_mode = dispatchMode,
+                    mode_version_id = modeVersionId,
+                    permission_mode = permissionMode,
+                    meeting_model_override = meetingModelOverride is null
+                        ? null
+                        : new
+                        {
+                            provider_instance_id = meetingModelOverride.ProviderInstanceId,
+                            model = meetingModelOverride.Model
+                        }
+                });
+                directive.UpdatedAt = DateTimeOffset.UtcNow;
+                if (replay is null) lifecycleDb.RunDirectives.Add(directive);
+                await lifecycleDb.SaveChangesAsync(ct).ConfigureAwait(false);
+                await lifecycle.AppendEventAsync(activeRun.Id, "run.queued", new
+                {
+                    interaction_id = directive.Id,
+                    directive_id = directive.Id,
+                    message_id = message.Id,
+                    content,
+                    dispatch_mode = dispatchMode,
+                    mode_version_id = modeVersionId,
+                    permission_mode = permissionMode,
+                    meeting_model_override = meetingModelOverride
+                }, "Interaction queued behind the active run", "info", cancellationToken: ct).ConfigureAwait(false);
+                var overflowRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
+                var overflowCursor = await RunStreamCursorAsync(lifecycleDbFactory, activeRun.Id, ct).ConfigureAwait(false);
+                return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{directive.Id}", new { interaction_id = directive.Id, session_id = sessionId, run_id = activeRun.Id, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = ex.Message, client_message_id = clientMessageId, context_revision = overflowRevision, stream_cursor = overflowCursor, correlation_id = clientMessageId });
+            }
         }
         catch (RunAdmissionException ex) when (ex.Code == "CONTEXT_REVISION_CONFLICT")
         {

@@ -15,7 +15,7 @@ namespace TinadecCore.Lifecycle;
 /// in-memory waiter. Content writes may be left orphaned on a database rollback,
 /// but no executable approval/execution relationship is committed partially.
 /// </summary>
-public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExecutionCoordinator
+public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExecutionCoordinator, ILeaseFencedToolExecutionCoordinator
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -502,7 +502,31 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         _ => 5
     };
 
-    public async Task<ToolExecutionStartDecision> TryStartAsync(Guid executionId, bool allowStaleRunningReset = false, CancellationToken cancellationToken = default)
+    public Task<ToolExecutionStartDecision> TryStartAsync(
+        Guid executionId,
+        bool allowStaleRunningReset = false,
+        CancellationToken cancellationToken = default) =>
+        TryStartCoreAsync(executionId, authority: null, allowStaleRunningReset, cancellationToken);
+
+    public Task<ToolExecutionStartDecision> TryStartUnderRunLeaseAsync(
+        Guid executionId,
+        RunExecutionAuthority authority,
+        bool allowStaleRunningReset = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(authority);
+        if (string.IsNullOrWhiteSpace(authority.LeaseOwner))
+            throw new ArgumentException("A run lease owner is required for fenced tool execution.", nameof(authority));
+        if (authority.RecoveryCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(authority), "RecoveryCount must not be negative.");
+        return TryStartCoreAsync(executionId, authority, allowStaleRunningReset, cancellationToken);
+    }
+
+    private async Task<ToolExecutionStartDecision> TryStartCoreAsync(
+        Guid executionId,
+        RunExecutionAuthority? authority,
+        bool allowStaleRunningReset,
+        CancellationToken cancellationToken)
     {
         var scope = _tenant.Current;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -515,6 +539,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (IsExecutionTerminal(execution.Status)) return new ToolExecutionStartDecision(execution.Status, snapshot, "Tool execution is terminal.");
         if (execution.Status == "running" && !allowStaleRunningReset)
             return new ToolExecutionStartDecision("already_running", snapshot, "Tool execution is already running.");
+        if (execution.Status == "running" && authority is not null
+            && !await RunAuthorityMatchesAsync(db, execution, authority, cancellationToken).ConfigureAwait(false))
+        {
+            return LostRunAuthority(snapshot);
+        }
         if (execution.Status == "running" && execution.RequiresApproval)
         {
             // A running row the caller proved this process cannot hold (host
@@ -545,6 +574,8 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             x.Id == execution.RunId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
             cancellationToken).ConfigureAwait(false);
         if (run is null) return new ToolExecutionStartDecision("not_found", snapshot, "Run was not found.");
+        if (authority is not null && !MatchesRunAuthority(run, authority, DateTimeOffset.UtcNow))
+            return LostRunAuthority(snapshot);
         if (run.Status == "cancelled")
         {
             await CancelExecutionAsync(db, execution, cancellationToken).ConfigureAwait(false);
@@ -556,6 +587,26 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         if (!execution.RequiresApproval)
         {
             if (execution.Status != "requested") return new ToolExecutionStartDecision(execution.Status, snapshot, "Tool execution is not ready.");
+            if (authority is not null)
+            {
+                await using var readOnlyStartTransaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+                if (!await TryClaimRunAuthorityAsync(db, execution, authority, cancellationToken).ConfigureAwait(false))
+                {
+                    await readOnlyStartTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    return LostRunAuthority(snapshot);
+                }
+                await db.Entry(execution).ReloadAsync(cancellationToken).ConfigureAwait(false);
+                if (execution.Status != "requested")
+                {
+                    await readOnlyStartTransaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    return new ToolExecutionStartDecision(execution.Status, await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false), "Tool execution is not ready.");
+                }
+                execution.Status = "running";
+                execution.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await readOnlyStartTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return new ToolExecutionStartDecision("running", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
+            }
             execution.Status = "running";
             execution.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -668,6 +719,12 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             return new ToolExecutionStartDecision("not_approved", snapshot, "Approval is not executable.");
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        if (authority is not null
+            && !await TryClaimRunAuthorityAsync(db, execution, authority, cancellationToken).ConfigureAwait(false))
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return LostRunAuthority(snapshot);
+        }
         var consumed = await db.ApprovalRequests
             .Where(x => x.Id == approvalId
                 && x.TenantId == scope.TenantId
@@ -704,6 +761,70 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new ToolExecutionStartDecision("running", await ToSnapshotAsync(execution, cancellationToken).ConfigureAwait(false));
+    }
+
+    private static ToolExecutionStartDecision LostRunAuthority(ToolExecutionSnapshot snapshot) =>
+        new(RunErrorTaxonomy.RunLeaseLost, snapshot,
+            "The tool execution caller no longer owns the current run lease epoch.");
+
+    private async Task<bool> RunAuthorityMatchesAsync(
+        LifecycleDbContext db,
+        ToolExecutionRecord execution,
+        RunExecutionAuthority authority,
+        CancellationToken cancellationToken)
+    {
+        var run = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.Id == execution.RunId
+            && x.TenantId == execution.TenantId
+            && x.WorkspaceId == execution.WorkspaceId,
+            cancellationToken).ConfigureAwait(false);
+        return run is not null && MatchesRunAuthority(run, authority, DateTimeOffset.UtcNow);
+    }
+
+    private static bool MatchesRunAuthority(
+        RunRecord run,
+        RunExecutionAuthority authority,
+        DateTimeOffset now) =>
+        string.Equals(run.LeaseOwner, authority.LeaseOwner, StringComparison.Ordinal)
+        && run.RecoveryCount == authority.RecoveryCount
+        && run.LeaseExpiresAt is { } expiresAt
+        && expiresAt > now
+        && run.CompletedAt is null
+        && run.Status is not ("cancelled" or "completed" or "failed" or "paused");
+
+    /// <summary>
+    /// Acquires a short database row lock on the run while re-validating the exact
+    /// lease epoch. The surrounding tool-start transaction keeps cancellation or a
+    /// lease takeover from winning between this check and the execution/approval
+    /// transition. Whichever transaction claims the run row first becomes the
+    /// authoritative ordering point.
+    /// </summary>
+    private static async Task<bool> TryClaimRunAuthorityAsync(
+        LifecycleDbContext db,
+        ToolExecutionRecord execution,
+        RunExecutionAuthority authority,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var nowMs = now.ToUnixTimeMilliseconds();
+        var claimed = await db.Runs
+            .Where(run => run.Id == execution.RunId
+                && run.TenantId == execution.TenantId
+                && run.WorkspaceId == execution.WorkspaceId
+                && run.LeaseOwner == authority.LeaseOwner
+                && run.RecoveryCount == authority.RecoveryCount
+                && run.LeaseExpiresUnixMilliseconds != null
+                && run.LeaseExpiresUnixMilliseconds > nowMs
+                && run.CompletedAt == null
+                && run.Status != "cancelled"
+                && run.Status != "completed"
+                && run.Status != "failed"
+                && run.Status != "paused")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(run => run.LeaseHeartbeatAt, now)
+                .SetProperty(run => run.LeaseHeartbeatUnixMilliseconds, nowMs),
+                cancellationToken).ConfigureAwait(false);
+        return claimed == 1;
     }
 
     public async Task<ToolExecutionSnapshot> CompleteAsync(Guid executionId, string resultJson, bool? toolSuccess = null, CancellationToken cancellationToken = default)

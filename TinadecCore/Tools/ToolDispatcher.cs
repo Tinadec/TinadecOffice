@@ -29,7 +29,7 @@ public sealed class ToolDispatchOptions
 /// never waits inside an HTTP request: prepare commits its execution/approval pair,
 /// and resume consumes that approval exactly once when the run is eligible.
 /// </summary>
-public sealed class ToolDispatcher : IToolDispatcher
+public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> WorkspaceLocks = new(StringComparer.OrdinalIgnoreCase);
 
@@ -261,7 +261,19 @@ public sealed class ToolDispatcher : IToolDispatcher
         }
     }
 
-    public async Task<ToolDispatchResultDto> ResumeAsync(string executionId, CancellationToken cancellationToken = default)
+    public Task<ToolDispatchResultDto> ResumeAsync(string executionId, CancellationToken cancellationToken = default) =>
+        ResumeCoreAsync(executionId, authority: null, cancellationToken);
+
+    public Task<ToolDispatchResultDto> ResumeAsync(
+        string executionId,
+        RunExecutionAuthority authority,
+        CancellationToken cancellationToken = default) =>
+        ResumeCoreAsync(executionId, authority, cancellationToken);
+
+    private async Task<ToolDispatchResultDto> ResumeCoreAsync(
+        string executionId,
+        RunExecutionAuthority? authority,
+        CancellationToken cancellationToken)
     {
         if (!Guid.TryParse(executionId, out var executionGuid)) return Blocked("execution_id must be a valid id.");
         var execution = await _executions.FindAsync(executionGuid, cancellationToken).ConfigureAwait(false);
@@ -270,7 +282,18 @@ public sealed class ToolDispatcher : IToolDispatcher
         // A running row this process holds is a genuinely live call, not a
         // stale remnant: answer already_running before the authorization phase
         // can clobber the row's status back to requested underneath the call.
-        if (execution.Status == "running" && _inFlightCalls.IsTracked(executionGuid))
+        var wasLocallyTracked = _inFlightCalls.IsTracked(executionGuid);
+        if (execution.Status == "running" && wasLocallyTracked)
+        {
+            return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.ToolAlreadyRunning, Message = "Tool execution is already running." };
+        }
+
+        // Register BEFORE the durable start claim. Once the execution becomes
+        // running, run-control cancellation must be able to signal this exact
+        // process during the narrow claim-to-provider window, not only after the
+        // provider call has already begun.
+        using var inFlight = _inFlightCalls.TryRegister(execution.RunId, execution.Id);
+        if (inFlight is null)
         {
             return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.ToolAlreadyRunning, Message = "Tool execution is already running." };
         }
@@ -374,9 +397,29 @@ public sealed class ToolDispatcher : IToolDispatcher
         // approval-gated calls, re-drive for read-only ones) instead of
         // answering already_running forever. A row this process does hold
         // keeps the legacy already_running answer.
-        var start = await _executions.TryStartAsync(executionGuid,
-            allowStaleRunningReset: !_inFlightCalls.IsTracked(executionGuid),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        ToolExecutionStartDecision start;
+        if (authority is not null)
+        {
+            if (_executions is not ILeaseFencedToolExecutionCoordinator fencedExecutions)
+            {
+                return Blocked(
+                    "The configured tool execution coordinator does not support run-lease fencing.",
+                    execution,
+                    RunErrorTaxonomy.RunLeaseLost);
+            }
+            start = await fencedExecutions.TryStartUnderRunLeaseAsync(
+                executionGuid,
+                authority,
+                allowStaleRunningReset: !wasLocallyTracked,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            start = await _executions.TryStartAsync(
+                executionGuid,
+                allowStaleRunningReset: !wasLocallyTracked,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
         switch (start.Status)
         {
             case "awaiting_approval":
@@ -408,6 +451,8 @@ public sealed class ToolDispatcher : IToolDispatcher
                 return new ToolDispatchResultDto { Status = start.Status, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, Message = start.Message };
             case "already_running":
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = "already_running", Message = start.Message };
+            case RunErrorTaxonomy.RunLeaseLost:
+                return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.RunLeaseLost, Message = start.Message };
             case "running":
                 execution = start.Execution ?? execution;
                 break;
@@ -415,7 +460,49 @@ public sealed class ToolDispatcher : IToolDispatcher
                 return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = start.Status, Message = start.Message };
         }
 
-        await TrySetRunStatusAsync(execution.RunId, "executing", cancellationToken).ConfigureAwait(false);
+        // Cancellation may have committed immediately after the start claim. The
+        // call has not reached the provider yet, so this outcome is still known:
+        // cancel the execution instead of manufacturing outcome_unknown.
+        if (inFlight.Token.IsCancellationRequested)
+        {
+            const string cancelledBeforeProvider = "The run was cancelled before the tool request reached the provider.";
+            var cancelled = await _executions.FailAsync(
+                execution.Id,
+                "cancelled",
+                RunErrorTaxonomy.Cancelled,
+                cancelledBeforeProvider,
+                CancellationToken.None).ConfigureAwait(false);
+            return ResultForFailure(cancelled, ToolDispatchStatus.Blocked);
+        }
+
+        if (!await TrySetRunStatusAsync(execution.RunId, "executing", cancellationToken).ConfigureAwait(false))
+        {
+            RunState? runState = null;
+            try
+            {
+                runState = await _lifecycle.GetRunStateAsync(execution.RunId.ToString(), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex, "Could not verify run {RunId} after execution-start status update failed.", execution.RunId);
+            }
+
+            if (runState is null
+                || runState.Status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled or RunStatus.Paused
+                || runState.CompletedAt is not null)
+            {
+                var category = runState?.Status == RunStatus.Cancelled
+                    ? RunErrorTaxonomy.Cancelled
+                    : RunErrorTaxonomy.RunLeaseLost;
+                var cancelled = await _executions.FailAsync(
+                    execution.Id,
+                    "cancelled",
+                    category,
+                    "The run lost execution authority before the tool request reached the provider.",
+                    CancellationToken.None).ConfigureAwait(false);
+                return ResultForFailure(cancelled, ToolDispatchStatus.Blocked);
+            }
+        }
         if (!TryParseParameters(execution.ParametersJson, out var parameters))
         {
             var failed = await _executions.FailAsync(execution.Id, "failed", "invalid_parameters", "Persisted tool parameters are invalid JSON.", cancellationToken).ConfigureAwait(false);
@@ -459,14 +546,6 @@ public sealed class ToolDispatcher : IToolDispatcher
             await pump.AppendCommandAsync(parameters, scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
         }
 
-        // Track the in-flight call so a run cancel interrupts the provider call
-        // instead of waiting out the wire timeout, and so a later resume can
-        // tell a live call apart from a stale running row.
-        using var inFlight = _inFlightCalls.TryRegister(execution.RunId, execution.Id);
-        if (inFlight is null)
-        {
-            return new ToolDispatchResultDto { Status = ToolDispatchStatus.Blocked, ExecutionId = executionId, ApprovalId = execution.ApprovalId?.ToString(), Attempt = execution.Attempt, ErrorCategory = RunErrorTaxonomy.ToolAlreadyRunning, Message = "Tool execution is already running." };
-        }
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, inFlight.Token);
         var callToken = linkedCts.Token;
 
@@ -518,10 +597,12 @@ public sealed class ToolDispatcher : IToolDispatcher
                 {
                     var resultJson = response.Result is { } result ? result.GetRawText() : "null";
                     if (streams) RecordTerminalSession(response.Result, execution, scope);
-                    // Shell-class tools report command success inside the result
-                    // payload (a non-zero exit is a wire success). Record that
-                    // honestly without changing the completed dispatch outcome:
-                    // the result still flows back to the model.
+                    // TinadecTools responses commonly report business success inside
+                    // the result payload. A wire-level success only means the provider
+                    // returned a result; { success:false } is still a real tool failure
+                    // (write_file validation, shell exit code, etc.). Record that fact
+                    // without changing the completed dispatch outcome so the result can
+                    // still flow back to the model for correction.
                     var toolSuccess = ReadEmbeddedToolSuccess(descriptor.Id, response.Result);
                     var completed = await _executions.CompleteAsync(execution.Id, resultJson, toolSuccess, cancellationToken).ConfigureAwait(false);
                     await AppendEventAsync(execution.RunId, "tool.execution.completed",
@@ -901,15 +982,17 @@ public sealed class ToolDispatcher : IToolDispatcher
         }, cancellationToken, execution.TaskId, execution.ToolId, "error").ConfigureAwait(false);
     }
 
-    private async Task TrySetRunStatusAsync(Guid runId, string status, CancellationToken cancellationToken)
+    private async Task<bool> TrySetRunStatusAsync(Guid runId, string status, CancellationToken cancellationToken)
     {
         try
         {
             await _lifecycle.SetRunStatusAsync(runId.ToString(), status, null, cancellationToken).ConfigureAwait(false);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not move run {RunId} to {Status}", runId, status);
+            return false;
         }
     }
 
@@ -1151,13 +1234,14 @@ public sealed class ToolDispatcher : IToolDispatcher
     internal const int MaxWireTimeoutSeconds = 1800 + WireTimeoutMarginSeconds;
 
     /// <summary>
-    /// Reads the embedded <c>success</c> field of a shell-class tool result.
-    /// Null when the tool reports no embedded outcome (non-shell tools, or a
-    /// payload without the field).
+    /// Reads the embedded <c>success</c> field of any tool result that exposes
+    /// one. Null when the payload does not carry an explicit business outcome.
+    /// The tool id remains part of the signature for call-site/test compatibility
+    /// and diagnostics even though outcome extraction is schema-driven now.
     /// </summary>
     internal static bool? ReadEmbeddedToolSuccess(string toolId, JsonElement? result)
     {
-        if (!StreamingTools.Contains(toolId)) return null;
+        _ = toolId;
         if (result is not { ValueKind: JsonValueKind.Object } payload) return null;
         if (!payload.TryGetProperty("success", out var success)) return null;
         return success.ValueKind switch

@@ -62,6 +62,7 @@ public sealed class StepResult
     public string Status { get; init; } = "completed";
     public string Summary { get; init; } = string.Empty;
     public IReadOnlyList<string> Evidence { get; init; } = [];
+    public IReadOnlyList<LaneCriterionVerdict> CriterionVerdicts { get; init; } = [];
 
     /// <summary>
     /// Optional context patch proposed by the worker. The engine applies it

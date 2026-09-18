@@ -172,8 +172,12 @@ public sealed class GitTopologyTests
     {
         public Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default) => Task.FromResult<HashSet<string>?>(tools);
 
+        public Task<HashSet<string>?> GetEffectiveToolsForModeAsync(Guid sessionId, Guid modeVersionId, CancellationToken cancellationToken = default) => Task.FromResult<HashSet<string>?>(tools);
+
         public Task<ChatResolution?> TryResolveFormalChatAsync(Guid sessionId, string layer, Guid runId, Guid turnId, CancellationToken cancellationToken = default) => Task.FromResult<ChatResolution?>(null);
 
         public Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken cancellationToken = default) => Task.FromResult<FormalModeRoster?>(null);
+
+        public Task<FormalModeRoster?> ResolveRosterForModeAsync(Guid sessionId, Guid modeVersionId, CancellationToken cancellationToken = default) => Task.FromResult<FormalModeRoster?>(null);
     }
 }

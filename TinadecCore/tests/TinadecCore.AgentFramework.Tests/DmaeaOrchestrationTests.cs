@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.Extensions.AI;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.DmaEA;
 
@@ -264,7 +266,7 @@ public sealed class DmaeaOrchestrationTests
         Assert.Equal(nodeId, result.TaskNodeId);
         Assert.Equal("completed", result.Status);
         Assert.Equal("任务A 完成", result.Summary);
-        Assert.Equal(new[] { "任务A 完成" }, result.Evidence);
+        Assert.Equal(new[] { "任务A 完成", "worker_outcome:completed:legacy" }, result.Evidence);
     }
 
     [Fact]
@@ -295,6 +297,186 @@ public sealed class DmaeaOrchestrationTests
         Assert.Contains("任务A 已完成。", result.Summary, StringComparison.Ordinal);
         Assert.DoesNotContain("先读取文件再说", result.Summary, StringComparison.Ordinal);
         Assert.DoesNotContain("<think>", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void WorkerOutcomeProtocol_RequiresAnExplicitOutcomeForFullDuplexCompletion()
+    {
+        var parsed = WorkerOutcomeProtocol.Parse("实现已经完成。", requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.True(parsed.MissingRequiredMarker);
+        Assert.False(parsed.Explicit);
+    }
+
+    [Theory]
+    [InlineData("Task not completed: unable to invoke write_file.")]
+    [InlineData("任务未完成：当前执行者没有 write_file。")]
+    public void WorkerOutcomeProtocol_RecognizesHistoricalFalseCompletionReports(string output)
+    {
+        var parsed = WorkerOutcomeProtocol.Parse(output, requireExplicit: true);
+
+        Assert.Equal("blocked", parsed.Status);
+        Assert.False(parsed.MissingRequiredMarker);
+        Assert.True(
+            parsed.Summary.Contains("not completed", StringComparison.OrdinalIgnoreCase)
+            || parsed.Summary.Contains("未完成", StringComparison.Ordinal),
+            parsed.Summary);
+    }
+
+    [Fact]
+    public void WorkerOutcomeProtocol_ParsesAndRemovesTheExplicitMarker()
+    {
+        var parsed = WorkerOutcomeProtocol.Parse("已写入文件并通过测试。\nTASK_OUTCOME: completed", requireExplicit: true);
+
+        Assert.Equal("completed", parsed.Status);
+        Assert.Equal("已写入文件并通过测试。", parsed.Summary);
+        Assert.True(parsed.Explicit);
+        Assert.False(parsed.MissingRequiredMarker);
+    }
+
+    [Fact]
+    public void TaskOutcomeFacts_OverrideASyntheticPassAndEventuallyEscalate()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            Status = "blocked",
+            ResultStatus = "blocked",
+            ResultSummary = "Task not completed: write_file was unavailable."
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, ["no supervisor"], []);
+
+        var revise = FullDuplexRunEngine.EnforceTaskOutcomeFacts([task], pass, revisionRound: 0, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Revise, revise.Decision);
+        Assert.Equal([0], revise.ReviseTaskIndexes);
+        Assert.Contains(revise.Reasons, reason => reason.Contains("task_outcome:write:blocked", StringComparison.Ordinal));
+
+        var escalate = FullDuplexRunEngine.EnforceTaskOutcomeFacts([task], pass, revisionRound: 2, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Escalate, escalate.Decision);
+        Assert.Empty(escalate.ReviseTaskIndexes);
+        Assert.Contains(escalate.Reasons, reason => reason.Contains("require user review", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ToolOutcomeFacts_RejectCompletedImmediatelyAfterEmbeddedFailure()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            ToolTurns =
+            [
+                new WorkerToolTurn
+                {
+                    CallId = "call-1",
+                    ToolId = "write_file",
+                    ResultJson = "{\"success\":false,\"error\":\"invalid path\"}",
+                    DispatchStatus = ToolDispatchStatus.Completed,
+                    ErrorCategory = RunErrorTaxonomy.ToolError,
+                    ToolSuccess = false
+                }
+            ]
+        };
+
+        Assert.False(FullDuplexRunEngine.LatestEmbeddedToolOutcome(task));
+        Assert.Equal("failed", FullDuplexRunEngine.EnforceLatestToolOutcomeFact(task, "completed"));
+    }
+
+    [Fact]
+    public void ToolOutcomeFacts_LaterExplicitSuccessClearsEmbeddedFailureFence()
+    {
+        var task = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            ToolTurns =
+            [
+                new WorkerToolTurn
+                {
+                    CallId = "call-1",
+                    ToolId = "write_file",
+                    ToolSuccess = false
+                },
+                new WorkerToolTurn
+                {
+                    CallId = "call-2",
+                    ToolId = "write_file",
+                    ToolSuccess = true
+                }
+            ]
+        };
+
+        Assert.True(FullDuplexRunEngine.LatestEmbeddedToolOutcome(task));
+        Assert.Equal("completed", FullDuplexRunEngine.EnforceLatestToolOutcomeFact(task, "completed"));
+    }
+
+    [Fact]
+    public void MeetingEvidenceFallback_OnlyActivatesAfterCompletedWorkAndRetryExhaustion()
+    {
+        var checkpoint = new FullDuplexCheckpointV1
+        {
+            UserGoal = "介绍项目",
+            TransientModelRetryCount = FullDuplexRunEngine.MaxDurableModelRetries,
+            Tasks =
+            [
+                new DurableTaskNode
+                {
+                    TaskId = Guid.NewGuid(),
+                    TaskKey = "inspect",
+                    Title = "检查项目",
+                    Status = "completed",
+                    ResultStatus = "completed",
+                    ResultSummary = "已读取 README 并完成介绍。"
+                }
+            ]
+        };
+        var failure = new ModelInvocationExhaustedException(
+            "provider_server_error",
+            "The model provider returned a server error.",
+            new HttpRequestException());
+
+        Assert.True(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+        var response = FullDuplexRunEngine.BuildMeetingEvidenceFallback(checkpoint, failure.Category);
+        Assert.Contains("已读取 README", response, StringComparison.Ordinal);
+        Assert.Contains("provider_server_error", response, StringComparison.Ordinal);
+
+        checkpoint.TransientModelRetryCount--;
+        Assert.False(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+        checkpoint.Tasks[0].Status = "blocked";
+        checkpoint.TransientModelRetryCount = FullDuplexRunEngine.MaxDurableModelRetries;
+        Assert.False(FullDuplexRunEngine.CanUseMeetingEvidenceFallback(checkpoint, failure));
+    }
+
+    [Fact]
+    public void QueuedInteractionPayload_PreservesFrozenModePermissionAndMeetingOverride()
+    {
+        var modeVersionId = Guid.NewGuid();
+        var providerInstanceId = Guid.NewGuid();
+        var payload = FullDuplexRunEngine.ParseQueuedInteractionPayload(JsonSerializer.Serialize(new
+        {
+            content = "继续执行",
+            client_message_id = "queued-1",
+            permission_mode = "full-access",
+            mode_version_id = modeVersionId,
+            meeting_model_override = new
+            {
+                provider_instance_id = providerInstanceId,
+                model = "qwen-test"
+            }
+        }));
+
+        Assert.NotNull(payload);
+        Assert.Equal("继续执行", payload!.Content);
+        Assert.Equal("queued-1", payload.ClientMessageId);
+        Assert.Equal("full-access", payload.PermissionMode);
+        Assert.Equal(modeVersionId, payload.ModeVersionId);
+        Assert.Equal(providerInstanceId, payload.MeetingModelOverride?.ProviderInstanceId);
+        Assert.Equal("qwen-test", payload.MeetingModelOverride?.Model);
     }
 
     // ──────────────────────────────────────────────────────────

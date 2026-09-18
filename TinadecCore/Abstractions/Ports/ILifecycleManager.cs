@@ -33,11 +33,45 @@ public interface ILifecycleManager
         string runId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Atomically claims the successful terminal outcome while keeping the run in
+    /// a lease-eligible non-terminal status until its user-visible artifacts are
+    /// durable. False means another terminal outcome or an earlier completion
+    /// claim already won.
+    /// </summary>
+    Task<bool> TryClaimRunCompletionAsync(
+        string runId,
+        string expectedStatus,
+        string? expectedLeaseOwner,
+        int? expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
     Task SetRunStatusAsync(
         string runId,
         string status,
         string? summary = null,
         CancellationToken cancellationToken = default);
+
+    Task SetRunStatusUnderLeaseAsync(
+        string runId,
+        string status,
+        string? summary,
+        string expectedLeaseOwner,
+        int expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException(
+            "This lifecycle implementation does not support lease-fenced run status transitions."));
+
+    Task SetRunFailedUnderLeaseAsync(
+        string runId,
+        string summary,
+        string errorCategory,
+        string expectedLeaseOwner,
+        int expectedRecoveryCount,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException(
+            "This lifecycle implementation does not support lease-fenced terminal transitions."));
 
     Task<int> CountActiveRunsAsync(string sessionId, CancellationToken cancellationToken = default);
 
@@ -195,6 +229,7 @@ public sealed record RunState
     public DateTimeOffset? LeaseHeartbeatAt { get; init; }
     public int RecoveryCount { get; init; }
     public string? Summary { get; init; }
+    public string? TerminalErrorCategory { get; init; }
     public DateTimeOffset StartedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAt { get; init; }
 }

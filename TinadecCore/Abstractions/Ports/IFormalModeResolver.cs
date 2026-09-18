@@ -12,6 +12,17 @@ public interface IFormalModeResolver
     Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves the effective tool union for one explicitly frozen mode version.
+    /// Queued interactions use this path so a later session-mode change cannot alter
+    /// the request that was already accepted.
+    /// </summary>
+    Task<HashSet<string>?> GetEffectiveToolsForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<HashSet<string>?>(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Resolves the runnable agent roster for the session's published relational mode version.
     /// Returns null when the session has no mode_version_id or the mode cannot be resolved, in which case
     /// the caller should fall back to the TOML baseline roster.
@@ -20,6 +31,13 @@ public interface IFormalModeResolver
     /// tool-scope overrides) is part of the same resolution and is never derived from graph shape.
     /// </summary>
     Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken cancellationToken = default);
+
+    /// <summary>Resolves an explicitly selected published mode version for this session scope.</summary>
+    Task<FormalModeRoster?> ResolveRosterForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<FormalModeRoster?>(null);
 }
 
 /// <summary>

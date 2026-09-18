@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Runtime;
@@ -178,6 +179,258 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
             // timestamp is frozen.
             Assert.Equal("second failure", record.Summary);
         }
+    }
+
+    [Fact]
+    public async Task RunStatusMachine_ConcurrentTerminalClaims_KeepTheDatabaseWinner()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "terminal-cas-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Terminal CAS session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/messages",
+            new { content = "Terminal CAS trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.SetRunStatusAsync(run.Id, "executing");
+
+        static async Task<(string Target, bool Succeeded, Exception? Error)> ClaimAsync(
+            string target,
+            Func<Task> claim)
+        {
+            try
+            {
+                await claim();
+                return (target, true, null);
+            }
+            catch (Exception ex)
+            {
+                return (target, false, ex);
+            }
+        }
+
+        var claims = await Task.WhenAll(
+            ClaimAsync("failed", () => lifecycle.SetRunStatusAsync(run.Id, "failed", "failure won")),
+            ClaimAsync("cancelled", () => lifecycle.SetRunStatusAsync(run.Id, "cancelled", "cancel won")));
+
+        var winner = Assert.Single(claims, item => item.Succeeded);
+        var loser = Assert.Single(claims, item => !item.Succeeded);
+        Assert.IsType<InvalidOperationException>(loser.Error);
+
+        await using var db = await runs.CreateDbContextAsync();
+        var stored = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+        Assert.Equal(winner.Target, stored.Status);
+        Assert.NotNull(stored.CompletedAt);
+        Assert.Equal(winner.Target == "failed" ? "failure won" : "cancel won", stored.Summary);
+    }
+
+    [Fact]
+    public async Task RunCompletionClaim_AtomicallyFencesCancellation()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "completion-claim-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Completion claim session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/messages",
+            new { content = "Completion claim trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var runs = _factory.Services.GetRequiredService<IDbContextFactory<LifecycleDbContext>>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.SetRunStatusAsync(run.Id, "executing");
+
+        async Task<(bool Succeeded, Exception? Error)> CancelAsync()
+        {
+            try
+            {
+                await lifecycle.SetRunStatusAsync(run.Id, "cancelled", "cancel attempted");
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex);
+            }
+        }
+
+        var completionTask = lifecycle.TryClaimRunCompletionAsync(run.Id, "executing", null, null);
+        var cancelTask = CancelAsync();
+        await Task.WhenAll(completionTask, cancelTask);
+        var completionWon = await completionTask;
+        var cancel = await cancelTask;
+        Assert.NotEqual(completionWon, cancel.Succeeded);
+
+        if (completionWon)
+        {
+            Assert.IsType<InvalidOperationException>(cancel.Error);
+            await lifecycle.CompleteRunAsync(run.Id);
+        }
+
+        await using var db = await runs.CreateDbContextAsync();
+        var stored = await db.Runs.AsNoTracking().SingleAsync(x => x.Id == run.Id);
+        Assert.Equal(completionWon ? "completed" : "cancelled", stored.Status);
+        Assert.NotNull(stored.CompletedAt);
+    }
+
+    [Fact]
+    public async Task RetryCheckpointPrecondition_RejectsACommittedCancellation()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "retry-precondition-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Retry precondition session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/messages",
+            new { content = "Retry precondition trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.SetRunStatusAsync(run.Id, "executing");
+        await lifecycle.SetRunStatusAsync(run.Id, "cancelled", "user cancelled");
+
+        var error = await Assert.ThrowsAsync<RunCheckpointConflictException>(() =>
+            lifecycle.SaveRunCheckpointAsync(run.Id, new RunCheckpointWrite(
+                0,
+                "executing",
+                "{\"retry\":1}",
+                IdempotencyKey: $"run:{run.Id}:retry-precondition",
+                ExpectedRunStatus: "executing",
+                RequireCompletionUnclaimed: true)));
+        Assert.Equal(0, error.ExpectedRevision);
+        Assert.Equal(0, error.ActualRevision);
+        Assert.Null(await lifecycle.GetCurrentRunCheckpointAsync(run.Id));
+    }
+
+    [Fact]
+    public async Task RecoveryCoordinator_RepairsCancelledRunWithoutTerminalStream()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "cancel-repair-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Cancel repair session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var conversations = _factory.Services.GetRequiredService<IConversationStore>();
+        var user = await conversations.AppendMessageAsync(sessionId, "user", "cancel repair");
+        var revision = await conversations.GetContextRevisionAsync(sessionId);
+        var turn = await conversations.CreateTurnAsync(sessionId, user.Id, "new_task", revision);
+        var lifecycle = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var started = await lifecycle.StartOrGetRunAsync(new RunStartRequest(
+            sessionId.ToString(),
+            user.Id.ToString(),
+            turn.Id.ToString(),
+            revision));
+        var runId = Guid.Parse(started.RunId);
+        await conversations.AttachRunAsync(turn.Id, runId);
+        await lifecycle.SetRunStatusAsync(started.RunId, "cancelled", "simulated host crash after status commit");
+        Assert.Empty(await lifecycle.ReplayRunStreamAsync(started.RunId, turn.Id, 0));
+
+        var coordinator = _factory.Services.GetRequiredService<RecoveryCoordinator>();
+        await coordinator.RunStartupPassesAsync();
+
+        var stream = await lifecycle.ReplayRunStreamAsync(started.RunId, turn.Id, 0);
+        var done = Assert.Single(stream, item => item.Kind == "done");
+        Assert.Equal("cancelled", done.FinishReason);
+        var repairedTurn = await conversations.FindTurnByUserMessageAsync(user.Id);
+        Assert.NotNull(repairedTurn);
+        Assert.Equal("cancelled", repairedTurn.Status);
+    }
+
+    [Fact]
+    public async Task RecoveryCoordinator_RepairsFailedRunWithItsOriginalErrorCategory()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "failed-repair-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Failed repair session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var conversations = _factory.Services.GetRequiredService<IConversationStore>();
+        var user = await conversations.AppendMessageAsync(sessionId, "user", "failed repair");
+        var revision = await conversations.GetContextRevisionAsync(sessionId);
+        var turn = await conversations.CreateTurnAsync(sessionId, user.Id, "new_task", revision);
+        var lifecycle = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var storage = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var started = await lifecycle.StartOrGetRunAsync(new RunStartRequest(
+            sessionId.ToString(),
+            user.Id.ToString(),
+            turn.Id.ToString(),
+            revision));
+        var runId = Guid.Parse(started.RunId);
+        await conversations.AttachRunAsync(turn.Id, runId);
+        var lease = await storage.TryAcquireRunLeaseAsync(runId, "failed-repair-owner", TimeSpan.FromMinutes(1));
+        Assert.True(lease.Acquired);
+        await storage.SetRunFailedUnderLeaseAsync(
+            runId,
+            "The model provider remained unavailable.",
+            "model",
+            lease.OwnerId,
+            lease.RecoveryCount);
+        Assert.Empty(await lifecycle.ReplayRunStreamAsync(started.RunId, turn.Id, 0));
+
+        var coordinator = _factory.Services.GetRequiredService<RecoveryCoordinator>();
+        await coordinator.RunStartupPassesAsync();
+
+        var stream = await lifecycle.ReplayRunStreamAsync(started.RunId, turn.Id, 0);
+        var error = Assert.Single(stream, item => item.Kind == "error");
+        Assert.Equal("model", error.ErrorCategory);
+        Assert.Equal("The model provider remained unavailable.", error.SafeErrorMessage);
+        var repaired = await lifecycle.GetRunStateAsync(started.RunId);
+        Assert.Equal("model", repaired.TerminalErrorCategory);
+        var repairedTurn = await conversations.FindTurnByUserMessageAsync(user.Id);
+        Assert.NotNull(repairedTurn);
+        Assert.Equal("failed", repairedTurn.Status);
+    }
+
+    [Fact]
+    public async Task LeaseEpochPreconditions_RejectThePreviousOwnerAfterRecovery()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "lease-epoch-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Lease epoch session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/messages",
+            new { content = "Lease epoch trigger" })).Content.ReadFromJsonAsync<JsonElement>();
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await lifecycle.SetRunStatusAsync(run.Id, "executing");
+        var first = await lifecycle.TryAcquireRunLeaseAsync(run.Id, "owner-a", TimeSpan.FromMinutes(1));
+        Assert.True(first.Acquired);
+        await lifecycle.ReleaseRunLeaseAsync(run.Id, first.OwnerId);
+        var second = await lifecycle.TryAcquireRunLeaseAsync(run.Id, "owner-b", TimeSpan.FromMinutes(1));
+        Assert.True(second.Acquired);
+        Assert.True(second.RecoveryCount > first.RecoveryCount);
+
+        var checkpointConflict = await Assert.ThrowsAsync<RunCheckpointConflictException>(() =>
+            lifecycle.SaveRunCheckpointAsync(run.Id, new RunCheckpointWrite(
+                0,
+                "executing",
+                "{\"owner\":\"a\"}",
+                IdempotencyKey: $"run:{run.Id}:stale-owner",
+                ExpectedRunStatus: "executing",
+                RequireCompletionUnclaimed: true,
+                ExpectedLeaseOwner: first.OwnerId,
+                ExpectedRecoveryCount: first.RecoveryCount)));
+        Assert.Equal(0, checkpointConflict.ActualRevision);
+        Assert.False(await lifecycle.TryClaimRunCompletionAsync(
+            run.Id,
+            "executing",
+            first.OwnerId,
+            first.RecoveryCount));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => lifecycle.SetRunStatusUnderLeaseAsync(
+            run.Id,
+            "reviewing",
+            null,
+            first.OwnerId,
+            first.RecoveryCount));
+
+        var checkpoint = await lifecycle.SaveRunCheckpointAsync(run.Id, new RunCheckpointWrite(
+            0,
+            "executing",
+            "{\"owner\":\"b\"}",
+            IdempotencyKey: $"run:{run.Id}:current-owner",
+            ExpectedRunStatus: "executing",
+            RequireCompletionUnclaimed: true,
+            ExpectedLeaseOwner: second.OwnerId,
+            ExpectedRecoveryCount: second.RecoveryCount));
+        Assert.Equal(1, checkpoint.Revision);
     }
 
     [Fact]

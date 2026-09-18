@@ -42,6 +42,7 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
             entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
             entity.Property(x => x.Summary).HasColumnName("summary");
+            entity.Property(x => x.TerminalErrorCategory).HasColumnName("terminal_error_category");
             entity.Property(x => x.TaskRevision).HasColumnName("task_revision");
             entity.Property(x => x.LastEventSequence).HasColumnName("last_event_sequence");
             entity.Property(x => x.LastEventAt).HasColumnName("last_event_at");
@@ -54,6 +55,7 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.LeaseOwner).HasMaxLength(256);
             entity.Property(x => x.Status).HasMaxLength(64).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(4096);
+            entity.Property(x => x.TerminalErrorCategory).HasMaxLength(128);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.CreatedAt });
             entity.HasIndex(x => new { x.SessionId, x.Status, x.UpdatedAt });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.TriggerMessageId }).IsUnique();
@@ -243,6 +245,7 @@ public sealed class RunRecord
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public string? Summary { get; set; }
+    public string? TerminalErrorCategory { get; set; }
     public long TaskRevision { get; set; }
     public long LastEventSequence { get; set; }
     public DateTimeOffset? LastEventAt { get; set; }

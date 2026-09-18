@@ -514,7 +514,10 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
 
             if (instructions?.Contains("监督智能体", StringComparison.Ordinal) == true || prompt.Contains("执行证据", StringComparison.Ordinal))
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                    "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[]}"));
+                    "{\"decision\":\"pass\",\"reasons\":[],\"revise_task_indexes\":[],\"criteria_verdicts\":["
+                    + "{\"task_key\":\"build\",\"criterion\":\"完成\",\"satisfied\":true,\"evidence\":\"worker completion evidence recorded\"},"
+                    + "{\"task_key\":\"run-tests\",\"criterion\":\"测试输出文件存在\",\"satisfied\":true,\"evidence\":\"feature.txt tool execution completed\"},"
+                    + "{\"task_key\":\"commit\",\"criterion\":\"产生提交\",\"satisfied\":true,\"evidence\":\"git_commit tool execution completed\"}]}"));
 
             if (instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) == true || prompt.Contains("Execution evidence", StringComparison.Ordinal))
             {
@@ -575,7 +578,26 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
                     ["confirm_commit"] = "yes"
                 })];
             }
-            return [new TextContent("完成")];
+            return [new TextContent(CompletedOutcome(routingText))];
+        }
+
+        private static string CompletedOutcome(string routingText)
+        {
+            if (routingText.Contains("运行测试", StringComparison.Ordinal))
+            {
+                return "测试输出文件已生成。\n"
+                    + "CRITERION_EVIDENCE: 测试输出文件存在 || feature.txt 的工具执行已完成。\n"
+                    + "TASK_OUTCOME: completed";
+            }
+            if (routingText.Contains("提交变更", StringComparison.Ordinal))
+            {
+                return "提交已创建。\n"
+                    + "CRITERION_EVIDENCE: 产生提交 || git_commit 工具执行已完成。\n"
+                    + "TASK_OUTCOME: completed";
+            }
+            return "任务已完成。\n"
+                + "CRITERION_EVIDENCE: 完成 || 脚本任务完成。\n"
+                + "TASK_OUTCOME: completed";
         }
 
         private bool FirstTurn(string title)

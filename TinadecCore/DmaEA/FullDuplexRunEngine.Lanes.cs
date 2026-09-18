@@ -643,10 +643,33 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var latest = tasks.SelectMany(item => item.CriteriaVerdicts.Select(verdict => (TaskKey: item.TaskKey, Verdict: verdict)))
             .GroupBy(pair => (pair.TaskKey, pair.Verdict.Criterion))
             .ToDictionary(group => group.Key, group => group.OrderBy(pair => pair.Verdict.Round).Last().Verdict);
-        foreach (var verdict in latest.Values)
+        if (requiredCriteria is null)
         {
-            if (requiredCriteria is not null && !requiredCriteria.Contains(verdict.Criterion, StringComparer.Ordinal)) continue;
-            if (!verdict.Satisfied || string.IsNullOrWhiteSpace(verdict.Evidence)) return false;
+            foreach (var task in tasks)
+            {
+                foreach (var criterion in task.SuccessCriteria)
+                {
+                    if (!latest.TryGetValue((task.TaskKey, criterion), out var verdict)
+                        || !verdict.Satisfied
+                        || string.IsNullOrWhiteSpace(verdict.Evidence))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        foreach (var criterion in requiredCriteria)
+        {
+            var matches = latest.Values
+                .Where(verdict => string.Equals(verdict.Criterion, criterion, StringComparison.Ordinal))
+                .ToArray();
+            if (matches.Length == 0
+                || matches.Any(verdict => !verdict.Satisfied || string.IsNullOrWhiteSpace(verdict.Evidence)))
+            {
+                return false;
+            }
         }
         return true;
     }
@@ -960,17 +983,47 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         // it was marked "rejected" and the user, who had seen the message accepted,
         // simply never got an answer. Nothing about a queued conversation turn depends
         // on lanes.
-        foreach (var directive in pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList())
-        {
-            var status = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
-            await _lifecycle.DrainRunDirectivesAsync(checkpoint.RunId, [directive.Id], status, cancellationToken).ConfigureAwait(false);
-            checkpoint.DirectiveCursor++;
-        }
+        checkpoint.DirectiveCursor += await ReleaseTerminalQueuedInteractionsAsync(
+            run,
+            pending,
+            cancellationToken).ConfigureAwait(false);
         if (pending.Count > 0)
         {
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "directives-drained", cancellationToken).ConfigureAwait(false);
         }
         return checkpoint;
+    }
+
+    private async Task<int> ReleaseTerminalQueuedInteractionsAsync(
+        RunState run,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(run.RunId, out var runId)) return 0;
+        var pending = await _lifecycle.ListPendingRunDirectivesAsync(runId, cancellationToken).ConfigureAwait(false);
+        return await ReleaseTerminalQueuedInteractionsAsync(run, pending, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<int> ReleaseTerminalQueuedInteractionsAsync(
+        RunState run,
+        IReadOnlyList<RunDirective> pending,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(run.RunId, out var runId)) return 0;
+        var released = 0;
+        foreach (var directive in pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList())
+        {
+            var status = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
+            // Deferred means the user message is still accepted but no run slot is
+            // available yet. Keep it pending so the hosted terminal repair loop can
+            // retry; only a successful admission or permanently unreadable payload
+            // is terminal for the directive itself.
+            if (!string.Equals(status, "deferred", StringComparison.Ordinal))
+            {
+                await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], status, cancellationToken).ConfigureAwait(false);
+                released++;
+            }
+        }
+        return released;
     }
 
     /// <summary>
@@ -989,26 +1042,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private async Task<string> ReleaseQueuedInteractionAsync(RunState run, RunDirective directive, CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
-        string? content = null;
-        string? clientMessageId = null;
-        string? permissionMode = null;
-        try
-        {
-            using var document = JsonDocument.Parse(directive.PayloadJson);
-            var root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("content", out var contentValue) && contentValue.ValueKind == JsonValueKind.String)
-                    content = contentValue.GetString();
-                if (root.TryGetProperty("client_message_id", out var clientValue) && clientValue.ValueKind == JsonValueKind.String)
-                    clientMessageId = clientValue.GetString();
-                if (root.TryGetProperty("permission_mode", out var modeValue) && modeValue.ValueKind == JsonValueKind.String)
-                    permissionMode = modeValue.GetString();
-            }
-        }
-        catch (JsonException) { }
+        var payload = ParseQueuedInteractionPayload(directive.PayloadJson);
 
-        if (string.IsNullOrWhiteSpace(content))
+        if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
         {
             await AppendEventAsync(runId, "interaction.queued_unreadable",
                 "A queued interaction could not be re-admitted: its stored payload carries no content.",
@@ -1031,11 +1067,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             var submission = await coordinator.SubmitAsync(new FullDuplexInvocation(
                 directive.SessionId,
-                content,
-                clientMessageId,
-                string.IsNullOrWhiteSpace(permissionMode) ? "default" : permissionMode,
+                payload.Content,
+                payload.ClientMessageId,
+                string.IsNullOrWhiteSpace(payload.PermissionMode) ? "default" : payload.PermissionMode,
                 TargetRunId: null,
-                ExpectedContextRevision: null), cancellationToken).ConfigureAwait(false);
+                ExpectedContextRevision: null,
+                MeetingModelOverride: payload.MeetingModelOverride,
+                ModeVersionId: payload.ModeVersionId), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "interaction.queued_executed",
                 "A queued interaction was admitted as its own run once this run finished.",
                 new { directive_id = directive.Id, released_run_id = submission.RunId, existing = submission.Existing }, cancellationToken).ConfigureAwait(false);
@@ -1049,6 +1087,65 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 $"A queued interaction is still waiting: {ex.Message}",
                 new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
             return "deferred";
+        }
+    }
+
+    internal sealed record QueuedInteractionPayload(
+        string? Content,
+        string? ClientMessageId,
+        string? PermissionMode,
+        Guid? ModeVersionId,
+        SessionModelOverride? MeetingModelOverride);
+
+    internal static QueuedInteractionPayload? ParseQueuedInteractionPayload(string payloadJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var content = root.TryGetProperty("content", out var contentValue)
+                && contentValue.ValueKind == JsonValueKind.String
+                ? contentValue.GetString()
+                : null;
+            var clientMessageId = root.TryGetProperty("client_message_id", out var clientValue)
+                && clientValue.ValueKind == JsonValueKind.String
+                ? clientValue.GetString()
+                : null;
+            var permissionMode = root.TryGetProperty("permission_mode", out var permissionValue)
+                && permissionValue.ValueKind == JsonValueKind.String
+                ? permissionValue.GetString()
+                : null;
+            Guid? modeVersionId = null;
+            if (root.TryGetProperty("mode_version_id", out var modeVersionValue)
+                && modeVersionValue.ValueKind == JsonValueKind.String
+                && Guid.TryParse(modeVersionValue.GetString(), out var parsedModeVersionId))
+            {
+                modeVersionId = parsedModeVersionId;
+            }
+            SessionModelOverride? meetingModelOverride = null;
+            if (root.TryGetProperty("meeting_model_override", out var overrideValue)
+                && overrideValue.ValueKind == JsonValueKind.Object
+                && overrideValue.TryGetProperty("provider_instance_id", out var providerValue)
+                && providerValue.ValueKind == JsonValueKind.String
+                && Guid.TryParse(providerValue.GetString(), out var providerInstanceId))
+            {
+                var model = overrideValue.TryGetProperty("model", out var modelValue)
+                    && modelValue.ValueKind == JsonValueKind.String
+                    ? modelValue.GetString()
+                    : null;
+                meetingModelOverride = new SessionModelOverride(providerInstanceId, model);
+            }
+            return new QueuedInteractionPayload(
+                content,
+                clientMessageId,
+                permissionMode,
+                modeVersionId,
+                meetingModelOverride);
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

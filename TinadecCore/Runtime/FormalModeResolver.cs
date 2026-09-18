@@ -24,21 +24,36 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         _logger = logger;
     }
 
-    public async Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken ct = default)
+    public Task<HashSet<string>?> GetEffectiveToolsForSessionAsync(Guid sessionId, CancellationToken ct = default) =>
+        GetEffectiveToolsAsync(sessionId, modeVersionIdOverride: null, ct);
+
+    public Task<HashSet<string>?> GetEffectiveToolsForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken ct = default) =>
+        GetEffectiveToolsAsync(sessionId, modeVersionId, ct);
+
+    private async Task<HashSet<string>?> GetEffectiveToolsAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        CancellationToken ct)
     {
         SessionReference? session = null;
+        Guid? effectiveModeVersionId = null;
         try
         {
             session = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-            if (session?.ModeVersionId is null) return null;
+            if (session is null) return null;
+            effectiveModeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
+            if (effectiveModeVersionId is null) return null;
             await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
-                x.Id == session.ModeVersionId.Value
+                x.Id == effectiveModeVersionId.Value
                 && x.TenantId == session.TenantId
                 && x.WorkspaceId == session.WorkspaceId, ct).ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Agent mode version '{session.ModeVersionId}' was not found.");
+                ?? throw new InvalidDataException($"Agent mode version '{effectiveModeVersionId}' was not found.");
             if (!string.Equals(mv.Status, "published", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Agent mode version '{session.ModeVersionId}' is not published.");
+                throw new InvalidDataException($"Agent mode version '{effectiveModeVersionId}' is not published.");
             var nodes = ParseModeSnapshot(mv);
             var union = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var hasWildcard = false;
@@ -54,19 +69,33 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             _logger.LogDebug(ex, "GetEffectiveToolsForSession failed for {SessionId}", sessionId);
             // A formal mode that cannot be verified is an empty grant, never a
             // signal to fall back to the broader legacy TOML authorization set.
-            return session?.ModeVersionId is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return effectiveModeVersionId is null ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
     }
 
-    public async Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default)
+    public Task<FormalModeRoster?> ResolveRosterAsync(Guid sessionId, CancellationToken ct = default) =>
+        ResolveRosterAsync(sessionId, modeVersionIdOverride: null, ct);
+
+    public Task<FormalModeRoster?> ResolveRosterForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        CancellationToken ct = default) =>
+        ResolveRosterAsync(sessionId, modeVersionId, ct);
+
+    private async Task<FormalModeRoster?> ResolveRosterAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        CancellationToken ct)
     {
         var sess = await _sessions.FindAsync(sessionId, ct).ConfigureAwait(false);
-        if (sess?.ModeVersionId is not { } modeVersionId) return null;
+        if (sess is null) return null;
+        var modeVersionId = modeVersionIdOverride ?? sess.ModeVersionId;
+        if (modeVersionId is null) return null;
         try
         {
             await using var cfg = await _cfgFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
             var mv = await cfg.ModeVersions.AsNoTracking().FirstOrDefaultAsync(x =>
-                x.Id == modeVersionId
+                x.Id == modeVersionId.Value
                 && x.TenantId == sess.TenantId
                 && x.WorkspaceId == sess.WorkspaceId, ct).ConfigureAwait(false)
                 ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' was not found.");

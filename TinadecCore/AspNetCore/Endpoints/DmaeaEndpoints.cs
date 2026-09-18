@@ -162,19 +162,25 @@ public static class DmaeaEndpoints
                             waits = Array.Empty<object>()
                         }
                     });
-            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created")
+            var nodes = events.Where(e => e.EventType is "task.assigned" or "step.result.created" or "worker.completed" or "worker.blocked" or "worker.failed")
                 .Select(e =>
                 {
-                    var nodeId = PayloadString(e.Payload, "task_node_id") ?? "";
+                    var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
                     return new
                     {
-                        id = PayloadString(e.Payload, "task_node_id"),
+                        id = nodeId,
                         graph_id = PayloadString(e.Payload, "graph_id"),
                         run_id = run.Id.ToString(),
                         session_id = sessionId,
                         title = PayloadString(e.Payload, "title") ?? "",
                         description = PayloadString(e.Payload, "description") ?? "",
-                        status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
+                        status = e.EventType switch
+                        {
+                            "worker.failed" => "failed",
+                            "worker.blocked" => "blocked",
+                            "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                            _ => "assigned"
+                        },
                         lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
                         priority = 1,
                         risk = "medium",
@@ -239,15 +245,21 @@ public static class DmaeaEndpoints
             if (!Guid.TryParse(sessionId, out var sessionGuid)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
             if (await sessions.FindAsync(sessionGuid, ct) is null) return Results.NotFound(new { code = "NOT_FOUND", message = "Session was not found." });
             var events = await lifecycle.ReplayEventsAsync(sessionGuid, 0, ct);
-            var nodes = events.Where(e => e.EventType == "task.assigned" || e.EventType == "step.result.created").Select(e => new
+            var nodes = events.Where(e => e.EventType is "task.assigned" or "step.result.created" or "worker.completed" or "worker.blocked" or "worker.failed").Select(e => new
             {
-                id = PayloadString(e.Payload, "task_node_id"),
+                id = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id"),
                 graph_id = PayloadString(e.Payload, "graph_id") ?? "",
                 run_id = PayloadString(e.Payload, "run_id") ?? "",
                 session_id = sessionId,
                 title = PayloadString(e.Payload, "title") ?? "",
                 description = PayloadString(e.Payload, "description") ?? "",
-                status = e.EventType == "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : "assigned",
+                status = e.EventType switch
+                {
+                    "worker.failed" => "failed",
+                    "worker.blocked" => "blocked",
+                    "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                    _ => "assigned"
+                },
                 priority = 1,
                 risk = "medium",
                 success_criteria = Array.Empty<string>(),
@@ -362,7 +374,7 @@ public static class DmaeaEndpoints
             var nodeAgentNames = agentInstanceRows.Where(a => a.TaskId is not null)
                 .GroupBy(a => a.TaskId!.Value)
                 .ToDictionary(g => g.Key, g => DisplayNameFor(g.First()));
-            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.failed" or "step.result.created").Select(e =>
+            var nodes = events.Where(e => e.EventType is "task.dispatched" or "task.assigned" or "worker.completed" or "worker.blocked" or "worker.failed" or "step.result.created").Select(e =>
             {
                 var nodeId = PayloadString(e.Payload, "task_id") ?? PayloadString(e.Payload, "task_node_id") ?? "";
                 var nodeAgentName = Guid.TryParse(nodeId, out var nodeGuid) && nodeAgentNames.TryGetValue(nodeGuid, out var dn) ? dn : null;
@@ -374,7 +386,13 @@ public static class DmaeaEndpoints
                     session_id = run.SessionId.ToString(),
                     title = PayloadString(e.Payload, "title") ?? "",
                     description = PayloadString(e.Payload, "description") ?? "",
-                    status = e.EventType is "worker.completed" or "step.result.created" ? PayloadString(e.Payload, "status") ?? "completed" : e.EventType is "worker.failed" ? "failed" : "assigned",
+                    status = e.EventType switch
+                    {
+                        "worker.failed" => "failed",
+                        "worker.blocked" => "blocked",
+                        "worker.completed" or "step.result.created" => PayloadString(e.Payload, "status") ?? "completed",
+                        _ => "assigned"
+                    },
                     lane_key = taskLaneById.TryGetValue(nodeId, out var nodeLane) ? nodeLane : "main",
                     agent_display_name = nodeAgentName,
                     priority = 1,

@@ -32,7 +32,9 @@ public sealed class ToolsModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<ITerminalSessionRegistry, TerminalSessionRegistry>();
         builder.Services.AddSingleton<TerminalSessionEventBridge>();
         builder.Services.AddSingleton<ITerminalSessionControl, TerminalSessionControlService>();
-        builder.Services.AddSingleton<IInFlightToolCallRegistry, InFlightToolCallRegistry>();
+        builder.Services.AddSingleton<InFlightToolCallRegistry>();
+        builder.Services.AddSingleton<IInFlightToolCallRegistry>(sp => sp.GetRequiredService<InFlightToolCallRegistry>());
+        builder.Services.AddSingleton<IRunInFlightToolCancellation>(sp => sp.GetRequiredService<InFlightToolCallRegistry>());
         builder.Services.AddHostedService<TerminalSessionBridgeHost>();
         builder.Services.AddSingleton<IToolDispatcher, ToolDispatcher>();
         builder.RegisterModule(new ModuleDescriptor

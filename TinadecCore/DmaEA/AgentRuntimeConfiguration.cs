@@ -82,8 +82,9 @@ public sealed record ToolRuntimePolicy(
     /// <summary>
     /// Absolute per-task tool-call fuse (<c>[tools] max_tool_calls</c>). This is
     /// a fuse, not a budget, and it is independent of the round limit: setting
-    /// <see cref="MaxToolRounds"/> to 0 (unlimited rounds) does not remove it.
-    /// Zero or less disables the check; a TOML without the key keeps the default.
+    /// <see cref="MaxToolRounds"/> to a non-positive value (unlimited rounds) does
+    /// not remove it. Zero disables this call fuse; negative values are invalid for
+    /// the fuse itself. A TOML without the key keeps the default.
     /// </summary>
     public int MaxToolCalls { get; init; } = DefaultMaxToolCalls;
 
@@ -95,12 +96,13 @@ public sealed record ToolRuntimePolicy(
     public static void Validate(ToolRuntimePolicy policy)
     {
         ArgumentNullException.ThrowIfNull(policy);
-        // 0 (or less) is a legal "unlimited rounds" declaration; negative is not
-        // a second spelling of it.
-        if (policy.MaxToolRounds is < 0 or > MaximumRounds)
+        // Any non-positive value means "unlimited rounds". Only positive values
+        // are bounded by the Core safety ceiling, matching the documented runtime
+        // contract and ResolveTaskRoundLimit's <= 0 semantics.
+        if (policy.MaxToolRounds > MaximumRounds)
         {
             throw new InvalidDataException(
-                $"max_tool_rounds must be 0 (unlimited) or a positive value up to the Core safety ceiling ({MaximumRounds}).");
+                $"A positive max_tool_rounds value must not exceed the Core safety ceiling ({MaximumRounds}); non-positive values mean unlimited.");
         }
         if (policy.MaxToolCalls < 0)
         {
@@ -108,10 +110,10 @@ public sealed record ToolRuntimePolicy(
         }
         foreach (var (key, rounds) in policy.Overrides)
         {
-            if (rounds is < 0 or > MaxTaskOverrideRounds)
+            if (rounds > MaxTaskOverrideRounds)
             {
                 throw new InvalidDataException(
-                    $"task_round_overrides['{key}'] must be 0 (unlimited) or a positive value up to the per-task ceiling ({MaxTaskOverrideRounds}).");
+                    $"A positive task_round_overrides['{key}'] value must not exceed the per-task ceiling ({MaxTaskOverrideRounds}); non-positive values mean unlimited.");
             }
         }
     }

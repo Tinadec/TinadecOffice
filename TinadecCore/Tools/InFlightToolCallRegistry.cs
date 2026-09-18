@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.Tools;
 
@@ -57,7 +58,7 @@ public sealed class InFlightToolCall : IDisposable
     }
 }
 
-public sealed class InFlightToolCallRegistry : IInFlightToolCallRegistry
+public sealed class InFlightToolCallRegistry : IInFlightToolCallRegistry, IRunInFlightToolCancellation
 {
     private readonly ConcurrentDictionary<Guid, InFlightToolCall> _calls = new();
 

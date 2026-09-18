@@ -4,6 +4,9 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Api.Tests;
 
@@ -195,6 +198,21 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
     }
 
     [Fact]
+    public async Task ToolLayerReadiness_UsesConfiguredDefaultWorkspaceRoot()
+    {
+        using var factory = new ToolLayerReadinessFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/v1/tool-layer-readiness");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("ready", payload.GetProperty("status").GetString());
+        Assert.Equal(1, payload.GetProperty("tool_count").GetInt32());
+        Assert.Equal(factory.WorkspaceRoot, factory.Registry.LastWorkspaceRoot);
+    }
+
+    [Fact]
     public async Task ModelProviderTemplates_ReturnsThreeProtocolTemplates()
     {
         var client = _factory.CreateClient();
@@ -222,6 +240,70 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
             Assert.True(template.TryGetProperty("provider_family", out _));
             Assert.True(template.TryGetProperty("capabilities", out _));
         }
+    }
+
+    private sealed class ToolLayerReadinessFactory : WebApplicationFactory<Program>
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-tool-readiness-tests", Guid.NewGuid().ToString("N"));
+
+        public ToolLayerReadinessFactory()
+        {
+            Directory.CreateDirectory(_root);
+            WorkspaceRoot = Path.Combine(_root, "workspace");
+            Directory.CreateDirectory(WorkspaceRoot);
+            Registry = new WorkspaceBoundToolRegistry(WorkspaceRoot);
+        }
+
+        public string WorkspaceRoot { get; }
+        public WorkspaceBoundToolRegistry Registry { get; }
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseSetting(WebHostDefaults.EnvironmentKey, "Testing");
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(_root, "tinadec.db"),
+                ["TinadecPersistence:DataRoot"] = Path.Combine(_root, "data"),
+                ["TinadecTools:DefaultWorkspaceRoot"] = WorkspaceRoot,
+                ["Logging:LogLevel:Default"] = "Warning"
+            }));
+            builder.ConfigureServices(services => services.AddSingleton<IToolRegistry>(Registry));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    private sealed class WorkspaceBoundToolRegistry(string expectedWorkspaceRoot) : IToolRegistry
+    {
+        public string? LastWorkspaceRoot { get; private set; }
+
+        public Task<IReadOnlyList<ToolManifestEntryDto>> ListToolsAsync(string? workspaceRoot = null, CancellationToken cancellationToken = default)
+        {
+            LastWorkspaceRoot = workspaceRoot;
+            IReadOnlyList<ToolManifestEntryDto> tools = string.Equals(workspaceRoot, expectedWorkspaceRoot, StringComparison.Ordinal)
+                ?
+                [
+                    new ToolManifestEntryDto
+                    {
+                        Id = "test.echo",
+                        Description = "Test tool",
+                        InputSchema = JsonDocument.Parse("{\"type\":\"object\"}").RootElement.Clone()
+                    }
+                ]
+                : [];
+            return Task.FromResult(tools);
+        }
+
+        public async Task<IReadOnlyList<ToolManifestEntryDto>> SearchToolsAsync(string query, string? workspaceRoot = null, CancellationToken cancellationToken = default)
+            => await ListToolsAsync(workspaceRoot, cancellationToken);
+
+        public async Task<ToolManifestEntryDto?> FindToolAsync(string toolId, string? workspaceRoot = null, CancellationToken cancellationToken = default)
+            => (await ListToolsAsync(workspaceRoot, cancellationToken)).FirstOrDefault(tool => string.Equals(tool.Id, toolId, StringComparison.Ordinal));
     }
 }
 

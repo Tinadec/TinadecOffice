@@ -18,6 +18,17 @@ public interface IAgentRuntimeConfigurationResolver
         string? permissionMode,
         SessionModelOverride? meetingModelOverride = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves one explicitly selected mode version without consulting a later
+    /// mutable session binding. Used by durable queued interactions.
+    /// </summary>
+    Task<FrozenRunConfigurationV1> ResolveForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -216,15 +227,32 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         _policySnapshots = policySnapshots;
     }
 
-    public async Task<FrozenRunConfigurationV1> ResolveAsync(
+    public Task<FrozenRunConfigurationV1> ResolveAsync(
         Guid sessionId,
         string? permissionMode,
         SessionModelOverride? meetingModelOverride = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(sessionId, modeVersionIdOverride: null, permissionMode, meetingModelOverride, cancellationToken);
+
+    public Task<FrozenRunConfigurationV1> ResolveForModeAsync(
+        Guid sessionId,
+        Guid modeVersionId,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride = null,
+        CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(sessionId, modeVersionId, permissionMode, meetingModelOverride, cancellationToken);
+
+    private async Task<FrozenRunConfigurationV1> ResolveCoreAsync(
+        Guid sessionId,
+        Guid? modeVersionIdOverride,
+        string? permissionMode,
+        SessionModelOverride? meetingModelOverride,
+        CancellationToken cancellationToken)
     {
         var session = await _sessions.FindAsync(sessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Session was not found.");
-        if (session.ModeVersionId is null)
+        var modeVersionId = modeVersionIdOverride ?? session.ModeVersionId;
+        if (modeVersionId is null)
             throw new RunAdmissionException("agent_mode_not_configured", "A published default Agent Mode must be configured before creating a run.");
         // The workspace is resolved exactly once, here, from Core-owned records and
         // a cheap filesystem probe. Everything downstream (prompt, tool boundary,
@@ -243,13 +271,12 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             // makes it visible to lifecycle audit without inventing a mutable record.
             new("agent_runtime_baseline", DeterministicGuid(snapshot.ContentHash), DeterministicGuid(snapshot.ContentHash + ":" + snapshot.Version), snapshot.ContentHash)
         };
-        var modeVersionId = session.ModeVersionId.Value;
-        var relational = await _formal.ResolveRosterAsync(sessionId, cancellationToken).ConfigureAwait(false)
+        var relational = await _formal.ResolveRosterForModeAsync(sessionId, modeVersionId.Value, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Agent mode version '{modeVersionId}' could not be resolved.");
         var operation = relational.Operation.Select(ToRuntimeAgentDefinition).ToArray();
         var execution = relational.Execution.Select(ToRuntimeAgentDefinition).ToArray();
-        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
-        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        operation = (await FreezeModelPlansAsync(operation, sessionId, modeVersionId.Value, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
+        execution = (await FreezeModelPlansAsync(execution, sessionId, modeVersionId.Value, session.ConversationTemplateSlug, meetingModelOverride, cancellationToken).ConfigureAwait(false)).ToArray();
 
         // Workspace baseline: a bound workspace gives every agent that holds a
         // provider tool face the whole-root read level, so read-only work never

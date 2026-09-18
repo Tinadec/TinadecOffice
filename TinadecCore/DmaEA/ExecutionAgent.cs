@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions.Ports;
@@ -35,9 +36,11 @@ public sealed class ExecutionAgent
         {
             return Failed(taskNodeId, agent, "The legacy execution runtime does not support tool calls.");
         }
-        return string.IsNullOrWhiteSpace(turn.Text)
-            ? Failed(taskNodeId, agent, "Execution returned no output.")
-            : Completed(taskNodeId, agent, turn.Text);
+        if (string.IsNullOrWhiteSpace(turn.Text))
+        {
+            return Failed(taskNodeId, agent, "Execution returned no output.");
+        }
+        return Result(taskNodeId, agent, WorkerOutcomeProtocol.Parse(turn.Text));
     }
 
     /// <summary>
@@ -72,8 +75,11 @@ public sealed class ExecutionAgent
             ? $"你是会话智能体（{agent.Name}），正在亲自执行用户的这个目标。你可以直接调用工具把它做掉；"
                 + "遇到可并行拆分或需要专项能力的部分，就派给子智能体去做。\n"
                 + $"标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n"
-                + "完成后简要说明你实际做了什么、以及有什么没做到。"
-            : $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n只输出完成摘要。";
+                + "完成后简要说明你实际做了什么、以及有什么没做到。\n"
+                + WorkerOutcomeProtocol.Instructions
+            : $"你是执行层 agent（{agent.Name}）。执行以下任务：\n标题：{task.Title}\n描述：{task.Description}\n成功标准：{string.Join("; ", task.SuccessCriteria)}\n"
+                + "只输出完成摘要。\n"
+                + WorkerOutcomeProtocol.Instructions;
         var instructions = string.IsNullOrWhiteSpace(assembledInstructions)
             ? taskInstructions
             : assembledInstructions.Trim() + "\n\n" + taskInstructions;
@@ -194,13 +200,13 @@ public sealed class ExecutionAgent
 
     private static string SerializeArguments(IDictionary<string, object?>? arguments) => JsonSerializer.Serialize(arguments ?? new Dictionary<string, object?>(), JsonOptions);
 
-    private static StepResult Completed(Guid taskNodeId, AgentDefinition agent, string text) => new()
+    private static StepResult Result(Guid taskNodeId, AgentDefinition agent, WorkerOutcomeProtocol.Parsed outcome) => new()
     {
         TaskNodeId = taskNodeId,
         AgentId = agent.Id.ToString("N"),
-        Status = "completed",
-        Summary = text,
-        Evidence = [text]
+        Status = outcome.Status,
+        Summary = outcome.Summary,
+        Evidence = [outcome.Summary, $"worker_outcome:{outcome.Status}:{(outcome.Explicit ? "explicit" : "legacy")}"]
     };
 
     private static StepResult Failed(Guid taskNodeId, AgentDefinition agent, string message) => new()
@@ -246,4 +252,12 @@ public sealed class WorkerToolTurn
     public string? DispatchStatus { get; set; }
     public string? ResultJson { get; set; }
     public string? ErrorCategory { get; set; }
+
+    /// <summary>
+    /// Business-level outcome reported inside a successful provider result. Null
+    /// means the tool has no explicit embedded success flag. Default suppression
+    /// preserves the canonical bytes of pre-field checkpoints.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ToolSuccess { get; set; }
 }

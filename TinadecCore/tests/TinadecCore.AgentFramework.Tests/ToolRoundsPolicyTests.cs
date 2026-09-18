@@ -60,22 +60,25 @@ public sealed class ToolRoundsPolicyTests : IDisposable
     }
 
     [Fact]
-    public void Parse_RejectsNegativeOverride()
+    public void Parse_NegativeOverride_MeansUnlimited()
     {
-        Assert.Throws<InvalidDataException>(() => LoadSnapshot([.. BaselineToml(), "", "[tools.task_round_overrides]", "test = -1"]));
+        var snapshot = LoadSnapshot([.. BaselineToml(), "", "[tools.task_round_overrides]", "test = -1"]);
+
+        Assert.Equal(-1, snapshot.Tools.Overrides["test"]);
+        Assert.Equal(-1, snapshot.Tools.ResolveTaskRoundLimit("test", "low"));
     }
 
     [Fact]
-    public void Parse_ZeroRounds_MeansUnlimited_ForGlobalAndOverride()
+    public void Parse_NonPositiveRounds_MeanUnlimited_ForGlobalAndOverride()
     {
         var snapshot = LoadSnapshot(
-            [.. BaselineToml(maxToolRounds: 0), "", "[tools.task_round_overrides]", "test = 0", "high = 8"]);
+            [.. BaselineToml(maxToolRounds: -2), "", "[tools.task_round_overrides]", "test = 0", "high = 8"]);
 
-        Assert.Equal(0, snapshot.Tools.MaxToolRounds);
+        Assert.Equal(-2, snapshot.Tools.MaxToolRounds);
         Assert.Equal(0, snapshot.Tools.ResolveTaskRoundLimit("test", "low"));
         // A positive override still narrows one class while the global default stays open.
         Assert.Equal(8, snapshot.Tools.ResolveTaskRoundLimit("high", "high"));
-        Assert.Equal(0, snapshot.Tools.ResolveTaskRoundLimit("unknown", "medium"));
+        Assert.Equal(-2, snapshot.Tools.ResolveTaskRoundLimit("unknown", "medium"));
     }
 
     [Fact]
@@ -147,9 +150,10 @@ public sealed class ToolRoundsPolicyTests : IDisposable
         Assert.Throws<InvalidDataException>(() => ToolRuntimePolicy.Validate(Policy(maxRounds: 4, overrides: new Dictionary<string, int> { ["test"] = ToolRuntimePolicy.MaxTaskOverrideRounds + 1 })));
         // The global default keeps its own, higher safety ceiling.
         ToolRuntimePolicy.Validate(Policy(maxRounds: ToolRuntimePolicy.MaximumRounds));
-        // 0 is the documented "unlimited" value, not a second spelling of negative.
+        // Every non-positive value is the documented "unlimited" spelling.
         ToolRuntimePolicy.Validate(Policy(maxRounds: 0));
-        Assert.Throws<InvalidDataException>(() => ToolRuntimePolicy.Validate(Policy(maxRounds: -1)));
+        ToolRuntimePolicy.Validate(Policy(maxRounds: -1));
+        ToolRuntimePolicy.Validate(Policy(maxRounds: 4, overrides: new Dictionary<string, int> { ["test"] = -1 }));
         Assert.Throws<InvalidDataException>(() => ToolRuntimePolicy.Validate(Policy(maxRounds: 4) with { MaxToolCalls = -1 }));
     }
 

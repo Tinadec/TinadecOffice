@@ -113,7 +113,9 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         {
             var formal = _services?.GetService(typeof(IFormalModeResolver)) as IFormalModeResolver;
             if (formal is not null)
-                formalEffective = await formal.GetEffectiveToolsForSessionAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+                formalEffective = request.ModeVersionId is { } modeVersionId
+                    ? await formal.GetEffectiveToolsForModeAsync(request.SessionId, modeVersionId, cancellationToken).ConfigureAwait(false)
+                    : await formal.GetEffectiveToolsForSessionAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
         }
         catch { }
 
