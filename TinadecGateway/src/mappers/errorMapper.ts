@@ -56,6 +56,7 @@ const ALLOWED_CODES = new Set([
   'agent_pack_owner_conflict',
   'agent_pack_preview_stale',
   'managed_resource_read_only',
+  'tina_chat_input_locked',
 ]);
 
 function normalizeCode(raw?: string | null): string {

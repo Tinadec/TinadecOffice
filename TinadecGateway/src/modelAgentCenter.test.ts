@@ -151,6 +151,32 @@ test('interactions thin proxy validates dispatch_mode and insert target_run_id b
   assert.equal(proxied, 2);
 });
 
+test('interactions thin proxy preserves TinaChat input-lock ProblemDetails', async () => {
+  const problem = {
+    type: 'https://tinadec.dev/errors/tina_chat_input_locked',
+    title: 'tina_chat_input_locked',
+    status: 403,
+    detail: 'Use the TinaChat intent execution endpoint for this isolated handoff.',
+    code: 'tina_chat_input_locked',
+    instance: '/api/v1/sessions/session-1/interactions',
+    trace_id: 'trace-tina-chat-lock',
+  };
+  mockFetch(() => new Response(JSON.stringify(problem), {
+    status: 403,
+    headers: { 'content-type': 'application/problem+json' },
+  }));
+
+  const response = await app.handle(new Request('http://gateway.local/api/v1/sessions/session-1/interactions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dispatch_mode: 'queued', content: 'raw insertion attempt' }),
+  }));
+
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get('content-type'), 'application/problem+json');
+  assert.deepEqual(await response.json(), problem);
+});
+
 test('interactions reassign/cancel thin proxy; per-interaction stream route removed', async () => {
   const requests: Array<{ url: string; headers: Record<string,string> }> = [];
   mockFetch((input, init) => {

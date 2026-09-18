@@ -1,9 +1,9 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-09-10
-**Last Updated By:** 自由对话契约修复（create-session 的 project_id 改可选、无项目会话映射为 null、快照重生成）
-**Last Verified Commit:** 6e29e86
-**Branch:** Astra
+**Last Updated:** 2026-09-18
+**Last Updated By:** TinaChat 管理员观察4个GET接口的生成契约投影与透明代理验证；保留此前领域错误码修复
+**Last Verified Commit:** `d5e676c` 基线上的当前未提交 TinaChat 工作树
+**Branch:** Everything-changed
 
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。
@@ -45,6 +45,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | 运行配置 | `src/config.ts` | 部署模式、端口、Core/Tool Runtime URL、认证、CORS |
 | 服务器路由 | `src/index.ts` | Elysia app，CORS，认证中间件，`/api/v1/*`，WebSocket，流式 |
 | Core 代理 | `src/coreClient.ts` | `coreUrl()`，JSON 代理，SSE 代理，流式代理 |
+| TinaChat 代理 | `src/tinaChatRoutes.ts`, `src/contracts/tina-chat.openapi.json` | 17 路径/25 操作来自 Core 生成契约；包含 observer 管理员读取，保留 Cache-Control/正文/query/header/状态，不计算通信权限 |
 | Tool Runtime 代理 | `src/toolRuntimeClient.ts` | `toolRuntimeUrl()`，JSON 代理，SSE 代理，流式代理 |
 | 认证中间件 | `src/auth.ts` | API Key / JWT HS256 验签（WebCrypto），租户上下文，反向代理头 |
 | 请求上下文 | `src/headers.ts`, `src/auth.ts` | 只处理请求 id、认证和租户头；授权事实由 Core 或 Tool Provider 产生 |
@@ -85,6 +86,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - MCP 连接管理由 Tool Runtime 负责
 
 ### 全双工运行期代理
+- **TinaChat（2026-09-18）**：`registerTinaChatRoutes` 挂载 `/api/v1/tina-chat`，参与现有认证与转发头路径，使用 `proxyRaw` 保留 Core JSON/ProblemDetails/204/ETag。OpenAPI `detail` 只用于文档，不新增响应裁剪或本地业务验证。`scripts/sync-tina-chat-contract.mjs` 从 Core snapshot 提取相应路径及递归 schema，生成投影随 Gateway 提交以支持独立构建；`bun run generate:tina-chat-contract` 生成、`bun run check:tina-chat-contract` 验证漂移，外部快照后在根目录执行 `npm run generate:client -w @tinadec/desktop`。普通 session interaction 也可能返回 TinaChat 隔离拒绝；通用 `errorMapper` 必须保留公开 `tina_chat_input_locked`，不能降级为 `conflict`。TinaChat 自身没有群消息 SSE/WS 推送，收件箱为游标拉取；执行输出复用 Core run stream。
 - **终端会话路由 (2026-08-31)**：`GET /api/v1/terminals`、`POST /api/v1/terminals/:terminalSessionId/stdin`、`POST /api/v1/terminals/:terminalSessionId/kill` 是 Core 的纯透传（Tags: Terminal）。终端实时输出走既有 `GET /api/v1/runs/:runId/stream` SSE 代理，不需要单独的 WS 通道；`/ws/terminal` 无效桩仍未启用。openapi.external.json 快照已随新路由再生成（快照测试已修复为「先写后断言」，漂移会重新生成文件并由 `git diff --exit-code` 把关）。
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` **已退役**（`src/index.ts:540` 起不再注册，返回 404）；当前入口是 `POST /api/v1/sessions/{sessionId}/interactions`（`interactionsMapper` 只做薄枚举校验），运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。
 - `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model_override`（结构化 `{provider_instance_id, model}`，Desktop 依赖它们感知当前模式；旧自由文本模型字段与分散 provider 字段已于 2026-08-27 重构删除）。

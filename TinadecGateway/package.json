@@ -5,6 +5,8 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
+    "generate:tina-chat-contract": "node scripts/sync-tina-chat-contract.mjs",
+    "check:tina-chat-contract": "node scripts/sync-tina-chat-contract.mjs --check",
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target bun --outdir dist --minify",

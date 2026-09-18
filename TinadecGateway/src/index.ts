@@ -38,6 +38,7 @@ import {
   agentPackProblemResponse,
 } from './agentPackOpenApi.js';
 import { externalDtoSchemas, externalJsonResponse } from './externalDtoOpenApi.js';
+import { registerTinaChatRoutes, tinaChatSchemas } from './tinaChatRoutes.js';
 
 const config = getConfig();
 const requestAuthContexts = new WeakMap<Request, AuthContext>();
@@ -126,7 +127,7 @@ const app = new Elysia()
       ],
       // TypeBox emits valid OpenAPI schemas, but its union types are not structurally
       // assignable to openapi-types' narrower SchemaObject declaration.
-      components: { schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas } as never },
+      components: { schemas: { ...agentPackOpenApiSchemas, ...externalDtoSchemas, ...tinaChatSchemas } as never },
     }
   }))
   .onError(({ code, error, set, request }) => {
@@ -2274,6 +2275,8 @@ const app = new Elysia()
     setToolTransportResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
     return result;
   }, { detail: { summary: 'Execute user tool (Core-owned)', tags: ['Tools'], description: 'Core resolves the registered workspace root and invokes the Tool Provider.' } });
+
+registerTinaChatRoutes(app, forwardHeaders);
 
 export { app };
 

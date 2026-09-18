@@ -1,0 +1,2328 @@
+{
+  "components": {
+    "schemas": {
+      "TinaChatConversationDto": {
+        "properties": {
+          "accepted_intent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "allow_cross_workspace": {
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "membership_status": {
+            "type": "string"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "title",
+          "kind",
+          "allow_cross_workspace",
+          "revision",
+          "last_sequence",
+          "accepted_intent_id",
+          "membership_status"
+        ],
+        "type": "object"
+      },
+      "TinaChatCreateConversationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "allow_cross_workspace": {
+            "default": false,
+            "type": "boolean"
+          },
+          "client_request_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "default": "group",
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "title",
+          "participant_ids"
+        ],
+        "type": "object"
+      },
+      "TinaChatExecuteIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "mode_version_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "mode_version_id"
+        ],
+        "type": "object"
+      },
+      "TinaChatExecutionDto": {
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "intent_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "intent_id",
+          "participant_id",
+          "session_id",
+          "run_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TinaChatGenerateIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "client_request_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "client_request_id",
+          "expected_revision",
+          "source_message_ids",
+          "audience_participant_ids"
+        ],
+        "type": "object"
+      },
+      "TinaChatInboxItem": {
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "message": {
+            "$ref": "#/components/schemas/TinaChatMessageDto"
+          }
+        },
+        "required": [
+          "message",
+          "acknowledged"
+        ],
+        "type": "object"
+      },
+      "TinaChatInboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatInboxItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentContent": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "blocking_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "constraints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "open_questions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "user_statements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "goal",
+          "user_statements",
+          "constraints",
+          "assumptions",
+          "open_questions",
+          "blocking_questions",
+          "acceptance_criteria"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "actor_id",
+          "decision",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatIntentDto": {
+        "properties": {
+          "author_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/TinaChatIntentContent"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "author_id",
+          "revision",
+          "status",
+          "content",
+          "source_message_ids",
+          "decided_by_id",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatMemberDto": {
+        "properties": {
+          "joined_after_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant_id",
+          "role",
+          "status",
+          "joined_after_sequence"
+        ],
+        "type": "object"
+      },
+      "TinaChatMemberRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "participant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "default": "member",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "participant_id",
+          "action",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatMessageDto": {
+        "properties": {
+          "allow_derived_sharing": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "sender_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sender_kind": {
+            "type": "string"
+          },
+          "sensitivity": {
+            "type": "string"
+          },
+          "sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "sender_id",
+          "sender_kind",
+          "sequence",
+          "kind",
+          "content",
+          "sensitivity",
+          "allow_derived_sharing",
+          "reply_to_message_id",
+          "source_message_ids",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatMessagePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatMessageDto"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedAudienceDto": {
+        "properties": {
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "can_read_original": {
+            "type": "boolean"
+          },
+          "can_receive_derived": {
+            "type": "boolean"
+          },
+          "participant": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          }
+        },
+        "required": [
+          "participant",
+          "can_read_original",
+          "can_receive_derived",
+          "acknowledged"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationDetail": {
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/TinaChatObservedConversationDto"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedMemberDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation",
+          "members"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_message_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "last_message_preview": {
+            "nullable": true,
+            "type": "string"
+          },
+          "last_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "member_count": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "participant_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "workspace_name",
+          "title",
+          "kind",
+          "revision",
+          "last_sequence",
+          "member_count",
+          "participant_names",
+          "last_message_preview",
+          "last_message_at"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedConversationPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedConversationDto"
+            },
+            "type": "array"
+          },
+          "next_offset": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "total": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "next_offset",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMemberDto": {
+        "properties": {
+          "joined_after_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "participant": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant",
+          "role",
+          "status",
+          "joined_after_sequence"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMessageDto": {
+        "properties": {
+          "audience": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedAudienceDto"
+            },
+            "type": "array"
+          },
+          "intent_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "intent_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/TinaChatMessageDto"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/TinaChatParticipantDto"
+          }
+        },
+        "required": [
+          "message",
+          "sender",
+          "audience",
+          "intent_id",
+          "intent_status"
+        ],
+        "type": "object"
+      },
+      "TinaChatObservedMessagePage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObservedMessageDto"
+            },
+            "type": "array"
+          },
+          "newest_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "oldest_sequence": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "items",
+          "oldest_sequence",
+          "newest_sequence",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "TinaChatObserverAccessDto": {
+        "properties": {
+          "level": {
+            "type": "string"
+          },
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/TinaChatObserverWorkspaceDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "level",
+          "workspaces"
+        ],
+        "type": "object"
+      },
+      "TinaChatObserverWorkspaceDto": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "TinaChatParticipantDto": {
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "can_interpret_intent": {
+            "type": "boolean"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "discoverable": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "job_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "receive_human_messages": {
+            "type": "boolean"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "handle",
+          "display_name",
+          "kind",
+          "job_title",
+          "description",
+          "agent_definition_id",
+          "receive_human_messages",
+          "can_interpret_intent",
+          "discoverable",
+          "status",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "TinaChatProposeIntentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "client_request_id": {
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/TinaChatIntentContent"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "client_request_id",
+          "expected_revision",
+          "source_message_ids",
+          "audience_participant_ids",
+          "content"
+        ],
+        "type": "object"
+      },
+      "TinaChatRegisterParticipantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_definition_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "can_interpret_intent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "discoverable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "job_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "default": "agent",
+            "type": "string"
+          },
+          "receive_human_messages": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "handle",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "TinaChatSendMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "allow_derived_sharing": {
+            "default": false,
+            "type": "boolean"
+          },
+          "audience_participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "client_message_id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "reply_to_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "sensitivity": {
+            "default": "normal",
+            "type": "string"
+          },
+          "source_message_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor_id",
+          "content",
+          "client_message_id"
+        ],
+        "type": "object"
+      },
+      "TinaChatUpdateParticipantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "can_interpret_intent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "discoverable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "job_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "receive_human_messages": {
+            "default": false,
+            "type": "boolean"
+          },
+          "status": {
+            "default": "active",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "TinaChatWorkspacePolicyDto": {
+        "properties": {
+          "allow_cross_workspace_discovery": {
+            "type": "boolean"
+          },
+          "allow_cross_workspace_messaging": {
+            "type": "boolean"
+          },
+          "revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "revision",
+          "allow_cross_workspace_discovery",
+          "allow_cross_workspace_messaging"
+        ],
+        "type": "object"
+      },
+      "TinaChatWorkspacePolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_cross_workspace_discovery": {
+            "default": false,
+            "type": "boolean"
+          },
+          "allow_cross_workspace_messaging": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/tina-chat/conversations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatConversationDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatCreateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatIntentDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatProposeIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/generate": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatGenerateIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/decision": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "intentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatIntentDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatIntentDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/execute": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "intentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatExecuteIntentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatExecutionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/members": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatMemberDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatMemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatConversationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/conversations/{id}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatSendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatMessageDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/access": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObserverAccessDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedConversationPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedConversationDetail"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/observer/conversations/{id}/messages": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_sequence",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatObservedMessagePage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TinaChatParticipantDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatRegisterParticipantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatUpdateParticipantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatParticipantDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}/inbox": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int64",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatInboxPage"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/participants/{id}/inbox/{messageId}/ack": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    },
+    "/api/v1/tina-chat/workspace-policy": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatWorkspacePolicyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TinaChatWorkspacePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TinaChatWorkspacePolicyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinaChat"
+        ]
+      }
+    }
+  }
+}
