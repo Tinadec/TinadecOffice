@@ -129,6 +129,37 @@ describe('useAgentActivity event wiring', () => {
     expect(progress!.message).toContain('spawnable_whitelist')
   })
 
+  it('shows a blocked worker as unfinished work instead of completion', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('worker.blocked', {
+      agent_slug: 'global_engineering',
+      status: 'blocked',
+      summary: 'Task not completed: write_file was unavailable.',
+    }, 6)
+
+    expect(harness.activity.value.status).toBe('working')
+    const step = harness.thinkingSteps.value.find((item) => item.id === '6-worker-blocked')
+    expect(step).toBeDefined()
+    expect(step!.title).toContain('未完成')
+    expect(step!.description).toContain('Task not completed')
+    expect(harness.progressEvents.value.some((event) => event.type === 'worker.blocked')).toBe(true)
+  })
+
+  it('makes the persisted-evidence final-response fallback visible', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('meeting.response_fallback', {
+      error_category: 'provider_server_error',
+      retry_count: 5,
+    }, 12)
+
+    const step = harness.thinkingSteps.value.find((item) => item.id === '12-meeting-fallback')
+    expect(step).toBeDefined()
+    expect(step!.description).toContain('provider_server_error')
+    expect(harness.progressEvents.value.some((event) => event.type === 'meeting.response_fallback')).toBe(true)
+  })
+
   it('drives the waiting-approval state from the real approval.requested payload', async () => {
     const { harness, source } = await mount()
 

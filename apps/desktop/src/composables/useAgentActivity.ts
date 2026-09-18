@@ -519,6 +519,26 @@ export function useAgentActivity(
     addProgressEvent(event.seq, event.type, 'x', `运行失败${category ? `：${category}` : ''}`)
   }
 
+  function processMeetingFallback(event: EventEnvelope) {
+    const category = extractString(event.payload, 'error_category') ?? ''
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      {
+        id: `${event.seq}-meeting-fallback`,
+        type: 'run',
+        title: '最终汇总已降级',
+        description: category
+          ? `汇总模型不可用（${category}），已直接返回持久化的执行证据。`
+          : '汇总模型不可用，已直接返回持久化的执行证据。',
+        timestamp: event.ts,
+        durationMs: null,
+        severity: 'warning',
+        category,
+      },
+    ]
+    addProgressEvent(event.seq, event.type, 'alert-triangle', '最终汇总模型不可用，已返回执行证据')
+  }
+
   /**
    * Execution-layer instance events: who got the task, who finished or failed, and
    * where the tool loop stands. Insufficient on its own to drive the icons, but the
@@ -550,6 +570,25 @@ export function useAgentActivity(
     }
     if (event.type === 'worker.budget_exhausted') {
       addProgressEvent(event.seq, event.type, 'hourglass', `${slug} 收敛收尾：${message || category || '预算耗尽'}`)
+      return
+    }
+    if (event.type === 'worker.blocked') {
+      updateAgentState(slug, slug, 'execution', slug, 'waiting')
+      thinkingSteps.value = [
+        ...thinkingSteps.value,
+        {
+          id: `${event.seq}-worker-blocked`,
+          type: 'step_result',
+          title: `${slug} 未完成任务`,
+          description: message || '执行者报告任务受阻，系统将重新规划或请求用户处理。',
+          timestamp: event.ts,
+          durationMs: null,
+          severity: 'warning',
+          category: 'blocked',
+          details: { slug },
+        },
+      ]
+      addProgressEvent(event.seq, event.type, 'alert-triangle', message || `${slug} 的任务受阻`)
       return
     }
     addProgressEvent(
@@ -634,6 +673,7 @@ export function useAgentActivity(
         break
       case 'worker.assigned':
       case 'worker.completed':
+      case 'worker.blocked':
       case 'worker.failed':
       case 'worker.tool_failed':
       case 'worker.budget_exhausted':
@@ -684,6 +724,9 @@ export function useAgentActivity(
       }
       case 'run.failed':
         processRunFailed(event)
+        break
+      case 'meeting.response_fallback':
+        processMeetingFallback(event)
         break
       case 'message.created':
         processMessageCreated(event)
