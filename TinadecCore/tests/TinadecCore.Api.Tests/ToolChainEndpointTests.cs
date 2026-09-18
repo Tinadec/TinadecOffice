@@ -96,7 +96,8 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var permissionPayload = Assert.IsType<JsonElement>(permissionDecision.Payload["payload"]);
         Assert.Equal(approvalId, permissionPayload.GetProperty("permission_request_id").GetGuid());
         Assert.Equal(GovernanceOutcomes.Allowed, permissionPayload.GetProperty("outcome").GetString());
-        Assert.NotEqual(Guid.Empty, permissionPayload.GetProperty("execution_id").GetGuid());
+        var executionId = permissionPayload.GetProperty("execution_id").GetGuid();
+        Assert.NotEqual(Guid.Empty, executionId);
 
         List<JsonElement> chunks;
         try
@@ -115,6 +116,20 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         Assert.Equal(runId, done.GetProperty("run_id").GetGuid());
 
         Assert.Equal("hello", await File.ReadAllTextAsync(Path.Combine(workspace, "probe.txt")));
+
+        var timeline = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions");
+        Assert.NotNull(timeline);
+        var writeExecution = Assert.Single(timeline, item =>
+            item.GetProperty("tool_id").GetString() == "write_file");
+        Assert.Equal(executionId.ToString(), writeExecution.GetProperty("id").GetString());
+        Assert.Equal("completed", writeExecution.GetProperty("status").GetString());
+        Assert.True(writeExecution.GetProperty("requires_approval").GetBoolean());
+        Assert.Equal(approvalId.ToString(), writeExecution.GetProperty("approval_id").GetString());
+        var timelineEventTypes = writeExecution.GetProperty("event_types").EnumerateArray()
+            .Select(item => item.GetString()).ToArray();
+        Assert.Contains("approval.requested", timelineEventTypes);
+        Assert.Contains("governance.permission_decided", timelineEventTypes);
+        Assert.Contains("tool.execution.completed", timelineEventTypes);
 
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration");
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
