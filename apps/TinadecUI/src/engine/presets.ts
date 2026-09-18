@@ -217,7 +217,24 @@ function buildDebugPreset(ctx: PresetContext): UieLayoutSnapshot {
   return snapshot
 }
 
+function buildChatroomPreset(ctx: PresetContext): UieLayoutSnapshot {
+  const snapshot = createEmptySnapshot('chatroom')
+  snapshot.gap = HOME_GEOMETRY.gap
+  snapshot.edgeInset = HOME_GEOMETRY.edgeInset
+  const nav = card(ctx.nextInstanceId(), 'nav', '项目')
+  const chatroom = card(ctx.nextInstanceId(), 'chatroom', '聊天室')
+  snapshot.cards = { [nav.id]: nav, [chatroom.id]: chatroom }
+  snapshot.columns = {
+    left: column('left', HOME_GEOMETRY.leftWidth, 8, 'float', [nav.id], nav.id),
+    center: column('center', 0, 48, 'float', [chatroom.id], chatroom.id),
+    right: column('right', 0, 48, 'float', [], null, true),
+  }
+  snapshot.focusedCardId = chatroom.id
+  return snapshot
+}
+
 export const PRESET_BUILDERS: Record<UiePageId, (ctx: PresetContext) => UieLayoutSnapshot> = {
+  chatroom: buildChatroomPreset,
   home: buildHomePreset,
   settings: buildSettingsPreset,
   market: buildMarketPreset,

@@ -1,5 +1,13 @@
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
 import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
+import type { components } from '@/generated/schema'
+
+export type TinaChatObserverAccess = components['schemas']['TinaChatObserverAccessDto']
+export type TinaChatObservedConversation = components['schemas']['TinaChatObservedConversationDto']
+export type TinaChatObservedConversationPage = components['schemas']['TinaChatObservedConversationPage']
+export type TinaChatObservedDetail = components['schemas']['TinaChatObservedConversationDetail']
+export type TinaChatObservedMessage = components['schemas']['TinaChatObservedMessageDto']
+export type TinaChatObservedMessagePage = components['schemas']['TinaChatObservedMessagePage']
 
 export interface ProjectDto {
   id: string;
@@ -1920,6 +1928,18 @@ export function normalizeEventEnvelope(
 
 export const api = {
   gatewayUrl,
+  tinaChatObserverAccess: (signal?: AbortSignal) => request<TinaChatObserverAccess>('/api/v1/tina-chat/observer/access', { signal, cache: 'no-store' }),
+  tinaChatObserverConversations: (params: { query?: string; kind?: string; workspace_id?: string; offset?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') search.set(key, String(value))
+    return request<TinaChatObservedConversationPage>(`/api/v1/tina-chat/observer/conversations?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatObserverConversation: (id: string, signal?: AbortSignal) => request<TinaChatObservedDetail>(`/api/v1/tina-chat/observer/conversations/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
+  tinaChatObserverMessages: (id: string, params: { before_sequence?: number; after_sequence?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value))
+    return request<TinaChatObservedMessagePage>(`/api/v1/tina-chat/observer/conversations/${encodeURIComponent(id)}/messages?${search}`, { signal, cache: 'no-store' })
+  },
   health: () => request<Record<string, unknown>>('/api/v1/health'),
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),

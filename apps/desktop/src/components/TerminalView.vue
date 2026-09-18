@@ -98,7 +98,7 @@ onUnmounted(() => {
   // shell: closing a tab, collapsing the feature column, a route change and a
   // detach all unmount here. Detach the listeners and xterm and leave the process
   // running; explicit close/restart/Ctrl+W still reach closeTerminal().
-  detachTerminal(props.terminalId)
+  detachTerminal(props.terminalId, term)
 
   term = null
   fitAddon = null

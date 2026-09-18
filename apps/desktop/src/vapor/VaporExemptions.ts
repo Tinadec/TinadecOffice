@@ -83,6 +83,7 @@ export const VAPOR_OPTED_IN: readonly string[] = [
   '../../TinadecUI/src/components/cards/home/ApprovalCard.vue',
   '../../TinadecUI/src/components/cards/home/BrowserCard.vue',
   '../../TinadecUI/src/components/cards/home/ChatCard.vue',
+  '../../TinadecUI/src/components/cards/home/ChatroomCard.vue',
   '../../TinadecUI/src/components/cards/home/DoctorCard.vue',
   '../../TinadecUI/src/components/cards/home/EventsCard.vue',
   '../../TinadecUI/src/components/cards/home/GitCard.vue',

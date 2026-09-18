@@ -1,6 +1,9 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-09-09
+**Last Updated:** 2026-09-18
+**Last Updated By:** TinaChat 管理员观察页面 + terminal singleton/legacy layout repair
+**Last Verified Commit:** `d5e676c` 基线上的当前未提交工作树
+**Branch:** Everything-changed
 
 TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desktop`, `apps/web`) import it as `@tinadec/ui` — a registered alias in both packages' `vite.config.ts` and `tsconfig.json` that resolves to `apps/TinadecUI/src/index.ts`. Both consumers also map `@` → `apps/desktop/src`, so TinadecUI files may reference app code via `@/` and it resolves under every consumer. The boundary is a module home + public barrel, not a build-isolated library.
 
@@ -32,6 +35,10 @@ TinadecUI organizes UI engineering into three modules (the user's framing):
 | **Rendering** | Page/surface rendering & transitions that compose the engine. | future: `src/rendering/` |
 
 ## Dock (multi-pane split)
+
+Chatroom（2026-09-18）：新增 `chatroom` pageId/preset，保留左侧 `nav`，中栏 `ChatroomCard` 承载 Desktop 只读观察面板，右栏为空。descriptor不可关闭/拖动，复用现有command bus和版式序列化；repair识别新pageId，无snapshot形状变化。NavCard的会话选择/新建需返回首页，聊天室入口跳 `/chatroom`；Vapor卡片已登记。权限与网络均不进入纯TS Engine。
+
+Terminal layout invariant（2026-09-18）：`terminal` descriptor 必须是 singleton。多 shell 会话由 Desktop `TerminalPanel` 内部 tabs 管理；允许多个 Uie TerminalCard 会让它们争用同一个全局 terminal attachment，最终可释放仍在使用的 xterm renderer。现有 `repairLayout` 的 singleton 去重同时承担旧持久快照修复：若历史布局含多个 terminal card，只保留第一个并正规化 active tab。不要为“多终端”把 descriptor 改回 non-singleton。
 
 The feature/right column supports **dock splits** — recursive binary split trees of panes (`UieColumn.dock`, mutually exclusive with `primary/secondary`). Users drag a tab to a pane edge to split (row/column) or to a pane center to merge; a single collapsed rail collects every pane's feature icons.
 

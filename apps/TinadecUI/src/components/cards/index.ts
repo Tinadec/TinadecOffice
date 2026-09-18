@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import { createCardRegistry, type CardRegistry } from '../../engine/registry'
 import NavCard from './home/NavCard.vue'
+import ChatroomCard from './home/ChatroomCard.vue'
 import ChatCard from './home/ChatCard.vue'
 import HomePickerCard from './home/HomePickerCard.vue'
 import GitCard from './home/GitCard.vue'
@@ -25,6 +26,7 @@ export function buildUieRegistry(): CardRegistry {
 
   const cards: UieCardDescriptor[] = [
     { type: 'nav', component: NavCard, minWidth: 220, minHeight: 120, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '项目' },
+    { type: 'chatroom', component: ChatroomCard, minWidth: 320, minHeight: 240, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '聊天室' },
     { type: 'chat', component: ChatCard, minWidth: 320, minHeight: 200, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '聊天' },
     { type: 'homePicker', component: HomePickerCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: 'Home' },
     { type: 'git', component: GitCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Git' },
@@ -34,7 +36,10 @@ export function buildUieRegistry(): CardRegistry {
     { type: 'doctor', component: DoctorCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Doctor' },
     { type: 'browser', component: BrowserCard, minWidth: 260, minHeight: 160, singleton: false, movable: true, closable: true, detachable: true, defaultTitle: '浏览器' },
     { type: 'agent', component: AgentCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Agent' },
-    { type: 'terminal', component: TerminalCard, minWidth: 260, minHeight: 160, singleton: false, movable: true, closable: true, detachable: true, defaultTitle: '终端' },
+    // The panel itself is singleton. It already manages multiple terminal tabs internally;
+    // mounting two TerminalCards would attach two xterm views to the same terminal IDs and
+    // let one view dispose the other's renderer.
+    { type: 'terminal', component: TerminalCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '终端' },
     { type: 'marketFilter', component: MarketFilterCard, minWidth: 240, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '筛选' },
     { type: 'marketCatalog', component: MarketCatalogCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '目录' },
     { type: 'marketDetail', component: MarketDetailCard, minWidth: 280, minHeight: 160, singleton: true, movable: false, closable: false, detachable: false, defaultTitle: '详情' },

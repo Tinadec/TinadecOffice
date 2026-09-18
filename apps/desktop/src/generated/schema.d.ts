@@ -681,6 +681,64 @@ export interface paths {
     /** Send user input to an agent terminal session */
     post: operations["postApiV1TerminalsByTerminalSessionIdStdin"];
   };
+  "/api/v1/tina-chat/conversations": {
+    get: operations["getApiV1Tina-chatConversations"];
+    post: operations["postApiV1Tina-chatConversations"];
+  };
+  "/api/v1/tina-chat/conversations/{id}": {
+    get: operations["getApiV1Tina-chatConversationsById"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/intents": {
+    get: operations["getApiV1Tina-chatConversationsByIdIntents"];
+    post: operations["postApiV1Tina-chatConversationsByIdIntents"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/intents/generate": {
+    post: operations["postApiV1Tina-chatConversationsByIdIntentsGenerate"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/decision": {
+    post: operations["postApiV1Tina-chatConversationsByIdIntentsByIntentIdDecision"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/intents/{intentId}/execute": {
+    post: operations["postApiV1Tina-chatConversationsByIdIntentsByIntentIdExecute"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/members": {
+    get: operations["getApiV1Tina-chatConversationsByIdMembers"];
+    put: operations["putApiV1Tina-chatConversationsByIdMembers"];
+  };
+  "/api/v1/tina-chat/conversations/{id}/messages": {
+    get: operations["getApiV1Tina-chatConversationsByIdMessages"];
+    post: operations["postApiV1Tina-chatConversationsByIdMessages"];
+  };
+  "/api/v1/tina-chat/observer/access": {
+    get: operations["getApiV1Tina-chatObserverAccess"];
+  };
+  "/api/v1/tina-chat/observer/conversations": {
+    get: operations["getApiV1Tina-chatObserverConversations"];
+  };
+  "/api/v1/tina-chat/observer/conversations/{id}": {
+    get: operations["getApiV1Tina-chatObserverConversationsById"];
+  };
+  "/api/v1/tina-chat/observer/conversations/{id}/messages": {
+    get: operations["getApiV1Tina-chatObserverConversationsByIdMessages"];
+  };
+  "/api/v1/tina-chat/participants": {
+    get: operations["getApiV1Tina-chatParticipants"];
+    post: operations["postApiV1Tina-chatParticipants"];
+  };
+  "/api/v1/tina-chat/participants/{id}": {
+    get: operations["getApiV1Tina-chatParticipantsById"];
+    patch: operations["patchApiV1Tina-chatParticipantsById"];
+  };
+  "/api/v1/tina-chat/participants/{id}/inbox": {
+    get: operations["getApiV1Tina-chatParticipantsByIdInbox"];
+  };
+  "/api/v1/tina-chat/participants/{id}/inbox/{messageId}/ack": {
+    post: operations["postApiV1Tina-chatParticipantsByIdInboxByMessageIdAck"];
+  };
+  "/api/v1/tina-chat/workspace-policy": {
+    get: operations["getApiV1Tina-chatWorkspace-policy"];
+    put: operations["putApiV1Tina-chatWorkspace-policy"];
+  };
   "/api/v1/tool-layer-readiness": {
     /** Tool layer readiness */
     get: operations["getApiV1Tool-layer-readiness"];
@@ -1170,6 +1228,310 @@ export interface components {
       [key: string]: unknown;
     };
     TaskNodeList: components["schemas"]["TaskNode"][];
+    TinaChatConversationDto: {
+      /** Format: uuid */
+      accepted_intent_id: string | null;
+      allow_cross_workspace: boolean;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      /** Format: int64 */
+      last_sequence: number | string;
+      membership_status: string;
+      /** Format: int64 */
+      revision: number | string;
+      title: string;
+      /** Format: uuid */
+      workspace_id: string;
+    };
+    TinaChatCreateConversationRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      /** @default false */
+      allow_cross_workspace?: boolean;
+      client_request_id?: string | null;
+      /** @default group */
+      kind?: string;
+      participant_ids: string[];
+      title: string;
+    };
+    TinaChatExecuteIntentRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      /** Format: uuid */
+      mode_version_id: string;
+      /** Format: uuid */
+      project_id?: string | null;
+    };
+    TinaChatExecutionDto: {
+      /** Format: uuid */
+      conversation_id: string;
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      intent_id: string;
+      /** Format: uuid */
+      participant_id: string;
+      /** Format: uuid */
+      run_id: string | null;
+      /** Format: uuid */
+      session_id: string;
+      status: string;
+    };
+    TinaChatGenerateIntentRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      audience_participant_ids: string[];
+      client_request_id: string;
+      /** Format: int64 */
+      expected_revision: number | string;
+      source_message_ids: string[];
+    };
+    TinaChatInboxItem: {
+      acknowledged: boolean;
+      message: components["schemas"]["TinaChatMessageDto"];
+    };
+    TinaChatInboxPage: {
+      items: components["schemas"]["TinaChatInboxItem"][];
+      /** Format: int64 */
+      next_cursor: number | string;
+    };
+    TinaChatIntentContent: {
+      acceptance_criteria: string[];
+      assumptions: string[];
+      blocking_questions: string[];
+      constraints: string[];
+      goal: string;
+      open_questions: string[];
+      user_statements: string[];
+    };
+    TinaChatIntentDecisionRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      decision: string;
+      /** Format: int64 */
+      expected_revision: number | string;
+    };
+    TinaChatIntentDto: {
+      /** Format: uuid */
+      author_id: string;
+      content: components["schemas"]["TinaChatIntentContent"];
+      /** Format: uuid */
+      conversation_id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      decided_by_id: string | null;
+      /** Format: uuid */
+      id: string;
+      /** Format: int64 */
+      revision: number | string;
+      source_message_ids: string[];
+      status: string;
+    };
+    TinaChatMemberDto: {
+      /** Format: int64 */
+      joined_after_sequence: number | string;
+      /** Format: uuid */
+      participant_id: string;
+      role: string;
+      status: string;
+    };
+    TinaChatMemberRequest: {
+      action: string;
+      /** Format: uuid */
+      actor_id: string;
+      /** Format: int64 */
+      expected_revision: number | string;
+      /** Format: uuid */
+      participant_id: string;
+      /** @default member */
+      role?: string;
+    };
+    TinaChatMessageDto: {
+      allow_derived_sharing: boolean;
+      content: string;
+      /** Format: uuid */
+      conversation_id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      /** Format: uuid */
+      reply_to_message_id: string | null;
+      /** Format: uuid */
+      sender_id: string;
+      sender_kind: string;
+      sensitivity: string;
+      /** Format: int64 */
+      sequence: number | string;
+      source_message_ids: string[];
+    };
+    TinaChatMessagePage: {
+      items: components["schemas"]["TinaChatMessageDto"][];
+      /** Format: int64 */
+      next_cursor: number | string;
+    };
+    TinaChatObservedAudienceDto: {
+      acknowledged: boolean;
+      can_read_original: boolean;
+      can_receive_derived: boolean;
+      participant: components["schemas"]["TinaChatParticipantDto"];
+    };
+    TinaChatObservedConversationDetail: {
+      conversation: components["schemas"]["TinaChatObservedConversationDto"];
+      members: components["schemas"]["TinaChatObservedMemberDto"][];
+    };
+    TinaChatObservedConversationDto: {
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      /** Format: date-time */
+      last_message_at: string | null;
+      last_message_preview: string | null;
+      /** Format: int64 */
+      last_sequence: number | string;
+      /** Format: int32 */
+      member_count: number | string;
+      participant_names: string[];
+      /** Format: int64 */
+      revision: number | string;
+      title: string;
+      /** Format: uuid */
+      workspace_id: string;
+      workspace_name: string;
+    };
+    TinaChatObservedConversationPage: {
+      has_more: boolean;
+      items: components["schemas"]["TinaChatObservedConversationDto"][];
+      /** Format: int32 */
+      next_offset: number | string;
+      /** Format: int32 */
+      total: number | string;
+    };
+    TinaChatObservedMemberDto: {
+      /** Format: int64 */
+      joined_after_sequence: number | string;
+      participant: components["schemas"]["TinaChatParticipantDto"];
+      role: string;
+      status: string;
+    };
+    TinaChatObservedMessageDto: {
+      audience: components["schemas"]["TinaChatObservedAudienceDto"][];
+      /** Format: uuid */
+      intent_id: string | null;
+      intent_status: string | null;
+      message: components["schemas"]["TinaChatMessageDto"];
+      sender: components["schemas"]["TinaChatParticipantDto"];
+    };
+    TinaChatObservedMessagePage: {
+      has_more: boolean;
+      items: components["schemas"]["TinaChatObservedMessageDto"][];
+      /** Format: int64 */
+      newest_sequence: number | string;
+      /** Format: int64 */
+      oldest_sequence: number | string;
+    };
+    TinaChatObserverAccessDto: {
+      level: string;
+      workspaces: components["schemas"]["TinaChatObserverWorkspaceDto"][];
+    };
+    TinaChatObserverWorkspaceDto: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+    };
+    TinaChatParticipantDto: {
+      /** Format: uuid */
+      agent_definition_id: string | null;
+      can_interpret_intent: boolean;
+      description: string | null;
+      discoverable: boolean;
+      display_name: string;
+      handle: string;
+      /** Format: uuid */
+      id: string;
+      job_title: string | null;
+      kind: string;
+      receive_human_messages: boolean;
+      /** Format: int64 */
+      revision: number | string;
+      status: string;
+      /** Format: uuid */
+      workspace_id: string;
+    };
+    TinaChatProposeIntentRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      audience_participant_ids: string[];
+      client_request_id: string;
+      content: components["schemas"]["TinaChatIntentContent"];
+      /** Format: int64 */
+      expected_revision: number | string;
+      source_message_ids: string[];
+    };
+    TinaChatRegisterParticipantRequest: {
+      /** Format: uuid */
+      agent_definition_id?: string | null;
+      /** @default false */
+      can_interpret_intent?: boolean;
+      description?: string | null;
+      /** @default true */
+      discoverable?: boolean;
+      display_name: string;
+      handle: string;
+      job_title?: string | null;
+      /** @default agent */
+      kind?: string;
+      /** @default false */
+      receive_human_messages?: boolean;
+    };
+    TinaChatSendMessageRequest: {
+      /** Format: uuid */
+      actor_id: string;
+      /** @default false */
+      allow_derived_sharing?: boolean;
+      audience_participant_ids?: string[] | null;
+      client_message_id: string;
+      content: string;
+      /** Format: uuid */
+      reply_to_message_id?: string | null;
+      /** @default normal */
+      sensitivity?: string;
+      source_message_ids?: string[] | null;
+    };
+    TinaChatUpdateParticipantRequest: {
+      /** @default false */
+      can_interpret_intent?: boolean;
+      description?: string | null;
+      /** @default true */
+      discoverable?: boolean;
+      display_name: string;
+      /** Format: int64 */
+      expected_revision: number | string;
+      job_title?: string | null;
+      /** @default false */
+      receive_human_messages?: boolean;
+      /** @default active */
+      status?: string;
+    };
+    TinaChatWorkspacePolicyDto: {
+      allow_cross_workspace_discovery: boolean;
+      allow_cross_workspace_messaging: boolean;
+      /** Format: int64 */
+      revision: number | string;
+      /** Format: uuid */
+      workspace_id: string;
+    };
+    TinaChatWorkspacePolicyRequest: {
+      /** @default false */
+      allow_cross_workspace_discovery?: boolean;
+      /** @default false */
+      allow_cross_workspace_messaging?: boolean;
+      /** Format: int64 */
+      expected_revision: number | string;
+    };
   };
   responses: never;
   parameters: never;
@@ -3624,6 +3986,419 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  "getApiV1Tina-chatConversations": {
+    parameters: {
+      query: {
+        actor_id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatConversationDto"][];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversations": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatCreateConversationRequest"];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        content: {
+          "application/json": components["schemas"]["TinaChatConversationDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatConversationsById": {
+    parameters: {
+      query: {
+        actor_id: string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatConversationDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatConversationsByIdIntents": {
+    parameters: {
+      query: {
+        actor_id: string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatIntentDto"][];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversationsByIdIntents": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatProposeIntentRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatIntentDto"];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversationsByIdIntentsGenerate": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatGenerateIntentRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatIntentDto"];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversationsByIdIntentsByIntentIdDecision": {
+    parameters: {
+      path: {
+        id: string;
+        intentId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatIntentDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatIntentDto"];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversationsByIdIntentsByIntentIdExecute": {
+    parameters: {
+      path: {
+        id: string;
+        intentId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatExecuteIntentRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatExecutionDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatConversationsByIdMembers": {
+    parameters: {
+      query: {
+        actor_id: string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatMemberDto"][];
+        };
+      };
+    };
+  };
+  "putApiV1Tina-chatConversationsByIdMembers": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatMemberRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatConversationDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatConversationsByIdMessages": {
+    parameters: {
+      query: {
+        actor_id: string;
+        after_sequence?: number | string;
+        limit?: number | string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatMessagePage"];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatConversationsByIdMessages": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatSendMessageRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatMessageDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatObserverAccess": {
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatObserverAccessDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatObserverConversations": {
+    parameters: {
+      query?: {
+        query?: string;
+        kind?: string;
+        workspace_id?: string;
+        offset?: number | string;
+        limit?: number | string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatObservedConversationPage"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatObserverConversationsById": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatObservedConversationDetail"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatObserverConversationsByIdMessages": {
+    parameters: {
+      query?: {
+        before_sequence?: number | string;
+        after_sequence?: number | string;
+        limit?: number | string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatObservedMessagePage"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatParticipants": {
+    parameters: {
+      query?: {
+        query?: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatParticipantDto"][];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatParticipants": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatRegisterParticipantRequest"];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        content: {
+          "application/json": components["schemas"]["TinaChatParticipantDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatParticipantsById": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatParticipantDto"];
+        };
+      };
+    };
+  };
+  "patchApiV1Tina-chatParticipantsById": {
+    parameters: {
+      path: {
+        id: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatUpdateParticipantRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatParticipantDto"];
+        };
+      };
+    };
+  };
+  "getApiV1Tina-chatParticipantsByIdInbox": {
+    parameters: {
+      query?: {
+        after_sequence?: number | string;
+        limit?: number | string;
+      };
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatInboxPage"];
+        };
+      };
+    };
+  };
+  "postApiV1Tina-chatParticipantsByIdInboxByMessageIdAck": {
+    parameters: {
+      path: {
+        id: string;
+        messageId: string;
+      };
+    };
+    responses: {
+      /** @description No Content */
+      204: {
+        content: never;
+      };
+    };
+  };
+  "getApiV1Tina-chatWorkspace-policy": {
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatWorkspacePolicyDto"];
+        };
+      };
+    };
+  };
+  "putApiV1Tina-chatWorkspace-policy": {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TinaChatWorkspacePolicyRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["TinaChatWorkspacePolicyDto"];
+        };
       };
     };
   };
