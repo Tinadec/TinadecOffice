@@ -624,14 +624,24 @@ public sealed class ControlPlaneService
                 if (runScope)
                     runScopeOutcome = await ApplyRunScopeAsync(resolved.Request, ct).ConfigureAwait(false);
 
+                Guid? executionId = null;
                 await using var db = await _lifecycle.CreateDbContextAsync(ct);
                 var execution = await db.ToolExecutions.SingleOrDefaultAsync(x => x.PermissionRequestId == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
                 if (execution is not null)
                 {
+                    executionId = execution.Id;
                     var snapshot = await _executions.EnsureApprovalAsync(execution.Id, ct).ConfigureAwait(false);
                     if (snapshot.ApprovalId is { } actionApproval)
                         await _approvals.DecideAsync(actionApproval, approve ? "approved" : "rejected", input.Reason, ct).ConfigureAwait(false);
                 }
+                await _runs.AppendEventAsync(permissionRun, "governance.permission_decided", new
+                {
+                    permission_request_id = resolved.Request.Id,
+                    authorization_decision_id = resolved.Decision.Id,
+                    execution_id = executionId,
+                    outcome = resolved.Decision.Outcome,
+                    reason_code = resolved.Decision.ReasonCode
+                }, "Permission decision committed; run resumed.", cancellationToken: ct).ConfigureAwait(false);
                 await _runs.SetRunStatusAsync(permissionRun.ToString(), "executing", "Legacy approval decision committed; resuming run.", ct).ConfigureAwait(false);
                 await _engine.EnqueueAsync(permissionRun, ct).ConfigureAwait(false);
             }

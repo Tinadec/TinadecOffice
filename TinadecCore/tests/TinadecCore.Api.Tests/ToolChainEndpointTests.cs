@@ -89,6 +89,15 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
         Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
 
+        var lifecycle = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var decisionEvents = await lifecycle.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
+        var permissionDecision = Assert.Single(decisionEvents, item =>
+            item.RunId == runId.ToString() && item.EventType == "governance.permission_decided");
+        var permissionPayload = Assert.IsType<JsonElement>(permissionDecision.Payload["payload"]);
+        Assert.Equal(approvalId, permissionPayload.GetProperty("permission_request_id").GetGuid());
+        Assert.Equal(GovernanceOutcomes.Allowed, permissionPayload.GetProperty("outcome").GetString());
+        Assert.NotEqual(Guid.Empty, permissionPayload.GetProperty("execution_id").GetGuid());
+
         List<JsonElement> chunks;
         try
         {
