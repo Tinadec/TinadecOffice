@@ -1881,11 +1881,21 @@ export function normalizeEventEnvelope(
   raw: Record<string, unknown>,
   lastEventId?: string | null,
 ): EventEnvelope {
-  const payload =
+  const wirePayload =
     raw.payload && typeof raw.payload === 'object' && !Array.isArray(raw.payload)
       ? (raw.payload as Record<string, unknown>)
       : {};
-  const seqFromPayload = Number(payload.sequence)
+  // StorageLifecycleService materializes durable journal rows as
+  // payload={ sequence, summary, severity, payload: <business payload> }.
+  // Consumers should not need to know whether an event arrived live or via
+  // durable replay, so flatten that business payload here while retaining the
+  // journal metadata used by the renderer (especially sequence/summary/severity).
+  const durablePayload =
+    wirePayload.payload && typeof wirePayload.payload === 'object' && !Array.isArray(wirePayload.payload)
+      ? (wirePayload.payload as Record<string, unknown>)
+      : null;
+  const payload = durablePayload ? { ...wirePayload, ...durablePayload } : wirePayload;
+  const seqFromPayload = Number(wirePayload.sequence)
   const seqFromId = Number(lastEventId)
   const seqCandidate =
     typeof raw.seq === 'number' && Number.isFinite(raw.seq)

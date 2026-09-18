@@ -25,6 +25,35 @@ describe('normalizeEventEnvelope', () => {
     expect((event as unknown as Record<string, unknown>).run_id).toBe('r-1')
   })
 
+  it('unwraps the durable replay business payload while retaining journal metadata', () => {
+    const event = normalizeEventEnvelope({
+      version: '1.0',
+      event_type: 'task_graph.created',
+      timestamp: '2026-09-18T00:00:00Z',
+      payload: {
+        sequence: 6,
+        summary: '1 task(s) planned.',
+        severity: 'info',
+        payload: {
+          run_id: 'r-1',
+          plan_revision: 1,
+          task_count: 1,
+          task_keys: ['responses-write-proof'],
+        },
+      },
+    })
+
+    expect(event.seq).toBe(6)
+    expect(event.payload).toMatchObject({
+      sequence: 6,
+      summary: '1 task(s) planned.',
+      severity: 'info',
+      run_id: 'r-1',
+      task_count: 1,
+      task_keys: ['responses-write-proof'],
+    })
+  })
+
   it('passes the legacy/mock top-level shape (type/seq/ts) through unchanged', () => {
     const legacy = { v: '1.0', type: 'run.started', seq: 3, ts: '2026-01-01T00:00:00Z', request_id: 'req', trace_id: 'tr', capabilities: ['a'], payload: { sequence: 99 } }
     const event = normalizeEventEnvelope(legacy)

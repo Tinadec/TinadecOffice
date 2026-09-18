@@ -26,7 +26,15 @@ class FakeEventSource {
       timestamp: '2026-09-18T00:00:00Z',
       session_id: 's-1',
       run_id: 'r-1',
-      payload: { sequence: seq, ...payload },
+      // Match StorageLifecycleService.MaterializeAsync exactly: durable replay
+      // wraps the business payload under payload.payload and adds journal
+      // metadata alongside it.
+      payload: {
+        sequence: seq,
+        summary: `${type} replay`,
+        severity: 'info',
+        payload,
+      },
     }
     const event = new MessageEvent(type, { data: JSON.stringify(frame), lastEventId: String(seq) })
     for (const listener of this.listeners.get(type) ?? []) listener(event)
