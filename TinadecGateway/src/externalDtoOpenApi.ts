@@ -58,6 +58,10 @@ const message = t.Object({
   role: t.String(),
   content: t.String(),
   created_at: nullableString(),
+  // Files the user sent with this message. An empty array means "none", never
+  // "unknown": Core groups the whole page from one listing, so the field is
+  // always present.
+  attachments: t.Array(componentRef('MessageAttachmentSummary')),
 }, { additionalProperties: true });
 
 const run = t.Object({
@@ -179,6 +183,22 @@ const attachment = t.Object({
   bound_at: nullableString(),
 }, { additionalProperties: true });
 
+/**
+ * The narrower shape Core projects inside a Message. session_id and message_id
+ * are absent because the parent row already carries both — restating them per
+ * attachment would only create a second place where the two can disagree.
+ * content_reference never leaves Core at any level.
+ */
+const messageAttachmentSummary = t.Object({
+  id: t.String(),
+  file_name: t.String(),
+  media_type: t.String(),
+  content_hash: t.String(),
+  content_length: t.Unsafe({ type: 'integer' }),
+  created_at: nullableString(),
+  bound_at: nullableString(),
+}, { additionalProperties: true });
+
 const preAuthorization = t.Object({
   id: t.String({ format: 'uuid' }),
   run_id: t.String({ format: 'uuid' }),
@@ -201,6 +221,7 @@ export const externalDtoSchemas = {
   Message: message,
   MessageList: t.Array(componentRef('Message')),
   MessageAttachment: attachment,
+  MessageAttachmentSummary: messageAttachmentSummary,
   MessageAttachmentList: t.Array(componentRef('MessageAttachment')),
   Run: run,
   RunList: t.Array(componentRef('Run')),

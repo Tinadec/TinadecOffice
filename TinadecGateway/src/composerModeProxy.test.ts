@@ -25,6 +25,19 @@ test('interaction validation carries mode_version_id and rejects the retired age
   if (absent.ok) assert.equal(absent.value.mode_version_id, undefined);
 });
 
+test('interaction validation forwards attachment_ids without re-deciding them', () => {
+  const ids = ['0d3f6a2e-0000-4000-8000-000000000001', '0d3f6a2e-0000-4000-8000-000000000002'];
+  const valid = validateInteractionBody({ content: '看这个文件', client_message_id: 'cm-2', dispatch_mode: 'queued', attachment_ids: ids });
+  assert.equal(valid.ok, true);
+  if (valid.ok) assert.deepEqual(valid.value.attachment_ids, ids);
+
+  // Ceiling, guid shape and which dispatch modes may carry files are Core's call.
+  // Dropping or rejecting such a value here would turn a refusal the user can read
+  // into a send that quietly carries nothing.
+  const odd = validateInteractionBody({ content: 'x', dispatch_mode: 'queued', attachment_ids: ['not-a-guid'] });
+  assert.equal(odd.ok, true);
+});
+
 test('session mapper preserves mode binding fields Core owns', () => {
   const mapped = mapSession({
     id: 's-1',

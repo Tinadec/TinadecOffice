@@ -1033,6 +1033,12 @@
       "Message": {
         "additionalProperties": true,
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/MessageAttachmentSummary"
+            },
+            "type": "array"
+          },
           "content": {
             "type": "string"
           },
@@ -1060,7 +1066,8 @@
           "run_id",
           "role",
           "content",
-          "created_at"
+          "created_at",
+          "attachments"
         ],
         "type": "object"
       },
@@ -1116,6 +1123,44 @@
           "$ref": "#/components/schemas/MessageAttachment"
         },
         "type": "array"
+      },
+      "MessageAttachmentSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "bound_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "content_length": {
+            "type": "integer"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "file_name",
+          "media_type",
+          "content_hash",
+          "content_length",
+          "created_at",
+          "bound_at"
+        ],
+        "type": "object"
       },
       "MessageList": {
         "items": {

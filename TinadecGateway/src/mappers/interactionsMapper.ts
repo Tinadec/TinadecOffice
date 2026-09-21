@@ -17,6 +17,12 @@ export interface InteractionExternalRequest {
   content?: string;
   client_message_id?: string;
   mode_version_id?: string | null;
+  /**
+   * Ids of rows already uploaded to this session. Declared, not validated: the
+   * shape rules (array of guids, per-message ceiling, which dispatch modes may
+   * carry them) belong to Core, and a proxy that re-decides them can only drift.
+   */
+  attachment_ids?: string[];
   [key: string]: unknown;
 }
 
