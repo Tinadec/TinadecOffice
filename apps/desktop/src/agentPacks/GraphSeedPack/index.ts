@@ -130,7 +130,7 @@ export interface AgentPackEnvelope {
 }
 
 export const GRAPH_SEED_PACK_ID = 'tinadec.graph.seed-pack'
-export const GRAPH_SEED_PACK_VERSION = '2.5.0'
+export const GRAPH_SEED_PACK_VERSION = '2.6.0'
 
 export const graphSeedPackManifest = manifestJson as AgentPackManifest
 
@@ -143,7 +143,7 @@ export const graphSeedPackManifest = manifestJson as AgentPackManifest
 // The digest must be computed over the DTO-closed manifest, i.e. the raw file as
 // written — Core canonicalizes its DTO round-trip of this same body. See
 // packIntegrity.ts for the invariant and the gates that enforce it.
-export const GRAPH_SEED_PACK_DIGEST = '2463deeadbb2f25564b74ca21edff4e3d131f5df747539af90dc8ceb6e8d2b57'
+export const GRAPH_SEED_PACK_DIGEST = 'e34896a257e378e80e60f9370bcc6edf4bcb5c4a3a6bf82eb60328979f268fbf'
 
 export const graphSeedPackEnvelope: AgentPackEnvelope = {
   manifest: graphSeedPackManifest,

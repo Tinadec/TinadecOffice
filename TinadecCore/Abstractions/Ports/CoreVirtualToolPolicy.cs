@@ -23,6 +23,16 @@ public static class CoreVirtualToolPolicy
     public const string TaskDispatchToolId = "task_dispatch";
 
     /// <summary>
+    /// Reads a page of a file the user attached to a message in this session.
+    ///
+    /// Why it exists: the context builder can only quote a bounded excerpt of every attachment per
+    /// turn, so the rest of a log, a CSV or a long config reaches the model as a filename and a byte
+    /// count. A model that needs line 4000 of a crash log had to ask the user to paste it. This tool
+    /// hands the paging to the model, which is the only party that knows how much it needs.
+    /// </summary>
+    public const string ReadAttachmentToolId = "read_attachment";
+
+    /// <summary>
     /// A nullable project id cannot travel on the wire, so a projectless call
     /// carries <see cref="Guid.Empty"/> as its project sentinel.
     /// </summary>
@@ -33,6 +43,9 @@ public static class CoreVirtualToolPolicy
 
     public static bool IsTaskDispatch(string? toolId) =>
         string.Equals(toolId, TaskDispatchToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsReadAttachment(string? toolId) =>
+        string.Equals(toolId, ReadAttachmentToolId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The nine tools that let a governed run act as a named member of a TinaChat conversation. They
@@ -62,7 +75,7 @@ public static class CoreVirtualToolPolicy
     /// legitimately declared virtual tool is dropped as "the process does not offer it".
     /// </summary>
     public static bool IsCoreVirtual(string? toolId) =>
-        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTinaChat(toolId);
+        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsReadAttachment(toolId) || IsTinaChat(toolId);
 
     /// <summary>
     /// True when a call-time gate may demand that the tool appear in the TinadecTools child-process

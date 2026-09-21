@@ -48,6 +48,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly ILogger<ToolDispatcher> _logger;
     private readonly ISessionWorkspaceBinder? _workspaceBinder;
     private readonly ITinaChatToolGateway? _tinaChat;
+    private readonly IMessageAttachmentStore? _attachments;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -61,7 +62,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger,
         ISessionWorkspaceBinder? workspaceBinder = null,
-        ITinaChatToolGateway? tinaChat = null)
+        ITinaChatToolGateway? tinaChat = null,
+        IMessageAttachmentStore? attachments = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -75,6 +77,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _logger = logger;
         _workspaceBinder = workspaceBinder;
         _tinaChat = tinaChat;
+        _attachments = attachments;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -703,6 +706,13 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         if (CoreVirtualToolPolicy.IsTaskDispatch(wire.ToolId))
         {
             return await ExecuteTaskDispatchToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsReadAttachment(wire.ToolId))
+        {
+            return _attachments is null
+                ? new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "No attachment store is registered in this host." }
+                : await CoreAttachmentReadTool.ExecuteAsync(_attachments, scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
         if (CoreVirtualToolPolicy.IsTinaChat(wire.ToolId))

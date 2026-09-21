@@ -11,8 +11,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using TinadecCore.Abstractions.Ports;
+using TinadecCore.Contracts.Dtos;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
+using TinadecCore.Tools;
 
 namespace TinadecCore.Api.Tests;
 
@@ -570,6 +572,146 @@ public sealed class AttachmentApiTests : IAsyncLifetime
         var pack = await provider.BuildContextAsync(new ContextBuildRequest(sessionId.ToString(), null));
         Assert.Null(pack.Evidence.FirstOrDefault(item => item.Source == "session_attachments"));
         Assert.Contains("no files here", pack.Evidence.Single(item => item.Source == "session_history").Content);
+    }
+
+    // ── read_attachment: the pages the inline budget could not carry ─────────────
+
+    /// <summary>
+    /// Only the session is real here: the store scopes bytes to (tenant, workspace) itself through
+    /// the ambient identity, and the tool's own promise is the narrower one - that a row from another
+    /// CONVERSATION stays unreachable. Random ids elsewhere keep that distinction visible.
+    /// </summary>
+    private static ToolInvocationScope ScopeOf(Guid sessionId) => new(
+        Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+        sessionId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+        string.Empty, ["*"], [], "frozen-config-hash", 120, 0, false);
+
+    private static ToolWireRequestDto ReadCall(string? parameters) => new()
+    {
+        ToolId = CoreAttachmentReadTool.ToolId,
+        ToolCallId = 1,
+        Params = parameters is null ? default : JsonDocument.Parse(parameters).RootElement,
+    };
+
+    private Task<ToolWireResponseDto> ReadAsync(Guid sessionId, string parameters) =>
+        CoreAttachmentReadTool.ExecuteAsync(Store(), ScopeOf(sessionId), ReadCall(parameters));
+
+    [Fact]
+    public async Task ReadTool_PagesTextPastTheInlineBudgetAndNamesWhereTheNextPageStarts()
+    {
+        var (client, sessionId) = await OpenSessionAsync("read-page");
+        var payload = string.Concat(Enumerable.Repeat("abcdefgh", 3_000));
+        Assert.Equal(24_000, payload.Length);
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes(payload), "crash.log", "text/plain");
+        var messageId = await AppendMessageAsync(client, sessionId, "find the failing line");
+        await Store().BindToMessageAsync(sessionId, messageId, [id]);
+
+        var first = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\",\"offset\":0,\"limit\":100}}");
+        Assert.True(first.IsSuccess);
+        Assert.Equal(payload[..100], first.Result!.Value.GetProperty("content").GetString());
+        Assert.Equal(100, first.Result!.Value.GetProperty("next_offset").GetInt32());
+        Assert.True(first.Result!.Value.GetProperty("has_more").GetBoolean());
+        Assert.Equal("crash.log", first.Result!.Value.GetProperty("file_name").GetString());
+        // The sizes a model reasons about are labelled apart: a byte count and a character window are
+        // not the same number for anything but ASCII, and this file happens to be ASCII.
+        Assert.Equal(24_000, first.Result!.Value.GetProperty("content_length_bytes").GetInt64());
+
+        var second = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\",\"offset\":100,\"limit\":100}}");
+        Assert.Equal(payload.Substring(100, 100), second.Result!.Value.GetProperty("content").GetString());
+
+        var tail = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\",\"offset\":{payload.Length - 50},\"limit\":100}}");
+        Assert.Equal(50, tail.Result!.Value.GetProperty("chars_returned").GetInt32());
+        Assert.False(tail.Result!.Value.GetProperty("has_more").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, tail.Result!.Value.GetProperty("next_offset").ValueKind);
+    }
+
+    [Fact]
+    public async Task ReadTool_LimitIsCappedSoOneCallCannotSpendTheWholeBudget()
+    {
+        var (client, sessionId) = await OpenSessionAsync("read-cap");
+        var payload = new string('x', CoreAttachmentReadTool.MaxCharsPerPage * 3);
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes(payload), "huge.txt", "text/plain");
+        var messageId = await AppendMessageAsync(client, sessionId, "read it all");
+        await Store().BindToMessageAsync(sessionId, messageId, [id]);
+
+        var over = await ReadAsync(sessionId,
+            $"{{\"attachment_id\":\"{id}\",\"limit\":{CoreAttachmentReadTool.MaxCharsPerPage * 10}}}");
+
+        Assert.True(over.IsSuccess);
+        Assert.Equal(CoreAttachmentReadTool.MaxCharsPerPage, over.Result!.Value.GetProperty("chars_returned").GetInt32());
+        Assert.True(over.Result!.Value.GetProperty("has_more").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ReadTool_OffsetPastTheEndIsAnEmptyPage_NotAFailure()
+    {
+        var (client, sessionId) = await OpenSessionAsync("read-past");
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes("short"), "s.txt", "text/plain");
+        var messageId = await AppendMessageAsync(client, sessionId, "how long is it?");
+        await Store().BindToMessageAsync(sessionId, messageId, [id]);
+
+        var response = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\",\"offset\":999999}}");
+
+        Assert.True(response.IsSuccess);
+        Assert.Equal(string.Empty, response.Result!.Value.GetProperty("content").GetString());
+        Assert.Equal(0, response.Result!.Value.GetProperty("chars_returned").GetInt32());
+        Assert.False(response.Result!.Value.GetProperty("has_more").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ReadTool_NonTextAttachmentIsRefusedWithoutInventingContent()
+    {
+        var (client, sessionId) = await OpenSessionAsync("read-binary");
+        var bytes = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+        var id = await UploadRecordedAsync(client, sessionId, bytes, "diagram.png", "image/png");
+        var messageId = await AppendMessageAsync(client, sessionId, "what does this show?");
+        await Store().BindToMessageAsync(sessionId, messageId, [id]);
+
+        var response = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\"}}");
+
+        Assert.False(response.IsSuccess);
+        Assert.Contains("no binary content reaches a model", response.Error);
+        // The temptation this refuses: hand back base64 and let the model describe an image it cannot
+        // see. An error that leaked the encoding would be the bug.
+        Assert.DoesNotContain(Convert.ToBase64String(bytes), response.Error);
+    }
+
+    [Fact]
+    public async Task ReadTool_StaysInsideTheConversationAndRefusesAnIdWithNoHandle()
+    {
+        var (clientA, sessionA) = await OpenSessionAsync("read-scope-a");
+        var (_, sessionB) = await OpenSessionAsync("read-scope-b");
+        var idInB = await UploadRecordedAsync(clientA, sessionB, Encoding.UTF8.GetBytes("another chat's log"), "other.log", "text/plain");
+
+        var foreign = await ReadAsync(sessionA, $"{{\"attachment_id\":\"{idInB}\"}}");
+
+        // Same tenant, same workspace, different conversation: the store alone would have answered.
+        Assert.False(foreign.IsSuccess);
+        Assert.Contains("No attachment in this session", foreign.Error);
+
+        var missing = await ReadAsync(sessionA, "{}");
+        Assert.False(missing.IsSuccess);
+        Assert.Contains("attachment_id", missing.Error);
+    }
+
+    [Fact]
+    public async Task ReadTool_TheIdTheContextSectionAdvertisesIsTheIdTheToolAccepts()
+    {
+        var (client, sessionId) = await OpenSessionAsync("read-handle");
+        var payload = string.Concat(Enumerable.Repeat("0123456789abcdef", 700));
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes(payload), "big.txt", "text/plain");
+        var messageId = await AppendMessageAsync(client, sessionId, "read the whole file");
+        await Store().BindToMessageAsync(sessionId, messageId, [id]);
+
+        var section = await AttachmentSectionAsync(sessionId);
+        Assert.Contains($"(id:{id}", section);
+        Assert.Contains("read_attachment", section);
+
+        // The coupling, not just the text: a section that named a different handle would leave the
+        // tool unreachable while still telling the model to use it.
+        var continued = await ReadAsync(sessionId, $"{{\"attachment_id\":\"{id}\",\"offset\":4096,\"limit\":16}}");
+        Assert.True(continued.IsSuccess);
+        Assert.Equal(payload.Substring(4_096, 16), continued.Result!.Value.GetProperty("content").GetString());
     }
 
     private sealed class AttachmentFactory : WebApplicationFactory<Program>

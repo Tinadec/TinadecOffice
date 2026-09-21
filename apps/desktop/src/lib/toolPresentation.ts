@@ -86,10 +86,12 @@ export const PROVIDER_TOOL_IDS = [
 /**
  * Tools Core executes itself, so they never appear in the provider manifest.
  * Mirrors `CoreVirtualToolPolicy` (`create_workspace` :12, `task_dispatch` :23,
- * the nine `tina_chat_*` ids :48-53) — if that list grows, this one must follow.
+ * `read_attachment`, the nine `tina_chat_*` ids) — and `toolPresentation.test.ts` now proves the
+ * copy by parsing that file, so a Core virtual tool cannot arrive here as an unknown id.
  */
 export const CORE_VIRTUAL_TOOL_IDS = [
   'create_workspace',
+  'read_attachment',
   'task_dispatch',
   'tina_chat_bind',
   'tina_chat_search_people',
@@ -128,6 +130,7 @@ export type ToolKind =
 
 const KIND_BY_ID: Record<string, ToolKind> = {
   read_file: 'read',
+  read_attachment: 'read',
   stat: 'read',
   ls: 'list',
   file_search: 'search',

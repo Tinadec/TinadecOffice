@@ -391,6 +391,15 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - 落库：`ToolDispatcher` 截获 → 入队 **`task_dispatch` directive**（幂等键 `run:{runId}:task-dispatch:{callId}`）→ 引擎 `ApplyPendingTaskDispatchesAsync` 在**常规 tick** 上物化成无依赖任务节点并交回既有派发链路。drain 状态 `consumed`/`rejected`（无可读 title 即拒绝，不造无标题任务）。
 - **v1 边界（诚实）**：调用**入队即返回，不回等子智能体结果**；返回文案明确写「结果不在本次回复里」。真正的「原地等待并读回结果」需要复用 park/resume 边界，**登记为独立后续批次**。solo 管线提示词据此写明，避免主人把未完成的子任务上报为已完成。
 
+**5b. `read_attachment`：第二件「由 Core 就地执行」的读取工具（2026-09-21）。** 上下文每轮只引用有限字符（`ContextModuleRegistrar` 的 4 Ki/8 Ki 上限），超出部分模型从来看不见——一份 2 MB 日志到它手上只剩文件名与字节数。这件工具把翻页交给模型：按 `attachment_id` + 字符偏移取一页（上限 16 Ki 字符 ≈ 4 Ki token），结果里写明下一页从哪开始。**新增一件 Core 虚拟工具必须同时动的地方**（少一处就是「模型看得见、一调就错」，或者「装了但没人调得动」）：
+- `CoreVirtualToolPolicy`：id 常量 + `IsX` 判定 + 进 `IsCoreVirtual`；
+- `ToolManifestSnapshotResolver.VirtualEntry`：那条注释点名的唯一映射处加一个分支（清单条目本身放 `Tools/CoreAttachmentReadTool.cs`，与 `CoreTaskDispatchTool` 同族）；
+- `ToolDispatcher.CallProviderAsync`：就地执行分支。读附件需要 `IMessageAttachmentStore`，按现有可空可选参数注入即可（它是 singleton，与 `AddSingleton<IToolDispatcher>` 同源，不会关住作用域）；
+- 种子包 `tool_scope`：只有声明过它的智能体拿得到。本次给 `solo_master`/`search`/`global_engineering`，`meeting` 继续留空工具面（非空会把已有三个模式一齐判成 solo）；`metadata.version` 与 digest 必须一起动，digest 用 `packIntegrity.ts` 那套 JCS+SHA-256 重算；
+- 桌面 `toolPresentation.ts`：`CORE_VIRTUAL_TOOL_IDS` 与 `KIND_BY_ID`。这条不再靠注释提醒——`toolPresentation.test.ts` 直接 parse 本文件比对两侧清单。
+- **安全边界写在工具里，不指望调用方**：附件按 (tenant, workspace) 存，比一次对话宽，所以本工具先 `ListAsync(scope.SessionId)` 再按 id 取；直接 `FindAsync(id)` 就能读通别的会话的字节。四道守卫（会话限定、非文本拒绝、页大小上限、上下文行里的 id）各自做过变异：每道只红它对应的用例，无连带。
+- **仍然存在的硬边界**：图片/音频读不到不是这件工具的缺陷，是这个运行时没有二进制通道（会话消息只有一个字符串，CLI/ACP 把它摊平）。工具的回答直说「没有 binary 通道，别猜」，而不是回一段 base64 让模型演它看见了一张图。真正的视觉通道是独立批次。
+
 **6. 种子包（`apps/desktop/src/agentPacks/GraphSeedPack/`）升到 2.2.0。** 新增第四模式 `solo` 与**四条模式级管线**（`solo-base`/`vibe-base`/`fixed-base`/`free-base`，各描述主人与子智能体在该模式下的行为），四模式各绑一条、互不相同。
 - **节点 `config` 只能收窄工具面**（`EffectiveTools` = agent ∩ mode），**不能扩增**。所以给主人工具**必须**用一个独立智能体资源 —— 新增 `solo_master`（operation、持 11 件工具含 `write_file`/`shell`/`task_dispatch`、**故意不含 `git_push`**，重副作用派给 `global_engineering`）。若直接给 `meeting` 加工具，三个既有模式会被**一齐判成 solo**。
 - 无声明边的档位下，子智能体必须作为**派生模板**（`agent_types` + 无节点绑定）声明，**不能**声明成节点——否则边权限检查会把派发拒掉。故 `solo` 与 `free_director` 同形：1 节点 + 0 边 + 白名单。

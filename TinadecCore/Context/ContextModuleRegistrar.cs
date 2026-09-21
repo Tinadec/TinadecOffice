@@ -205,28 +205,10 @@ internal sealed class ContextProvider : IContextProvider
     private const int MaxInlineCharsTotal = 8 * 1024;
 
     /// <summary>
-    /// Media types whose bytes are the content rather than an encoding of something the
-    /// model cannot see. Anything binary is listed and explained instead, because this
-    /// runtime sends no image or audio part to a provider: ConversationMessage carries one
-    /// string and the CLI/ACP clients flatten it (DmaEA/CliRuntime/AcpChatClient.cs).
+    /// Which media types can be quoted as text lives in <see cref="AttachmentContentPolicy"/>, shared
+    /// with the <c>read_attachment</c> tool: the two readers must not disagree about whether a file is
+    /// readable, or one of them would tell the model a fact the other contradicts.
     /// </summary>
-    private static readonly string[] InlineMediaTypes =
-    [
-        "application/json",
-        "application/xml",
-        "application/sql",
-        "application/x-sh",
-        "application/yaml",
-        "application/x-yaml",
-        "application/javascript",
-        "application/typescript",
-        "image/svg+xml",
-    ];
-
-    private static bool InlineAsText(string mediaType) =>
-        mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-        || InlineMediaTypes.Contains(mediaType, StringComparer.OrdinalIgnoreCase);
-
     private async Task<ContextEvidence?> BuildAttachmentEvidenceAsync(
         Guid sessionId,
         IReadOnlyList<ConversationMessage> messages,
@@ -257,15 +239,17 @@ internal sealed class ContextProvider : IContextProvider
         var inlined = 0;
         foreach (var row in rows.Take(MaxListedAttachments))
         {
-            var head = $"- {row.FileName} ({row.MediaType}, {row.ContentLength} bytes, sha256:{Shorten(row.ContentHash)})";
-            if (!InlineAsText(row.MediaType))
+            // The id is on the line because it is the only handle `read_attachment` accepts: a section
+            // that named files but not their ids would describe a capability the model cannot use.
+            var head = $"- {row.FileName} (id:{row.Id}, {row.MediaType}, {row.ContentLength} bytes, sha256:{Shorten(row.ContentHash)})";
+            if (!AttachmentContentPolicy.InlineAsText(row.MediaType))
             {
                 lines.Add($"{head} attached, but this is not text and no binary content reaches a model here. Do not claim to have read it.");
                 continue;
             }
             if (inlineCharsLeft <= 0)
             {
-                lines.Add($"{head} attached; not quoted because the inline budget for this turn is spent. Ask the user for the part you need.");
+                lines.Add($"{head} attached; not quoted because the inline budget for this turn is spent. Where a `read_attachment` tool is available to you, page through it by this id; otherwise ask the user for the part you need.");
                 continue;
             }
             var excerpt = await ReadExcerptAsync(row, Math.Min(MaxInlineCharsPerAttachment, inlineCharsLeft), cancellationToken).ConfigureAwait(false);
@@ -276,7 +260,7 @@ internal sealed class ContextProvider : IContextProvider
             }
             inlineCharsLeft -= excerpt.Length;
             inlined += 1;
-            lines.Add($"{head} content:");
+            lines.Add($"{head} content ({excerpt.Length} characters of {row.ContentLength} bytes quoted; `read_attachment` with this id continues where this stops):");
             lines.Add(excerpt);
         }
         if (rows.Length > MaxListedAttachments)
