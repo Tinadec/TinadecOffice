@@ -9,6 +9,7 @@ import {
   userToolActionToApproval,
   withGitToolConfirmation,
 } from '../userToolAction'
+import { isStagedFile, isUnstagedFile } from '../lib/gitStatusSides'
 
 // ---- Type definitions ----
 
@@ -240,9 +241,9 @@ export function useGitOperation(
     for (const file of files) {
       if (file.is_untracked || file.status === '?') {
         untracked++
-      } else if (file.staged_status && file.staged_status !== ' ' && file.staged_status !== '?') {
+      } else if (isStagedFile(file)) {
         staged++
-      } else if (file.unstaged_status && file.unstaged_status !== ' ' && file.unstaged_status !== '?') {
+      } else if (isUnstagedFile(file)) {
         unstaged++
       } else if (file.status && file.status !== ' ') {
         // Fallback: count as unstaged
