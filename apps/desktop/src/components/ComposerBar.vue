@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings, Sparkles, Square } from '@lucide/vue'
+import { ArrowUp, ChevronDown, FileText, Folder, FolderOpen, FolderPlus, Image, Plus, Settings, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -11,6 +11,9 @@ import type { MeetingModelOverrideDto, ProjectDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { filterComposerCommands, parseComposerCommand, type ComposerCommand } from '@/lib/composerCommands'
+import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
+import { api } from '@/api'
+import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
 const { t } = useI18n()
@@ -79,6 +82,7 @@ const commandSuggestions = computed(() =>
 watch(() => props.modelValue, () => {
   commandIndex.value = 0
   commandsDismissed.value = false
+  void refreshMentions()
 })
 
 const commandMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
@@ -153,6 +157,92 @@ const selectedProject = computed(() =>
   props.projects?.find((p) => p.id === props.selectedProjectId) ?? null
 )
 
+/**
+ * `@` path completion. It walks the workspace one directory at a time because `ls`
+ * is the only listing the tool manifest offers; there is no filename index, so this
+ * is not fuzzy whole-workspace search and does not pretend to be.
+ */
+const caretPos = ref(0)
+const mentionToken = ref<MentionToken | null>(null)
+const mentionEntries = ref<DirEntryView[]>([])
+const mentionDirectory = ref<string | null>(null)
+const mentionIndex = ref(0)
+const mentionsDismissed = ref(false)
+const mentionMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
+let mentionSeq = 0
+
+const mentionSuggestions = computed(() =>
+  mentionToken.value ? filterMentionEntries(mentionEntries.value, mentionToken.value.query) : [],
+)
+
+watch(mentionSuggestions, async (list) => {
+  if (!list.length) return
+  await nextTick()
+  placeMenu(textareaRef.value, mentionMenuStyle, { minWidth: 240, estimatedHeight: 116 })
+})
+
+async function refreshMentions() {
+  const cwd = selectedProject.value?.path
+  const caret = caretPos.value || props.modelValue.length
+  const token = cwd && !mentionsDismissed.value
+    ? parseMentionToken(props.modelValue, caret)
+    : null
+  mentionToken.value = token
+  if (!token) {
+    mentionEntries.value = []
+    mentionDirectory.value = null
+    // Dismissing only lasts for the current fragment; the next `@` is a new request.
+    mentionsDismissed.value = false
+    return
+  }
+  mentionIndex.value = 0
+  if (token.directory === mentionDirectory.value) return
+  mentionDirectory.value = token.directory
+  const seq = ++mentionSeq
+  try {
+    const result = await api.listDirectory(cwd!, token.directory.replace(/\/$/, '') || '.')
+    const data = result.data as { entries?: DirEntryDto[] }
+    if (seq !== mentionSeq) return
+    mentionEntries.value = (Array.isArray(data?.entries) ? data.entries : [])
+      .map(toDirEntryView)
+      .filter((entry): entry is DirEntryView => entry !== null && !entry.name.startsWith('.'))
+  } catch {
+    if (seq !== mentionSeq) return
+    mentionEntries.value = []
+  }
+}
+
+function acceptMention(entry: DirEntryView) {
+  const token = mentionToken.value
+  if (!token) return
+  const caret = caretPos.value || props.modelValue.length
+  const completed = completeMentionToken(props.modelValue, caret, token, entry)
+  updateDraft(completed.text)
+  caretPos.value = completed.caret
+  if (!entry.isDir) mentionsDismissed.value = true
+  void nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(completed.caret, completed.caret)
+    autoResize()
+  })
+}
+
+function onDraftInput(event: Event) {
+  const el = event.target as HTMLTextAreaElement
+  caretPos.value = el.selectionStart ?? el.value.length
+  emit('update:modelValue', el.value)
+  autoResize()
+}
+
+/** Moving the caret with the mouse or the arrow keys is also a completion request. */
+function onCaretMove(event: Event) {
+  const el = event.target as HTMLTextAreaElement
+  caretPos.value = el.selectionStart ?? caretPos.value
+  void refreshMentions()
+}
+
 function autoResize() {
   const el = textareaRef.value
   if (!el) return
@@ -226,7 +316,13 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
-onMounted(() => document.addEventListener('click', handleClickOutside))
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+  // A draft can arrive pre-filled (edit-and-resend, a restored session), and the
+  // modelValue watcher does not fire for a value that was never changed.
+  void refreshMentions()
+})
+
 onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 function submit(pref?: DispatchPref) {
@@ -258,6 +354,27 @@ function submit(pref?: DispatchPref) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  const mentions = mentionSuggestions.value
+  if (mentions.length) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      mentionIndex.value = (mentionIndex.value + delta + mentions.length) % mentions.length
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      mentionsDismissed.value = true
+      mentionToken.value = null
+      return
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+      // Enter completes while the list is open; it does not send a half-typed path.
+      event.preventDefault()
+      acceptMention(mentions[mentionIndex.value] ?? mentions[0])
+      return
+    }
+  }
   const suggestions = commandSuggestions.value
   if (suggestions.length) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -387,13 +504,39 @@ function confirmSteer(id: string) {
           </ul>
         </Teleport>
 
+        <Teleport v-if="mentionSuggestions.length" to="body">
+          <ul
+            class="composer-commands-portal composer-mentions-portal"
+            :style="mentionMenuStyle"
+            data-testid="composer-mentions"
+            role="listbox"
+            :aria-label="t('composer.mentions')"
+          >
+            <li
+              v-for="(entry, index) in mentionSuggestions"
+              :key="entry.name"
+              role="option"
+              :aria-selected="index === mentionIndex"
+              :class="{ 'is-active': index === mentionIndex }"
+              :data-testid="`composer-mention-${entry.name}`"
+              @mouseenter="mentionIndex = index"
+              @mousedown.prevent="acceptMention(entry)"
+            >
+              <component :is="entry.isDir ? Folder : FileText" :size="12" class="composer-mention-icon" />
+              <code class="composer-command-syntax">{{ entry.name }}{{ entry.isDir ? '/' : '' }}</code>
+              <span v-if="mentionToken?.directory" class="composer-command-hint">{{ mentionToken.directory }}</span>
+            </li>
+          </ul>
+        </Teleport>
+
         <textarea
           ref="textareaRef"
           :value="modelValue"
           class="welcome-dialog-input"
           :placeholder="t('chat.whatToDo')"
           rows="1"
-          @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value); autoResize()"
+          @input="onDraftInput"
+          @click="onCaretMove"
           @keydown="handleKeydown"
         />
 

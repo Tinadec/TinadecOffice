@@ -2,6 +2,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ComposerBar from './ComposerBar.vue'
+import type { ProjectDto } from '@/api'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
@@ -30,6 +31,7 @@ const dispatchMock = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   api: {
     listAgentModeTopologies: vi.fn(async () => [] as import('@/api').AgentModeTopologyDto[]),
+    listDirectory: vi.fn(async (_cwd: string, _dir: string) => ({ data: { entries: [] as unknown[] } })),
   },
 }))
 
@@ -43,7 +45,14 @@ vi.mock('@/lib/dispatchPref', () => ({
 
 vi.mock('@/api', () => apiMock)
 
-function mountComposer(props: Partial<{ busy: boolean; canStop: boolean; modelValue: string; modeVersionId: string | null }> = {}) {
+function mountComposer(props: Partial<{
+  busy: boolean
+  canStop: boolean
+  modelValue: string
+  modeVersionId: string | null
+  projects: ProjectDto[]
+  selectedProjectId: string | null
+}> = {}) {
   return mount(ComposerBar, {
     props: {
       busy: false,
@@ -321,6 +330,71 @@ describe('ComposerBar slash commands', () => {
     await pressEnter(wrapper)
     expect(homeMock.sendMessage).not.toHaveBeenCalled()
     expect(wrapper.emitted('submit')).toBeTruthy()
+    wrapper.unmount()
+  })
+})
+
+describe('ComposerBar @ path completion', () => {
+  const project = {
+    id: 'p1',
+    name: 'demo',
+    path: 'C:/ws/demo',
+    created_at: '2026-09-21T00:00:00Z',
+  } as ProjectDto
+
+  const rootEntries = [
+    { name: 'README.md', type: 'file', size: 10 },
+    { name: 'src', type: 'directory', size: 0 },
+  ]
+  const srcEntries = [{ name: 'main.ts', type: 'file', size: 5 }]
+
+  function mockLs() {
+    apiMock.api.listDirectory = vi.fn(async (_cwd: string, dir: string) => ({
+      data: { entries: dir === '.' ? rootEntries : dir === 'src' ? srcEntries : [] },
+    }))
+  }
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('lists the workspace root through ls when an @ appears', async () => {
+    mockLs()
+    const wrapper = mountComposer({ modelValue: '@', projects: [project], selectedProjectId: 'p1' })
+    await flushPromises()
+    expect(apiMock.api.listDirectory).toHaveBeenCalledWith('C:/ws/demo', '.')
+    expect(document.querySelectorAll('[data-testid="composer-mentions"] li')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('descends into a directory instead of stopping at the first segment', async () => {
+    mockLs()
+    const wrapper = mountComposer({ modelValue: '@src/', projects: [project], selectedProjectId: 'p1' })
+    await flushPromises()
+    expect(apiMock.api.listDirectory).toHaveBeenCalledWith('C:/ws/demo', 'src')
+    expect(document.querySelector('[data-testid="composer-mention-main.ts"]')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('completes with Enter rather than sending a half-typed path', async () => {
+    mockLs()
+    const wrapper = mountComposer({ modelValue: '@RE', projects: [project], selectedProjectId: 'p1' })
+    await flushPromises()
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter', shiftKey: false })
+    await flushPromises()
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(homeMock.sendMessage).not.toHaveBeenCalled()
+    expect(homeMock.updateDraft).toHaveBeenCalledWith('@README.md ')
+    wrapper.unmount()
+  })
+
+  it('says nothing and asks for nothing when no workspace is selected', async () => {
+    mockLs()
+    const wrapper = mountComposer({ modelValue: '@' })
+    await flushPromises()
+    expect(apiMock.api.listDirectory).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-testid="composer-mentions"]')).toBeNull()
     wrapper.unmount()
   })
 })

@@ -1501,6 +1501,7 @@ retry: 'Retry',
   },
   composer: {
     commands: 'Composer commands',
+    mentions: 'Workspace paths',
     cmdStop: 'Stop the running agent',
     cmdStopHint: 'Same as the stop button',
     cmdNew: 'Start a new conversation',

@@ -2991,6 +2991,22 @@ overflow: hidden;
   background: var(--bg-hover);
 }
 
+/* Path suggestions reuse the command menu's surface; only the row shape differs. */
+.composer-mentions-portal li {
+  grid-template-columns: auto minmax(88px, auto) 1fr;
+  grid-template-rows: auto;
+  align-items: center;
+}
+
+.composer-mentions-portal .composer-command-syntax {
+  grid-row: auto;
+}
+
+.composer-mention-icon {
+  align-self: center;
+  color: var(--text-muted);
+}
+
 .composer-command-syntax {
   grid-row: 1 / span 2;
   align-self: center;

@@ -1501,6 +1501,7 @@ retry: '重试',
   },
   composer: {
     commands: '输入框命令',
+    mentions: '工作区路径',
     cmdStop: '停止正在运行的智能体',
     cmdStopHint: '与停止按钮等价',
     cmdNew: '新建一段对话',
