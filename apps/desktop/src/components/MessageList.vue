@@ -4,16 +4,26 @@ import { useI18n } from 'vue-i18n'
 import { UiScrollArea } from '@/components/ui'
 import type { MessageDto } from '../api'
 import MessageItem from './MessageItem.vue'
+import LiveTurnBlock from './chat/LiveTurnBlock.vue'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 const { t } = useI18n()
 
-defineProps<{
-  messages: MessageDto[]
+interface TurnActivity {
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
-  /** Per-message activity override; falls back to the shared arrays. */
-  activityByMessage?: Record<string, { thinkingSteps?: ThinkingStep[]; toolCalls?: ToolCall[] }>
+}
+
+defineProps<{
+  messages: MessageDto[]
+  /** Completed turns, keyed by the message that ended them. */
+  activityByMessage?: Record<string, TurnActivity>
+  /**
+   * The turn still in flight. It has no message id yet — a run emits thinking
+   * and tool calls long before its assistant message is persisted — so without
+   * a dedicated anchor the whole turn, approvals included, renders nowhere.
+   */
+  liveTurn?: TurnActivity
 }>()
 
 const emit = defineEmits<{
@@ -25,14 +35,26 @@ const emit = defineEmits<{
 <template>
   <div class="message-stream-container">
     <UiScrollArea class="message-stream">
-      <div class="message-stream-inner">
+      <div
+        class="message-stream-inner"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        :aria-label="t('chat.ready')"
+      >
         <MessageItem
           v-for="(message, index) in messages"
           :key="message.id"
           :message="message"
           :index="index"
-          :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps ?? (message.role === 'assistant' ? thinkingSteps : undefined)"
-          :tool-calls="activityByMessage?.[message.id]?.toolCalls ?? (message.role === 'assistant' ? toolCalls : undefined)"
+          :thinking-steps="activityByMessage?.[message.id]?.thinkingSteps"
+          :tool-calls="activityByMessage?.[message.id]?.toolCalls"
+          @approve="emit('approve', $event)"
+          @reject="emit('reject', $event)"
+        />
+        <LiveTurnBlock
+          :thinking-steps="liveTurn?.thinkingSteps"
+          :tool-calls="liveTurn?.toolCalls"
           @approve="emit('approve', $event)"
           @reject="emit('reject', $event)"
         />

@@ -21,7 +21,8 @@ const props = defineProps<{
   busy: boolean
   draft: string
   permission: PermissionLevel
-  /** Agent activity data — now owned by HomePage, passed down for per-message rendering */
+  /** Activity of the most recent run, owned by HomePage. ChatPanel decides
+      whether it belongs to the live turn or to the message that answered. */
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
   panelStyle?: Record<string, string>
@@ -70,6 +71,37 @@ const conversationRef = ref<HTMLElement | null>(null)
 const { mode: chatMode } = useChatResponsiveMode(conversationRef)
 
 const hero = computed(() => props.messages.length === 0)
+
+const lastAssistantId = computed(() => {
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    if (props.messages[i].role === 'assistant') return props.messages[i].id
+  }
+  return null
+})
+
+const hasActivity = computed(
+  () => (props.thinkingSteps?.length ?? 0) > 0 || (props.toolCalls?.length ?? 0) > 0,
+)
+
+/**
+ * The controller keeps one shared pair of activity arrays for the most recent
+ * run, so the message stream has to decide where they belong. While a run is in
+ * flight there is no assistant message to attach them to — attaching only ever
+ * worked for the second turn onward, which is why the very first conversation
+ * showed no tool activity and no in-chat approval entry at all. Anchor them to
+ * the trailing live row instead, and to the answering message once it exists.
+ */
+const liveTurn = computed(() =>
+  hasActivity.value && (props.busy || !lastAssistantId.value)
+    ? { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls }
+    : undefined,
+)
+
+const activityByMessage = computed(() =>
+  hasActivity.value && !props.busy && lastAssistantId.value
+    ? { [lastAssistantId.value]: { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls } }
+    : undefined,
+)
 
 const modeVersionId = ref<string | null>(null)
 watch(
@@ -134,8 +166,8 @@ function handleReject(approvalId: string) {
         <ChatHeader :current-session="currentSession" />
         <MessageList
           :messages="messages"
-          :thinking-steps="thinkingSteps"
-          :tool-calls="toolCalls"
+          :activity-by-message="activityByMessage"
+          :live-turn="liveTurn"
           @approve="handleApprove"
           @reject="handleReject"
         />

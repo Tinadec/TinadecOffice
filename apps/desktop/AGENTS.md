@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-09-20
-**Last Updated By:** 聊天室裁决台移除（收为纯观察 + 可红守卫）、身份文案去掉"必须注册人类身份"暗示；记录真机走查发现的对话内审批不可见与审批详情缺命令两处缺陷
-**Last Verified Commit:** `a82ed34` 之后的 TinaChat 唤醒闭环工作树
+**Last Updated:** 2026-09-21
+**Last Updated By:** 修复真机走查缺陷①：首轮对话看不到工具卡与审批入口（MessageList 契约改为 activityByMessage + liveTurn 两路互不重叠）
+**Last Verified Commit:** `a673112` 之后的工作树
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -14,6 +14,7 @@ TinaChat（2026-09-19，2026-09-20 收口为纯观察）：定位是**智能体�
 - 架构面：设置页“智能体交流”子页 `settings/sections/TinaChatSection.vue`：注册/停用参与者身份、以某一身份建群与邀请/移除/任命、读写跨工作区通信策略。身份提示文案不再暗示"必须注册一个用户身份"（实测 agent 身份 `POST /conversations` 返回 201，人类不是建群前提）。`api.ts` 补齐 20 个非观察操作，`/api/v1/tina-chat` 实为 **24 操作 / 17 路径**（旧记录写 25 与“21+4”，均与源码不符；以 `Map*` 计数与 Core OpenAPI 快照为准）。
 - “我的身份”存在 localStorage `tinadec.tinachat.identities`（`tinaChat/useChatIdentity.ts`），只是省得每次重选 `actor_id`；归属由 Core 逐次核验，写错只会 403，不会提权。
 - 2026-09-20 真机走查（真 Electron 43.3.0 + CDP + 真模型）实测：GraphSeedPack 升级对话框正确识别 2.2.0→2.4.0 并核对 digest；设置页注册三个身份、建群、邀请→本人接受全通；聊天室纯观察正常。**发现的缺陷**：① 审批在功能面板可点，但**对话里没有任何工具卡与审批入口**（`MessageList.vue:35` 把工具卡按消息 id 挂载，首轮 run 还没有 assistant 消息 → 无落脚点），用户只看到 "awaiting user" 和转圈；② 审批行**不显示工具名/命令/风险/归属**，无法据以判断；③ 注册身份默认 `receive_human_messages=false`，人类消息因此静默不唤醒任何整理者，界面无解释。未做且不得写成已完成：实时推送（仍是轮询）、成员在线状态、附件、访客问答。
+- **缺陷① 已修（2026-09-21）**：`MessageList.vue` 的契约改成两个互不重叠的输入——`activityByMessage`（按消息 id 挂载，run 收尾且有 assistant 消息时）与 `liveTurn`（跟随最后一个尚未落地的活动块常驻渲染），归属判定放在 `ChatPanel.vue`：`busy` 或缺少 assistant 落点时活动属于 `LiveTurnBlock`，否则归最后一条 assistant 消息。**不要退回旧写法**：`props.thinkingSteps ?? (role === 'assistant' ? thinkingSteps : undefined)` 会把同一份实时活动盖到**每一条** assistant 消息上，且首轮永远无处可挂。`chat/LiveTurnBlock.vue` 用扁平无边框无背景的聊天视觉语言（状态只由字形颜色表达），转发 approve/reject 到与功能面板同一个审批入口；`MessageList.test.ts` 4 例钉住"首轮无消息也有工具卡与审批按钮""run 结束后活动归位到最后一条消息""两处状态切换都不重复渲染"，已用变异验证（去掉 liveTurn 分支即红）。**缺陷② 仍未修**：审批契约级缺口在 Core 侧（`ApprovalResponseDto` 从来没有命令/参数/资源字段），前端单独修不了。
 
 Terminal renderer crash（2026-09-18）：启动时出现的 `Cannot read properties of undefined (reading 'dimensions')` 已由真实 DevTools 堆栈定位到 `@xterm/xterm` 的 `RenderService.dimensions -> _renderer.value.dimensions`。根因是 `terminal` Uie card 错误声明为非 singleton，旧持久布局可同时挂载多个 `TerminalCard`，它们共享同一模块级 terminal id/状态；一个 view 的 detach/dispose 会释放另一个 view 正在使用的 xterm renderer，异步渲染随后访问已释放 renderer。修复：terminal descriptor 设为 singleton（多 shell 本来就在 `TerminalPanel` 内部 tab 化），layout repair 自动去掉旧快照中的重复 terminal card；`TerminalView` unmount 传入自己持有的 terminal，`detachTerminal` 只允许当前 attachment owner 释放；xterm `Terminal` / `FitAddon` 存入响应式状态前用 `markRaw`，不得让 Vue Proxy 进入 xterm 私有对象图。回归：TinadecUI repair/reducer 31/31、Desktop terminal/sidebar 18/18；真实 Electron 往返聊天室→设置→首页后界面正常、右栏仅一个“集成终端”，DevTools 无新的 `dimensions` / renderer uncaught。
 
