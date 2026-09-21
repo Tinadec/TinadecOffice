@@ -51,7 +51,7 @@ async function loadFile(): Promise<void> {
   loading.value = true
   try {
     // read_file gives text; only stat gives size and mtime. The old single call went
-    // to `code_editor`, a tool id that does not exist, so opening a file always failed.
+    // to code_editor, a tool id that does not exist, so opening a file always failed.
     const [file, meta] = await Promise.all([
       api.readFile(props.cwd, props.filePath),
       api.statEntry(props.cwd, props.filePath),

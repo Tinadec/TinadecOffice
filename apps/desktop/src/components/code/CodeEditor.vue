@@ -83,7 +83,7 @@ async function loadFile(): Promise<void> {
   loading.value = true
   try {
     // read_file gives the text and the hash; only stat gives size and mtime. The call
-    // used to go to `code_editor`, a tool id that does not exist, so this always threw.
+    // used to go to code_editor, a tool id that does not exist, so this always threw.
     const [file, meta] = await Promise.all([
       api.readFile(props.cwd, props.filePath),
       api.statEntry(props.cwd, props.filePath),

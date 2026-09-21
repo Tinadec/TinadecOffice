@@ -36,7 +36,7 @@ function url(): string {
  * The ids and argument keys below are not style: Core answers 404 tool_not_found for
  * an id outside the TinadecTools manifest, and the tool ignores keys it does not
  * declare. Three of these wrappers used to name tools that do not exist
- * (`list_directory`, `glob_search`, `grep_content`) and `read_file` was called with
+ * (list_directory, glob_search, grep_content) and `read_file` was called with
  * `path`/`start_line` while the tool declares `filepath`/`start_row`.
  */
 describe('code tool wire contract', () => {

@@ -6,18 +6,13 @@ import {
   ChevronRight,
   Clock,
   Copy,
-  FileCode2,
-  FileText,
-  Folder,
-  GitBranch,
   MoreHorizontal,
   RotateCw,
   Search,
-  Shield,
-  Terminal,
-  Wrench
+  Shield
 } from '@lucide/vue'
 import type { ToolExecutionTimelineItemDto } from '@/api'
+import { riskToneClass, toolIconOf } from '@/lib/toolPresentation'
 import ToolResultViewer from './ToolResultViewer.vue'
 
 const props = defineProps<{
@@ -34,16 +29,7 @@ const expanded = ref(props.defaultExpanded ?? false)
 const menuOpen = ref(false)
 const copied = ref(false)
 
-const toolIcon = computed(() => {
-  const id = props.toolExecution.tool_id
-  if (id === 'read_file') return FileText
-  if (id === 'list_directory') return Folder
-  if (id === 'glob_search' || id === 'grep_content') return Search
-  if (id === 'apply_patch' || id === 'code_editor') return FileCode2
-  if (id === 'git_worktree_manager' || id.startsWith('git_')) return GitBranch
-  if (id === 'sandbox_exec') return Terminal
-  return Wrench
-})
+const toolIcon = computed(() => toolIconOf(props.toolExecution.tool_id))
 
 const sourceClass = computed(() => {
   const source = props.toolExecution.source
@@ -64,15 +50,7 @@ const statusClass = computed(() => {
   return 'status-pending'
 })
 
-const riskClass = computed(() => {
-  const risk = props.toolExecution.risk?.toLowerCase() ?? ''
-  if (risk.includes('read')) return 'risk-read'
-  if (risk.includes('shell')) return 'risk-shell'
-  if (risk.includes('git')) return 'risk-git'
-  if (risk.includes('external') || risk.includes('url')) return 'risk-url'
-  if (risk.includes('write')) return 'risk-write'
-  return 'risk-default'
-})
+const riskClass = computed(() => riskToneClass(props.toolExecution.risk))
 
 const formattedDuration = computed(() => {
   const ms = props.toolExecution.duration_ms
@@ -513,24 +491,20 @@ function viewDetails() {
   background: var(--bg-tertiary);
 }
 
-.tool-invocation-risk.risk-read {
+.tool-invocation-risk.risk-low {
   color: var(--accent-success);
 }
 
-.tool-invocation-risk.risk-write {
+.tool-invocation-risk.risk-medium {
   color: var(--accent-warning);
 }
 
-.tool-invocation-risk.risk-shell {
-  color: var(--accent-warning);
-}
-
-.tool-invocation-risk.risk-git {
+.tool-invocation-risk.risk-high {
   color: var(--accent-danger);
 }
 
-.tool-invocation-risk.risk-url {
-  color: #bc8cff;
+.tool-invocation-risk.risk-elevated {
+  color: var(--accent-recovery);
 }
 
 .tool-invocation-risk.risk-default {
