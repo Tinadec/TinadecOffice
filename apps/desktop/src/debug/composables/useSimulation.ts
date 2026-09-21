@@ -8,7 +8,6 @@ import type {
   PatchAgentStateRequest,
   Breakpoint,
   CreateBreakpointRequest,
-  SimulationMode,
 } from '../types/simulation'
 import { useNotifications } from '@/composables/useNotifications'
 
@@ -19,9 +18,6 @@ export function useSimulation() {
   const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730'
   const { status, notify, dismissByKey } = useNotifications()
 
-  const mode = ref<SimulationMode>('idle')
-  const currentStep = ref(0)
-  const totalSteps = ref(0)
   const breakpoints = ref<Breakpoint[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -165,9 +161,6 @@ export function useSimulation() {
   }
 
   return {
-    mode,
-    currentStep,
-    totalSteps,
     breakpoints,
     loading,
     error,

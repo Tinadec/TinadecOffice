@@ -3,7 +3,6 @@ import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useNotifications } from '@/composables/useNotifications'
 import { usePanelStyles } from '@/composables/usePanelStyles'
-import { useDebugWebSocket } from './composables/useDebugWebSocket'
 import { useTraceData } from './composables/useTraceData'
 import { useSimulation } from './composables/useSimulation'
 import { useMetrics } from './composables/useMetrics'
@@ -23,7 +22,6 @@ import type { ForceApprovalDecisionRequest, SimulateMessageRequest } from './typ
 const { t } = useI18n()
 const { notify, confirm } = useNotifications()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
-const ws = useDebugWebSocket()
 const traceData = useTraceData()
 const simulation = useSimulation()
 const metrics = useMetrics()
@@ -70,7 +68,6 @@ async function forceApproval(request: ForceApprovalDecisionRequest) {
 }
 
 onMounted(() => {
-  ws.connect()
   traceData.fetchTraces()
   metrics.fetchDiagnostics()
 })
@@ -90,9 +87,6 @@ onMounted(() => {
             <LiveReplayToggle />
           </div>
           <div class="debug-titlebar-right">
-            <span class="ws-status" :class="{ connected: ws.connected.value }">
-              {{ ws.connected.value ? t('debugStudio.live') : t('debugStudio.offline') }}
-            </span>
             <div class="titlebar-divider" />
             <button class="window-btn" @click="minimizeWindow" :title="t('app.minimize')"><Minus :size="14" /></button>
             <button class="window-btn" @click="maximizeWindow" :title="t('app.maximize')"><Square :size="12" /></button>
@@ -165,20 +159,9 @@ onMounted(() => {
       </div>
     </main>
 
-    <!-- Bottom simulator bar 岛 -->
+    <!-- Bottom simulation tools 岛 -->
     <PreviewIslandCard variant="section" :hoverable="false" padding="none" class="debug-sim-island">
-      <SimulatorBar
-        :mode="simulation.mode.value"
-        :current-step="simulation.currentStep.value"
-        :total-steps="simulation.totalSteps.value"
-        @step="ws.stepSimulation"
-        @run="ws.resumeSimulation"
-        @pause="() => { simulation.mode.value = 'paused' }"
-        @reset="ws.resetSimulation"
-        @inject-message="injectMessage"
-        @inject-tool-result="simulation.injectToolResult"
-        @force-approval="forceApproval"
-      />
+      <SimulatorBar @inject-message="injectMessage" @force-approval="forceApproval" />
     </PreviewIslandCard>
   </div>
 </template>
@@ -245,19 +228,6 @@ onMounted(() => {
   height: 16px;
   background: var(--border-default, #1a1f29);
   flex-shrink: 0;
-}
-
-.ws-status {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--text-muted, #6e7681);
-  color: #fff;
-  letter-spacing: 0.5px;
-}
-.ws-status.connected {
-  background: var(--accent-success, #238636);
 }
 
 .window-btn {
