@@ -45,6 +45,9 @@ const panelSources = import.meta.glob(
     './../components/MessageItem.vue',
     './../components/MessageList.vue',
     './../components/ComposerBar.vue',
+    // The palette's rows are all labels from the command table, and its chrome is
+    // translated too, so an unlisted key here would show a raw dotted string in a dialog.
+    './../components/CommandPalette.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

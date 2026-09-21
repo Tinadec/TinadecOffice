@@ -152,6 +152,11 @@ export const appCommands: readonly AppCommand[] = [
   go('view.goSettings', 'palette.goSettings', 'settings', ['palette.keywordPreferences']),
 ]
 
+/** The i18n key a group's label lives under, so a row tag and a test agree on it. */
+export function formatGroup(group: CommandGroup): string {
+  return `palette.group${group.charAt(0).toUpperCase()}${group.slice(1)}`
+}
+
 export function isCommandAvailable(command: AppCommand, host: CommandHost): boolean {
   return command.isAvailable?.(host) ?? true
 }

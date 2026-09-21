@@ -15,6 +15,8 @@ import AppSplash from '@/components/AppSplash.vue'
 import NotificationIslandHost from '@/components/NotificationIslandHost.vue'
 import NotificationDetailDialog from '@/components/NotificationDetailDialog.vue'
 import SelectionContextMenu from '@/components/SelectionContextMenu.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
+import { installPaletteKeybinding } from '@/composables/useCommandPalette'
 
 // ---- Background layer (global, outside page transitions) ----
 // The background layer is ALWAYS rendered here — outside the <Transition> —
@@ -42,6 +44,7 @@ setGraphSeedPackTranslator((key, params) => String(t(key, params ?? {})))
 const { connectionState, start: startConnection } = useConnection()
 const { status, dismissByKey } = useNotifications()
 let unsubscribeStatusSync: (() => void) | undefined
+let uninstallPaletteKeys: (() => void) | undefined
 const isConnecting = computed(() => !isChildWindow && connectionState.value === 'connecting')
 
 watch(connectionState, (state) => {
@@ -76,11 +79,14 @@ onMounted(() => {
   if (!isPetWindow && !isChildWindow) startConnection()
   if (!isPetWindow) {
     unsubscribeStatusSync = startStatusSync()
+    // The palette is the window's command surface, and a pet has no commands to run.
+    uninstallPaletteKeys = installPaletteKeybinding()
   }
 })
 
 onBeforeUnmount(() => {
   unsubscribeStatusSync?.()
+  uninstallPaletteKeys?.()
 })
 
 // Track navigation direction for directional page transitions.
@@ -184,5 +190,6 @@ router.beforeEach((to, from, next) => {
   <NotificationIslandHost v-if="!isConnecting" />
   <NotificationDetailDialog v-if="!isConnecting" />
   <SelectionContextMenu />
+  <CommandPalette />
   </template>
 </template>
