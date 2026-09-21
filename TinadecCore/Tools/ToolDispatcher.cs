@@ -962,30 +962,26 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 
     private async Task<(ToolManifestEntryDto? Entry, string? Error)> FindV2ToolAsync(ToolInvocationScope scope, string toolId, CancellationToken cancellationToken)
     {
+        // A Core-owned virtual tool has no child-process entry by construction, so the run's frozen
+        // manifest is where its entry lives. That is a lookup rule, not a bypass: a project session
+        // still reads the live manifest and still requires it to match the hash the run froze, and a
+        // projectless session still hashes its synthetic list against the run binding.
+        var frozen = scope.AuthorizedToolManifest?
+            .FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
+
         if (CoreVirtualToolPolicy.IsProjectlessScope(scope.ProjectId))
         {
             // Projectless (free-conversation) scope: no live provider exists. Core-owned
             // virtual tools are the only legal calls, and the run-frozen manifest is the
             // sole declaration source.
             if (!CoreVirtualToolPolicy.IsCoreVirtual(toolId)) return (null, $"Unknown tool '{toolId}'.");
-            var frozenOnly = scope.AuthorizedToolManifest?.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
-            if (frozenOnly is null) return (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.");
+            if (frozen is null) return (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.");
             if (string.IsNullOrWhiteSpace(scope.FrozenToolManifestHash)
                 || !string.Equals(ToolManifestHasher.Compute(scope.AuthorizedToolManifest!), scope.FrozenToolManifestHash, StringComparison.OrdinalIgnoreCase))
             {
                 return (null, "The frozen tool manifest hash does not match the run binding.");
             }
-            return (new ToolManifestEntryDto
-            {
-                Id = frozenOnly.Id,
-                Description = frozenOnly.Description,
-                RequiresApproval = frozenOnly.RequiresApproval,
-                InputSchema = frozenOnly.InputSchema.Clone(),
-                Risk = frozenOnly.Risk,
-                MutatesWorkspace = frozenOnly.MutatesWorkspace,
-                RetrySafety = frozenOnly.RetrySafety,
-                ConfirmationFields = frozenOnly.ConfirmationFields.ToArray()
-            }, null);
+            return (ToFrozenEntry(frozen), null);
         }
 
         var manifest = await _provider.GetManifestAsync(scope.WorkspaceRoot, cancellationToken).ConfigureAwait(false);
@@ -997,12 +993,36 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             return (null, "The TinadecTools manifest changed after run admission.");
         }
         var descriptor = manifest.Tools.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
-        if (descriptor is null) return (null, $"Unknown tool '{toolId}'.");
-        var frozen = scope.AuthorizedToolManifest?.FirstOrDefault(item => string.Equals(item.Id, toolId, StringComparison.OrdinalIgnoreCase));
+        if (descriptor is null)
+        {
+            if (CoreVirtualToolPolicy.RequiresLiveManifestEntry(toolId)) return (null, $"Unknown tool '{toolId}'.");
+            // The child process does not offer it, and never will: only a run that declared the
+            // virtual tool can dispatch it, so naming an id is not a grant.
+            return frozen is null
+                ? (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.")
+                : (ToFrozenEntry(frozen), null);
+        }
         return frozen is null || !ToolManifestHasher.Equivalent(descriptor, frozen)
             ? (null, $"Tool '{toolId}' is not present in the frozen authorized manifest.")
             : (descriptor, null);
     }
+
+    /// <summary>
+    /// The one place a frozen manifest entry becomes a dispatch descriptor. Both the projectless
+    /// path and the Core-virtual-tool path in a project session need it, and a copy per path is how
+    /// the two would drift out of the run's authorization.
+    /// </summary>
+    private static ToolManifestEntryDto ToFrozenEntry(FrozenToolManifestEntry frozen) => new()
+    {
+        Id = frozen.Id,
+        Description = frozen.Description,
+        RequiresApproval = frozen.RequiresApproval,
+        InputSchema = frozen.InputSchema.Clone(),
+        Risk = frozen.Risk,
+        MutatesWorkspace = frozen.MutatesWorkspace,
+        RetrySafety = frozen.RetrySafety,
+        ConfirmationFields = frozen.ConfirmationFields.ToArray()
+    };
 
     private async Task PauseForUnknownOutcomeAsync(ToolExecutionSnapshot execution, string? message, CancellationToken cancellationToken)
     {

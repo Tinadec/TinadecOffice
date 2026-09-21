@@ -59,6 +59,34 @@ describe('provider tool id allowlist', () => {
   })
 })
 
+describe('Core virtual tool mirror', () => {
+  // `CoreVirtualToolPolicy` is the only holder of "Core executes this tool itself", and the
+  // display layer copies it by hand. A Core virtual tool that is not copied here arrives with
+  // no kind, no icon and no result view - the silent half of the work this file exists to catch.
+  const policySource = readFileSync(
+    fileURLToPath(
+      new URL('../../../../TinadecCore/Abstractions/Ports/CoreVirtualToolPolicy.cs', import.meta.url),
+    ),
+    'utf8',
+  )
+
+  function mintedById(): string[] {
+    const singles = [...policySource.matchAll(/public const string \w+ = "([a-z_]+)";/g)].map((m) => m[1])
+    const roster = policySource.match(/TinaChatToolIds\s*=\s*\[([^\]]*)\]/)
+    const chat = roster ? [...roster[1].matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]) : []
+    return [...singles, ...chat]
+  }
+
+  it('reads the real policy file, so a moved file cannot blank the check', () => {
+    expect(policySource).toContain('IsCoreVirtual')
+    expect(mintedById().length).toBeGreaterThan(10)
+  })
+
+  it('mirrors exactly the ids Core declares virtual', () => {
+    expect([...CORE_VIRTUAL_TOOL_IDS].sort()).toEqual(mintedById().sort())
+  })
+})
+
 describe('toolKindOf', () => {
   it('classifies the file surface by what it actually does', () => {
     expect(toolKindOf('read_file')).toBe('read')

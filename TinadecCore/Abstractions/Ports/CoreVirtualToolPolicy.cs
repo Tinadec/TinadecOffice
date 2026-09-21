@@ -64,6 +64,18 @@ public static class CoreVirtualToolPolicy
     public static bool IsCoreVirtual(string? toolId) =>
         IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTinaChat(toolId);
 
+    /// <summary>
+    /// True when a call-time gate may demand that the tool appear in the TinadecTools child-process
+    /// manifest. False for Core-owned virtual tools: they have no child-process entry by construction,
+    /// so a run declares and authorizes them through its frozen manifest alone.
+    ///
+    /// Both call-time gates have to ask this instead of looking up the live manifest directly. A gate
+    /// that insists on a live entry rejects a legitimately declared virtual tool, and it does so with a
+    /// message about the child process - which is why "the pack declares task_dispatch" read as working
+    /// while every project-backed call was being refused.
+    /// </summary>
+    public static bool RequiresLiveManifestEntry(string? toolId) => !IsCoreVirtual(toolId);
+
     /// <summary>True when the caller declared no project (the <see cref="Guid.Empty"/> sentinel).</summary>
     public static bool IsProjectlessScope(Guid projectId) => projectId == ProjectlessProjectId;
 

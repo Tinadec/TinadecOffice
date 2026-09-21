@@ -480,7 +480,78 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Assert.Equal("warning", Assert.IsType<string>(completedEvent.Payload["severity"]));
     }
 
+    // ── Core-owned virtual tools inside a PROJECT-backed session ───────────
+
+    [Fact]
+    public async Task ResumeAsync_ProjectScope_DeclaredCoreVirtualTool_ReachesCoresExecutor()
+    {
+        // What a project freeze actually looks like: the child process offers read_file, while the
+        // frozen entry list additionally carries the declared Core virtual tool, and the hash covers
+        // the CHILD entries only (the freezer's `computedHash`). So a call-time gate that demands a
+        // live entry for a virtual tool can never be satisfied by any install - which is what this
+        // test was written to measure.
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:virtual-dispatch:0:0");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        // Core intercepted it: the child process was never asked.
+        Assert.Equal(0, provider.CallCount);
+        // The durable side effect is the witness that Core EXECUTED the tool, not that some gate
+        // waved the call through - a blocked dispatch would have no directive behind it.
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var directive = Assert.Single(await db.RunDirectives.AsNoTracking()
+            .Where(x => x.RunId == run.Id && x.Kind == "task_dispatch")
+            .ToListAsync());
+        Assert.Equal("check the fixtures",
+            JsonDocument.Parse(directive.PayloadJson).RootElement.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task ResumeAsync_ProjectScope_UndeclaredCoreVirtualTool_IsStillRefused()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        // Frozen WITHOUT the entry: the exemption is "the run declared this Core-owned tool", not
+        // "the caller typed an id Core happens to know", so naming a virtual tool cannot mint a grant.
+        var (dispatcher, _, _, _, execution) = await PrepareVirtualExecutionAsync(
+            live, [], provider, "disp:virtual-undeclared:0:0");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("frozen authorized manifest", result.Message);
+        Assert.Equal(0, provider.CallCount);
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Prepares a `task_dispatch` execution in a project-backed session whose frozen manifest was
+    /// built the way <c>ToolManifestSnapshotResolver</c> builds one: child entries plus the declared
+    /// virtual entries, hashed over the child entries alone.
+    /// </summary>
+    private async Task<(ToolDispatcher Dispatcher, Guid ProjectId, Guid SessionId, RunRecord Run, ToolExecutionSnapshot Execution)>
+        PrepareVirtualExecutionAsync(
+            IReadOnlyList<ToolManifestEntryDto> live,
+            IReadOnlyList<ToolManifestEntryDto> declaredVirtual,
+            ConfigurableToolProvider provider,
+            string toolCallKey)
+    {
+        var (projectId, sessionId) = await CreateProjectAndSessionAsync("disp-" + Guid.NewGuid().ToString("N")[..6]);
+        var run = await InsertRunAsync(sessionId, "executing");
+        var taskId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var dispatcher = CreateDispatcher(provider,
+            ScopeFor([.. live, .. declaredVirtual], run, projectId, sessionId, taskId, agentId, liveManifest: live));
+        var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
+            toolCallKey, CoreTaskDispatchTool.ToolId, risk: "low", mutatesWorkspace: false, requiresApproval: false,
+            "{\"title\":\"check the fixtures\"}");
+        return (dispatcher, projectId, sessionId, run, execution);
+    }
 
     private async Task<(ToolDispatcher Dispatcher, Guid ProjectId, Guid SessionId, RunRecord Run, ToolExecutionSnapshot Execution)>
         PrepareReadOnlyExecutionAsync(
@@ -561,7 +632,8 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
         Guid sessionId,
         Guid taskId,
         Guid agentId,
-        int timeoutSeconds = 120)
+        int timeoutSeconds = 120,
+        IReadOnlyList<ToolManifestEntryDto>? liveManifest = null)
     {
         var tenant = TenantAccessor().Current;
         var frozen = tools
@@ -584,7 +656,7 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             0,
             false,
             frozen,
-            ToolManifestHasher.Compute(tools),
+            ToolManifestHasher.Compute(liveManifest ?? tools),
             null);
     }
 

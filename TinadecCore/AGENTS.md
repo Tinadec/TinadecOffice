@@ -380,10 +380,14 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - `BuildSoloMasterTask` 的 `RequiredTools` **故意留空**：非空会逐工具校验、任一不匹配即抛异常把任务打死；留空走「给出完整已授权目录」路径，而那个目录（实例 grant ∩ 冻结清单）正好是主人真实权限。
 - `ExecutionAgent` 按 `agent.Layer` 区分措辞：operation 层是「主人，自己动手 + 派子智能体」，execution 层是「执行体，只输出完成摘要」。同一循环、同一治理，指令不同。
 
-**5. `task_dispatch`：Core 虚拟工具，让主人能表达「我要派」。** 与 `create_workspace` 同族（`CoreVirtualToolPolicy.TaskDispatchToolId` / `Tools/CoreTaskDispatchTool.cs`），四处支撑：
+**5. `task_dispatch`：Core 虚拟工具，让主人能表达「我要派」。** 与 `create_workspace` 同族（`CoreVirtualToolPolicy.TaskDispatchToolId` / `Tools/CoreTaskDispatchTool.cs`），支撑点如下（2026-09-21 补齐两处调用期闸门后共六处）：
 - 清单条目：`title`/`description`/`success_criteria`/`required_tools`/`required_capabilities`；**不要求审批**（派发是调度决策，副作用由子任务自身授权与逐次写审批兜住，再要一次等于双重门禁且会让模型干脆不派）。
 - **冻结清单容纳**：虚拟工具按构造**不在子进程清单里**，而冻结逻辑按「live manifest 是否提供」过滤——「包里声明了 `task_dispatch`」会被静默丢弃。现对被声明的 Core 虚拟工具豁免该过滤（仍以模式有效工具面为权威）。
 - 授权链：任何 Core 虚拟工具在无工作区会话下合法（原先只放行 `create_workspace`）。
+- **调用期两个闸门也必须豁免（2026-09-21 补）**：上面那条「冻结容纳」当时只做了一半——`ToolInvocationScopeResolver` 要求 live 清单与冻结清单**成对**出现该 id，`ToolDispatcher.FindV2ToolAsync` 干脆只在子进程清单里找。虚拟工具按构造不在子进程清单里，于是**任何有项目的会话**里模型每次调用都被拒，理由还写成「the child process does not offer it」；而模型看得见这件工具（`FrozenToolManifestCatalog` 只看冻结清单∩授权），所以表现为「提示词让用、一用就错」。唯一能跑的是无工作区会话，因为那条路径本就以冻结清单为唯一来源。
+  - 现收成**一个 owner**：`CoreVirtualToolPolicy.RequiresLiveManifestEntry(toolId)`（= `!IsCoreVirtual`）回答「调用期闸门能否要求子进程条目」，两个门都改读它；冻结条目→派发描述符的转换也抽成 `ToolDispatcher.ToFrozenEntry`，避免两条路径各写一份而漂移。豁免只是**查找来源**规则，不是绕过：项目会话仍读 live 清单、仍要求它等于 run 冻结的哈希；无工作区会话仍把合成清单的哈希对回 run 绑定。
+  - **证据顺序**：两条新用例（`ToolDispatcherResilienceTests`）在产品代码未动时全红，且**两条失败理由完全相同**（`Unknown tool 'task_dispatch'.`）——「声明了」与「没声明」不可区分，正是它能长期无测试存活的原因（`grep task_dispatch TinadecCore/tests` 此前零命中）。修后两条各证一侧：声明了的走通并落下 `task_dispatch` directive，且 `provider.CallCount == 0`（证明是 Core 执行、不是某个门放行）；没声明的仍被拒、理由必须是 `not present in the frozen authorized manifest`。
+  - 桌面端 `toolPresentation.ts` 的 `CORE_VIRTUAL_TOOL_IDS` 由手写副本升级为真契约：`toolPresentation.test.ts` 直接 parse `CoreVirtualToolPolicy.cs` 的 const 与 `TinaChatToolIds` 数组并断言两侧相等，先断言 parse 到 >10 个 id（防解析空转成常真）。新增虚拟工具时**必须**同时进这张表，否则显示层没有 kind/图标/结果视图。
 - 落库：`ToolDispatcher` 截获 → 入队 **`task_dispatch` directive**（幂等键 `run:{runId}:task-dispatch:{callId}`）→ 引擎 `ApplyPendingTaskDispatchesAsync` 在**常规 tick** 上物化成无依赖任务节点并交回既有派发链路。drain 状态 `consumed`/`rejected`（无可读 title 即拒绝，不造无标题任务）。
 - **v1 边界（诚实）**：调用**入队即返回，不回等子智能体结果**；返回文案明确写「结果不在本次回复里」。真正的「原地等待并读回结果」需要复用 park/resume 边界，**登记为独立后续批次**。solo 管线提示词据此写明，避免主人把未完成的子任务上报为已完成。
 

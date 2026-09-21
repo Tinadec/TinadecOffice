@@ -98,7 +98,10 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             throw new InvalidOperationException("The run does not contain a valid frozen TinadecTools v2 manifest.");
         }
 
-        if (project is not null)
+        // A Core-owned virtual tool has no child-process entry to pair against, so the frozen
+        // manifest is its only declaration source here too - the same exemption the freezer applies
+        // when it builds that manifest. See CoreVirtualToolPolicy.RequiresLiveManifestEntry.
+        if (project is not null && CoreVirtualToolPolicy.RequiresLiveManifestEntry(request.ToolId))
         {
             var liveManifest = await _provider.GetManifestAsync(root, cancellationToken).ConfigureAwait(false);
             if (liveManifest.ProtocolVersion != 2
