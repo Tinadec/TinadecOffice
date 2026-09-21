@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   listSessions: vi.fn(async () => []),
   createSession: vi.fn(),
   listMessages: vi.fn(async () => []),
+  revertSessionMessage: vi.fn(),
   listApprovals: vi.fn(async () => []),
   getOrchestrationSnapshot: vi.fn(async () => null),
   listToolExecutions: vi.fn(async () => []),
@@ -21,6 +22,7 @@ vi.mock('@/api', () => ({
     listSessions: h.listSessions,
     createSession: h.createSession,
     listMessages: h.listMessages,
+    revertSessionMessage: h.revertSessionMessage,
     listApprovals: h.listApprovals,
     getOrchestrationSnapshot: h.getOrchestrationSnapshot,
     listToolExecutions: h.listToolExecutions,
@@ -135,5 +137,52 @@ describe('HomeController.createSession free-conversation dedup', () => {
 
     expect(h.createSession).toHaveBeenCalledTimes(1)
     expect(homeController.selectedSessionId.value).toBe('free-1')
+  })
+})
+
+describe('HomeController.editAndResend', () => {
+  async function selectSession(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-1'
+    homeController.draft.value = ''
+    // The selected-session watcher reloads the transcript; settle it before asserting.
+    await flushPromises()
+  }
+
+  it('cuts the conversation at the edited message and hands the correction to the composer', async () => {
+    await selectSession()
+    h.revertSessionMessage.mockResolvedValue({ from_message_id: 'm2', from_sequence: 2, removed_count: 2, history_revision: 4 })
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(h.revertSessionMessage).toHaveBeenCalledWith('session-1', 'm2')
+    expect(homeController.draft.value).toBe('改过的那条')
+    expect(homeController.invokeError.value).toBeNull()
+  })
+
+  it('keeps the corrected text when Core refuses the cut because a run still holds it', async () => {
+    await selectSession()
+    const readsBefore = h.listMessages.mock.calls.length
+    h.revertSessionMessage.mockRejectedValue(Object.assign(new Error('run in flight'), { code: 'active_run_conflict' }))
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(homeController.draft.value).toBe('改过的那条')
+    expect(homeController.invokeError.value).toContain('停止它')
+    // Nothing was cut, so the transcript must not be re-read as though it had been.
+    expect(h.listMessages.mock.calls.length).toBe(readsBefore)
+  })
+
+  it('refuses to start while the composer holds unsent text', async () => {
+    await selectSession()
+    homeController.draft.value = '还没发的那句'
+
+    await homeController.editAndResend({ id: 'm2', content: '改过的那条' })
+
+    expect(h.revertSessionMessage).not.toHaveBeenCalled()
+    expect(homeController.draft.value).toBe('还没发的那句')
+    expect(homeController.invokeError.value).toContain('输入框')
   })
 })

@@ -138,6 +138,10 @@ export default {
     addFile: '添加文件',
     stopRun: '停止正在运行的智能体',
     toolEvidence: '本轮工具调用记录',
+    copy: '复制消息',
+    copied: '已复制',
+    edit: '编辑并重发',
+    applyEdit: '应用修改',
     planMode: '计划模式',
     chatMode: '聊天模式',
     chatWithTinadec: '与会议智能体对话',
@@ -1498,6 +1502,7 @@ retry: '重试',
   common: {
     loading: '加载中…',
     none: '无',
+    cancel: '取消',
   },
   contextMenu: {
     label: '文本操作',

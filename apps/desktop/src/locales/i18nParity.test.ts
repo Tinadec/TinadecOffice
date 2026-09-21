@@ -38,6 +38,12 @@ const panelSources = import.meta.glob(
     './../components/agentCenter/GovernanceRolesPanel.vue',
     './../components/AgentEvolutionPanel.vue',
     './../components/TerminalPanel.vue',
+    // The chat surface ships through TinadecUI's ChatCard, not a page, so nothing
+    // else proved its keys exist: chat.copy/chat.edit rendered as raw keys for the
+    // whole time the pencil was wired to a stub. ChatPanel itself is not listed —
+    // it labels nothing and translates no key.
+    './../components/MessageItem.vue',
+    './../components/MessageList.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

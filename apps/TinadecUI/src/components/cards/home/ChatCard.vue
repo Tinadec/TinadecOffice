@@ -31,6 +31,7 @@ const c = homeController
     @select-project="c.setSelectedProject($event)"
     @approve="c.decideApprovalById($event, 'approved')"
     @reject="c.decideApprovalById($event, 'rejected')"
+    @edit-message="c.editAndResend($event)"
     @stop="c.stopRun()"
   />
 </template>

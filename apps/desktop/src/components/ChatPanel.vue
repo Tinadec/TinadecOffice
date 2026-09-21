@@ -47,6 +47,7 @@ const emit = defineEmits<{
   'select-project': [id: string | null]
   'approve': [approvalId: string]
   'reject': [approvalId: string]
+  'edit-message': [payload: { id: string; content: string }]
   'stop': []
 }>()
 
@@ -170,6 +171,7 @@ function handleReject(approvalId: string) {
           :live-turn="liveTurn"
           @approve="handleApprove"
           @reject="handleReject"
+          @edit="emit('edit-message', $event)"
         />
         <!-- Live reply bubble: rendered from the stream while it is still arriving,
              in the same shape as a persisted assistant message. -->

@@ -122,3 +122,48 @@ describe('MessageList turn anchoring', () => {
     wrapper.unmount()
   })
 })
+
+describe('MessageList edit-and-resend', () => {
+  /**
+   * Regression guard for the second half of the 真机走查 list: the pencil button was
+   * wired to `saveEdit()` — a stub that closed the textarea and emitted nothing, so an
+   * edit looked applied while the next run kept reasoning over the old sentence.
+   */
+  it('re-emits an edited user turn so the caller can cut history and resend it', async () => {
+    const wrapper = mountList({ messages: [message('u1', 'user')] })
+    const item = wrapper.findAllComponents(MessageItem)[0]!
+    await item.find('[aria-label="chat.edit"]').trigger('click')
+
+    const input = item.find('[data-testid="message-edit-input"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('改过的话')
+    // The confirm button names itself: "保存" would promise persistence the cut alone
+    // does not deliver, and a raw key here would mean the label is missing in both bundles.
+    expect(item.find('[data-testid="message-edit-save"]').text()).toBe('chat.applyEdit')
+    await item.find('[data-testid="message-edit-save"]').trigger('click')
+
+    expect(wrapper.emitted('edit')?.[0]).toEqual([{ id: 'u1', content: '改过的话' }])
+    wrapper.unmount()
+  })
+
+  it('offers no edit affordance for an optimistic row Core has never seen', () => {
+    const wrapper = mountList({ messages: [message('pending-1', 'user')] })
+    const item = wrapper.findAllComponents(MessageItem)[0]!
+    // Reverting by an id the server never issued would target nothing, while copy
+    // still makes sense for text the user just typed.
+    expect(item.find('[aria-label="chat.edit"]').exists()).toBe(false)
+    expect(item.find('[aria-label="chat.copy"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('cuts nothing when the correction is cleared', async () => {
+    const wrapper = mountList({ messages: [message('u1', 'user')] })
+    const item = wrapper.findAllComponents(MessageItem)[0]!
+    await item.find('[aria-label="chat.edit"]').trigger('click')
+    await item.find('[data-testid="message-edit-input"]').setValue('   ')
+    await item.find('[data-testid="message-edit-save"]').trigger('click')
+
+    expect(wrapper.emitted('edit')).toBeUndefined()
+    wrapper.unmount()
+  })
+})

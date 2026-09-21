@@ -138,6 +138,10 @@ export default {
     addFile: 'Add file',
     stopRun: 'Stop the running agent',
     toolEvidence: 'Tool activity for this turn',
+    copy: 'Copy message',
+    copied: 'Copied',
+    edit: 'Edit and resend',
+    applyEdit: 'Apply edit',
     planMode: 'Plan mode',
     chatMode: 'Chat mode',
     chatWithTinadec: 'Talk to the Meeting Agent',
@@ -1498,6 +1502,7 @@ retry: 'Retry',
   common: {
     loading: 'Loading…',
     none: 'None',
+    cancel: 'Cancel',
   },
   contextMenu: {
     label: 'Text actions',

@@ -459,6 +459,37 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
   })
 }
 
+/**
+ * Edit-and-resend. The cut is the irreversible half, so it happens first and alone:
+ * if Core refuses it (an active run is still reading that history) nothing is lost.
+ * Both exits hand the corrected text to the composer instead of sending it blind —
+ * `handleSend` reports failures through `run()` rather than throwing, so an auto-send
+ * could drop the user's words into a history that no longer has the original. A
+ * non-empty composer aborts the whole operation: two unsent texts must never collide.
+ */
+async function editAndResend(payload: { id: string; content: string }) {
+  const sessionId = selectedSessionId.value
+  if (!sessionId) return
+  if (draft.value.trim()) {
+    invokeError.value = '输入框里还有未发送的内容，先发送或清空它，再编辑历史消息。'
+    return
+  }
+  invokeError.value = null
+  try {
+    await api.revertSessionMessage(sessionId, payload.id)
+  } catch (err) {
+    const code = (err as { code?: unknown }).code
+    const msg = err instanceof Error ? err.message : String(err)
+    invokeError.value = code === 'active_run_conflict' || msg.includes('active_run_conflict')
+      ? '这条消息正被一个 run 使用，先停止它才能改写它的历史。'
+      : msg
+    draft.value = payload.content
+    return
+  }
+  draft.value = payload.content
+  await loadMessagesAndApprovals()
+}
+
 function dismissQueued(id: string) {
   queuedMessages.value = queuedMessages.value.filter((item) => item.id !== id)
 }
@@ -694,6 +725,7 @@ export const homeController = {
     await handleSend(content, opts)
   },
   handleWelcomeSend: (payload: { content: string; permission_mode: PermissionLevel; mode_version_id?: string | null }) => handleSend(payload.content, payload),
+  editAndResend,
   requestShellApproval,
   decideApproval,
   decideApprovalById,

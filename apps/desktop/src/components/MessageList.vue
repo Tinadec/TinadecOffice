@@ -29,6 +29,7 @@ defineProps<{
 const emit = defineEmits<{
   approve: [approvalId: string]
   reject: [approvalId: string]
+  edit: [payload: { id: string; content: string }]
 }>()
 </script>
 
@@ -51,6 +52,7 @@ const emit = defineEmits<{
           :tool-calls="activityByMessage?.[message.id]?.toolCalls"
           @approve="emit('approve', $event)"
           @reject="emit('reject', $event)"
+          @edit="emit('edit', $event)"
         />
         <LiveTurnBlock
           :thinking-steps="liveTurn?.thinkingSteps"

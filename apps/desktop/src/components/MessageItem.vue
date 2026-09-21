@@ -18,11 +18,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   approve: [approvalId: string]
   reject: [approvalId: string]
+  edit: [payload: { id: string; content: string }]
 }>()
 
 const copied = ref(false)
 const isEditing = ref(false)
 const editContent = ref('')
+
+// An optimistic row has a local `pending-…` id that Core never saw, so it cannot be
+// the anchor of a revert. Only persisted user turns are editable.
+const canEdit = computed(() => props.message.role === 'user' && !props.message.id.startsWith('pending-'))
 
 function handleCopy() {
   navigator.clipboard.writeText(props.message.content)
@@ -40,8 +45,22 @@ function cancelEdit() {
 }
 
 function saveEdit() {
-  // TODO: emit edit event
+  const content = editContent.value.trim()
   isEditing.value = false
+  // An empty "correction" means delete, which is not what revert does: it would cut
+  // the turn and resend nothing, silently losing history the user did not ask to lose.
+  if (!content) return
+  emit('edit', { id: props.message.id, content })
+}
+
+function onEditKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    isEditing.value = false
+  } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault()
+    saveEdit()
+  }
 }
 
 const timeLabel = computed(() => {
@@ -104,11 +123,11 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
       <div class="user-message-row">
         <!-- 左侧操作按钮 -->
         <div class="user-message-actions">
-          <UiButton variant="ghost" size="icon" class="message-action-btn" :title="$t('chat.copy')" @click="handleCopy">
+          <UiButton variant="ghost" size="icon" class="message-action-btn" :title="$t(copied ? 'chat.copied' : 'chat.copy')" :aria-label="$t('chat.copy')" @click="handleCopy">
             <Check v-if="copied" :size="11" />
             <Copy v-else :size="11" />
           </UiButton>
-          <UiButton variant="ghost" size="icon" class="message-action-btn" :title="$t('chat.edit')" @click="startEdit">
+          <UiButton v-if="canEdit" variant="ghost" size="icon" class="message-action-btn" :title="$t('chat.edit')" :aria-label="$t('chat.edit')" @click="startEdit">
             <Pencil :size="11" />
           </UiButton>
         </div>
@@ -116,10 +135,17 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
         <!-- 对话框气泡 -->
         <div class="message-content user">
           <template v-if="isEditing">
-            <textarea v-model="editContent" class="edit-textarea" rows="3" />
+            <textarea
+              v-model="editContent"
+              class="edit-textarea"
+              rows="3"
+              data-testid="message-edit-input"
+              :aria-label="$t('chat.edit')"
+              @keydown="onEditKeydown"
+            />
             <div class="edit-actions">
               <UiButton variant="ghost" size="sm" @click="cancelEdit">{{ $t('common.cancel') }}</UiButton>
-              <UiButton variant="default" size="sm" @click="saveEdit">{{ $t('common.save') }}</UiButton>
+              <UiButton variant="default" size="sm" data-testid="message-edit-save" @click="saveEdit">{{ $t('chat.applyEdit') }}</UiButton>
             </div>
           </template>
           <template v-else>

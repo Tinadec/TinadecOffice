@@ -49,6 +49,14 @@ export interface MessageDto {
   created_at: string;
 }
 
+/** Hand-written: the revert endpoint returns a bare object, so no generated type exists. */
+export interface SessionHistoryRevertDto {
+  from_message_id: string;
+  from_sequence: number;
+  removed_count: number;
+  history_revision: number;
+}
+
 export interface ApprovalDto {
   id: string;
   session_id?: string | null;
@@ -2030,6 +2038,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ content })
   }),
+  revertSessionMessage: (sessionId: string, messageId: string) => request<SessionHistoryRevertDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/revert`, { method: 'POST' }),
   getOrchestrationSnapshot: (sessionId: string) => request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`),
   listToolExecutions: (sessionId: string, params: { run_id?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
