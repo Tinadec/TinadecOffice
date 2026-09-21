@@ -23,7 +23,7 @@ import type { PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { DispatchMode, MeetingModelOverrideDto } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
-import { createRunStream, type RunStreamHandle } from '@/composables/useRunStream'
+import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
 import { generatedApi } from '@/generated/client'
 import { useRunStore } from '@/stores/run'
 
@@ -205,10 +205,6 @@ async function loadMessagesAndApprovals() {
   attachActiveRuns()
 }
 
-function streamDelta(chunk: import('@/generated/client').SseChunk): string {
-  const payload = chunk.payload as Record<string, unknown>
-  return typeof payload.delta === 'string' ? payload.delta : ''
-}
 
 function attachRun(runId: string) {
   if (runStreams.has(runId)) return
@@ -229,7 +225,7 @@ function attachRun(runId: string) {
     },
     onChunk: (chunk) => {
       if (chunk.kind === 'delta') {
-        const delta = streamDelta(chunk)
+        const delta = runStreamDelta(chunk)
         if (delta) {
           const next = `${runText.get(runId) ?? ''}${delta}`
           runText.set(runId, next)

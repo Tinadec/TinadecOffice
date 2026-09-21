@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so tests need a DOM-ish global.
-import { describe, expect, it, vi } from 'vitest'
-import { api, normalizeEventEnvelope, type EventEnvelope } from './api'
+import { describe, expect, it, afterEach, vi } from 'vitest'
+import { api, normalizeEventEnvelope, type EventEnvelope, type ModelStreamChunkDto } from './api'
 
 describe('normalizeEventEnvelope', () => {
   it('maps the Core wire shape (event_type/timestamp/version + payload.sequence)', () => {
@@ -159,3 +159,130 @@ describe('connectEvents normalization', () => {
     }
   })
 })
+
+
+describe('invokeStream compat', () => {
+  interface Call {
+    url: string
+    init?: RequestInit
+  }
+
+  const calls: Call[] = []
+
+  function sseBody(frames: string): Response {
+    return new Response(frames, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }
+
+  /**
+   * The admission receipt, then a run stream written the way Core writes it: a
+   * comment heartbeat, one CRLF-framed delta whose text sits next to `kind`, and a
+   * terminal frame with no trailing blank line because the response ends there.
+   */
+  function stubGateway(frames: string) {
+    calls.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ run_id: 'r-1', stream_cursor: 3 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return sseBody(frames)
+    }))
+  }
+
+  async function until(predicate: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 200 && !predicate(); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    if (!predicate()) throw new Error('the stream never reached the expected state')
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('carries the admission cursor into the stream request', async () => {
+    stubGateway('id: 4\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":4}')
+    const chunks: Array<{ kind: string }> = []
+    const controller = api.invokeStreamWithAdmission(
+      's-1',
+      { content: '写个提交信息', client_message_id: 'c-1', permission_mode: 'default' },
+      (chunk) => chunks.push(chunk as unknown as { kind: string }),
+    )
+    await until(() => chunks.length > 0)
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining('/api/v1/sessions/s-1/interactions'),
+      expect.stringContaining('/api/v1/runs/r-1/stream?after_seq=3'),
+    ])
+    controller.abort()
+  })
+
+  it('delivers the delta text the panel actually reads', async () => {
+    // Core puts the text beside `kind`; parseRunSseBlock keeps the frame in
+    // `payload`; ModelStreamChunkDto spells it at the top level. Before the readers were
+    // merged this compat path built a chunk without that field, so the AI commit-message
+    // panel streamed a full reply into `chunk.delta === undefined` and showed nothing.
+    stubGateway(
+      ': heartbeat\n\n'
+        + 'id: 4\r\nevent: delta\r\ndata: {"run_id":"r-1","kind":"delta","seq":4,"delta":"feat: 一条"}\r\n\r\n',
+    )
+    const chunks: ModelStreamChunkDto[] = []
+    const controller = api.invokeStream('s-1', '写个提交信息', (chunk) => chunks.push(chunk))
+    await until(() => chunks.some((chunk) => chunk.delta))
+    const delta = chunks.find((chunk) => chunk.kind === 'delta')
+    expect(delta?.delta).toBe('feat: 一条')
+    // Heartbeats are transport noise and never reach a consumer.
+    expect(chunks.map((chunk) => chunk.kind)).toEqual(['delta'])
+    controller.abort()
+  })
+
+  it('does not lose the last frame when the response ends without a blank line', async () => {
+    stubGateway('id: 7\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":7,"finish_reason":"stop"}')
+    const chunks: ModelStreamChunkDto[] = []
+    const errors: Error[] = []
+    const controller = api.invokeStream('s-1', '内容', (chunk) => chunks.push(chunk), (error) => errors.push(error))
+    await until(() => chunks.length > 0)
+    expect(chunks[0].kind).toBe('done')
+    expect(chunks[0].finish_reason).toBe('stop')
+    controller.abort()
+  })
+
+  it('stops the durable reader when the caller aborts', async () => {
+    stubGateway('id: 4\nevent: delta\ndata: {"run_id":"r-1","kind":"delta","seq":4,"delta":"x"}\n\n')
+    const chunks: ModelStreamChunkDto[] = []
+    const controller = api.invokeStream('s-1', '内容', (chunk) => chunks.push(chunk))
+    await until(() => chunks.length > 0)
+    const streamCall = calls[calls.length - 1]
+    expect(streamCall.init?.signal?.aborted).toBe(false)
+    controller.abort()
+    expect(streamCall.init?.signal?.aborted).toBe(true)
+  })
+
+  it('sends the identity the durable endpoint accepts, and none it rejects', async () => {
+    stubGateway('id: 4\nevent: done\ndata: {"run_id":"r-1","kind":"done","seq":4}')
+    const controller = api.invokeStreamWithAdmission(
+      's-1',
+      { content: 'x', client_message_id: 'c-9', mode_version_id: 'm-1', permission_mode: 'default', expected_context_revision: 2 },
+      () => {},
+    )
+    await until(() => calls.length >= 2)
+    const sent = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>
+    expect(sent).toEqual({
+      content: 'x',
+      client_message_id: 'c-9',
+      dispatch_mode: 'parallel',
+      mode_version_id: 'm-1',
+      expected_context_revision: 2,
+    })
+    // agent_mode is the retired six-value enum: Core answers 400 unknown_field for it.
+    expect(sent.agent_mode).toBeUndefined()
+    controller.abort()
+  })
+})
+

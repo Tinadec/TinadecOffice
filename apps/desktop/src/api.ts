@@ -1,7 +1,8 @@
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
 import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 import type { components } from '@/generated/schema'
-import type { MessageAttachmentDto, MessageDto } from '@/generated/client'
+import type { MessageAttachmentDto, MessageDto, SseChunk } from '@/generated/client'
+import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
 
 export type { MessageDto }
 
@@ -1947,6 +1948,107 @@ export function normalizeEventEnvelope(
   };
 }
 
+/** Body the durable admission endpoint takes on the compat streaming path. */
+interface InvokeStreamBody {
+  content: string
+  client_message_id: string
+  mode_version_id?: string | null
+  permission_mode: string
+  target_run_id?: string | null
+  expected_context_revision?: number | null
+}
+
+function newClientMessageId(): string {
+  return (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * The durable frame carries its business fields next to `kind`, and `parseRunSseBlock`
+ * keeps them in `payload` when the frame has no nested payload of its own.
+ * `ModelStreamChunkDto` spells them at the top level, which is what its consumers read,
+ * so the lift happens here rather than in every caller. It used to not happen at all:
+ * the compat path built a chunk without `delta`, and the AI commit-message and
+ * change-analysis panels streamed a whole reply into a field that stayed undefined.
+ */
+function modelStreamChunkOf(chunk: SseChunk): ModelStreamChunkDto {
+  const payload = chunk.payload as Record<string, unknown>
+  const text = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+  return {
+    run_id: chunk.run_id,
+    session_id: text(payload.session_id) ?? '',
+    purpose: text(payload.purpose) ?? 'dual_layer',
+    provider_instance_id: text(payload.provider_instance_id) ?? '',
+    effective_model: text(payload.effective_model),
+    kind: chunk.kind as ModelStreamChunkDto['kind'],
+    delta: runStreamDelta(chunk) || null,
+    tool_call_delta: (payload.tool_call_delta as ModelStreamChunkDto['tool_call_delta']) ?? null,
+    usage: (payload.usage as ModelStreamChunkDto['usage']) ?? null,
+    finish_reason: text(payload.finish_reason),
+    error_category: text(payload.error_category),
+    is_retryable: payload.is_retryable === true,
+    safe_error_message: text(payload.safe_error_message),
+    fallback_provider_selected: payload.fallback_provider_selected === true,
+    error_provider_id: text(payload.error_provider_id),
+  }
+}
+
+/**
+ * Admit an interaction, then follow its run with the durable reader.
+ *
+ * This used to be a second hand-written SSE parser over the same endpoint the chat
+ * already reads through `createRunStream`. Duplicating the reader cost three things it
+ * never noticed: a CRLF-framed stream never split into blocks, a final frame that
+ * arrived without a trailing blank line was dropped on the floor, and a connection that
+ * died before the terminal event was not retried.
+ */
+function streamAdmittedInteraction(
+  sessionId: string,
+  body: InvokeStreamBody,
+  onChunk: (chunk: ModelStreamChunkDto) => void,
+  onError?: (error: Error) => void,
+): AbortController {
+  const controller = new AbortController()
+  let handle: RunStreamHandle | null = null
+  controller.signal.addEventListener('abort', () => handle?.disconnect())
+  void (async () => {
+    try {
+      // 模式身份 = 已发布的 ModeVersion；六值 agent_mode 不再发送（Core 收到会 400 unknown_field）。
+      const interactionBody: Record<string, unknown> = {
+        content: body.content,
+        client_message_id: body.client_message_id,
+        dispatch_mode: 'parallel',
+      }
+      if (body.mode_version_id) interactionBody.mode_version_id = body.mode_version_id
+      if (body.target_run_id) interactionBody.target_run_id = body.target_run_id
+      if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
+      const receipt = await request<{ run_id?: string; stream_cursor?: number }>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`,
+        { method: 'POST', body: JSON.stringify(interactionBody), signal: controller.signal },
+      )
+      const runId = receipt.run_id
+      if (!runId) throw new Error('Interaction admission did not return a run_id.')
+      handle = createRunStream({
+        runId,
+        cursor: receipt.stream_cursor ?? 0,
+        // One-shot on purpose: these callers generate a commit message, and a
+        // backoff-retry loop is not what a cancelled generation should become.
+        autoReconnect: false,
+        onChunk: (chunk) => onChunk(modelStreamChunkOf(chunk)),
+        onError,
+      })
+      if (controller.signal.aborted) {
+        handle.disconnect()
+        return
+      }
+      handle.connect()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      onError?.(error instanceof Error ? error : new Error(String(error)))
+    }
+  })()
+  return controller
+}
+
 export const api = {
   gatewayUrl,
   tinaChatObserverAccess: (signal?: AbortSignal) => request<TinaChatObserverAccess>('/api/v1/tina-chat/observer/access', { signal, cache: 'no-store' }),
@@ -2429,107 +2531,31 @@ export const api = {
     body: JSON.stringify({ version_a: versionA, version_b: versionB })
   }),
 
-  // --- Streaming Invoke (SSE) — external contract: 5 required + 2 optional, 8 kinds, fixed fields ---
-  // Canonical DTO lives in src/generated/client.ts (openapi-typescript target); this file remains compat alias only.
-  // --- Streaming Invoke — compat adapter over the durable protocol (plan §4.3-4):
-  // POST /sessions/{id}/interactions (durable admission receipt) then GET
-  // /runs/{runId}/stream (id=seq, event=kind, occurred_at). Call sites keep their
-  // old signature; the legacy POST /sessions/{id}/invoke-stream wire is retired.
+  // --- Streaming Invoke (SSE) — compat adapter over the durable protocol (plan §4.3-4):
+  // POST /sessions/{id}/interactions for the admission receipt, then the one durable
+  // reader in src/lib/runStream.ts follows /runs/{runId}/stream. Call sites keep their
+  // old signature; the legacy POST /sessions/{id}/invoke-stream wire is retired, and so
+  // is the second SSE parser that used to live in this file.
+
   invokeStreamWithAdmission: (
     sessionId: string,
-    body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode: string; target_run_id?: string | null; expected_context_revision?: number | null },
-    onChunk: (chunk: { run_id: string; turn_id: string | null; message_id: string | null; seq: number; kind: string; occurred_at: string; payload: Record<string, unknown> }) => void,
+    body: InvokeStreamBody,
+    onChunk: (chunk: ModelStreamChunkDto) => void,
     onError?: (error: Error) => void,
-  ): AbortController => {
-    const controller = new AbortController()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    // 模式身份 = 已发布的 ModeVersion；六值 agent_mode 不再发送（Core 收到会 400 unknown_field）。
-    const interactionBody: Record<string, unknown> = {
-      content: body.content,
-      client_message_id: body.client_message_id,
-      dispatch_mode: 'parallel',
-    }
-    if (body.mode_version_id) interactionBody.mode_version_id = body.mode_version_id
-    if (body.target_run_id) interactionBody.target_run_id = body.target_run_id
-    if (body.expected_context_revision != null) interactionBody.expected_context_revision = body.expected_context_revision
-    ;(async () => {
-      try {
-        const admissionResponse = await fetch(`${gatewayUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(interactionBody),
-          signal: controller.signal,
-        })
-        if (!admissionResponse.ok) {
-          const text = await admissionResponse.text()
-          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
-          throw new Error(extractErrorMessage(parsed, admissionResponse.statusText) || text || `HTTP ${admissionResponse.status}`)
-        }
-        const receipt = (await admissionResponse.json()) as { run_id?: string; stream_cursor?: number }
-        if (!receipt.run_id) throw new Error('Interaction admission did not return a run_id.')
-        const cursor = receipt.stream_cursor ?? 0
+  ): AbortController => streamAdmittedInteraction(sessionId, body, onChunk, onError),
 
-        const streamResponse = await fetch(`${gatewayUrl}/api/v1/runs/${encodeURIComponent(receipt.run_id)}/stream?after_seq=${encodeURIComponent(String(cursor))}`, {
-          headers: { accept: 'text/event-stream' },
-          signal: controller.signal,
-        })
-        if (!streamResponse.ok) {
-          const text = await streamResponse.text()
-          let parsed: unknown = null; try { parsed = text ? JSON.parse(text) : null } catch {}
-          throw new Error(extractErrorMessage(parsed, streamResponse.statusText) || text || `HTTP ${streamResponse.status}`)
-        }
-        const reader = streamResponse.body?.getReader()
-        if (!reader) throw new Error('No response body for streaming')
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          let idx: number
-          while ((idx = buffer.indexOf('\n\n')) !== -1) {
-            const block = buffer.slice(0, idx); buffer = buffer.slice(idx + 2)
-            if (!block.trim() || block.startsWith(':')) continue
-            let id: string | null = null, ev: string | null = null, data = ''
-            for (const line of block.split('\n')) {
-              if (line.startsWith('id:')) id = line.slice(3).trim()
-              else if (line.startsWith('event:')) ev = line.slice(7).trim()
-              else if (line.startsWith('data:')) data += line.slice(5).trim()
-            }
-            if (!data) continue
-            try {
-              const obj = JSON.parse(data) as Record<string, unknown>
-              const chunk = {
-                run_id: String((obj.run_id as string) ?? receipt.run_id),
-                turn_id: (obj.turn_id as string) ?? (obj.turnId as string) ?? null,
-                message_id: (obj.message_id as string) ?? (obj.messageId as string) ?? null,
-                seq: Number((obj.seq as number) ?? id ?? 0),
-                kind: String((obj.kind as string) ?? ev ?? 'delta'),
-                occurred_at: (obj.occurred_at as string) ?? (obj.occurredAt as string) ?? new Date().toISOString(),
-                payload: (obj.payload as Record<string, unknown>) ?? obj,
-              }
-              if (chunk.kind === 'heartbeat') continue
-              onChunk(chunk as never)
-              if (chunk.kind === 'done' || chunk.kind === 'error') return
-            } catch {}
-          }
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        onError?.(err instanceof Error ? err : new Error(String(err)))
-      }
-    })()
-    return controller
-  },
-  // compat: old single-arg signature delegates to admission variant
-  invokeStream: (sessionId: string, content: string, onChunk: (chunk: ModelStreamChunkDto) => void, onError?: (error: Error) => void): AbortController => {
-    const clientMessageId = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    return (api as unknown as { invokeStreamWithAdmission: typeof api.invokeStreamWithAdmission }).invokeStreamWithAdmission(
-      sessionId,
-      { content, client_message_id: clientMessageId, mode_version_id: null, permission_mode: 'default' },
-      onChunk as unknown as never,
-      onError,
-    )
-  },
+  // compat: the old four-argument signature delegates to the admission variant
+  invokeStream: (
+    sessionId: string,
+    content: string,
+    onChunk: (chunk: ModelStreamChunkDto) => void,
+    onError?: (error: Error) => void,
+  ): AbortController => streamAdmittedInteraction(
+    sessionId,
+    { content, client_message_id: newClientMessageId(), mode_version_id: null, permission_mode: 'default' },
+    onChunk,
+    onError,
+  ),
 
   connectEvents(sessionId: string | null, onEvent: (event: EventEnvelope) => void): EventSource {
     const params = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
