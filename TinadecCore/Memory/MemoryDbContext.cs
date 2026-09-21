@@ -20,6 +20,7 @@ public sealed class MemoryDbContext : DbContext
     public DbSet<ProjectRecord> Projects => Set<ProjectRecord>();
     public DbSet<SessionRecord> Sessions => Set<SessionRecord>();
     public DbSet<MessageRecord> Messages => Set<MessageRecord>();
+    public DbSet<MessageAttachmentRecord> MessageAttachments => Set<MessageAttachmentRecord>();
     public DbSet<TurnRecord> Turns => Set<TurnRecord>();
     public DbSet<ContextSnapshotRecord> ContextSnapshots => Set<ContextSnapshotRecord>();
     public DbSet<ContextPatchRecord> ContextPatches => Set<ContextPatchRecord>();
@@ -89,6 +90,15 @@ public sealed class MemoryDbContext : DbContext
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.Sequence }).IsUnique();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.ClientMessageId }).IsUnique();
             entity.HasIndex(x => new { x.RunId, x.CreatedAt });
+        });
+        modelBuilder.Entity<MessageAttachmentRecord>(entity =>
+        {
+            entity.ToTable("message_attachments"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.FileName).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.MediaType).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.ContentReference).HasMaxLength(1024).IsRequired(); entity.Property(x => x.ContentHash).HasMaxLength(128).IsRequired();
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.CreatedAt });
+            entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.MessageId });
         });
         modelBuilder.Entity<TurnRecord>(entity =>
         {
@@ -202,6 +212,36 @@ public sealed class MessageRecord
     /// "edit and resend".
     /// </summary>
     public DateTimeOffset? RevertedAt { get; set; }
+}
+
+/// <summary>
+/// A user-supplied file parked on a session. Like every other Core row this holds only a
+/// ContentStore reference plus integrity metadata, never bytes, so it satisfies
+/// "database rows must not carry secret values" and stays provider-neutral.
+///
+/// <see cref="MessageId"/> is null until the attachment is bound to a message: the
+/// composer uploads while the user is still writing, so the file must be addressable
+/// before any message exists. Deleting a row therefore must NOT delete the content —
+/// the local content store keys files by SHA-256, so identical
+/// bytes from two uploads share one file and a row deletion that removed the file would
+/// corrupt the survivor. Garbage accrues until a refcounting sweep exists; that is the
+/// deliberate trade-off, recorded in TinadecCore/AGENTS.md.
+/// </summary>
+public sealed class MessageAttachmentRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid? MessageId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string MediaType { get; set; } = "application/octet-stream";
+    public string ContentReference { get; set; } = string.Empty;
+    public string ContentHash { get; set; } = string.Empty;
+    public long ContentLength { get; set; }
+    public Guid CreatedByPrincipalId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? BoundAt { get; set; }
 }
 public sealed class TurnRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid UserMessageId { get; set; } public Guid? AssistantMessageId { get; set; } public Guid? RunId { get; set; } public string Kind { get; set; } = "new_task"; public string Status { get; set; } = "accepted"; public long BaseContextRevision { get; set; } public long ResultContextRevision { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } }
 public sealed class ContextSnapshotRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public long Revision { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } }

@@ -219,7 +219,36 @@ checkpoints remain separate resources.
 
 All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 
+## SESSION ATTACHMENTS (2026-09-21)
+
+`AttachmentEndpoints.cs` + `Memory/MessageAttachmentStore.cs` + `Abstractions/Ports/IMessageAttachmentStore.cs`:
+`POST /api/v1/sessions/{sessionId}/attachments?filename=&media_type=`（原始请求体，非 multipart）,
+`GET …/attachments`, `GET /api/v1/attachments/{id}`, `GET /api/v1/attachments/{id}/content`,
+`DELETE /api/v1/attachments/{id}`。表 `message_attachments` 与 `messages` 一样**没有迁移文件**——
+新表由 `DbContextSchemaBootstrapper.EnsureTablesAsync` 从模型生成（`AnExistingDatabaseGainsTheAttachmentTableFromBootstrap` 钉住）。
+
+- **传输刻意不用 multipart**：Gateway 是逐字节代理，任何它必须解开的编码都是"代理可能与客户端悄悄不一致"的地方。
+  代价写进代码注释：**请求体因此不在 `openapi.core.json` 里**（与 `/interactions` 同类），所以这条路由的回归由
+  `AttachmentApiTests` 钉住，**不是**由契约生成器钉住；响应侧用 `.Produces<T>()` 因而 `MessageAttachmentDto` 进了快照。
+- **删除行绝不删内容**：`LocalFileContentStore.PutAsync` 按 SHA-256 落盘（`File.Exists(destination)` 即复用），
+  两份相同字节**共享同一个文件**；若删行时连带删内容就会打断另一条。因此垃圾会累积，真正的清理需要引用计数——
+  这是记录在案的边界而不是待修的疏忽。`Delete_RemovesTheRowButKeepsBytesASecondUploadShares` 钉住两侧。
+- **响应头不是回显**：`content_reference` 从不出现在对外 DTO 里（那是数据根内的路径）；`filename` 只取叶子并拒绝
+  仍带分隔符/控制字符的值；`media_type` 含控制字符即退回 `application/octet-stream`，因此 CRLF 注入写不出响应头。
+- **内联白名单是安全边界，不是审美**：这些字节由用户提交、却从渲染器信任的同一 origin 发出，所以内联只允许
+  无法携带脚本的类型（png/jpeg/gif/webp/bmp/plain）；`text/html` 与 **svg** 一律降级为下载——svg 能带脚本。
+- **上限自己加**：`IContentStore`/`StoragePaths` 全仓没有任何大小或类型限制，也没有 `[RequestSizeLimit]`。
+  现由端点声明 32 MiB：先看 `Content-Length`，再用 per-request `IHttpMaxRequestBodySizeFeature` 真强制。
+  **未验证**：413 的流式截断没有端到端测试——伪造 `Content-Length` 会让客户端等 body 而死锁，真写 33MB 又会在
+  内容库里留下中断的临时文件，所以只测了声明侧拒绝，Kestrel 那一半靠机制本身。
+- **租户内可见，跨租户 404**：作用域是 `(TenantId, WorkspaceId, SessionId)`。**不要**把它写成按用户隔离——
+  `PrincipalId` 目前是 `DevelopmentTenantContextAccessor` 里的硬编码常量，`created_by_principal_id` 只是审计列。
+- **尚未接线**：附件还不能绑定到消息（`message_id` 恒为 null），发送路径的 `unknown_field` 白名单
+  （`InteractionsEndpoints.cs:34-37`）与 `ProjectSessionStore.cs:381` 的"空正文拒绝"都还没动，上下文注入
+  （`ContextModuleRegistrar.cs:85`）也未读附件。Gateway 代理与 Desktop 选择器是后续批次。
+
 ## FREE-CONVERSATION WORKSPACES (2026-09-10)
+
 - `sessions.project_id` is nullable (Codex-style session/workspace decoupling): a session created without `project_id` is a free conversation with full Meeting/Planner/Worker orchestration and task-graph projections, but no provider-backed tools.
 - Projectless runs freeze a synthetic v2 manifest containing only the Core-owned `create_workspace` virtual tool (`ToolManifestSnapshotResolver`); `ToolInvocationScopeResolver` skips project-root/live-manifest checks only for that tool, `ToolApprovalCoordinator` accepts `ProjectId == Guid.Empty` only for it (stored as NULL), and `ToolDispatcher` executes it in-process after the normal approval gate: create directory → find-or-create project by root path → `ISessionWorkspaceBinder.BindSessionToWorkspaceAsync` migrates the session (`POST /api/v1/sessions/{id}/migrate` is the same capability for users). The bound run keeps its frozen ceiling; the NEXT interaction freezes a fresh manifest from the new project root and gains the full tool set.
 - `EventIndexRecord`/`SessionMetadataSnapshotRecord`/`EventFileRecord` `ProjectId` are nullable; `ToolExecutionRecord`/`ApprovalRequestRecord` store NULL for projectless executions.

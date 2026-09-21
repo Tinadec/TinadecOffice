@@ -24,6 +24,7 @@ public sealed class MemoryModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<TinadecCore.Persistence.IStorageMigrationParticipant>(sp => sp.GetRequiredService<ProjectSessionStore>());
         builder.Services.AddSingleton<IMemoryStore, MemoryStore>();
         builder.Services.AddSingleton<ILongTermMemoryService, LongTermMemoryService>();
+        builder.Services.AddSingleton<IMessageAttachmentStore, MessageAttachmentStore>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
