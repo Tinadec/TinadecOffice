@@ -55,9 +55,9 @@ async function runSearch(): Promise<void> {
     const data = result.data as FileSearchDataDto
     truncated.value = data?.truncated === true
     if (mode.value === 'files') {
-      fileResults.value = searchedFilePaths(data)
+      fileResults.value = searchedFilePaths(data, props.cwd)
     } else {
-      grepResults.value = groupSearchLines(data)
+      grepResults.value = groupSearchLines(data, props.cwd)
     }
   } catch (err) {
     notify.error(err, { title: 'Search failed', source: 'code', key: 'code-search' })

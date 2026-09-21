@@ -2348,18 +2348,15 @@ export const api = {
     api.executeCodeTool('read_file', { cwd, arguments: { filepath: filePath, ...options } }),
   listDirectory: (cwd: string, dirPath: string) =>
     api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
+  /** stat is the only tool that reports an entry's size and mtime; its envelope is
+   * `{ success, error, entry }` with `entry.type` in directory|file|link. */
+  statEntry: (cwd: string, filePath: string) =>
+    api.executeCodeTool('stat', { cwd, arguments: { path: filePath } }),
   grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
     api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
-  applyPatch: (cwd: string, patch: string, approvalId?: string) =>
-    api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
-  codeEditorOpen: (cwd: string, filePath: string) =>
-    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'open', path: filePath } }),
-  codeEditorSave: (cwd: string, filePath: string, content: string, approvalId: string) =>
-    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'save', path: filePath, content } }),
-  codeEditorDiff: (cwd: string, filePath: string) =>
-    api.executeCodeTool('code_editor', { cwd, arguments: { action: 'diff', path: filePath } }),
-  codeEditorPatch: (cwd: string, filePath: string, patch: string, approvalId: string) =>
-    api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'patch', path: filePath, patch } }),
+  // There is deliberately no apply_patch / code_editor wrapper here: neither tool id
+  // exists in the TinadecTools manifest, and the governed write path is
+  // createUserToolActionForPath(cwd, 'write_file', { filepath, content, file_hash }).
   gitDiffCompare: (cwd: string, baseRef: string, headRef: string, paths?: string[]) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
   gitLog: (cwd: string, limit?: number, ref?: string) =>

@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api'
-import { groupSearchLines, searchedFilePaths, toDirEntryView, stripSearchRoot } from './workspaceSearch'
+import {
+  groupSearchLines,
+  readFileText,
+  searchedFilePaths,
+  toDirEntryView,
+  toWorkspaceRelative,
+} from './workspaceSearch'
 
 const fetchMock = vi.fn()
 
@@ -57,21 +63,31 @@ describe('code tool wire contract', () => {
       arguments: { pattern: 'todo', case_sensitive: true, max_results: 20, fixed_strings: true },
     })
   })
+
+  it('stats through stat with the path key', async () => {
+    await api.statEntry('C:/ws/demo', 'C:/ws/demo/src/main.ts')
+    expect(url()).toContain('/api/v1/code/tools/stat/execute')
+    expect(body()).toEqual({ cwd: 'C:/ws/demo', arguments: { path: 'C:/ws/demo/src/main.ts' } })
+  })
 })
 
 /**
- * The read side of the same contract: Core hands the provider's JSON to the renderer
- * untouched, so a component that invents its own keys gets an empty panel with a 200.
- * `ls` classifies with a string `type` (no is_dir) and `file_search` answers with a
- * flat `lines` array plus a `file_hashes` map (no matches).
+ * The read side of the same contract. These payloads are copied from a live stdio
+ * session against TinadecTools.exe, not written by hand: Core hands the provider's JSON
+ * to the renderer untouched, so a component that invents a key gets an empty panel with
+ * a 200. Note the three traps in here — `ls` has no is_dir, `file_search` has no
+ * matches and answers with absolute backslash paths, and read_file's line objects keep
+ * the C# member names (`Content`, `LineNumber`).
  */
+const CWD = 'C:/tmp/tina-probe'
+
 describe('toDirEntryView', () => {
   it('reads the directory flag from the tool type string', () => {
-    expect(toDirEntryView({ name: 'src', type: 'directory', size: 0 })).toEqual({
-      name: 'src', isDir: true, size: 0, modifiedAt: null,
+    expect(toDirEntryView({ name: 'inner', path: 'inner', type: 'directory', size: 0, modified_at: '2026-09-21T12:27:07Z' })).toEqual({
+      name: 'inner', isDir: true, size: 0, modifiedAt: '2026-09-21T12:27:07Z',
     })
-    expect(toDirEntryView({ name: 'a.ts', type: 'file', size: 12, modified_at: 'x' })).toEqual({
-      name: 'a.ts', isDir: false, size: 12, modifiedAt: 'x',
+    expect(toDirEntryView({ name: 'note.txt', type: 'file', size: 11 })).toEqual({
+      name: 'note.txt', isDir: false, size: 11, modifiedAt: null,
     })
   })
 
@@ -81,15 +97,14 @@ describe('toDirEntryView', () => {
 })
 
 describe('searchedFilePaths', () => {
-  it('uses the tool\'s own hit-file map, without the "./" ripgrep prefixes', () => {
+  it('uses the tool\'s own hit-file map and makes it workspace-relative', () => {
     expect(searchedFilePaths({
-      file_hashes: { './src/a.ts': 'h1', './src/b.ts': 'h2' },
-      lines: [{ filepath: './src/a.ts' }],
-    })).toEqual(['src/a.ts', 'src/b.ts'])
+      file_hashes: { 'C:\\tmp\\tina-probe\\note.txt': 'ZZWQ', 'C:\\tmp\\tina-probe\\inner\\deep.txt': 'ZQMM' },
+    }, CWD)).toEqual(['note.txt', 'inner/deep.txt'])
   })
 
   it('accepts an absent payload', () => {
-    expect(searchedFilePaths(undefined)).toEqual([])
+    expect(searchedFilePaths(undefined, CWD)).toEqual([])
   })
 })
 
@@ -97,27 +112,51 @@ describe('groupSearchLines', () => {
   it('regroups the flat row list by file, keeping match and context rows apart', () => {
     const groups = groupSearchLines({
       lines: [
-        { filepath: './src/a.ts', line_number: 10, content: 'before', is_match: false },
-        { filepath: './src/a.ts', line_number: 11, content: 'hit', is_match: true },
-        { filepath: './src/b.ts', line_number: 3, content: 'other', is_match: true },
+        { filepath: 'C:\\tmp\\tina-probe\\note.txt', line_number: 1, content: 'alpha', is_match: true },
+        { filepath: 'C:\\tmp\\tina-probe\\note.txt', line_number: 2, content: 'beta', is_match: false },
       ],
-    })
+      file_hashes: { 'C:\\tmp\\tina-probe\\note.txt': 'ZZWQ' },
+      truncated: false,
+      total_match_count: 1,
+    }, CWD)
     expect(groups).toEqual([
-      { path: 'src/a.ts', name: 'a.ts', lines: [
-        { number: 10, text: 'before', isMatch: false },
-        { number: 11, text: 'hit', isMatch: true },
+      { path: 'note.txt', name: 'note.txt', lines: [
+        { number: 1, text: 'alpha', isMatch: true },
+        { number: 2, text: 'beta', isMatch: false },
       ] },
-      { path: 'src/b.ts', name: 'b.ts', lines: [{ number: 3, text: 'other', isMatch: true }] },
     ])
   })
 
   it('skips rows that carry no path or line number', () => {
-    expect(groupSearchLines({ lines: [{ content: 'x' }, { filepath: 'a', content: 'y' }] })).toEqual([])
+    expect(groupSearchLines({ lines: [{ content: 'x' }, { filepath: 'a', content: 'y' }] }, CWD)).toEqual([])
+  })
+})
+
+describe('readFileText', () => {
+  it('joins the per-line entries the provider actually returns', () => {
+    expect(readFileText({
+      success: true,
+      file_hash: 'ZZWQ',
+      all_contents: [
+        { content: { Content: 'alpha', LineNumber: 1, StartOffset: 0, EndOffset: 6 }, line_hash: '1|JN' },
+        { content: { Content: 'beta', LineNumber: 2, StartOffset: 6, EndOffset: 11 }, line_hash: '2|NK' },
+      ],
+    })).toBe('alpha\nbeta')
   })
 
-  it('strips only a leading search-root prefix', () => {
-    expect(stripSearchRoot('./src/a.ts')).toBe('src/a.ts')
-    expect(stripSearchRoot('.\\src\\a.ts')).toBe('src\\a.ts')
-    expect(stripSearchRoot('C:/ws/src/a.ts')).toBe('C:/ws/src/a.ts')
+  it('answers with nothing for an empty or absent payload', () => {
+    expect(readFileText({ success: true, file_hash: '', all_contents: [] })).toBe('')
+    expect(readFileText(undefined)).toBe('')
+  })
+})
+
+describe('toWorkspaceRelative', () => {
+  it('leaves a path it cannot attribute to the root alone', () => {
+    expect(toWorkspaceRelative('D:/other/file.ts', CWD)).toBe('D:/other/file.ts')
+    expect(toWorkspaceRelative('./src/a.ts', CWD)).toBe('src/a.ts')
+  })
+
+  it('tolerates a trailing separator on the root', () => {
+    expect(toWorkspaceRelative('C:\\tmp\\tina-probe\\note.txt', 'C:/tmp/tina-probe/')).toBe('note.txt')
   })
 })

@@ -496,18 +496,24 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       }
       if (toolId === 'read_file') {
         const args = payload.arguments as Record<string, unknown> | null
-        const filePath = (args?.path as string) ?? 'src/orchestrator.ts'
+        const filePath = (args?.filepath as string) ?? 'src/orchestrator.ts'
+        const text = mockCodeContent(filePath)
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
             summary: `读取 ${filePath}`,
             evidence: [filePath],
+            // Real envelope: file_hash plus one entry per line, where the nested line
+            // keeps the provider's C# member names.
             data: {
-              path: filePath,
-              content: mockCodeContent(filePath),
-              size_bytes: mockCodeContent(filePath).length,
-              modified_at: new Date().toISOString(),
+              success: true,
+              error: null,
+              file_hash: 'ZZWQ',
+              all_contents: text.split('\n').map((line, index) => ({
+                content: { Content: line, LineNumber: index + 1, StartOffset: 0, EndOffset: line.length },
+                line_hash: `${index + 1}|${line.slice(0, 2)}`,
+              })),
             },
             requires_approval: false,
             approval_summary: null,
@@ -515,36 +521,29 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           scenario.value,
         )
       }
-      if (toolId === 'code_editor') {
+      if (toolId === 'stat') {
         const args = payload.arguments as Record<string, unknown> | null
-        const action = args?.action as string
         const filePath = (args?.path as string) ?? 'src/orchestrator.ts'
-        if (action === 'open' || action === 'diff') {
-          return delay(
-            {
-              tool_id: toolId,
-              status: 'ok',
-              summary: `${action} ${filePath}`,
-              evidence: [filePath],
-              data: {
-                path: filePath,
-                content: mockCodeContent(filePath),
-                original: action === 'diff' ? mockCodeContent(filePath) : null,
-                modified: action === 'diff' ? mockCodeContent(filePath) + '\n// modified' : null,
-              },
-              requires_approval: false,
-              approval_summary: null,
-            } as CodeToolExecuteResultDto,
-            scenario.value,
-          )
-        }
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
-            summary: `${action} ${filePath}`,
+            summary: `stat ${filePath}`,
             evidence: [filePath],
-            data: { path: filePath },
+            data: {
+              success: true,
+              error: null,
+              entry: {
+                name: filePath.split(/[\\/]/).pop() ?? filePath,
+                path: filePath,
+                type: 'file',
+                size: mockCodeContent(filePath).length,
+                modified_at: new Date().toISOString(),
+                is_readonly: false,
+                is_hidden: false,
+                link_target: null,
+              },
+            },
             requires_approval: false,
             approval_summary: null,
           } as CodeToolExecuteResultDto,
@@ -605,16 +604,6 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
     grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
       api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
-    applyPatch: (cwd: string, patch: string, approvalId?: string) =>
-      api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
-    codeEditorOpen: (cwd: string, filePath: string) =>
-      api.executeCodeTool('code_editor', { cwd, arguments: { action: 'open', path: filePath } }),
-    codeEditorSave: (cwd: string, filePath: string, content: string, approvalId: string) =>
-      api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'save', path: filePath, content } }),
-    codeEditorDiff: (cwd: string, filePath: string) =>
-      api.executeCodeTool('code_editor', { cwd, arguments: { action: 'diff', path: filePath } }),
-    codeEditorPatch: (cwd: string, filePath: string, patch: string, approvalId: string) =>
-      api.executeCodeTool('code_editor', { cwd, approval_id: approvalId, arguments: { action: 'patch', path: filePath, patch } }),
     gitDiffCompare: (cwd: string, baseRef: string, headRef: string, paths?: string[]) =>
       api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'diff_compare', base_ref: baseRef, head_ref: headRef, paths } }),
     gitLog: (cwd: string, limit?: number, ref?: string) =>

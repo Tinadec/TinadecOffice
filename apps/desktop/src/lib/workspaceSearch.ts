@@ -3,13 +3,18 @@
  *
  * Core forwards the provider's JSON verbatim into `CodeToolExecuteResultDto.data`
  * (DirectToolEndpoints.cs:89, `response.Result?.Clone()`), so the keys below are the
- * TinadecTools contracts and nothing else:
- * - `ls`          → FileSystemTools.cs:35 `entries[].{name,path,type,size,modified_at}`
- * - `file_search` → FileSearch.cs:87 `lines[]`, :91 `file_hashes`
+ * provider's and nothing else. They were taken from a live stdio session against
+ * TinadecTools.exe, not inferred:
+ * - `ls`          → `entries[].{name,path,type,size,modified_at}`; `path` is relative
+ *                   to the workspace root, `type` is `directory`|`file`|`link`.
+ * - `file_search` → flat `lines[]` + `file_hashes`; `filepath` comes back **absolute
+ *                   with backslashes** on Windows.
+ * - `read_file`   → `file_hash` + `all_contents[].{content,line_hash}`, where the
+ *                   nested `content` keeps the C# member names (`Content`,
+ *                   `LineNumber`, …) because `LineContent` has no [JsonPropertyName]
+ *                   and its generator sets no naming policy.
  *
- * They carry no `is_dir` and no `matches`: guessing either key yields an empty panel
- * with a 200 response, which is why the tree and both search boxes looked wired but
- * showed nothing.
+ * Inventing a key here is invisible: the call answers 200 with an empty panel.
  */
 
 export interface DirEntryDto {
@@ -53,13 +58,46 @@ export interface FileSearchDataDto {
   total_match_count?: number
 }
 
-export function searchedFilePaths(data: FileSearchDataDto | undefined): string[] {
-  // `path` defaults to "." in the tool, so ripgrep echoes results prefixed with it.
-  return Object.keys(data?.file_hashes ?? {}).map(stripSearchRoot)
+export function searchedFilePaths(data: FileSearchDataDto | undefined, cwd: string): string[] {
+  // The tool already deduplicated the hit files, so its own map keys are the list.
+  return Object.keys(data?.file_hashes ?? {}).map((path) => toWorkspaceRelative(path, cwd))
 }
 
-export function stripSearchRoot(path: string): string {
-  return path.replace(/^\.[\\/]/, '')
+/**
+ * `file_search` answers with absolute, platform-separated paths while the tree, the
+ * editor tabs and `ls` all speak workspace-relative forward slashes. Convert with the
+ * root the caller already has; a path that does not start with it is left alone rather
+ * than guessed at.
+ */
+export function toWorkspaceRelative(path: string, cwd: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  const prefix = `${root}/`
+  const relative = normalized.startsWith(prefix)
+    ? normalized.slice(prefix.length)
+    : normalized.replace(/^\.\//, '')
+  return relative.length > 0 ? relative : normalized
+}
+
+export interface ReadFileDataDto {
+  success?: boolean
+  file_hash?: string
+  /** One entry per line. `content` carries the provider's C# member names verbatim. */
+  all_contents?: Array<{
+    content?: { Content?: string; LineNumber?: number; StartOffset?: number; EndOffset?: number }
+    line_hash?: string
+  }>
+}
+
+/**
+ * `read_file` has no single content field: it answers with one entry per line, and the
+ * nested line object keeps the C# member names (`Content`), because `LineContent` is a
+ * positional record struct with no [JsonPropertyName]. The file's trailing newline is
+ * not in the payload at all, so a save round-trip can drop it — that is the provider's
+ * limit, not something the client can restore.
+ */
+export function readFileText(data: ReadFileDataDto | undefined): string {
+  return (data?.all_contents ?? []).map((line) => line.content?.Content ?? '').join('\n')
 }
 
 export interface SearchGroup {
@@ -73,10 +111,10 @@ export interface SearchGroup {
  * rows interleaved, sorted by path then line. The panel wants files with their hits,
  * so the regrouping lives here rather than in the template.
  */
-export function groupSearchLines(data: FileSearchDataDto | undefined): SearchGroup[] {
+export function groupSearchLines(data: FileSearchDataDto | undefined, cwd: string): SearchGroup[] {
   const byPath = new Map<string, SearchGroup>()
   for (const line of data?.lines ?? []) {
-    const path = line.filepath ? stripSearchRoot(line.filepath) : undefined
+    const path = line.filepath ? toWorkspaceRelative(line.filepath, cwd) : undefined
     const number = line.line_number
     if (!path || typeof number !== 'number') continue
     let group = byPath.get(path)

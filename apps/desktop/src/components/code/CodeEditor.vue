@@ -5,6 +5,7 @@ import { api, createUserToolActionForPath, type ApprovalDto, type UserToolAction
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { readFileText, type DirEntryDto, type ReadFileDataDto } from '@/lib/workspaceSearch'
 import {
   userToolActionIdempotencyKey,
   userToolActionNeedsDecision,
@@ -41,6 +42,13 @@ const content = ref(props.initialContent ?? '')
 const originalContent = ref(props.initialContent ?? '')
 const fileSize = ref<number | null>(null)
 const modifiedAt = ref<string | null>(null)
+/**
+ * The hash the file had **when it was loaded**. write_file demands it so an edit made
+ * elsewhere on disk is rejected instead of silently overwritten; the previous code
+ * re-read the file at save time, which always produced a matching hash and so disabled
+ * that check entirely.
+ */
+const loadedFileHash = ref<string | null>(null)
 const pendingApprovalId = ref<string | null>(null)
 const pendingAction = ref<UserToolActionDto | null>(null)
 const lastPublishedAction = ref<string | null>(null)
@@ -74,16 +82,21 @@ async function loadFile(): Promise<void> {
   if (!props.filePath) return
   loading.value = true
   try {
-    const result = await api.codeEditorOpen(props.cwd, props.filePath)
-    const data = result.data as {
-      content?: string
-      size?: number
-      modified_at?: string
-    }
-    content.value = typeof data.content === 'string' ? data.content : ''
+    // read_file gives the text and the hash; only stat gives size and mtime. The call
+    // used to go to `code_editor`, a tool id that does not exist, so this always threw.
+    const [file, meta] = await Promise.all([
+      api.readFile(props.cwd, props.filePath),
+      api.statEntry(props.cwd, props.filePath),
+    ])
+    const fileData = file.data as ReadFileDataDto
+    content.value = readFileText(fileData)
     originalContent.value = content.value
-    fileSize.value = typeof data.size === 'number' ? data.size : null
-    modifiedAt.value = typeof data.modified_at === 'string' ? data.modified_at : null
+    loadedFileHash.value = typeof fileData.file_hash === 'string' && fileData.file_hash
+      ? fileData.file_hash
+      : null
+    const entry = (meta.data as { entry?: DirEntryDto }).entry
+    fileSize.value = typeof entry?.size === 'number' ? entry.size : null
+    modifiedAt.value = typeof entry?.modified_at === 'string' ? entry.modified_at : null
     await renderEditor()
   } catch (err) {
     notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-editor-load' })
@@ -142,7 +155,7 @@ async function handleSave(): Promise<void> {
   saving.value = true
   feedback.value = null
   try {
-    const fileHash = await resolveFileHash()
+    const fileHash = loadedFileHash.value
     const params: Record<string, unknown> = {
       filepath: props.filePath,
       content: content.value,
@@ -166,16 +179,6 @@ async function handleSave(): Promise<void> {
     notify.error(err, { title: 'Failed to request file save', source: 'code', key: 'code-editor-action' })
   } finally {
     saving.value = false
-  }
-}
-
-async function resolveFileHash(): Promise<string | null> {
-  try {
-    const result = await api.readFile(props.cwd, props.filePath)
-    const data = result.data as { file_hash?: unknown }
-    return typeof data.file_hash === 'string' && data.file_hash.length > 0 ? data.file_hash : null
-  } catch {
-    return null
   }
 }
 
@@ -210,10 +213,9 @@ async function handleActionStatus(action: UserToolActionDto): Promise<void> {
 
 async function finishSave(action: UserToolActionDto): Promise<void> {
   if (action.status !== 'completed') return
-  const result = action.result ?? {}
-  originalContent.value = content.value
-  fileSize.value = typeof result.size === 'number' ? result.size : new TextEncoder().encode(content.value).byteLength
-  modifiedAt.value = typeof result.modified_at === 'string' ? result.modified_at : new Date().toISOString()
+  // Re-read instead of guessing: the next save must carry the hash the file has now,
+  // and size/mtime come from stat rather than from "what we meant to write".
+  await loadFile()
   notify.success(`Saved ${props.filePath}.`)
   pendingAction.value = null
   pendingApprovalId.value = null

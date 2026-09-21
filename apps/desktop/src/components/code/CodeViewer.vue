@@ -5,6 +5,7 @@ import { api } from '@/api'
 import { detectLanguage, useMonaco } from '@/composables/useMonaco'
 import { UiButton, UiSkeleton } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { readFileText, type DirEntryDto, type ReadFileDataDto } from '@/lib/workspaceSearch'
 
 const props = defineProps<{
   cwd: string
@@ -49,15 +50,16 @@ async function loadFile(): Promise<void> {
   if (!props.filePath) return
   loading.value = true
   try {
-    const result = await api.codeEditorOpen(props.cwd, props.filePath)
-    const data = result.data as {
-      content?: string
-      size?: number
-      modified_at?: string
-    }
-    content.value = typeof data.content === 'string' ? data.content : ''
-    fileSize.value = typeof data.size === 'number' ? data.size : null
-    modifiedAt.value = typeof data.modified_at === 'string' ? data.modified_at : null
+    // read_file gives text; only stat gives size and mtime. The old single call went
+    // to `code_editor`, a tool id that does not exist, so opening a file always failed.
+    const [file, meta] = await Promise.all([
+      api.readFile(props.cwd, props.filePath),
+      api.statEntry(props.cwd, props.filePath),
+    ])
+    content.value = readFileText(file.data as ReadFileDataDto)
+    const entry = (meta.data as { entry?: DirEntryDto }).entry
+    fileSize.value = typeof entry?.size === 'number' ? entry.size : null
+    modifiedAt.value = typeof entry?.modified_at === 'string' ? entry.modified_at : null
     await renderEditor()
   } catch (err) {
     notify.error(err, { title: 'Failed to load file', source: 'code', key: 'code-file-load' })

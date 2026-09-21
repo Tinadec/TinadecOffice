@@ -157,9 +157,9 @@ async function runSearch(): Promise<void> {
   try {
     const result = await api.grepContent(props.cwd, q, { max_results: 200 })
     const data = result.data as FileSearchDataDto
-    // Paths come back exactly as the tool printed them, so they resolve against the
-    // same workspace root the tree itself uses.
-    searchResults.value = searchedFilePaths(data).map((path) => ({
+    // Search answers with absolute paths; the tree, its keys and `ls` all use paths
+    // relative to the workspace root, so translate before rendering.
+    searchResults.value = searchedFilePaths(data, props.cwd).map((path) => ({
       name: path.split(/[\\/]/).pop() ?? path,
       path,
       isDir: false,
