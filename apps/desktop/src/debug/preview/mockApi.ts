@@ -477,7 +477,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         }
         return delay(mockGitDiffPreview(), scenario.value) as Promise<CodeToolExecuteResultDto>
       }
-      if (toolId === 'list_directory') {
+      if (toolId === 'ls') {
         const args = payload.arguments as Record<string, unknown> | null
         const path = (args?.path as string) ?? '.'
         const tree = path === '.' || path === './' ? mockFileTree() : path === 'src' || path === './src' ? mockFileTreeSrc() : mockFileTree()
@@ -551,19 +551,31 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           scenario.value,
         )
       }
-      if (toolId === 'glob_search' || toolId === 'grep_content') {
+      if (toolId === 'file_search') {
         return delay(
           {
             tool_id: toolId,
             status: 'ok',
             summary: `搜索完成，命中 3 个结果`,
             evidence: ['src/orchestrator.ts', 'src/graph.ts', 'src/types.ts'],
+            // Shape of TinadecTools' file_search response (FileSearch.cs:79): one flat
+            // row per line plus a per-hit-file hash map.
             data: {
-              matches: [
-                { path: 'src/orchestrator.ts', line: 42, content: 'buildTaskGraph' },
-                { path: 'src/graph.ts', line: 1, content: 'export class TaskGraph' },
-                { path: 'src/types.ts', line: 12, content: 'TaskGraphDto' },
+              success: true,
+              error: null,
+              lines: [
+                { filepath: './src/orchestrator.ts', line_number: 42, content: 'buildTaskGraph(nodes)', is_match: true },
+                { filepath: './src/graph.ts', line_number: 1, content: 'export class TaskGraph', is_match: true },
+                { filepath: './src/types.ts', line_number: 11, content: '// graph node shapes', is_match: false },
+                { filepath: './src/types.ts', line_number: 12, content: 'export interface TaskGraphDto', is_match: true },
               ],
+              file_hashes: {
+                './src/orchestrator.ts': 'sha256:1a2b',
+                './src/graph.ts': 'sha256:3c4d',
+                './src/types.ts': 'sha256:5e6f',
+              },
+              truncated: false,
+              total_match_count: 3,
             },
             requires_approval: false,
             approval_summary: null,
@@ -586,15 +598,13 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       )
     },
 
-    // 语义包装器
-    readFile: (cwd: string, filePath: string, options?: { start_line?: number; end_line?: number }) =>
-      api.executeCodeTool('read_file', { cwd, arguments: { path: filePath, ...options } }),
+    // 语义包装器：与 src/api.ts 保持同一套工具 id 和参数键
+    readFile: (cwd: string, filePath: string, options?: { start_row?: number; end_row?: number }) =>
+      api.executeCodeTool('read_file', { cwd, arguments: { filepath: filePath, ...options } }),
     listDirectory: (cwd: string, dirPath: string) =>
-      api.executeCodeTool('list_directory', { cwd, arguments: { path: dirPath } }),
-    globSearch: (cwd: string, pattern: string) =>
-      api.executeCodeTool('glob_search', { cwd, arguments: { pattern } }),
-    grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number }) =>
-      api.executeCodeTool('grep_content', { cwd, arguments: { pattern, ...options } }),
+      api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
+    grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
+      api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
     applyPatch: (cwd: string, patch: string, approvalId?: string) =>
       api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
     codeEditorOpen: (cwd: string, filePath: string) =>

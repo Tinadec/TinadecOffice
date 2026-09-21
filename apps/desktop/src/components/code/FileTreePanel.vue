@@ -17,6 +17,7 @@ import { computed, ref, watch } from 'vue'
 import { api, createUserToolActionForPath, type ApprovalDto, type UserToolActionDto } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { searchedFilePaths, toDirEntryView, type DirEntryDto, type DirEntryView, type FileSearchDataDto } from '@/lib/workspaceSearch'
 import {
   userToolActionIdempotencyKey,
   userToolActionNeedsDecision,
@@ -24,14 +25,6 @@ import {
   userToolActionToApproval,
   userToolApprovalId,
 } from '@/userToolAction'
-
-interface DirEntry {
-  name: string
-  is_dir: boolean
-  is_file: boolean
-  size_bytes: number | null
-  modified_at?: string | null
-}
 
 interface TreeNode {
   name: string
@@ -76,24 +69,25 @@ const pendingActionSummaries = ref<Map<string, string>>(new Map())
 const inFlightIdempotencyKeys = new Set<string>()
 const resumingActions = new Set<string>()
 
-function entryToNode(entry: DirEntry, parentPath: string): TreeNode {
+function entryToNode(entry: DirEntryView, parentPath: string): TreeNode {
   const path = parentPath === '.' ? entry.name : `${parentPath}/${entry.name}`
   return {
     name: entry.name,
     path,
-    isDir: entry.is_dir,
-    size: entry.size_bytes ?? null,
-    modifiedAt: typeof entry.modified_at === 'string' ? entry.modified_at : null,
+    isDir: entry.isDir,
+    size: entry.size,
+    modifiedAt: entry.modifiedAt,
     children: [],
     loaded: false,
     loading: false,
   }
 }
 
-async function loadDirectory(dirPath: string): Promise<DirEntry[]> {
+async function loadDirectory(dirPath: string): Promise<DirEntryView[]> {
   const result = await api.listDirectory(props.cwd, dirPath)
-  const data = result.data as { entries?: DirEntry[] }
-  const entries = Array.isArray(data?.entries) ? data.entries : []
+  const data = result.data as { entries?: DirEntryDto[] }
+  const entries = (Array.isArray(data?.entries) ? data.entries : []).map(toDirEntryView)
+    .filter((e): e is DirEntryView => e !== null)
   return showHidden.value ? entries : entries.filter((e) => !e.name.startsWith('.'))
 }
 
@@ -161,13 +155,14 @@ async function runSearch(): Promise<void> {
   }
   searching.value = true
   try {
-    const result = await api.globSearch(props.cwd, q)
-    const data = result.data as { matches?: Array<{ path: string; is_dir?: boolean; is_file?: boolean }> }
-    const matches = Array.isArray(data?.matches) ? data.matches : []
-    searchResults.value = matches.map((m) => ({
-      name: m.path.split(/[\\/]/).pop() ?? m.path,
-      path: m.path,
-      isDir: m.is_dir ?? false,
+    const result = await api.grepContent(props.cwd, q, { max_results: 200 })
+    const data = result.data as FileSearchDataDto
+    // Paths come back exactly as the tool printed them, so they resolve against the
+    // same workspace root the tree itself uses.
+    searchResults.value = searchedFilePaths(data).map((path) => ({
+      name: path.split(/[\\/]/).pop() ?? path,
+      path,
+      isDir: false,
       size: null,
       modifiedAt: null,
       children: [],

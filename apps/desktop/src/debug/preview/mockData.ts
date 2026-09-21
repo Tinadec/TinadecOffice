@@ -1643,26 +1643,36 @@ export function mockGitPushPlan(): CodeToolExecuteResultDto {
 
 export function mockFileTree() {
   return {
+    success: true,
+    error: null,
+    // Shape of TinadecTools' `ls` response (FileSystemTools.cs:31): type is a string,
+    // there is no is_dir/size_bytes.
     entries: [
-      { name: 'src', is_dir: true, is_file: false, size_bytes: null },
-      { name: 'tests', is_dir: true, is_file: false, size_bytes: null },
-      { name: 'package.json', is_dir: false, is_file: true, size_bytes: 2048 },
-      { name: 'tsconfig.json', is_dir: false, is_file: true, size_bytes: 512 },
-      { name: 'README.md', is_dir: false, is_file: true, size_bytes: 4096 },
-      { name: '.gitignore', is_dir: false, is_file: true, size_bytes: 128 },
+      { name: 'src', path: './src', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'tests', path: './tests', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'package.json', path: './package.json', type: 'file', size: 2048, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'tsconfig.json', path: './tsconfig.json', type: 'file', size: 512, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'README.md', path: './README.md', type: 'file', size: 4096, modified_at: '2026-09-14T08:00:00Z' },
+      { name: '.gitignore', path: './.gitignore', type: 'file', size: 128, modified_at: '2026-09-14T08:00:00Z' },
     ],
+    has_more: false,
+    next_cursor: null,
   }
 }
 
 export function mockFileTreeSrc() {
   return {
+    success: true,
+    error: null,
     entries: [
-      { name: 'orchestrator.ts', is_dir: false, is_file: true, size_bytes: 12288 },
-      { name: 'graph.ts', is_dir: false, is_file: true, size_bytes: 6144 },
-      { name: 'types.ts', is_dir: false, is_file: true, size_bytes: 3072 },
-      { name: 'index.ts', is_dir: false, is_file: true, size_bytes: 256 },
-      { name: '__tests__', is_dir: true, is_file: false, size_bytes: null },
+      { name: 'orchestrator.ts', path: './src/orchestrator.ts', type: 'file', size: 12288, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'graph.ts', path: './src/graph.ts', type: 'file', size: 6144, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'types.ts', path: './src/types.ts', type: 'file', size: 3072, modified_at: '2026-09-14T08:00:00Z' },
+      { name: 'index.ts', path: './src/index.ts', type: 'file', size: 256, modified_at: '2026-09-14T08:00:00Z' },
+      { name: '__tests__', path: './src/__tests__', type: 'directory', size: 0, modified_at: '2026-09-14T08:00:00Z' },
     ],
+    has_more: false,
+    next_cursor: null,
   }
 }
 

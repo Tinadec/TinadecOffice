@@ -10,23 +10,9 @@ import { computed, ref } from 'vue'
 import { api } from '@/api'
 import { UiButton, UiInput, UiScrollArea } from '@/components/ui'
 import { useNotifications } from '@/composables/useNotifications'
+import { groupSearchLines, searchedFilePaths, type FileSearchDataDto, type SearchGroup } from '@/lib/workspaceSearch'
 
 type SearchMode = 'files' | 'content'
-
-interface GlobMatch {
-  path: string
-  is_dir?: boolean
-  is_file?: boolean
-}
-
-interface GrepMatch {
-  file: string
-  full_path?: string
-  line: number
-  text: string
-  context_before?: Array<{ line: number; text: string }>
-  context_after?: Array<{ line: number; text: string }>
-}
 
 const props = defineProps<{
   cwd: string
@@ -44,8 +30,9 @@ const caseSensitive = ref(false)
 const useRegex = ref(false)
 const searching = ref(false)
 
-const fileResults = ref<GlobMatch[]>([])
-const grepResults = ref<GrepMatch[]>([])
+const fileResults = ref<string[]>([])
+const grepResults = ref<SearchGroup[]>([])
+const truncated = ref(false)
 
 const hasResults = computed(() =>
   mode.value === 'files' ? fileResults.value.length > 0 : grepResults.value.length > 0,
@@ -57,18 +44,20 @@ async function runSearch(): Promise<void> {
 
   searching.value = true
   try {
+    // One tool answers both modes: `file_search` is content search, and the file list
+    // is the set of files it hit. There is no filename-only tool in the manifest.
+    const result = await api.grepContent(props.cwd, q, {
+      case_sensitive: caseSensitive.value,
+      context_lines: mode.value === 'content' ? 2 : 0,
+      max_results: mode.value === 'files' ? 200 : 100,
+      fixed_strings: !useRegex.value,
+    })
+    const data = result.data as FileSearchDataDto
+    truncated.value = data?.truncated === true
     if (mode.value === 'files') {
-      const result = await api.globSearch(props.cwd, q)
-      const data = result.data as { matches?: GlobMatch[] }
-      fileResults.value = Array.isArray(data?.matches) ? data.matches : []
+      fileResults.value = searchedFilePaths(data)
     } else {
-      const result = await api.grepContent(props.cwd, q, {
-        case_sensitive: caseSensitive.value,
-        context_lines: useRegex.value ? 0 : 2,
-        max_results: 100,
-      })
-      const data = result.data as { matches?: GrepMatch[] }
-      grepResults.value = Array.isArray(data?.matches) ? data.matches : []
+      grepResults.value = groupSearchLines(data)
     }
   } catch (err) {
     notify.error(err, { title: 'Search failed', source: 'code', key: 'code-search' })
@@ -142,7 +131,7 @@ function escapeRegex(s: string): string {
       <Search :size="14" class="text-muted-foreground" />
       <UiInput
         v-model="query"
-        :placeholder="mode === 'files' ? 'glob: **/*.ts' : 'search content...'"
+        :placeholder="mode === 'files' ? 'files containing…' : 'search content...'"
         class="h-7 text-xs"
         @keydown.enter="runSearch"
       />
@@ -186,62 +175,56 @@ function escapeRegex(s: string): string {
           </div>
         </template>
 
-        <!-- File search results -->
+        <!-- File hits: the tool's own per-file map, so one row per file -->
         <template v-else-if="mode === 'files'">
           <button
-            v-for="item in fileResults"
-            :key="item.path"
+            v-for="path in fileResults"
+            :key="path"
             class="search-result-item"
-            @click="handleSelect(item.path)"
+            @click="handleSelect(path)"
           >
             <FileCode :size="13" class="search-result-icon" />
-            <span class="search-result-path">{{ item.path }}</span>
+            <span class="search-result-path">{{ path }}</span>
           </button>
         </template>
 
-        <!-- Content search results -->
+        <!-- Content hits: one flat row per line, regrouped per file -->
         <template v-else>
           <div
-            v-for="(match, idx) in grepResults"
-            :key="`${match.file}:${match.line}:${idx}`"
+            v-for="group in grepResults"
+            :key="group.path"
             class="search-result-group"
           >
             <button
               class="search-result-file"
-              @click="handleSelect(match.file)"
+              @click="handleSelect(group.path)"
             >
               <FileCode :size="12" />
-              <span>{{ match.file }}</span>
-              <span class="search-result-line">:{{ match.line }}</span>
+              <span>{{ group.path }}</span>
             </button>
             <div class="search-result-context">
               <div
-                v-for="ctx in match.context_before"
-                :key="`before-${ctx.line}`"
-                class="search-result-ctx-line"
+                v-for="line in group.lines"
+                :key="line.number"
+                :class="line.isMatch ? 'search-result-match-line' : 'search-result-ctx-line'"
               >
-                <span class="search-result-ctx-num">{{ ctx.line }}</span>
-                <code>{{ ctx.text }}</code>
-              </div>
-              <div class="search-result-match-line">
-                <span class="search-result-ctx-num">{{ match.line }}</span>
+                <span class="search-result-ctx-num">{{ line.number }}</span>
                 <code>
-                  <template v-for="(part, pi) in highlightText(match.text, query)" :key="pi">
-                    <span :class="{ 'search-highlight': part.match }">{{ part.text }}</span>
+                  <template v-if="line.isMatch">
+                    <template v-for="(part, pi) in highlightText(line.text, query)" :key="pi">
+                      <span :class="{ 'search-highlight': part.match }">{{ part.text }}</span>
+                    </template>
                   </template>
+                  <template v-else>{{ line.text }}</template>
                 </code>
-              </div>
-              <div
-                v-for="ctx in match.context_after"
-                :key="`after-${ctx.line}`"
-                class="search-result-ctx-line"
-              >
-                <span class="search-result-ctx-num">{{ ctx.line }}</span>
-                <code>{{ ctx.text }}</code>
               </div>
             </div>
           </div>
         </template>
+
+        <div v-if="truncated" class="search-truncated">
+          Showing the first matches — refine the query to narrow them down.
+        </div>
       </div>
     </UiScrollArea>
   </div>
@@ -301,9 +284,10 @@ function escapeRegex(s: string): string {
 .search-result-file:hover {
   background: var(--bg-hover);
 }
-.search-result-line {
+.search-truncated {
+  padding: 6px 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  font-weight: 400;
 }
 .search-result-context {
   padding: 0 12px 4px 28px;

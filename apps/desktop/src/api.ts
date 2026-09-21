@@ -2336,15 +2336,20 @@ export const api = {
     body: JSON.stringify(payload)
   }),
 
-  // Semantic wrappers for code tools
-  readFile: (cwd: string, filePath: string, options?: { start_line?: number; end_line?: number }) =>
-    api.executeCodeTool('read_file', { cwd, arguments: { path: filePath, ...options } }),
+  // Semantic wrappers for code tools. The ids and argument keys below must match the
+  // TinadecTools manifest, not an aspiration: Core answers 404 tool_not_found for an
+  // unknown id and the tool rejects unknown argument keys, so a wrong string here is a
+  // silently broken feature rather than a type error. Verified against
+  // TinadecTools/Tools/FileRW/FileReader.cs:59 (read_file → filepath),
+  // FileSystemTools.cs:69 (ls → path) and Tools/Search/FileSearch.cs:118
+  // (file_search → pattern/path/glob/type/case_sensitive/fixed_strings/context_lines/
+  // max_results, FileSearch.cs:8-38).
+  readFile: (cwd: string, filePath: string, options?: { start_row?: number; end_row?: number }) =>
+    api.executeCodeTool('read_file', { cwd, arguments: { filepath: filePath, ...options } }),
   listDirectory: (cwd: string, dirPath: string) =>
-    api.executeCodeTool('list_directory', { cwd, arguments: { path: dirPath } }),
-  globSearch: (cwd: string, pattern: string) =>
-    api.executeCodeTool('glob_search', { cwd, arguments: { pattern } }),
-  grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number }) =>
-    api.executeCodeTool('grep_content', { cwd, arguments: { pattern, ...options } }),
+    api.executeCodeTool('ls', { cwd, arguments: { path: dirPath } }),
+  grepContent: (cwd: string, pattern: string, options?: { case_sensitive?: boolean; context_lines?: number; max_results?: number; glob?: string; fixed_strings?: boolean }) =>
+    api.executeCodeTool('file_search', { cwd, arguments: { pattern, ...options } }),
   applyPatch: (cwd: string, patch: string, approvalId?: string) =>
     api.executeCodeTool('apply_patch', { cwd, approval_id: approvalId, arguments: { patch } }),
   codeEditorOpen: (cwd: string, filePath: string) =>
