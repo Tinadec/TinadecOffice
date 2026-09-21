@@ -1166,6 +1166,7 @@ retry: 'Retry',
     reject: 'Reject',
     request: 'Request approval',
     alwaysAllow: 'Always allow this tool for this session',
+    parameters: 'Parameters (redacted)',
   },
   doctor: {
     title: 'Doctor',

@@ -1166,6 +1166,7 @@ retry: '重试',
     reject: '拒绝',
     request: '请求审批',
     alwaysAllow: '本会话内总是允许这个工具',
+    parameters: '参数（已脱敏）',
   },
   doctor: {
     title: '诊断',

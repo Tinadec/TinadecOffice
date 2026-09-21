@@ -3888,6 +3888,84 @@ padding: 10px 0;
   gap: 6px;
 }
 
+.approval-facts {
+  min-width: 0;
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval-tool,
+.approval-command code,
+.approval-target code,
+.approval-arguments code {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+}
+
+.approval-tool {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.approval-risk {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.approval-risk[data-risk='high'],
+.approval-risk[data-risk='elevated'] {
+  color: var(--accent-warning);
+}
+
+.approval-risk[data-risk='critical'] {
+  color: var(--accent-danger);
+}
+
+/* A command line and a target path are the two things a reviewer has to read in
+   full, so they wrap instead of inheriting the row's single-line ellipsis. */
+.approval-command,
+.approval-target {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  white-space: normal;
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.approval-cwd {
+  color: var(--text-muted);
+}
+
+.approval-arguments {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.approval-arguments summary {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.approval-arguments code {
+  display: block;
+  overflow: auto;
+  max-height: 140px;
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+}
+
 .approve {
   color: var(--text-approve);
 }

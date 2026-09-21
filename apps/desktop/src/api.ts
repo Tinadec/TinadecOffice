@@ -53,9 +53,18 @@ export interface ApprovalDto {
   id: string;
   session_id?: string | null;
   kind: string;
+  tool_id?: string | null;
+  risk?: string | null;
   summary: string;
+  /**
+   * Redacted, bounded projection of the tool parameters, minted with the approval.
+   * Bulk values (file bodies, patches, MCP payloads) arrive as size plus hash and
+   * secret-shaped keys never leave Core, so this is safe to render verbatim.
+   */
+  arguments?: string | null;
   command?: string | null;
   cwd?: string | null;
+  resource_path?: string | null;
   status: string;
   /** Core user-action state kept separate from the approval projection. */
   governance_status?: string | null;
