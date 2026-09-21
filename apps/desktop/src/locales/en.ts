@@ -138,6 +138,7 @@ export default {
     addFile: 'Add file',
     stopRun: 'Stop the running agent',
     toolEvidence: 'Tool activity for this turn',
+    attachments: 'Files sent with this message',
     copy: 'Copy message',
     copied: 'Copied',
     edit: 'Edit and resend',

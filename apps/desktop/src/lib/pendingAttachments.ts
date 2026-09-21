@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import type { MessageAttachmentDto } from '@/generated/client'
+import type { MessageAttachmentDto, MessageAttachmentSummaryDto } from '@/generated/client'
 
 /**
  * Mirror of Core's `AttachmentEndpoints.MaxAttachmentBytes`. `pendingAttachments.test.ts`
@@ -23,6 +23,11 @@ export interface PendingAttachment {
   /** Core row id; null until the upload is accepted. */
   attachmentId: string | null
   errorCode: string | null
+  /**
+   * The row Core answered with, kept so an optimistic message bubble can show the
+   * same projection a reload would. Null while uploading or after a failure.
+   */
+  storedRow: MessageAttachmentDto | null
 }
 
 /**
@@ -107,6 +112,7 @@ export function attachFiles(
         status: 'uploading',
         attachmentId: null,
         errorCode: null,
+        storedRow: null,
       },
     ]
     return uploadOne(clientId, file, sessionId)
@@ -140,7 +146,7 @@ async function uploadOne(clientId: string, file: AttachableFile, sessionId: stri
     await deleteQuietly(stored.id)
     return
   }
-  patch(clientId, { status: 'ready', attachmentId: stored.id, errorCode: null })
+  patch(clientId, { status: 'ready', attachmentId: stored.id, errorCode: null, storedRow: stored })
 }
 
 async function deleteQuietly(attachmentId: string) {
@@ -159,6 +165,51 @@ export function removePendingAttachment(clientId: string): Promise<void> {
   if (!target) return Promise.resolve()
   pending.value = pending.value.filter((item) => item.clientId !== clientId)
   return target.attachmentId ? deleteQuietly(target.attachmentId) : Promise.resolve()
+}
+
+/** What one send takes with it: chips to clear, ids to send, rows to paint optimistically. */
+export interface OutgoingAttachments {
+  readonly clientIds: string[]
+  readonly attachmentIds: string[]
+  readonly summaries: MessageAttachmentSummaryDto[]
+}
+
+/**
+ * The ready rows, as a snapshot taken before the request goes out. Deliberately not a
+ * mutation: a send can fail, and a chip that quietly vanished would leave the user with
+ * nothing to retry. Only settleSentAttachments clears, and only after Core has answered.
+ */
+export function attachmentsForSend(): OutgoingAttachments {
+  const ready = pending.value.filter(
+    (item): item is PendingAttachment & { storedRow: MessageAttachmentDto } =>
+      item.status === 'ready' && item.storedRow !== null,
+  )
+  return {
+    clientIds: ready.map((item) => item.clientId),
+    attachmentIds: ready.map((item) => item.storedRow.id),
+    summaries: ready.map((item) => {
+      const row = item.storedRow
+      return {
+        id: row.id,
+        file_name: row.file_name,
+        media_type: row.media_type,
+        content_hash: row.content_hash,
+        content_length: row.content_length,
+        created_at: row.created_at,
+        bound_at: row.bound_at,
+      }
+    }),
+  }
+}
+
+/**
+ * Drop the chips a send carried away. No DELETE call here, unlike the other two
+ * removals: Core has just bound these rows to the appended message, so the transcript
+ * needs them to stay alive.
+ */
+export function settleSentAttachments(outgoing: OutgoingAttachments): void {
+  if (outgoing.clientIds.length === 0) return
+  pending.value = pending.value.filter((item) => !outgoing.clientIds.includes(item.clientId))
 }
 
 const UNITS = ['B', 'KB', 'MB', 'GB']

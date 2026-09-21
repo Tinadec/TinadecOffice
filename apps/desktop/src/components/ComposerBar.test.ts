@@ -462,6 +462,7 @@ describe('ComposerBar attachments', () => {
       status: 'ready',
       attachmentId: 'row-1',
       errorCode: null,
+      storedRow: null,
       ...overrides,
     }
   }

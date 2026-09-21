@@ -6,14 +6,17 @@ import { fileURLToPath } from 'node:url'
 import { api } from '@/api'
 import type { MessageAttachmentDto } from '@/generated/client'
 import {
+  attachmentsForSend,
   attachFiles,
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   pendingAttachments,
   reconcileSession,
   removePendingAttachment,
+  settleSentAttachments,
   TOO_LARGE_CODE,
   type AttachableFile,
+  type OutgoingAttachments,
 } from './pendingAttachments'
 
 vi.mock('@/api', () => ({
@@ -248,5 +251,111 @@ describe('formatAttachmentBytes', () => {
 
   it.each(cases)('labels %i bytes as %s', (bytes, expected) => {
     expect(formatAttachmentBytes(bytes)).toBe(expected)
+  })
+})
+
+describe('the bundle a send takes', () => {
+  /**
+   * The projection is built by hand from Core's row, so it is compared to the published
+   * contract rather than to another hand-written list: this is the one place where the
+   * strip and the message projection can quietly stop agreeing.
+   */
+  function contractSummaryFields(): string[] {
+    const snapshotPath = fileURLToPath(new URL('../../../../TinadecGateway/tests/__snapshots__/openapi.external.json', import.meta.url))
+    const doc = JSON.parse(readFileSync(snapshotPath, 'utf8')) as {
+      components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+    }
+    const props = doc.components.schemas.MessageAttachmentSummary?.properties
+    expect(props, 'the external contract must publish MessageAttachmentSummary').toBeDefined()
+    return Object.keys(props!).sort()
+  }
+
+  it('offers only rows Core has accepted', async () => {
+    const resolvers: Array<(row: MessageAttachmentDto) => void> = []
+    upload.mockImplementation(() => new Promise<MessageAttachmentDto>((resolve) => {
+      resolvers.push(resolve)
+    }))
+
+    const started = attachFiles([file(), file({ name: 'late.txt' })], 'sess-1')
+    await tick()
+    const whileUploading = attachmentsForSend()
+    expect(whileUploading.attachmentIds).toEqual([])
+    expect(whileUploading.clientIds).toEqual([])
+
+    resolvers[0]?.(storedRow('att-1'))
+    await tick()
+    expect(attachmentsForSend().attachmentIds).toEqual(['att-1'])
+    expect(pendingAttachments.value).toHaveLength(2)
+
+    resolvers[1]?.(storedRow('att-2'))
+    reconcileSession(null)
+    await started
+  })
+
+  it('excludes a row whose upload was refused', async () => {
+    upload.mockRejectedValue(new Error('quota'))
+    await attachFiles([file()], 'sess-1')
+
+    expect(attachmentsForSend().attachmentIds).toEqual([])
+    expect(attachmentsForSend().summaries).toEqual([])
+  })
+
+  it('carries the contract projection, not the whole Core row', async () => {
+    upload.mockResolvedValue(storedRow('att-9'))
+    await attachFiles([file()], 'sess-1')
+
+    const bundle = attachmentsForSend()
+    expect(bundle.summaries).toHaveLength(1)
+    const summary = bundle.summaries[0] as unknown as Record<string, unknown>
+    expect(Object.keys(summary).sort()).toEqual(contractSummaryFields())
+    // session_id and message_id belong to the parent row; content_reference never
+    // leaves Core at any level.
+    expect(summary).not.toHaveProperty('session_id')
+    expect(summary).not.toHaveProperty('message_id')
+    expect(summary).not.toHaveProperty('content_reference')
+  })
+
+  it('clears the chips a send carried without deleting the rows it bound', async () => {
+    upload.mockResolvedValue(storedRow('att-3'))
+    await attachFiles([file(), file({ name: 'still.txt', type: '' })], 'sess-1')
+    const bundle: OutgoingAttachments = attachmentsForSend()
+    remove.mockClear()
+
+    settleSentAttachments(bundle)
+
+    expect(pendingAttachments.value).toHaveLength(0)
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('leaves an in-flight upload out of a clear of the ready ones', async () => {
+    upload.mockResolvedValueOnce(storedRow('att-4'))
+    const resolvers: Array<(row: MessageAttachmentDto) => void> = []
+    upload.mockImplementationOnce(() => new Promise<MessageAttachmentDto>((resolve) => {
+      resolvers.push(resolve)
+    }))
+
+    const started = attachFiles([file(), file({ name: 'late.txt' })], 'sess-1')
+    await tick()
+    settleSentAttachments(attachmentsForSend())
+
+    const left = pendingAttachments.value
+    expect(left).toHaveLength(1)
+    expect(left[0]!.fileName).toBe('late.txt')
+    expect(left[0]!.status).toBe('uploading')
+
+    resolvers[0]?.(storedRow('att-5'))
+    await tick()
+    expect(pendingAttachments.value[0]!.status).toBe('ready')
+    expect(attachmentsForSend().attachmentIds).toEqual(['att-5'])
+    await started
+  })
+
+  it('clears nothing for an empty bundle', async () => {
+    upload.mockResolvedValue(storedRow('att-6'))
+    await attachFiles([file()], 'sess-1')
+
+    settleSentAttachments({ clientIds: [], attachmentIds: [], summaries: [] })
+
+    expect(pendingAttachments.value).toHaveLength(1)
   })
 })

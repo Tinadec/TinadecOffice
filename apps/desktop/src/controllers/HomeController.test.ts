@@ -14,7 +14,26 @@ const h = vi.hoisted(() => ({
   listToolExecutions: vi.fn(async () => []),
   listRuns: vi.fn(async () => []),
   connectEvents: vi.fn(() => ({ close: vi.fn(), disconnect: vi.fn() })),
+  createInteraction: vi.fn(async (_sessionId: string, _body: Record<string, unknown>) => ({ run_id: null, status: 'accepted' })),
+  updateSessionTitle: vi.fn(async () => ({ id: 'session-1' })),
   notifyError: vi.fn(),
+}))
+
+// The strip's own behaviour is pinned in pendingAttachments.test.ts; here it is only
+// the source of "what a send carries", so the controller's three decisions (forward,
+// clear, refuse) can be read off one call.
+const attach = vi.hoisted(() => ({
+  forSend: vi.fn(() => ({
+    clientIds: [] as string[],
+    attachmentIds: [] as string[],
+    summaries: [] as Record<string, unknown>[],
+  })),
+  settle: vi.fn(),
+}))
+
+vi.mock('@/lib/pendingAttachments', () => ({
+  attachmentsForSend: attach.forSend,
+  settleSentAttachments: attach.settle,
 }))
 
 vi.mock('@/api', () => ({
@@ -28,6 +47,8 @@ vi.mock('@/api', () => ({
     listToolExecutions: h.listToolExecutions,
     listRuns: h.listRuns,
     connectEvents: h.connectEvents,
+    createInteraction: h.createInteraction,
+    updateSessionTitle: h.updateSessionTitle,
   },
   createUserToolActionForPath: h.createUserToolActionForPath,
 }))
@@ -184,5 +205,79 @@ describe('HomeController.editAndResend', () => {
     expect(h.revertSessionMessage).not.toHaveBeenCalled()
     expect(homeController.draft.value).toBe('还没发的那句')
     expect(homeController.invokeError.value).toContain('输入框')
+  })
+})
+
+describe('HomeController.sendMessage attachment hand-off', () => {
+  async function readySession(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-1'
+    homeController.updateDraft('看这个文件')
+    await flushPromises()
+    h.createInteraction.mockClear()
+    attach.forSend.mockClear()
+    attach.settle.mockClear()
+  }
+
+  const outgoing = {
+    clientIds: ['c-1', 'c-2'],
+    attachmentIds: ['att-1', 'att-2'],
+    summaries: [
+      { id: 'att-1', file_name: 'notes.txt', media_type: 'text/plain', content_hash: 'h1', content_length: 12, created_at: null, bound_at: null },
+      { id: 'att-2', file_name: 'shot.png', media_type: 'image/png', content_hash: 'h2', content_length: 2048, created_at: null, bound_at: null },
+    ],
+  }
+
+  it('names the ready rows in the interaction and clears the strip after Core answers', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    expect(h.createInteraction).toHaveBeenCalledTimes(1)
+    expect(h.createInteraction.mock.calls[0]![1]).toMatchObject({ attachment_ids: ['att-1', 'att-2'] })
+    expect(attach.settle).toHaveBeenCalledWith(outgoing)
+  })
+
+  it('keeps the selection when Core refuses the send', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+    h.createInteraction.mockRejectedValueOnce(new Error('attachment_already_bound'))
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    // A chip that vanished on a failed send is an upload the user cannot retry, and
+    // Core never bound the rows, so they are still the only copy of those bytes.
+    expect(attach.settle).not.toHaveBeenCalled()
+    expect(h.notifyError).toHaveBeenCalled()
+  })
+
+  it('refuses to steer a message that carries files, because steering appends nothing', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+
+    await homeController.sendMessage({ dispatch_mode: 'insert', target_run_id: 'run-1' })
+
+    // Sending without the files would be the silent failure; sending them would be an
+    // orphan row, since insert never creates a message to own them. The refusal goes
+    // through the same channel as the other pre-flight guard (run() notifies).
+    expect(h.createInteraction).not.toHaveBeenCalled()
+    expect(attach.settle).not.toHaveBeenCalled()
+    expect(String(h.notifyError.mock.calls[0]?.[0])).toContain('附件')
+  })
+
+  it('omits the field entirely when nothing is attached', async () => {
+    await readySession()
+    const empty = { clientIds: [], attachmentIds: [], summaries: [] }
+    attach.forSend.mockReturnValue(empty)
+
+    await homeController.sendMessage({ dispatch_mode: 'parallel' })
+
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect('attachment_ids' in body).toBe(false)
+    // The clear runs but claims nothing: an empty bundle must not drop any chip.
+    expect(attach.settle).toHaveBeenCalledWith(empty)
   })
 })

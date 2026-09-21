@@ -1115,6 +1115,7 @@ export interface components {
       [key: string]: unknown;
     };
     Message: {
+      attachments: components["schemas"]["MessageAttachmentSummary"][];
       content: string;
       created_at: string | null;
       id: string;
@@ -1136,6 +1137,16 @@ export interface components {
       [key: string]: unknown;
     };
     MessageAttachmentList: components["schemas"]["MessageAttachment"][];
+    MessageAttachmentSummary: {
+      bound_at: string | null;
+      content_hash: string;
+      content_length: number;
+      created_at: string | null;
+      file_name: string;
+      id: string;
+      media_type: string;
+      [key: string]: unknown;
+    };
     MessageList: components["schemas"]["Message"][];
     OrchestrationSnapshot: {
       agent_instances: unknown[];

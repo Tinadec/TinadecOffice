@@ -15,6 +15,7 @@ import {
 } from '@/api'
 import { basenameFromPath } from '@/format'
 import { getDispatchPref } from '@/lib/dispatchPref'
+import { attachmentsForSend, settleSentAttachments } from '@/lib/pendingAttachments'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { PermissionLevel } from '@/types/mode'
@@ -407,8 +408,15 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
     const meetingModelOverride = opts?.meeting_model_override ?? null
     const requestedPermission = opts?.permission_mode ?? currentPermission.value
     if (dispatchMode === 'insert' && !targetRunId) throw new Error('插入模式需选择目标 run')
+    // Taken before the request, not after it: a send that fails must leave the chips
+    // alone so the same selection can be retried. Core binds these rows to the message
+    // it appends, so the optimistic bubble carries the same projection a reload shows.
+    const outgoing = attachmentsForSend()
+    if (dispatchMode === 'insert' && outgoing.attachmentIds.length > 0) {
+      throw new Error('转向消息不追加新消息，因此不能携带附件；请把文件作为单独一条消息发送')
+    }
     try {
-      messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString() } as MessageDto]
+      messages.value = [...messages.value, { id: `pending-${clientMessageId}`, session_id: sessionId, role: 'user', content: snapshotContent, created_at: new Date().toISOString(), attachments: outgoing.summaries } as MessageDto]
       // new interaction path (snake_case)
       const resp = await api.createInteraction(sessionId, {
         content: snapshotContent,
@@ -418,7 +426,9 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         dispatch_mode: dispatchMode,
         target_run_id: targetRunId,
         meeting_model_override: meetingModelOverride,
+        ...(outgoing.attachmentIds.length > 0 ? { attachment_ids: outgoing.attachmentIds } : {}),
       })
+      settleSentAttachments(outgoing)
       if (resp.run_id) {
         attachRun(resp.run_id)
         runs.value = [{ id: resp.run_id, status: resp.status || 'planning' }, ...runs.value.filter((run) => run.id !== resp.run_id)]

@@ -17,6 +17,8 @@ function msg(id: string, role: 'user' | 'assistant', content: string, createdOff
   return {
     id,
     session_id: session,
+    run_id: null,
+    attachments: [],
     role,
     content,
     created_at: new Date(Date.parse('2026-08-24T10:00:00Z') + createdOffsetMin * 60_000).toISOString(),

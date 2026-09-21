@@ -360,45 +360,68 @@ const ASSISTANT_MARKDOWN_SIMPLE = `好的，我已开始执行任务。
 
 正在读取 \`src/orchestrator.ts\` 文件，分析现有实现...`
 
+/** One attachment projection, exactly as Core nests it inside a message. */
+const MOCK_ATTACHMENT_SUMMARY = {
+  id: 'att-1',
+  file_name: 'orchestrator-notes.txt',
+  media_type: 'text/plain',
+  content_hash: 'a'.repeat(64),
+  content_length: 4_128,
+  created_at: iso(-60 * 5),
+  bound_at: iso(-60 * 4),
+}
+
 export function mockMessages(sessionId: string): MessageDto[] {
   return [
     {
-      id: id('msg', 1),
+      id: id('msg', 1),
+      run_id: null,
+      attachments: [MOCK_ATTACHMENT_SUMMARY],
       session_id: sessionId,
       role: 'user',
       content: '请帮我重构编排引擎的任务图构建逻辑，要求支持动态依赖解析。',
       created_at: iso(-60 * 4),
     },
     {
-      id: id('msg', 2),
+      id: id('msg', 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: ASSISTANT_MARKDOWN_RICH,
       created_at: iso(-60 * 4 + 2),
     },
     {
-      id: id('msg', 3),
+      id: id('msg', 3),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: '可以，请按这个计划执行。注意保留向后兼容。',
       created_at: iso(-60 * 3),
     },
     {
-      id: id('msg', 4),
+      id: id('msg', 4),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: ASSISTANT_MARKDOWN_SIMPLE,
       created_at: iso(-60 * 3 + 1),
     },
     {
-      id: id('msg', 5),
+      id: id('msg', 5),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: '工具调用看起来卡住了，能否查看一下执行状态？',
       created_at: iso(-60 * 2),
     },
     {
-      id: id('msg', 6),
+      id: id('msg', 6),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: '我已检查工具执行时间线，发现 \`write_file\` 调用正在等待审批。\n\n请前往右侧 **审批** 面板批准该操作，或直接拒绝以回滚。',
@@ -412,14 +435,18 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
   const extra: MessageDto[] = []
   for (let i = 0; i < 8; i++) {
     extra.push({
-      id: id('msg', 100 + i * 2),
+      id: id('msg', 100 + i * 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'user',
       content: `第 ${i + 1} 轮追问：请进一步说明第 ${i + 1} 步的实现细节，并给出对应的单元测试用例。`,
       created_at: iso(-60 * (10 - i)),
     })
     extra.push({
-      id: id('msg', 101 + i * 2),
+      id: id('msg', 101 + i * 2),
+      run_id: null,
+      attachments: [],
       session_id: sessionId,
       role: 'assistant',
       content: `### 第 ${i + 1} 轮回复\n\n针对你的追问，补充说明如下：\n\n- 实现要点 ${i + 1}：使用 \`Map<taskNodeId, Dependency[]>\` 维护依赖关系\n- 测试用例 ${i + 1}：\n\n\`\`\`typescript\nit('resolves dynamic dependencies #${i + 1}', async () => {\n  const graph = buildGraph(fixture(${i + 1}))\n  expect(graph.nodes).toHaveLength(${i + 2})\n})\n\`\`\`\n\n> 该用例覆盖了循环依赖检测与拓扑排序边界场景。`,

@@ -4,7 +4,8 @@ import { mount } from '@vue/test-utils'
 import MessageList from './MessageList.vue'
 import MessageItem from './MessageItem.vue'
 import ToolCallCard from './chat/ToolCallCard.vue'
-import type { MessageDto } from '../api'
+import { api, type MessageDto } from '../api'
+import type { MessageAttachmentSummaryDto } from '@/generated/client'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -164,6 +165,77 @@ describe('MessageList edit-and-resend', () => {
     await item.find('[data-testid="message-edit-save"]').trigger('click')
 
     expect(wrapper.emitted('edit')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+describe('MessageItem attachment strip', () => {
+  function attachment(over: Partial<MessageAttachmentSummaryDto> = {}): MessageAttachmentSummaryDto {
+    return {
+      id: 'att-1',
+      file_name: 'notes.txt',
+      media_type: 'text/plain',
+      content_hash: 'a'.repeat(64),
+      content_length: 2048,
+      created_at: '2026-09-21T00:00:00Z',
+      bound_at: '2026-09-21T00:00:01Z',
+      ...over,
+    }
+  }
+
+  function carrying(rows: MessageAttachmentSummaryDto[]): MessageDto {
+    return { ...message('u1', 'user'), attachments: rows } as MessageDto
+  }
+
+  /**
+   * The href is compared against api.attachmentContentUrl itself, not a hand-written
+   * string: a renderer that guessed the route shape would keep passing a literal
+   * assertion after the Gateway moved the path.
+   */
+  it('addresses every row by its id through the gateway content route', () => {
+    const wrapper = mountList({
+      messages: [carrying([attachment(), attachment({ id: 'att-2', file_name: 'a.bin', media_type: 'application/octet-stream' })])],
+    })
+    const links = wrapper.findAll('[data-testid="message-attachments"] a')
+    expect(links).toHaveLength(2)
+    expect(links[0]!.attributes('href')).toBe(api.attachmentContentUrl('att-1'))
+    expect(links[0]!.attributes('download')).toBe('notes.txt')
+    expect(links[1]!.attributes('href')).toBe(api.attachmentContentUrl('att-2'))
+    expect(links[1]!.text()).toContain('2 KB')
+    wrapper.unmount()
+  })
+
+  it('shows an image as a thumbnail whose link still carries the original', () => {
+    const wrapper = mountList({ messages: [carrying([attachment({ file_name: 'shot.png', media_type: 'image/png' })])] })
+    const link = wrapper.find('[data-testid="message-attachments"] a')
+    const img = link.find('img')
+    expect(img.attributes('src')).toBe(api.attachmentContentUrl('att-1'))
+    expect(img.attributes('alt')).toBe('shot.png')
+    expect(link.attributes('href')).toBe(api.attachmentContentUrl('att-1'))
+    wrapper.unmount()
+  })
+
+  it('will not render svg as an image, because svg can carry script', () => {
+    const wrapper = mountList({ messages: [carrying([attachment({ file_name: 'diagram.svg', media_type: 'image/svg+xml' })])] })
+    const strip = wrapper.find('[data-testid="message-attachments"]')
+    expect(strip.find('img').exists()).toBe(false)
+    expect(strip.text()).toContain('diagram.svg')
+    wrapper.unmount()
+  })
+
+  it('names the strip and shows no storage path for any row', () => {
+    const wrapper = mountList({ messages: [carrying([attachment()])] })
+    const strip = wrapper.find('[data-testid="message-attachments"]')
+    expect(strip.attributes('aria-label')).toBe('chat.attachments')
+    expect(strip.attributes('role')).toBe('list')
+    expect(strip.html()).not.toContain('content_reference')
+    expect(strip.html()).not.toContain('DataRoot')
+    wrapper.unmount()
+  })
+
+  it('renders no strip at all when the message carries nothing', () => {
+    const wrapper = mountList({ messages: [message('u1', 'user')] })
+    expect(wrapper.find('[data-testid="message-attachments"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

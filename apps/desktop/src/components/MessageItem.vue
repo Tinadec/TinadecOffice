@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Copy, Check, Pencil, Clock } from '@lucide/vue'
+import { Copy, Check, Pencil, Clock, FileText } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { UiButton } from '@/components/ui'
+import { api, type MessageDto } from '../api'
+import type { MessageAttachmentSummaryDto } from '@/generated/client'
+import { formatAttachmentBytes } from '@/lib/pendingAttachments'
 import MarkdownRender from './MarkdownRender.vue'
 import ThinkingProcess from './chat/ThinkingProcess.vue'
 import ToolCallCard from './chat/ToolCallCard.vue'
-import type { MessageDto } from '../api'
 import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 const props = defineProps<{
@@ -79,6 +81,28 @@ const messageThinkingSteps = computed(() => props.thinkingSteps ?? [])
 const messageToolCalls = computed(() => props.toolCalls ?? [])
 const hasThinking = computed(() => messageThinkingSteps.value.length > 0)
 const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
+
+// `?? []` is about the rows this component builds locally (optimistic bubbles, test
+// fixtures), not about the wire: a persisted message always answers with an array.
+const messageAttachments = computed(() => props.message.attachments ?? [])
+const hasAttachments = computed(() => messageAttachments.value.length > 0)
+
+/**
+ * Always a Gateway route addressed by attachment id. Core keeps `content_reference`
+ * to itself and decides inline vs download per media type, so navigating this URL
+ * inherits that decision instead of re-guessing it here.
+ */
+function attachmentUrl(attachment: MessageAttachmentSummaryDto): string {
+  return api.attachmentContentUrl(attachment.id)
+}
+
+/**
+ * svg is excluded on purpose: it can carry script, and Core serves it as a download,
+ * so an <img> here would be the one place a renderer could execute a user's file.
+ */
+function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
+  return attachment.media_type.startsWith('image/') && attachment.media_type !== 'image/svg+xml'
+}
 </script>
 
 <template>
@@ -158,5 +182,39 @@ const hasToolCalls = computed(() => messageToolCalls.value.length > 0)
         </div>
       </div>
     </template>
+
+    <!-- 附件条只渲染消息自带的投影：不解析正文、不猜类型，链接一律是网关按 id 寻址的
+         路由，内联还是下载由 Core 决定。图片走 <img> 缩略图，其余显示名字与体积。 -->
+    <ul
+      v-if="hasAttachments"
+      class="message-attachments"
+      role="list"
+      data-testid="message-attachments"
+      :aria-label="$t('chat.attachments')"
+    >
+      <li v-for="attachment in messageAttachments" :key="attachment.id" class="message-attachment">
+        <a
+          :href="attachmentUrl(attachment)"
+          :download="attachment.file_name"
+          :title="attachment.file_name"
+          :aria-label="attachment.file_name"
+          class="message-attachment-link"
+          :class="{ 'is-thumb': isThumbnail(attachment) }"
+        >
+          <img
+            v-if="isThumbnail(attachment)"
+            :src="attachmentUrl(attachment)"
+            :alt="attachment.file_name"
+            class="message-attachment-thumb"
+            loading="lazy"
+          />
+          <template v-else>
+            <FileText :size="11" aria-hidden="true" />
+            <span class="message-attachment-name">{{ attachment.file_name }}</span>
+            <span class="message-attachment-size">{{ formatAttachmentBytes(attachment.content_length) }}</span>
+          </template>
+        </a>
+      </li>
+    </ul>
   </article>
 </template>

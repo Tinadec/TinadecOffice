@@ -138,6 +138,7 @@ export default {
     addFile: '添加文件',
     stopRun: '停止正在运行的智能体',
     toolEvidence: '本轮工具调用记录',
+    attachments: '这条消息附带的文件',
     copy: '复制消息',
     copied: '已复制',
     edit: '编辑并重发',
