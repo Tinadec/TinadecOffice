@@ -37,6 +37,8 @@ const panelSources = import.meta.glob(
     './../settings/sections/RuntimeInstancesPanel.vue',
     './../components/agentCenter/GovernanceRolesPanel.vue',
     './../components/AgentEvolutionPanel.vue',
+    './../components/AgentActivityPanel.vue',
+    './../components/TaskGraphPanel.vue',
     './../components/TerminalPanel.vue',
     // The chat surface ships through TinadecUI's ChatCard, not a page, so nothing
     // else proved its keys exist: chat.copy/chat.edit rendered as raw keys for the

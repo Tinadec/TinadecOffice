@@ -289,7 +289,7 @@ const visibleProgressEvents = computed(() => [...props.progressEvents].slice(-15
           <div class="agent-panel-section-title">
             <component :is="taskGraphCollapsed ? ChevronRight : ChevronDown" :size="12" />
             <ListTodo :size="12" />
-            <span>{{ orchestration.graph.title ?? t('agent.taskPlan') }}</span>
+            <span>{{ t('agent.taskPlan') }}</span>
             <span v-if="taskProgress.total > 0" class="agent-panel-count-badge">
               {{ taskProgress.done }}/{{ taskProgress.total }}
             </span>

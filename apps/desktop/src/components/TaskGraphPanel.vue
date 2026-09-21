@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
   ChevronRight,
@@ -16,6 +17,7 @@ const props = defineProps<{
   snapshot: OrchestrationSnapshotDto | null
 }>()
 
+const { t } = useI18n()
 const collapsed = ref(false)
 
 const assignmentsByNode = computed(() => {
@@ -112,7 +114,7 @@ function toggleCollapse() {
       />
       <ListTodo :size="12" class="task-graph-icon" />
       <span class="task-graph-title">
-        {{ snapshot?.graph?.title ?? 'Plan' }}
+        {{ t('agent.taskPlan') }}
       </span>
       <span v-if="progress.total > 0" class="task-graph-progress">
         {{ progress.done }}/{{ progress.total }}

@@ -548,13 +548,18 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
       updated_at: iso(-60 * 1),
     },
     graph: {
-      id: graphId,
-      run_id: runId,
-      session_id: sessionId,
-      title: '编排引擎重构任务图',
-      status: 'active',
-      created_at: iso(-60 * 4 + 1),
-      updated_at: iso(-60 * 1),
+      tier: 'deterministic',
+      nodes: [
+        { node_key: 'conversation', label: '对话入口', layer: 'operation', is_conversation: true },
+        { node_key: 'planning', label: '任务规划', layer: 'operation', agent_definition_id: 'agent-task-planner', is_conversation: false },
+        { node_key: 'build', label: '代码实现', layer: 'execution', agent_definition_id: 'agent-code-writer', is_conversation: false },
+        { node_key: 'docs', label: '文档更新', layer: 'execution', agent_definition_id: 'agent-doc-writer', is_conversation: false },
+      ],
+      edges: [
+        { edge_key: 'conversation->planning', source_node_key: 'conversation', target_node_key: 'planning' },
+        { edge_key: 'planning->build', source_node_key: 'planning', target_node_key: 'build' },
+        { edge_key: 'build->docs', source_node_key: 'build', target_node_key: 'docs' },
+      ],
     },
     nodes: [
       {
@@ -566,6 +571,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '阅读 src/orchestrator.ts 与相关模块，梳理当前任务图构建流程',
         status: 'completed',
         priority: 1,
+        lane_key: 'plan',
         risk: 'low',
         success_criteria: ['输出当前实现的关键调用路径', '识别可扩展点'],
         dependencies: [],
@@ -582,6 +588,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '设计支持运行时依赖发现的图节点结构，兼容现有序列化协议',
         status: 'completed',
         priority: 2,
+        lane_key: 'plan',
         risk: 'medium',
         success_criteria: ['数据结构通过设计评审', '向后兼容旧图格式'],
         dependencies: ['node-001'],
@@ -598,6 +605,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '编写核心解析器，支持循环检测与拓扑排序',
         status: 'running',
         priority: 3,
+        lane_key: 'build',
         risk: 'high',
         success_criteria: ['单元测试覆盖率 ≥ 85%', '通过循环依赖边界用例'],
         dependencies: ['node-002'],
@@ -614,6 +622,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '将新解析器接入编排服务主流程，替换旧的静态依赖构建',
         status: 'pending',
         priority: 4,
+        lane_key: 'build',
         risk: 'medium',
         success_criteria: ['端到端测试通过', '性能不劣于旧实现'],
         dependencies: ['node-003'],
@@ -630,6 +639,7 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         description: '编写新特性的使用文档，更新架构图',
         status: 'pending',
         priority: 5,
+        lane_key: 'docs',
         risk: 'low',
         success_criteria: ['文档评审通过', '示例可运行'],
         dependencies: ['node-004'],
@@ -637,6 +647,32 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
         created_at: iso(-60 * 1 + 1),
         updated_at: iso(-60 * 1 + 1),
       },
+    ],
+    lanes: [
+      { lane_key: 'plan', status: 'done', escalated: false, task_keys: ['node-001', 'node-002'], waits: [] },
+      { lane_key: 'build', status: 'executing', escalated: false, task_keys: ['node-003', 'node-004'], waits: [] },
+      {
+        lane_key: 'docs',
+        status: 'waiting',
+        escalated: false,
+        task_keys: ['node-005'],
+        waits: [
+          {
+            waiting_task: 'node-005',
+            lane: 'build',
+            predicate: 'lane_tasks_completed',
+            required_criteria: ['端到端测试通过'],
+            facts_hash: null,
+          },
+        ],
+      },
+    ],
+    flows: [
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-001', kind: 'dispatch', status: 'completed' },
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-002', kind: 'dispatch', status: 'completed' },
+      { from: 'conversation.plan', to: 'worker.code', task_key: 'node-003', kind: 'dispatch', status: 'running' },
+      { from: 'conversation.plan', to: 'worker.general', task_key: 'node-004', kind: 'dispatch', status: 'pending' },
+      { from: 'conversation.plan', to: 'worker.general', task_key: 'node-005', kind: 'dispatch', status: 'pending' },
     ],
     assignments: [
       {

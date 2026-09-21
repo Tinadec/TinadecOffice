@@ -8,7 +8,7 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async () => true) }))
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async (..._args: unknown[]) => true) }))
 vi.mock('@/composables/useNotifications', () => ({
   useNotifications: () => ({
     confirm: (...args: unknown[]) => confirmMock(...args),

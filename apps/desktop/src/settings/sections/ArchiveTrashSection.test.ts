@@ -8,7 +8,7 @@ vi.mock('vue-i18n', () => ({
 }))
 
 const { confirmMock, generatedApi } = vi.hoisted(() => ({
-  confirmMock: vi.fn(async () => true),
+  confirmMock: vi.fn(async (..._args: unknown[]) => true),
   generatedApi: {
     listProjects: vi.fn(),
     listSessions: vi.fn(),

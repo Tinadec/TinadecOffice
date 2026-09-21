@@ -115,8 +115,9 @@ export function useMonacoDiff() {
       // Monaco invariant: the diff widget must RESET its model references
       // BEFORE the models are disposed, otherwise TextModel.dispose() asserts
       // "TextModel got disposed before DiffEditorWidget model got reset".
+      // `setModel(null)` is that detach, per monaco's own declaration.
       const models = editor.getModel()
-      editor.setModel({ original: null, modified: null })
+      editor.setModel(null)
       models?.original?.dispose()
       models?.modified?.dispose()
     } catch {
