@@ -43,6 +43,38 @@ public interface IMessageAttachmentStore
     Task<bool> DeleteAsync(
         Guid attachmentId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Claims previously uploaded rows for a message in the same session, which is what
+    /// makes an attachment part of the conversation instead of a file someone once sent.
+    ///
+    /// Idempotent for the same message on purpose: the caller appends the message first
+    /// and claims the rows afterwards, so a retry of an interrupted send (same
+    /// client_message_id, same attachment ids) must land on the existing message rather
+    /// than be refused for rows it already owns.
+    ///
+    /// Implementations that persist rows must override this. The default body exists so
+    /// the port can be held by a caller that never binds (fakes, read-only views); it
+    /// throws rather than returning success, because a bind that quietly did nothing is
+    /// the failure this whole feature exists to avoid.
+    /// </summary>
+    Task<int> BindToMessageAsync(
+        Guid sessionId,
+        Guid messageId,
+        IReadOnlyList<Guid> attachmentIds,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException(
+            "This attachment store does not support binding rows to messages.");
+}
+
+/// <summary>
+/// A binding request that cannot be honoured: an id that is not in this session, a row
+/// already carried by a different message, or a message that does not exist. Thrown
+/// before anything is written, so the caller either claims every id it named or none.
+/// </summary>
+public sealed class AttachmentBindingException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
 }
 
 public sealed record StoreAttachmentRequest(

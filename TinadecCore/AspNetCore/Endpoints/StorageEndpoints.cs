@@ -232,10 +232,22 @@ public static class StorageEndpoints
             catch (TinadecCore.Runtime.ActiveRunConflictException ex) { return Results.Conflict(new { code = "active_run_conflict", message = ex.Message, run_id = ex.RunId }); }
         });
 
-        app.MapGet("/api/v1/sessions/{sessionId}/messages", async (string sessionId, ProjectSessionStore store, CancellationToken ct) =>
+        app.MapGet("/api/v1/sessions/{sessionId}/messages", async (string sessionId, ProjectSessionStore store, IMessageAttachmentStore attachments, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
-            try { return Results.Ok((await store.ListMessagesAsync(id, ct).ConfigureAwait(false)).Select(ToMessage)); }
+            try
+            {
+                var messages = await store.ListMessagesAsync(id, ct).ConfigureAwait(false);
+                // One listing for the whole page, grouped in memory: per-message reads would
+                // be one query per row on the route the chat hits every time it opens a
+                // session, and the store is already scoped to this tenant and workspace.
+                var claimed = (await attachments.ListAsync(id, ct).ConfigureAwait(false))
+                    .Where(row => row.MessageId is not null)
+                    .GroupBy(row => row.MessageId!.Value)
+                    .ToDictionary(group => group.Key, group => group.ToArray());
+                return Results.Ok(messages.Select(message => ToMessage(message,
+                    claimed.TryGetValue(message.Id, out var rows) ? rows : Array.Empty<StoredAttachment>())).ToArray());
+            }
             catch (KeyNotFoundException) { return Results.NotFound(new { code = "SESSION_NOT_FOUND" }); }
         });
 
@@ -432,7 +444,30 @@ public static class StorageEndpoints
         session.MeetingModelOverrideProviderInstanceId is { } providerInstanceId
             ? new { provider_instance_id = providerInstanceId, model = session.MeetingModelOverrideModel }
             : null;
-    private static object ToMessage(StoredMessage message) => new { id = message.Id, session_id = message.SessionId, run_id = message.RunId, role = message.Role, content = message.Content, created_at = message.CreatedAt };
+    /// <summary>
+    /// attachments rides with the message so a reopened transcript shows what the user sent
+    /// without a second round-trip per row. content_reference deliberately does not: it is a
+    /// path under the data root, and the download route addresses bytes by attachment id.
+    /// </summary>
+    private static object ToMessage(StoredMessage message, IReadOnlyList<StoredAttachment>? attachments = null) => new
+    {
+        id = message.Id,
+        session_id = message.SessionId,
+        run_id = message.RunId,
+        role = message.Role,
+        content = message.Content,
+        created_at = message.CreatedAt,
+        attachments = (attachments ?? Array.Empty<StoredAttachment>()).Select(attachment => new
+        {
+            id = attachment.Id,
+            file_name = attachment.FileName,
+            media_type = attachment.MediaType,
+            content_length = attachment.ContentLength,
+            content_hash = attachment.ContentHash,
+            created_at = attachment.CreatedAt,
+            bound_at = attachment.BoundAt
+        }).ToArray()
+    };
     private static object ToRun(RunRecord run) => new { id = run.Id, session_id = run.SessionId, trigger_message_id = run.TriggerMessageId, status = run.Status, summary = run.Summary, task_revision = run.TaskRevision, latest_event_sequence = run.LastEventSequence, latest_event_at = run.LastEventAt, created_at = run.CreatedAt, updated_at = run.UpdatedAt, completed_at = run.CompletedAt };
 
     private static readonly TimeSpan EventFollowPollInterval = TimeSpan.FromMilliseconds(200);

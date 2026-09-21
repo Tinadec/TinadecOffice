@@ -141,6 +141,57 @@ public sealed class MessageAttachmentStore : IMessageAttachmentStore
         return affected > 0;
     }
 
+    public async Task<int> BindToMessageAsync(
+        Guid sessionId,
+        Guid messageId,
+        IReadOnlyList<Guid> attachmentIds,
+        CancellationToken cancellationToken = default)
+    {
+        var distinct = attachmentIds.Distinct().ToArray();
+        if (distinct.Length == 0) return 0;
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+
+        // The message has to be in the session the rows are in. Without this, a caller
+        // that names a message from another session could move those rows out of reach of
+        // the transcript that uploaded them.
+        var ownsMessage = await db.Messages.AsNoTracking().AnyAsync(
+            x => x.Id == messageId && x.SessionId == sessionId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            cancellationToken).ConfigureAwait(false);
+        if (!ownsMessage)
+            throw new AttachmentBindingException("message_not_found",
+                $"No message in this session has the id {messageId}.");
+
+        var rows = await db.MessageAttachments
+            .Where(x => distinct.Contains(x.Id) && x.SessionId == sessionId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        // Foreign and missing ids answer with the same code, so this cannot be used to
+        // probe whether another workspace holds an attachment.
+        if (rows.Count != distinct.Length)
+        {
+            var missing = distinct.Except(rows.Select(x => x.Id)).ToArray();
+            throw new AttachmentBindingException("attachment_not_found",
+                $"No attachment in this session has the id(s): {string.Join(", ", missing)}.");
+        }
+
+        var taken = rows.FirstOrDefault(x => x.MessageId is { } owner && owner != messageId);
+        if (taken is not null)
+            throw new AttachmentBindingException("attachment_already_bound",
+                $"Attachment {taken.Id} is already carried by another message.");
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var row in rows.Where(x => x.MessageId != messageId))
+        {
+            row.MessageId = messageId;
+            row.BoundAt = now;
+        }
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return rows.Count;
+    }
+
     private static StoredAttachment ToStored(MessageAttachmentRecord record) => new(
         record.Id,
         record.SessionId,

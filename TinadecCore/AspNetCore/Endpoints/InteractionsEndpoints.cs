@@ -16,6 +16,13 @@ public static class InteractionsEndpoints
     private const string TinaChatInputLockedCode = "tina_chat_input_locked";
     private const string TinaChatInputLockedDetail = "Use the TinaChat intent execution endpoint for this isolated handoff. New instructions belong in a new intent revision.";
 
+    /// <summary>
+    /// Bounded because each id costs the user a stored upload that a message may never
+    /// claim, and because the model-facing manifest lists a fixed number of rows. Eight
+    /// matches what comparable local-first harnesses cap a message at.
+    /// </summary>
+    private const int MaxAttachmentsPerMessage = 8;
+
     public static IEndpointRouteBuilder MapInteractionsEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/sessions/{sessionId:guid}/interactions", CreateInteraction);
@@ -25,7 +32,7 @@ public static class InteractionsEndpoints
         return app;
     }
 
-    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, StorageLifecycleService lifecycle, CancellationToken ct)
+    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         if (el.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { code = "invalid_request", message = "Body must be a JSON object." });
@@ -33,7 +40,7 @@ public static class InteractionsEndpoints
         // admit a run under a mode nobody reads anymore.
         var unknownField = el.EnumerateObject()
             .Select(property => property.Name)
-            .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "meeting_model_override"));
+            .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "meeting_model_override" or "attachment_ids"));
         if (unknownField is not null) return Results.BadRequest(new { code = "unknown_field", message = $"Field '{unknownField}' is not part of the interaction contract." });
         var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
         if (string.IsNullOrWhiteSpace(content)) return Results.BadRequest(new { code = "invalid_request", message = "content is required" });
@@ -66,6 +73,70 @@ public static class InteractionsEndpoints
         // session existence + session's default mode handling
         var session = await sessions.FindAsync(sessionId, ct);
         if (session is null) return Results.NotFound(new { code = "not_found", message = "Session not found" });
+
+        // An attachment is claimed by the message this interaction appends, so the ids
+        // arrive with the send rather than in a second request that could race it.
+        IReadOnlyList<Guid>? attachmentIds = null;
+        if (el.TryGetProperty("attachment_ids", out var attachmentElement)
+            && attachmentElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            if (attachmentElement.ValueKind != JsonValueKind.Array)
+            {
+                return Results.BadRequest(new { code = "attachment_ids_invalid", message = "attachment_ids must be an array of attachment ids." });
+            }
+            // Steering writes a context patch and appends no user message. Accepting ids
+            // there would strand the upload with nothing to name it, so the request is
+            // refused where the client can read why.
+            if (dispatchMode == "insert")
+            {
+                return Results.BadRequest(new { code = "attachment_dispatch_unsupported", message = "Steering inserts no user message, so it cannot carry attachments. Send the file as its own message." });
+            }
+            var ids = new List<Guid>(attachmentElement.GetArrayLength());
+            foreach (var item in attachmentElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || !Guid.TryParse(item.GetString(), out var parsedId))
+                {
+                    return Results.BadRequest(new { code = "attachment_ids_invalid", message = "Every attachment id must be a guid string." });
+                }
+                ids.Add(parsedId);
+            }
+            if (ids.Count > MaxAttachmentsPerMessage)
+            {
+                return Results.BadRequest(new { code = "attachment_count_exceeded", message = $"A message carries at most {MaxAttachmentsPerMessage} attachments.", max = MaxAttachmentsPerMessage });
+            }
+            if (ids.Count > 0)
+            {
+                // Pre-flight against the session's unbound rows before a run exists. The
+                // bind below still re-checks; this is what stops the common mistake — a
+                // stale id from a session the user has since left — from starting a run
+                // whose message silently carries nothing.
+                var unbound = await attachments.ListAsync(sessionId, ct).ConfigureAwait(false);
+                var missing = ids.Except(unbound.Where(row => row.MessageId is null).Select(row => row.Id)).ToArray();
+                if (missing.Length > 0)
+                {
+                    return Results.BadRequest(new { code = "attachment_not_found", message = $"No unbound attachment in this session has the id(s): {string.Join(", ", missing)}.", missing });
+                }
+            }
+            attachmentIds = ids;
+        }
+
+        // The message is appended first (its id comes from the run admission or the queued
+        // branch), so binding is a second step and a crash between the two is possible. It
+        // is recoverable by design: the same client_message_id replays onto the same
+        // message, and BindToMessageAsync treats rows it already owns as success.
+        async Task<IResult?> BindAttachmentsAsync(Guid messageId)
+        {
+            if (attachmentIds is null) return null;
+            try
+            {
+                await attachments.BindToMessageAsync(sessionId, messageId, attachmentIds, ct).ConfigureAwait(false);
+                return null;
+            }
+            catch (AttachmentBindingException ex)
+            {
+                return Results.BadRequest(new { code = ex.Code, message = ex.Message });
+            }
+        }
 
         // An insertion bypasses coordinator admission, so enforce the communication
         // binding here too, before persisting any context patch or mutable mode.
@@ -200,6 +271,11 @@ public static class InteractionsEndpoints
             {
                 var replayRevision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false);
                 var replayCursor = await RunStreamCursorAsync(lifecycleDbFactory, replay.RunId, ct).ConfigureAwait(false);
+                if (replay.MessageId is { } replayMessageId)
+                {
+                    var replayBind = await BindAttachmentsAsync(replayMessageId).ConfigureAwait(false);
+                    if (replayBind is not null) return replayBind;
+                }
                 return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{replay.Id}", new { interaction_id = replay.Id, session_id = sessionId, run_id = replay.RunId, dispatch_mode = dispatchMode, status = "queued", mode_version_id = modeVersionId, meeting_model_override = meetingModelOverride, reason = "replayed queued interaction", client_message_id = clientMessageId, context_revision = replayRevision, stream_cursor = replayCursor, correlation_id = clientMessageId });
             }
 
@@ -247,6 +323,8 @@ public static class InteractionsEndpoints
                     content.Trim(),
                     clientMessageId: clientMessageId,
                     cancellationToken: ct).ConfigureAwait(false);
+                var queuedBind = await BindAttachmentsAsync(message.Id).ConfigureAwait(false);
+                if (queuedBind is not null) return queuedBind;
                 var directive = replay ?? new RunDirectiveRecord
                 {
                     Id = Guid.NewGuid(),
@@ -318,6 +396,10 @@ public static class InteractionsEndpoints
             });
         }
         if (admission is null) return Results.Conflict(new { code = "conflict", message = "Admission failed" });
+        {
+            var admittedBind = await BindAttachmentsAsync(admission.MessageId).ConfigureAwait(false);
+            if (admittedBind is not null) return admittedBind;
+        }
         // if mode_version provided, store it as frozen binding hint (best-effort)
         if (modeVersionId.HasValue)
         {

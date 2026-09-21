@@ -243,9 +243,40 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
   内容库里留下中断的临时文件，所以只测了声明侧拒绝，Kestrel 那一半靠机制本身。
 - **租户内可见，跨租户 404**：作用域是 `(TenantId, WorkspaceId, SessionId)`。**不要**把它写成按用户隔离——
   `PrincipalId` 目前是 `DevelopmentTenantContextAccessor` 里的硬编码常量，`created_by_principal_id` 只是审计列。
-- **尚未接线**：附件还不能绑定到消息（`message_id` 恒为 null），发送路径的 `unknown_field` 白名单
-  （`InteractionsEndpoints.cs:34-37`）与 `ProjectSessionStore.cs:381` 的"空正文拒绝"都还没动，上下文注入
-  （`ContextModuleRegistrar.cs:85`）也未读附件。Gateway 代理与 Desktop 选择器是后续批次。
+- **Gateway 代理与 Desktop 选择器已接上**：网关逐字节转发上传，桌面端 Composer 的选择器/拖拽条
+  把状态独占给 `src/lib/pendingAttachments.ts`。绑定与上下文注入见下一节。
+
+## ATTACHMENTS RIDE ON A MESSAGE (2026-09-21)
+
+`MessageAttachmentStore.BindToMessageAsync` + `InteractionsEndpoints` + `ContextModuleRegistrar.BuildAttachmentEvidenceAsync`
++ `StorageEndpoints` 的消息投影。绑定的唯一所有者是 store，而不是 `ProjectSessionStore.AddMessageAsync`：
+`ModulesDoNotReferenceEachOtherDirectly` 不允许 DmaEA 反向依赖 Memory，而 `IMessageAttachmentStore` 是端口，
+所以"追加消息 + 认领行"是两步。新增端口成员必须是 **default interface member**（`BindToMessageAsync` 默认抛
+`NotSupportedException`），否则任何外部实现都会被这次改动打断。
+
+- **为什么不在 `AddMessageAsync` 里顺带绑定**：先写过一版原子的实现，但它把同一条规则表达了两遍，而"谁能认领、
+  认领给谁"本来只属于 attachment store。重复一份就是让未来的规则改动只有一个被改到。
+- **非原子是设计，不是缺陷**：崩在"消息已追加、行未认领"之间可恢复——同一个 `client_message_id` 重放到同一条消息，
+  而 `BindToMessageAsync` 把自己已经拥有的行判为成功（no-op）而不是冲突。三个落点各调一次：replay、queued、
+  admitted（`InteractionsEndpoints` 里的 `BindAttachmentsAsync` 局部函数）。
+- **认领失败有码**：`AttachmentBindingException` → `message_not_found`（消息不属于本作用域）/
+  `attachment_not_found`（行不在本会话；与"根本不存在"同答，避免上传变成探测别人会话的探针）/
+  `attachment_already_bound`（已被另一条消息携带）。**上限 8 条/消息**，且 `dispatch_mode: insert`（转向）直接拒：
+  它不追加消息，绑了就是永久孤儿行。
+- **模型看到清单+摘录，不是字节**：`ConversationMessage` 只有 `(Role, Content)` 字符串，全仓没有 image/audio
+  content part（ACP/opencode 客户端也把它摊平成一个 text part），所以二进制文件**只列不内联**。文本类
+  （plain/csv/json/xml/yaml/md/tsv/log/ini/toml/hcl/env）按 `(4096/文件, 8192/次, 16 条)` 三元组截断，截断处显式写出
+  "cut at N of M bytes"；证据段插在 `session_history` **之前**，头部一句把附件定性为数据而非指令。字节走
+  `IContentStore.OpenReadAsync` + `StreamReader`，因此 `content_reference` 永不出 Core。
+- **`/messages` 加了 `attachments[]` 却没让契约漂移**：该 handler 是未类型化 `IResult`（匿名对象），在
+  `openapi.core.json` 里只有 path 条目——实测加字段后快照零改动。因此这条回归**只由测试钉住**，这也是
+  `AttachmentApiTests` 打到 HTTP 层而不是 store 层的原因。
+- **两个守卫实测有牙**：注释掉端点里的 `BindToMessageAsync` 调用 → `Assert.Equal() Collections differ`；把上下文
+  那一行的谓词改成不可能命中 → `Assert.NotNull() Failure: Value is null`。两次都是断言失败而非编译错误；恢复后
+  定向 27/27（含快照 1 例）+ Architecture 17/17。
+- **仍未接**：只传文件、正文为空的消息还是被拒（端点与 `ProjectSessionStore.cs:381` 两处），且模型**没有任何办法
+  打开一个非文本附件**——图片/音频只出现在清单里，真正的 `read_attachment` Core 虚拟工具是下一件事。PostgreSQL 上
+  `message_attachments.message_id/bound_at` 的建列对账未在真库演练过。
 
 ## FREE-CONVERSATION WORKSPACES (2026-09-10)
 
