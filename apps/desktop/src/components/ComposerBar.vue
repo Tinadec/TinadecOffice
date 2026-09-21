@@ -12,6 +12,17 @@ import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
 import { filterComposerCommands, parseComposerCommand, type ComposerCommand } from '@/lib/composerCommands'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
+import {
+  attachFiles,
+  formatAttachmentBytes,
+  MAX_ATTACHMENT_BYTES,
+  pendingAttachments,
+  reconcileSession,
+  removePendingAttachment,
+  TOO_LARGE_CODE,
+  type AttachableFile,
+  type PendingAttachment,
+} from '@/lib/pendingAttachments'
 import { api } from '@/api'
 import { toDirEntryView, type DirEntryDto, type DirEntryView } from '@/lib/workspaceSearch'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
@@ -49,13 +60,12 @@ const emit = defineEmits<{
   'welcome-submit': [payload: { content: string; permission_mode: PermissionLevel; mode_version_id: string | null }]
   'create-project': []
   'select-project': [id: string | null]
-  'add-image': []
-  'add-file': []
   'stop': []
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const plusTriggerRef = ref<HTMLElement | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const sendTriggerRef = ref<HTMLElement | null>(null)
 const showPlusMenu = ref(false)
 const plusMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
@@ -277,6 +287,53 @@ async function togglePlusMenu() {
   }
 }
 
+const attachments = pendingAttachments
+// An attachment row is scoped to a session at write time, so the hero box (no session
+// yet) has nowhere to put bytes. The entries stay visible and disabled rather than
+// vanishing, so the menu does not change shape between the two surfaces.
+const canAttach = computed(() => Boolean(props.sessionId))
+
+function openFilePicker(accept: string) {
+  showPlusMenu.value = false
+  if (!canAttach.value) return
+  const input = fileInputRef.value
+  if (!input) return
+  // Cleared first: picking the same file twice in a row would otherwise fire no change
+  // event, because the input still holds the previous selection.
+  input.value = ''
+  input.accept = accept
+  input.click()
+}
+
+function pickedFiles(event: Event): AttachableFile[] {
+  const input = event.target as HTMLInputElement
+  return Array.from(input.files ?? [])
+}
+
+function onFilesPicked(event: Event) {
+  const files = pickedFiles(event)
+  if (!files.length) return
+  void attachFiles(files, props.sessionId ?? null)
+}
+
+function dropAttachment(clientId: string) {
+  void removePendingAttachment(clientId)
+}
+
+function attachmentHint(item: PendingAttachment): string {
+  if (item.status === 'uploading') return t('composer.attachUploading')
+  if (item.status === 'ready') return t('composer.attachReady')
+  if (item.errorCode === TOO_LARGE_CODE) {
+    return t('composer.attachTooLarge', { max: formatAttachmentBytes(MAX_ATTACHMENT_BYTES) })
+  }
+  return t('composer.attachFailed', { code: item.errorCode ?? 'unknown' })
+}
+
+// Chips describe rows in the session the composer was attached to. immediate covers
+// a remount onto a different session, where no change is observed from inside this
+// component's lifetime.
+watch(() => props.sessionId, (id) => { reconcileSession(id ?? null) }, { immediate: true })
+
 async function toggleAskMenu() {
   showAskMenu.value = !showAskMenu.value
   if (showAskMenu.value) {
@@ -451,6 +508,25 @@ function confirmSteer(id: string) {
         </div>
       </div>
 
+      <div v-if="attachments.length" class="composer-attachments" role="list" aria-live="polite" :aria-label="t('composer.attachments')">
+        <div
+          v-for="item in attachments"
+          :key="item.clientId"
+          class="attachment-chip"
+          :class="`is-${item.status}`"
+          role="listitem"
+          :title="attachmentHint(item)"
+          data-testid="attachment-chip"
+        >
+          <component :is="item.mediaType.startsWith('image/') ? Image : FileText" :size="12" class="attachment-icon" aria-hidden="true" />
+          <span class="attachment-name">{{ item.fileName }}</span>
+          <span class="attachment-meta">{{ formatAttachmentBytes(item.size) }}</span>
+          <span v-if="item.status === 'uploading'" class="attachment-spinner" aria-hidden="true" />
+          <span v-if="item.status !== 'ready'" class="attachment-state">{{ attachmentHint(item) }}</span>
+          <button class="attachment-remove" :aria-label="t('composer.removeAttachment', { name: item.fileName })" @click="dropAttachment(item.clientId)">×</button>
+        </div>
+      </div>
+
       <div class="welcome-dialog-main">
         <div class="welcome-dialog-plus-wrapper">
           <button
@@ -466,16 +542,37 @@ function confirmSteer(id: string) {
               class="plus-dropdown-portal"
               :style="plusMenuStyle"
             >
-              <button class="plus-menu-item" @click="emit('add-image'); showPlusMenu = false">
+              <button
+                class="plus-menu-item"
+                data-testid="composer-attach-image"
+                :disabled="!canAttach"
+                :title="canAttach ? t('chat.addImage') : t('composer.attachNeedsSession')"
+                @click="openFilePicker('image/*')"
+              >
                 <Image :size="12" />
                 <span>{{ t('chat.addImage') }}</span>
               </button>
-              <button class="plus-menu-item" @click="emit('add-file'); showPlusMenu = false">
+              <button
+                class="plus-menu-item"
+                data-testid="composer-attach-file"
+                :disabled="!canAttach"
+                :title="canAttach ? t('chat.addFile') : t('composer.attachNeedsSession')"
+                @click="openFilePicker('')"
+              >
                 <FileText :size="12" />
                 <span>{{ t('chat.addFile') }}</span>
               </button>
             </div>
           </Teleport>
+          <input
+            ref="fileInputRef"
+            class="composer-file-input"
+            type="file"
+            multiple
+            data-testid="composer-file-input"
+            :aria-label="t('composer.attachFile')"
+            @change="onFilesPicked"
+          />
         </div>
 
         <Teleport to="body">
@@ -777,5 +874,79 @@ function confirmSteer(id: string) {
 .queued-run-select {
   min-width: 150px;
   height: 24px;
+}
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+/* The picker is driven programmatically from the plus menu; it must not take up a row. */
+.composer-file-input {
+  display: none;
+}
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  padding: 3px 4px 3px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.attachment-chip.is-uploading {
+  border-style: dashed;
+}
+.attachment-chip.is-failed {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+}
+.attachment-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.attachment-name {
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.attachment-meta {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.attachment-state {
+  flex-shrink: 0;
+}
+.attachment-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border-muted);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: composer-spin 0.8s linear infinite;
+}
+.attachment-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.attachment-remove:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.plus-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>
