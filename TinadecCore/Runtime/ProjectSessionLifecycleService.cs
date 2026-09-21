@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Lifecycle;
 using TinadecCore.Memory;
 using TinadecCore.Persistence;
@@ -52,6 +53,18 @@ public sealed class ProjectSessionLifecycleService
 
     public Task<SessionRecord> RestoreSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         TransitionSessionAsync(sessionId, LifecycleStatuses.Active, ct);
+
+    /// <summary>
+    /// Edit-and-resend support: cut the conversation at a message so the corrected turn
+    /// can be sent again. Refused while any run of that session is still active, for the
+    /// same reason a lifecycle transition is — the live run's checkpoint references the
+    /// messages that would leave the history.
+    /// </summary>
+    public async Task<SessionHistoryRevert> RevertSessionHistoryAsync(Guid sessionId, Guid fromMessageId, CancellationToken ct = default)
+    {
+        await ThrowIfAnyActiveRunAsync([sessionId], ct).ConfigureAwait(false);
+        return await _store.RevertHistoryAsync(sessionId, fromMessageId, ct).ConfigureAwait(false);
+    }
 
     private async Task<ProjectRecord> TransitionProjectAsync(Guid projectId, string target, CancellationToken ct)
     {

@@ -178,7 +178,31 @@ public sealed class SessionRecord
     public DateTimeOffset? TrashedAt { get; set; }
 }
 
-public sealed class MessageRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public Guid? TurnId { get; set; } public string? ClientMessageId { get; set; } public long Sequence { get; set; } public string Role { get; set; } = "user"; public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } }
+public sealed class MessageRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid? RunId { get; set; }
+    public Guid? TurnId { get; set; }
+    public string? ClientMessageId { get; set; }
+    public long Sequence { get; set; }
+    public string Role { get; set; } = "user";
+    public string ContentReference { get; set; } = string.Empty;
+    public string ContentHash { get; set; } = string.Empty;
+    public long ContentLength { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Set when the user edits that turn away. The row stays because runs, checkpoints
+    /// and context snapshots reference message ids, but it leaves the conversation. A
+    /// per-row marker rather than a sequence cutoff is deliberate: a cutoff would also
+    /// hide whatever is appended afterwards, which is exactly the resend in
+    /// "edit and resend".
+    /// </summary>
+    public DateTimeOffset? RevertedAt { get; set; }
+}
 public sealed class TurnRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid UserMessageId { get; set; } public Guid? AssistantMessageId { get; set; } public Guid? RunId { get; set; } public string Kind { get; set; } = "new_task"; public string Status { get; set; } = "accepted"; public long BaseContextRevision { get; set; } public long ResultContextRevision { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset UpdatedAt { get; set; } public DateTimeOffset? CompletedAt { get; set; } }
 public sealed class ContextSnapshotRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public long Revision { get; set; } public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } }
 public sealed class ContextPatchRecord { public Guid Id { get; set; } public Guid TenantId { get; set; } public Guid WorkspaceId { get; set; } public Guid SessionId { get; set; } public Guid? RunId { get; set; } public Guid? AgentInstanceId { get; set; } public long BaseRevision { get; set; } public long? AppliedRevision { get; set; } public string Status { get; set; } = "pending"; public string ContentReference { get; set; } = string.Empty; public string ContentHash { get; set; } = string.Empty; public long ContentLength { get; set; } public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset? AppliedAt { get; set; } }

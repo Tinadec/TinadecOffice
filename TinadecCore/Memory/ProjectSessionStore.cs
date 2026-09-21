@@ -362,7 +362,12 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     {
         await EnsureSessionExistsAsync(sessionId, cancellationToken).ConfigureAwait(false);
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await db.Messages.AsNoTracking().Where(x => x.SessionId == sessionId).OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
+        // An edited-away turn keeps its row (runs, checkpoints and context snapshots
+        // still reference those message ids) but must never come back into the
+        // conversation. The filter lives here so every reader — the UI list, the model
+        // context and the limited overload below — agrees on what the history is.
+        var rows = await db.Messages.AsNoTracking().Where(x => x.SessionId == sessionId && x.RevertedAt == null)
+            .OrderBy(x => x.Sequence).ToListAsync(cancellationToken).ConfigureAwait(false);
         var result = new List<StoredMessage>(rows.Count);
         foreach (var row in rows) result.Add(await ToStoredMessageAsync(row, cancellationToken).ConfigureAwait(false));
         return result;
@@ -446,6 +451,48 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     {
         var messages = await ListMessagesAsync(sessionId, cancellationToken).ConfigureAwait(false);
         return messages.TakeLast(Math.Max(0, limit ?? messages.Count)).Select(ToConversationMessage).ToArray();
+    }
+
+    Task<SessionHistoryRevert> IConversationStore.RevertHistoryAsync(Guid sessionId, Guid fromMessageId, CancellationToken cancellationToken) =>
+        RevertHistoryAsync(sessionId, fromMessageId, cancellationToken);
+
+    /// <summary>
+    /// Marks the given message and everything after it as edited away. Rows are not
+    /// deleted: a run's trigger message, its checkpoint and the context snapshots all
+    /// reference message ids, so deleting them would wedge recovery instead of editing
+    /// the conversation. The marker is per row rather than a sequence cutoff because a
+    /// cutoff would also hide the resend that follows the edit.
+    /// </summary>
+    public async Task<SessionHistoryRevert> RevertHistoryAsync(Guid sessionId, Guid fromMessageId, CancellationToken cancellationToken = default)
+    {
+        var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var scope = _tenantContext.Current;
+            var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Session was not found.");
+            var from = await db.Messages.AsNoTracking().SingleOrDefaultAsync(x => x.Id == fromMessageId && x.SessionId == sessionId
+                && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException("Message was not found in this session.");
+            var revertedAt = DateTimeOffset.UtcNow;
+            var removed = await db.Messages
+                .Where(x => x.SessionId == sessionId
+                    && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId
+                    && x.Sequence >= from.Sequence && x.RevertedAt == null)
+                .ExecuteUpdateAsync(set => set.SetProperty(x => x.RevertedAt, revertedAt), cancellationToken)
+                .ConfigureAwait(false);
+            session.HistoryRevision++;
+            session.UpdatedAt = revertedAt;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return new SessionHistoryRevert(fromMessageId, from.Sequence, removed, session.HistoryRevision);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     async Task<ConversationMessage?> IConversationStore.FindMessageByClientMessageIdAsync(Guid sessionId, string clientMessageId, CancellationToken cancellationToken)

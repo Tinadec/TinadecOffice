@@ -72,6 +72,103 @@ public sealed class StorageApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RevertHistory_DropsMessagesFromConversation_ButKeepsRowsAndResequence()
+    {
+        var client = _factory!.CreateClient();
+        var projectResponse = await client.PostAsJsonAsync("/api/v1/projects",
+            new { name = "Revert project", path = Path.Combine(_root, "revert-workspace") });
+        Assert.Equal(HttpStatusCode.Created, projectResponse.StatusCode);
+        var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+
+        var sessionResponse = await client.PostAsJsonAsync("/api/v1/sessions",
+            new { project_id = project.GetProperty("id").GetGuid(), title = "Revert session" });
+        Assert.Equal(HttpStatusCode.Created, sessionResponse.StatusCode);
+        var sessionId = (await sessionResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        var first = await PostMessageAsync(client, sessionId, "第一条");
+        var second = await PostMessageAsync(client, sessionId, "要改的那条");
+        var third = await PostMessageAsync(client, sessionId, "基于错误回答的后续");
+
+        var revertResponse = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages/{second}/revert", new { });
+        Assert.Equal(HttpStatusCode.OK, revertResponse.StatusCode);
+        var reverted = await revertResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(second, reverted.GetProperty("from_message_id").GetGuid());
+        Assert.Equal(2, reverted.GetProperty("from_sequence").GetInt32());
+        Assert.Equal(2, reverted.GetProperty("removed_count").GetInt32());
+
+        // The conversation the UI and the next run read no longer contains them.
+        var visible = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+        var visibleId = Assert.Single(visible!).GetProperty("id").GetGuid();
+        Assert.Equal(first, visibleId);
+
+        // The port the model context is built from filters identically, so an edit
+        // cannot leave the cut turn in the prompt while hiding it from the transcript.
+        var store = _factory.Services.GetRequiredService<IConversationStore>();
+        Assert.Equal(new[] { first }, (await store.ListMessagesAsync(sessionId, 10)).Select(item => item.Id).ToArray());
+        Assert.Single(await store.ListMessagesAsync(sessionId));
+
+        // Rows stay durable: runs, checkpoints and context snapshots reference these
+        // ids, and a resuming run fails closed when its trigger message disappears.
+        await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<MemoryDbContext>>().CreateDbContextAsync())
+        {
+            Assert.Equal(3, await db.Messages.CountAsync(item => item.SessionId == sessionId));
+            Assert.Equal(2, await db.Messages.CountAsync(item => item.SessionId == sessionId && item.RevertedAt != null));
+            var kept = await db.Messages.SingleAsync(item => item.SessionId == sessionId && item.RevertedAt == null);
+            Assert.Equal(first, kept.Id);
+        }
+
+        // Edit-and-resend: the replacement continues the sequence and is visible,
+        // because the revert marks rows rather than trimming a session-wide boundary.
+        var resend = await PostMessageAsync(client, sessionId, "改过的那条");
+        var afterResend = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+        Assert.Equal(2, afterResend!.Length);
+        Assert.Equal(afterResend[1].GetProperty("id").GetGuid(), resend);
+        Assert.Equal("改过的那条", afterResend[1].GetProperty("content").GetString());
+        Assert.Equal("第一条", afterResend[0].GetProperty("content").GetString());
+
+        var missing = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages/{Guid.NewGuid()}/revert", new { });
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Contains("revert_target_not_found", await missing.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task RevertHistory_IsRefusedWhileARunStillReadsTheTrigger()
+    {
+        var client = _factory!.CreateClient();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects",
+            new { name = "Revert guard", path = Path.Combine(_root, "revert-guard-workspace") })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions",
+            new { project_id = project.GetProperty("id").GetGuid(), title = "Revert guard session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+
+        var kept = await PostMessageAsync(client, sessionId, "保留");
+        var trigger = await PostMessageAsync(client, sessionId, "正在被推理");
+        var lifecycle = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var run = await lifecycle.StartRunAsync(sessionId, trigger);
+
+        // Run recovery reads the conversation through the same filtered port, so hiding
+        // the trigger row mid-run would fail the run closed on a missing trigger message.
+        var refused = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages/{trigger}/revert", new { });
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        var error = await refused.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("active_run_conflict", error.GetProperty("code").GetString());
+        Assert.Equal(run.Id, error.GetProperty("run_id").GetGuid());
+        Assert.Equal(2, (await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages"))!.Length);
+
+        await lifecycle.CompleteRunAsync(run.Id);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages/{trigger}/revert", new { })).StatusCode);
+        var afterRun = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/messages");
+        Assert.Equal(kept, Assert.Single(afterRun!).GetProperty("id").GetGuid());
+    }
+
+    private static async Task<Guid> PostMessageAsync(HttpClient client, Guid sessionId, string content)
+    {
+        var response = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+    }
+
+    [Fact]
     public async Task LegacySessionJson_ImportsOnceIntoRelationalMessagesAndContentStore()
     {
         var client = _factory!.CreateClient();

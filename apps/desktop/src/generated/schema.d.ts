@@ -637,6 +637,10 @@ export interface paths {
     /** Create message (compat) */
     post: operations["postApiV1SessionsBySessionIdMessages"];
   };
+  "/api/v1/sessions/{sessionId}/messages/{messageId}/revert": {
+    /** Revert conversation history to a message */
+    post: operations["postApiV1SessionsBySessionIdMessagesByMessageIdRevert"];
+  };
   "/api/v1/sessions/{sessionId}/migrate": {
     /** Migrate session onto a project workspace (find-or-create by root path) */
     post: operations["postApiV1SessionsBySessionIdMigrate"];
@@ -3815,6 +3819,20 @@ export interface operations {
         "text/plain": {
           content: string;
         };
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Revert conversation history to a message */
+  postApiV1SessionsBySessionIdMessagesByMessageIdRevert: {
+    parameters: {
+      path: {
+        sessionId: string;
+        messageId: string;
       };
     };
     responses: {

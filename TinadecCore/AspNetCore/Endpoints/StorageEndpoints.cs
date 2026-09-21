@@ -247,6 +247,29 @@ public static class StorageEndpoints
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_MESSAGE", message = ex.Message }); }
         });
 
+        // "Edit and resend": cut the conversation at one of its own messages so the
+        // corrected turn can be sent in its place. Rows stay durable — a run's trigger
+        // message, its checkpoint and the context snapshots all reference message ids —
+        // they simply stop being history, for the message list and the model alike.
+        app.MapPost("/api/v1/sessions/{sessionId}/messages/{messageId}/revert", async (string sessionId, string messageId, TinadecCore.Runtime.ProjectSessionLifecycleService lifecycle, CancellationToken ct) =>
+        {
+            if (!Guid.TryParse(sessionId, out var session)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });
+            if (!Guid.TryParse(messageId, out var message)) return Results.BadRequest(new { code = "INVALID_MESSAGE_ID" });
+            try
+            {
+                var reverted = await lifecycle.RevertSessionHistoryAsync(session, message, ct).ConfigureAwait(false);
+                return Results.Ok(new
+                {
+                    from_message_id = reverted.FromMessageId,
+                    from_sequence = reverted.FromSequence,
+                    removed_count = reverted.RemovedCount,
+                    history_revision = reverted.HistoryRevision
+                });
+            }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { code = "revert_target_not_found", message = ex.Message }); }
+            catch (TinadecCore.Runtime.ActiveRunConflictException ex) { return Results.Conflict(new { code = "active_run_conflict", message = ex.Message, run_id = ex.RunId }); }
+        });
+
         app.MapGet("/api/v1/sessions/{sessionId}/runs", async (string sessionId, StorageLifecycleService lifecycle, CancellationToken ct) =>
         {
             if (!Guid.TryParse(sessionId, out var id)) return Results.BadRequest(new { code = "INVALID_SESSION_ID" });

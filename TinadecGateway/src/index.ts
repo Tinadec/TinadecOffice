@@ -550,6 +550,18 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Create message (compat)', tags: ['Messages'] }, body: t.Object({ content: t.String() }) })
+  // Edit-and-resend: Core reverts the session's history to one of its messages
+  // (rows stay durable; they simply stop being history). Pure pass-through — the
+  // active-run refusal and the tenant check are Core's, not the Gateway's.
+  .post('/api/v1/sessions/:sessionId/messages/:messageId/revert', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${params.sessionId}/messages/${params.messageId}/revert`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Revert conversation history to a message', tags: ['Messages'] } })
   // POST /api/v1/sessions/:sessionId/invoke-stream retired (plan §4.3 item 4):
   // Desktop now submits via POST /sessions/{id}/interactions and follows
   // GET /runs/{runId}/stream. The Gateway proxy is removed with the Core route.
