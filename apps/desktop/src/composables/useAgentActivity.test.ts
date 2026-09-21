@@ -70,6 +70,23 @@ describe('useAgentActivity event wiring', () => {
     return { harness, source }
   }
 
+  /**
+   * The defect this wiring replaced: every owner of session events opened its own
+   * EventSource on the same URL, so a window held two live streams and parsed each
+   * frame twice. One connection per window is the invariant.
+   */
+  it('costs no extra connection when a second view subscribes', async () => {
+    await mount()
+    expect(FakeEventSource.instances).toHaveLength(1)
+
+    const second = ref<string | null>(null)
+    scope.run(() => useAgentActivity(second))!
+    second.value = 's-1'
+    await nextTick()
+
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
   it('turns a fed-back tool failure into a visible reasoning step', async () => {
     const { harness, source } = await mount()
 

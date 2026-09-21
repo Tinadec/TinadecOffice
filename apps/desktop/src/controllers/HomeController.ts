@@ -16,6 +16,7 @@ import {
 import { basenameFromPath } from '@/format'
 import { getDispatchPref } from '@/lib/dispatchPref'
 import { attachmentsForSend, settleSentAttachments } from '@/lib/pendingAttachments'
+import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
 import type { PermissionLevel } from '@/types/mode'
@@ -56,7 +57,6 @@ const modelName = ref('')
 const modelApiKey = ref('')
 const shellCommand = ref('npm test')
 const busy = ref(false)
-const eventSource = ref<EventSource | null>(null)
 const rightRailCollapsed = ref(false)
 const rightRailWidth = ref(420)
 // 模式身份只剩「已发布的 ModeVersion」：六值 agent_mode 词表已从契约删除，
@@ -611,43 +611,31 @@ function recordApproval(approval: ApprovalDto) {
 }
 
 /**
- * Fan-out for terminal widgets. The controller owns the single SSE connection, so
- * agent terminal panels subscribe here instead of opening their own EventSource.
+ * Fan-out seam for terminal widgets. It stays on the controller because that is where
+ * widgets already reach, but the connection itself is no longer the controller's to
+ * own: one session stream per window lives in `sessionEventBus`, which
+ * `useAgentActivity` also subscribes to instead of opening a second EventSource.
  */
-const eventListeners = new Set<(event: EventEnvelope) => void>()
 function onEvent(handler: (event: EventEnvelope) => void): () => void {
-  eventListeners.add(handler)
-  return () => {
-    eventListeners.delete(handler)
-  }
+  return subscribeToSessionEvents(handler)
 }
 
-function reconnectEvents() {
-  eventSource.value?.close()
-  eventSource.value = api.connectEvents(selectedSessionId.value, async (event) => {
-    for (const listener of [...eventListeners]) {
-      try {
-        listener(event)
-      } catch {
-        // A failing terminal widget must not break the session event pipeline.
-      }
-    }
-    const bySeq = new Map(events.value.map((item) => [item.seq, item]))
-    bySeq.set(event.seq, event)
-    events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
-    if (
-      event.type.startsWith('message.') ||
-      event.type.startsWith('approval.') ||
-      event.type.startsWith('tool.') ||
-      event.type.startsWith('run.') ||
-      event.type.startsWith('task') ||
-      event.type.startsWith('supervision.') ||
-      event.type.startsWith('context.') ||
-      event.type.startsWith('step.')
-    ) {
-      await loadMessagesAndApprovals()
-    }
-  })
+async function handleSessionEvent(event: EventEnvelope) {
+  const bySeq = new Map(events.value.map((item) => [item.seq, item]))
+  bySeq.set(event.seq, event)
+  events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
+  if (
+    event.type.startsWith('message.') ||
+    event.type.startsWith('approval.') ||
+    event.type.startsWith('tool.') ||
+    event.type.startsWith('run.') ||
+    event.type.startsWith('task') ||
+    event.type.startsWith('supervision.') ||
+    event.type.startsWith('context.') ||
+    event.type.startsWith('step.')
+  ) {
+    await loadMessagesAndApprovals()
+  }
 }
 
 watch(selectedProjectId, () => {
@@ -661,7 +649,7 @@ watch(selectedSessionId, () => {
   runText.clear()
   streamingText.value = new Map()
   void loadMessagesAndApprovals()
-  reconnectEvents()
+  followSession(selectedSessionId.value)
   queuedMessages.value = []
 })
 
@@ -671,7 +659,8 @@ function start() {
   if (started) return
   started = true
   void loadInitial()
-  reconnectEvents()
+  subscribeToSessionEvents(handleSessionEvent)
+  followSession(selectedSessionId.value)
 }
 
 export const homeController = {
@@ -696,7 +685,6 @@ export const homeController = {
   modelApiKey,
   shellCommand,
   busy,
-  eventSource,
   rightRailCollapsed,
   rightRailWidth,
   currentPermission,

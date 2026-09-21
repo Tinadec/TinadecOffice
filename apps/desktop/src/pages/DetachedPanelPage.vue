@@ -6,6 +6,7 @@ import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
 import { api, createUserToolActionForPath, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
+import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useNotifications } from '@/composables/useNotifications'
 import GitPanel from '@/components/GitPanel.vue'
 import ApprovalTab from '@/components/ApprovalTab.vue'
@@ -58,7 +59,7 @@ const {
   progressEvents: agentProgressEvents,
 } = useAgentActivity(sessionIdRef, orchestration)
 
-let eventSource: EventSource | null = null
+let unsubscribeEvents: (() => void) | null = null
 
 async function loadData() {
   if (!sessionId.value) {
@@ -91,29 +92,29 @@ async function loadData() {
 }
 
 function connectSSE() {
-  eventSource?.close()
+  unsubscribeEvents?.()
+  unsubscribeEvents = null
+  // The detached window follows its own session; useAgentActivity subscribes to the
+  // same bus underneath, so this page used to be the second of two connections here.
+  followSession(sessionId.value)
   if (!sessionId.value) return
 
-  try {
-    eventSource = api.connectEvents(sessionId.value, async (event) => {
-      events.value = [...events.value.slice(-79), event].sort((a, b) => a.seq - b.seq)
+  unsubscribeEvents = subscribeToSessionEvents(async (event) => {
+    events.value = [...events.value.slice(-79), event].sort((a, b) => a.seq - b.seq)
 
-      if (
-        event.type.startsWith('message.') ||
-        event.type.startsWith('approval.') ||
-        event.type.startsWith('tool.') ||
-        event.type.startsWith('run.') ||
-        event.type.startsWith('task') ||
-        event.type.startsWith('supervision.') ||
-        event.type.startsWith('context.') ||
-        event.type.startsWith('step.')
-      ) {
-        await loadData()
-      }
-    })
-  } catch {
-    // SSE connection failure is non-fatal; data was loaded via REST
-  }
+    if (
+      event.type.startsWith('message.') ||
+      event.type.startsWith('approval.') ||
+      event.type.startsWith('tool.') ||
+      event.type.startsWith('run.') ||
+      event.type.startsWith('task') ||
+      event.type.startsWith('supervision.') ||
+      event.type.startsWith('context.') ||
+      event.type.startsWith('step.')
+    ) {
+      await loadData()
+    }
+  }, { scope: sessionId })
 }
 
 // ---- Window controls ----
@@ -197,7 +198,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  eventSource?.close()
+  unsubscribeEvents?.()
   removeThemeListener?.()
 })
 

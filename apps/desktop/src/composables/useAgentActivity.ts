@@ -1,10 +1,11 @@
-import { ref, watch, onUnmounted, type Ref } from 'vue'
+import { ref, watch, onScopeDispose, type Ref } from 'vue'
 import {
   api,
   type EventEnvelope,
   type OrchestrationSnapshotDto,
   type ToolExecutionTimelineItemDto,
 } from '@/api'
+import { subscribeToSessionEvents } from '@/lib/sessionEventBus'
 
 export type AgentRunStatus =
   | 'idle'
@@ -164,7 +165,7 @@ export function useAgentActivity(
   const agentStates = ref<Record<string, AgentState>>({})
   const progressEvents = ref<ProgressEvent[]>([])
 
-  let eventSource: EventSource | null = null
+  let unsubscribe: (() => void) | null = null
   let cleanupTimer: ReturnType<typeof setTimeout> | null = null
   let lastRunStartedAt: string | null = null
 
@@ -844,27 +845,29 @@ export function useAgentActivity(
     }
   }
 
+  function handleSessionEvent(event: EventEnvelope) {
+    processEvent(event)
+    if (
+      event.type.startsWith('tool.') ||
+      event.type.startsWith('approval.') ||
+      event.type.startsWith('step.') ||
+      event.type.startsWith('task')
+    ) {
+      void refreshToolExecutions()
+    }
+  }
+
   function connect() {
     disconnect()
     if (!sessionId.value) return
-    eventSource = api.connectEvents(sessionId.value, (event) => {
-      processEvent(event)
-      if (
-        event.type.startsWith('tool.') ||
-        event.type.startsWith('approval.') ||
-        event.type.startsWith('step.') ||
-        event.type.startsWith('task')
-      ) {
-        void refreshToolExecutions()
-      }
-    })
+    // The window's one session stream is owned by sessionEventBus; scoping the
+    // subscription is what keeps this view on the session it was built for.
+    unsubscribe = subscribeToSessionEvents(handleSessionEvent, { scope: sessionId })
   }
 
   function disconnect() {
-    if (eventSource) {
-      eventSource.close()
-      eventSource = null
-    }
+    unsubscribe?.()
+    unsubscribe = null
   }
 
   watch(
@@ -886,7 +889,11 @@ export function useAgentActivity(
     { immediate: true, deep: true },
   )
 
-  onUnmounted(() => {
+  // onScopeDispose, not onUnmounted: the subscription is now into a window-wide bus, so
+  // a view that is torn down outside a component (an effect scope, a detached panel that
+  // is closed and recreated) would otherwise leave its handler registered and keep the
+  // connection alive for a panel that no longer exists.
+  onScopeDispose(() => {
     disconnect()
     if (cleanupTimer) clearTimeout(cleanupTimer)
   })
