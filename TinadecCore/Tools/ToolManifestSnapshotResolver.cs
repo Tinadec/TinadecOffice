@@ -50,9 +50,17 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
             // model only ever sees IFrozenToolManifestCatalog (instance grant ∩ this
             // frozen manifest), so an agent that does not declare the tool cannot
             // reach it.
-            var virtualEntry = CoreWorkspaceTool.ManifestEntry();
-            var virtualHash = ToolManifestHasher.Compute(new[] { virtualEntry });
-            return new ToolManifestSnapshot(2, virtualHash, [ToFrozen(virtualEntry)]);
+            var projectlessEntries = new List<ToolManifestEntryDto> { CoreWorkspaceTool.ManifestEntry() };
+            // Any other Core-owned virtual tool the run declared must be frozen in here too.
+            // Free conversation is the common shape for a chatroom handoff session, and dropping
+            // a declared tool would leave the agent holding a declaration it can never see.
+            foreach (var id in (request.AllowedToolIds ?? [])
+                         .Where(CoreVirtualToolPolicy.IsCoreVirtual)
+                         .Where(id => !CoreVirtualToolPolicy.IsCreateWorkspace(id))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+                projectlessEntries.Add(VirtualEntry(id));
+            var virtualHash = ToolManifestHasher.Compute(projectlessEntries);
+            return new ToolManifestSnapshot(2, virtualHash, projectlessEntries.Select(ToFrozen).ToArray());
         }
 
         var project = await _sessions.FindProjectAsync(session.ProjectId.Value, cancellationToken).ConfigureAwait(false)
@@ -142,9 +150,8 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
         // as for every provider tool.
         var virtualEntries = (formalEffective ?? [])
             .Where(CoreVirtualToolPolicy.IsCoreVirtual)
-            .Select(id => CoreVirtualToolPolicy.IsCreateWorkspace(id)
-                ? CoreWorkspaceTool.ManifestEntry()
-                : CoreTaskDispatchTool.ManifestEntry())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(VirtualEntry)
             .ToArray();
         foreach (var entry in virtualEntries)
         {
@@ -217,6 +224,17 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
                 throw new ToolManifestSnapshotException("TOOL_MANIFEST_INVALID", $"Tool '{tool.Id}' has incomplete execution policy metadata.");
         }
     }
+
+    /// <summary>
+    /// The one place that maps a declared Core-owned virtual tool id to its manifest entry. Adding
+    /// a virtual tool means adding a branch here and a manifest entry beside it - never a new
+    /// copy of this conditional at each call site.
+    /// </summary>
+    private static ToolManifestEntryDto VirtualEntry(string toolId) =>
+        CoreVirtualToolPolicy.IsCreateWorkspace(toolId) ? CoreWorkspaceTool.ManifestEntry()
+        : CoreVirtualToolPolicy.IsTaskDispatch(toolId) ? CoreTaskDispatchTool.ManifestEntry()
+        : TinaChatVirtualTools.ManifestEntry(toolId)
+        ?? throw new InvalidOperationException($"Core-owned virtual tool '{toolId}' has no manifest entry.");
 
     private static FrozenToolManifestEntry ToFrozen(ToolManifestEntryDto tool) => new(
         tool.Id.Trim(),

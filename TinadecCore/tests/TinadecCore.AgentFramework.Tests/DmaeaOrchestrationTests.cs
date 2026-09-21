@@ -360,6 +360,107 @@ public sealed class DmaeaOrchestrationTests
         Assert.Contains(escalate.Reasons, reason => reason.Contains("require user review", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A task the execution loop closed as failed already has an answer: reopening it
+    /// re-dispatches the same demand and fails identically every round, so the revision
+    /// budget would end with the whole run parked on user review instead of finishing
+    /// with the failure visible.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_ReportAFailedTaskWithoutReopeningIt()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "ghost",
+            Title = "需要不存在的工具",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "Task 'ghost' requires tool 'ghost_tool', which is not in the frozen run manifest."
+        };
+        var completed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "probe",
+            Title = "写探针",
+            Status = "completed",
+            ResultStatus = "completed",
+            ResultSummary = "已写入 probe.txt"
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+
+        var enforced = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, completed], pass, revisionRound: 2, maxRevisionRounds: 2);
+
+        Assert.Equal(SupervisionDecision.Pass, enforced.Decision);
+        Assert.Empty(enforced.ReviseTaskIndexes);
+        Assert.Contains(enforced.Reasons, reason =>
+            reason.Contains("task_outcome:ghost:failed", StringComparison.Ordinal)
+            && reason.Contains("ghost_tool", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The exemption stops exactly where "success" would become a claim with nothing
+    /// behind it: with no completed task in the graph the closed failures go straight to
+    /// the user instead of burning revision rounds on a demand that cannot be met.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_EscalateWhenNoTaskCompletedAtAll()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "probe",
+            Title = "写探针",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "the deterministic tier denies spawn (graph_tier_spawn_denied)"
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, ["no supervisor"], []);
+
+        var enforced = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed], pass, revisionRound: 0, maxRevisionRounds: 2);
+
+        Assert.Equal(SupervisionDecision.Escalate, enforced.Decision);
+        Assert.Empty(enforced.ReviseTaskIndexes);
+        Assert.Contains(enforced.Reasons, reason => reason.Contains("requires user review", StringComparison.Ordinal));
+        Assert.Contains(enforced.Reasons, reason => reason.Contains("task_outcome:probe:failed", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Only a closed failure is exempt. An open outcome in the same graph still drives
+    /// the revision ladder, so the escape hatch cannot quietly disable escalation.
+    /// </summary>
+    [Fact]
+    public void TaskOutcomeFacts_ABlockedTaskStillEscalatesBesideAFailedOne()
+    {
+        var failed = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "ghost",
+            Title = "需要不存在的工具",
+            Status = "failed",
+            ResultStatus = "failed",
+            ResultSummary = "not in the frozen run manifest"
+        };
+        var blocked = new DurableTaskNode
+        {
+            TaskId = Guid.NewGuid(),
+            TaskKey = "write",
+            Title = "写文件",
+            Status = "blocked",
+            ResultStatus = "blocked",
+            ResultSummary = "Task not completed: write_file was unavailable."
+        };
+        var pass = new SupervisionVerdict(SupervisionDecision.Pass, [], []);
+
+        var revise = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, blocked], pass, revisionRound: 0, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Revise, revise.Decision);
+        Assert.Equal([1], revise.ReviseTaskIndexes);
+
+        var escalate = FullDuplexRunEngine.EnforceTaskOutcomeFacts([failed, blocked], pass, revisionRound: 2, maxRevisionRounds: 2);
+        Assert.Equal(SupervisionDecision.Escalate, escalate.Decision);
+        Assert.Contains(escalate.Reasons, reason => reason.Contains("task_outcome:ghost:failed", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ToolOutcomeFacts_RejectCompletedImmediatelyAfterEmbeddedFailure()
     {

@@ -113,7 +113,13 @@ public sealed class ExecutionAgent
             if (call.InformationalOnly) continue;
             if (call.Exception is not null)
             {
-                return WorkerModelTurn.Invalid("The model returned an invalid tool call mapping.");
+                // The framework surfaces an unmappable call as an Exception on the content instead of
+                // throwing. Without carrying it, the only trace left is "invalid mapping" and nobody can
+                // tell whether the model invented a tool or the host failed to declare one.
+                var reason = call.Exception.Message.ReplaceLineEndings(" ");
+                if (reason.Length > 300) reason = string.Concat(reason.AsSpan(0, 300), "…");
+                return WorkerModelTurn.Invalid(
+                    $"The model returned an invalid tool call mapping for '{call.Name ?? "(unnamed)"}': {reason}");
             }
             if (string.IsNullOrWhiteSpace(call.CallId) || string.IsNullOrWhiteSpace(call.Name))
             {

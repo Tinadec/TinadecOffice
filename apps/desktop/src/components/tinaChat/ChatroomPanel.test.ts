@@ -8,22 +8,36 @@ import zh from '@/locales/zh-CN'
 import { useChatroomObserver } from '@/tinaChat/useChatroomObserver'
 import type { TinaChatObservedConversation, TinaChatObservedDetail, TinaChatObservedMessage, TinaChatObservedMessagePage } from '@/api'
 
-const mocks = vi.hoisted(() => ({ access: vi.fn(), list: vi.fn(), detail: vi.fn(), messages: vi.fn(), notify: vi.fn(), dismiss: vi.fn() }))
+const mocks = vi.hoisted(() => ({ access: vi.fn(), list: vi.fn(), detail: vi.fn(), messages: vi.fn(), notify: vi.fn(), dismiss: vi.fn(),
+  decide: vi.fn(), execute: vi.fn(), modes: vi.fn(), projects: vi.fn() }))
 vi.mock('@/api', () => ({ api: {
   tinaChatObserverAccess: mocks.access, tinaChatObserverConversations: mocks.list,
   tinaChatObserverConversation: mocks.detail, tinaChatObserverMessages: mocks.messages,
+  tinaChatDecideIntent: mocks.decide, tinaChatExecuteIntent: mocks.execute,
+  listAgentModeTopologies: mocks.modes, listProjects: mocks.projects,
 } }))
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({ status: { error: mocks.notify }, dismissByKey: mocks.dismiss }) }))
 
-const participant = (id: string, name: string) => ({ id, display_name: name, handle: id, kind: 'agent', workspace_id: 'workspace',
+const participant = (id: string, name: string, kind = 'agent') => ({ id, display_name: name, handle: id, kind, workspace_id: 'workspace',
   job_title: '工程师', description: null, agent_definition_id: null, receive_human_messages: false, can_interpret_intent: false,
   discoverable: true, status: 'active', revision: 1 })
+const brief = (id: string, sequence: number, status: string, blocking: string[] = []): TinaChatObservedMessage => ({
+  message: { id, conversation_id: 'group', sender_id: 'sender', sender_kind: 'agent', sequence, kind: 'intent_brief',
+    content: JSON.stringify({ goal: '把设置页首屏做快', userStatements: [], constraints: [], assumptions: [], openQuestions: [], blockingQuestions: blocking, acceptanceCriteria: [] }),
+    sensitivity: 'normal', allow_derived_sharing: false, reply_to_message_id: null, source_message_ids: ['one'], created_at: '2026-09-18T12:00:00Z' },
+  sender: participant('sender', '青禾'), audience: [{ participant: participant('receiver', '见微'), can_read_original: true, can_receive_derived: true, acknowledged: false }],
+  intent_id: 'intent-1', intent_status: status,
+})
 const room = (id: string): TinaChatObservedConversation => ({ id, workspace_id: 'workspace', workspace_name: '开发工作区',
   title: id === 'group' ? '工程协作群' : '青禾与见微', kind: id === 'group' ? 'group' : 'direct',
   last_sequence: 2, revision: 3, member_count: 2, participant_names: ['青禾', '见微'], last_message_preview: '完成核对', last_message_at: '2026-09-18T12:00:00Z' })
 const detail = (id: string): TinaChatObservedDetail => ({ conversation: room(id), members: [
   { participant: participant('sender', '青禾'), role: 'owner', status: 'active', joined_after_sequence: 0 },
   { participant: participant('receiver', '见微'), role: 'member', status: 'active', joined_after_sequence: 0 },
+] })
+const humanDetail = (): TinaChatObservedDetail => ({ conversation: room('group'), members: [
+  { participant: participant('sender', '青禾'), role: 'owner', status: 'active', joined_after_sequence: 0 },
+  { participant: participant('me', '我', 'human'), role: 'admin', status: 'active', joined_after_sequence: 0 },
 ] })
 const message = (id: string, sequence: number, content = '仅向见微发送的保密资料'): TinaChatObservedMessage => ({
   message: { id, conversation_id: 'group', sender_id: 'sender', sender_kind: 'agent', sequence, kind: 'message', content,
@@ -41,6 +55,11 @@ beforeEach(() => {
   mocks.list.mockImplementation(async (params: { kind?: string }) => ({ items: params.kind ? [room(params.kind)] : [room('group'), room('direct')], total: params.kind ? 1 : 2, next_offset: 2, has_more: false }))
   mocks.detail.mockImplementation(async (id: string) => detail(id))
   mocks.messages.mockResolvedValue(page([message('one', 1)]))
+  mocks.decide.mockResolvedValue({ id: 'intent-1' })
+  mocks.execute.mockResolvedValue({ id: 'exec-1', run_id: 'run-1' })
+  mocks.modes.mockResolvedValue([{ id: 'mode-1', display_name: '自由指挥', latest_published_mode_version_id: 'mv-1', nodes: [], edges: [] }])
+  mocks.projects.mockResolvedValue([{ id: 'project-1', name: 'Demo', path: '/demo' }])
+  localStorage.removeItem('tinadec.tinachat.identities')
 })
 afterEach(() => { mounted.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
@@ -122,4 +141,29 @@ describe('Chatroom administrator observation', () => {
     await observer.refreshMessages()
     expect(observer.messages.value.map(x => x.message.sequence)).toEqual([1, 2, 3, 4, 5, 6])
   })
+})
+
+// The observation seat has no write path at all. Accepting a brief and handing it to an executor
+// belong to the conversation role, and an agent holds that role exactly as a human can — through its
+// own tools, not through a button in the admin viewer. Any control re-added here fails these cases,
+// which is the point.
+describe('Chatroom stays read-only', () => {
+  for (const status of ['proposed', 'accepted'] as const) {
+    it(`renders a ${status} brief with nothing that can decide it`, async () => {
+      localStorage.setItem('tinadec.tinachat.identities', JSON.stringify(['me']))
+      mocks.detail.mockImplementation(async (id: string) => (id === 'group' ? humanDetail() : detail(id)))
+      mocks.messages.mockResolvedValue(page([brief('b1', 3, status, status === 'proposed' ? ['哪个页面？'] : [])]))
+      const wrapper = panel()
+      await flushPromises()
+
+      // The brief is still fully observable.
+      expect(wrapper.text()).toContain('把设置页首屏做快')
+
+      for (const affordance of ['intent-accept', 'intent-reject', 'intent-execute', 'intent-mode', 'intent-project', 'intent-desk', 'intent-notice'])
+        expect(wrapper.find(`[data-testid="${affordance}"]`).exists(), `${status} exposed ${affordance}`).toBe(false)
+      expect(wrapper.findAll('button').map(b => b.text()).join(' ')).not.toMatch(/采纳|拒绝|交接/)
+      expect(mocks.decide).not.toHaveBeenCalled()
+      expect(mocks.execute).not.toHaveBeenCalled()
+    })
+  }
 })

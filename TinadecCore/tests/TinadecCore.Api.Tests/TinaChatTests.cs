@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.AgentConfiguration;
 using TinadecCore.Contracts.Dtos;
@@ -475,6 +476,307 @@ public sealed class TinaChatTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
     }
 
+    [Fact]
+    public async Task CommittedMessage_QueuesADurableTurn_ThatSurvivesRestartAndFilesOneBrief()
+    {
+        var team = await TeamAsync();
+        var source = await Chat.SendAsync(team.Conversation, new(team.Human, "Could we make the page faster?", "wake-source", AllowDerivedSharing: true));
+        await using (var db = await DbAsync())
+        {
+            var queued = Assert.Single(await db.Wakes.Where(x => x.ConversationId == team.Conversation && x.ParticipantId == team.Interpreter).ToArrayAsync());
+            Assert.Equal("pending", queued.Status);
+            Assert.Equal(new[] { source.Id }, JsonSerializer.Deserialize<Guid[]>(queued.SourceMessageIdsJson, Wire));
+        }
+
+        // The owed turn belongs to the database, not to the process that wrote the message.
+        _http.Dispose(); _factory.Dispose();
+        StartHost();
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+
+        var brief = Assert.Single(await Chat.ListIntentsAsync(team.Conversation, team.Interpreter));
+        Assert.Equal("proposed", brief.Status);
+        Assert.Equal(new[] { source.Id }, brief.SourceMessageIds.OrderBy(x => x).ToArray());
+        var call = Assert.Single(_model.Calls);
+        Assert.Contains("Could we make", call.Prompt);
+        Assert.Empty(call.ToolNames);
+        Assert.Contains((await Chat.ReadInboxAsync(team.Human)).Items, x => x.Message.Kind == "intent_brief");
+
+        await using (var db = await DbAsync())
+        {
+            var settled = Assert.Single(await db.Wakes.ToArrayAsync());
+            Assert.Equal("done", settled.Status);
+        }
+        // A brief is the interpreter's own output: the next move belongs to a human decision, so
+        // draining again must not chain another turn.
+        Assert.Equal(0, await WakesAsync().RunPassAsync(5));
+        Assert.Single(_model.Calls);
+    }
+
+    [Fact]
+    public async Task ArrivalsDuringAPendingTurn_CoalesceIntoOneBrief_WithoutWakingTheSender()
+    {
+        var team = await TeamAsync();
+        var first = await Chat.SendAsync(team.Conversation, new(team.Human, "First observation request", "coalesce-1", AllowDerivedSharing: true));
+        var second = await Chat.SendAsync(team.Conversation, new(team.Human, "Second observation request", "coalesce-2", AllowDerivedSharing: true));
+        await using var db = await DbAsync();
+        var queued = Assert.Single(await db.Wakes.ToArrayAsync());
+        Assert.Equal(new[] { first.Id, second.Id }.OrderBy(x => x).ToArray(), JsonSerializer.Deserialize<Guid[]>(queued.SourceMessageIdsJson, Wire));
+
+        // The only interpreter already holds the floor, and it never answers itself.
+        await Chat.SendAsync(team.Conversation, new(team.Interpreter, "Noting the shape of the problem", "self-note"));
+        Assert.Single(await db.Wakes.ToArrayAsync());
+
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+        var call = Assert.Single(_model.Calls);
+        Assert.Contains("First observation request", call.Prompt);
+        Assert.Contains("Second observation request", call.Prompt);
+        var brief = Assert.Single(await Chat.ListIntentsAsync(team.Conversation, team.Interpreter));
+        Assert.Equal(2, brief.SourceMessageIds.Length);
+    }
+
+    [Fact]
+    public async Task AdmittedHandoff_CompletingItsRun_AnnouncesTheOutcomeBackIntoTheConversation()
+    {
+        var team = await TeamAsync();
+        var source = await Chat.SendAsync(team.Conversation, new(team.Human, "Make the settings page load faster.", "outcome-source", AllowDerivedSharing: true));
+        // Let the interpreter's own turn land first, so the pass under test carries only the outcome.
+        await WakesAsync().RunPassAsync(5);
+        var intent = await ProposeAsync(team, source.Id);
+        var revision = (await Chat.GetConversationAsync(team.Conversation, team.Human)).Revision;
+        await Chat.DecideIntentAsync(team.Conversation, intent.Id, new(team.Human, "accepted", revision));
+        await using var cfg = await _factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+        var modeId = (await cfg.WorkspaceDefaults.SingleAsync(x => x.TenantId == _identity.Current.TenantId && x.WorkspaceId == _identity.Current.WorkspaceId)).DefaultModeVersionId!.Value;
+
+        var execute = await _http.PostAsJsonAsync($"/api/v1/tina-chat/conversations/{team.Conversation}/intents/{intent.Id}/execute",
+            new TinaChatExecuteIntentRequest(team.Worker, modeId), Wire);
+        Assert.True(execute.IsSuccessStatusCode, await execute.Content.ReadAsStringAsync());
+        var receipt = (await execute.Content.ReadFromJsonAsync<TinaChatExecutionDto>(Wire))!;
+        var lifecycle = _factory.Services.GetRequiredService<ILifecycleManager>();
+        RunState state = new();
+        for (var attempt = 0; attempt < 200 && !RunStatusMachine.IsTerminal(state.Status.ToString()); attempt++)
+        {
+            await Task.Delay(50);
+            state = await lifecycle.GetRunStateAsync(receipt.RunId!.Value.ToString("N"));
+        }
+        Assert.Equal(RunStatus.Completed, state.Status);
+
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+        var history = await Chat.ReadMessagesAsync(team.Conversation, team.Human);
+        var outcome = Assert.Single(history.Items, x => x.Kind == "result");
+        Assert.Equal(team.Worker, outcome.SenderId);
+        Assert.Equal("agent", outcome.SenderKind);
+        Assert.Contains("completed", outcome.Content);
+        // The outcome speaks about a brief, so it carries exactly one cited brief as its source.
+        var briefIds = history.Items.Where(x => x.Kind == "intent_brief").Select(x => x.Id).ToArray();
+        Assert.Contains(Assert.Single(outcome.SourceMessageIds), briefIds);
+        // The group now has something new for the interpreter to react to, so the loop is still open.
+        await using (var db = await DbAsync())
+            Assert.Contains(await db.Wakes.ToArrayAsync(), x => x.Status == "pending" && x.ParticipantId == team.Interpreter);
+        await using (var chat = await DbAsync())
+            Assert.NotNull((await chat.Executions.SingleAsync(x => x.Id == receipt.Id)).ResultRunStatus);
+    }
+
+    [Fact]
+    public async Task BoundSessionSpeaksInTheRoom_AndTheOtherInterpreterIsQueuedATurn()
+    {
+        var team = await TeamAsync();
+        // A participant can only accept an invitation it was actually given, so invite first.
+        var oracle = await Chat.RegisterAsync(new("oracle", "Second interpreter", ReceiveHumanMessages: true, CanInterpretIntent: true));
+        var host = await Chat.GetConversationAsync(team.Conversation, team.Human);
+        await Chat.ChangeMemberAsync(team.Conversation, new(team.Human, oracle.Id, "invite", host.Revision));
+        await JoinAsync(team.Conversation, oracle.Id);
+        var session = await NewSessionAsync();
+        var tools = ToolsAsync();
+
+        var bound = await tools.ExecuteAsync(ToolCall(session, "tina_chat_bind", Args(("handle", "thought-partner"))));
+        Assert.True(bound.IsSuccess, bound.Error);
+        Assert.Contains("bound", bound.ResultJson);
+
+        var rooms = await tools.ExecuteAsync(ToolCall(session, "tina_chat_list_rooms", Args()));
+        Assert.True(rooms.IsSuccess, rooms.Error);
+        var room = JsonDocument.Parse(rooms.ResultJson).RootElement.GetProperty("rooms")[0];
+        Assert.Equal(team.Conversation.ToString("N"), room.GetProperty("conversation_id").GetString());
+
+        var sent = await tools.ExecuteAsync(ToolCall(session, "tina_chat_send", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("content", "I checked the two slow paths; the settings page rebuilds the model list on every keystroke."))));
+        Assert.True(sent.IsSuccess, sent.Error);
+
+        var heard = await Chat.ReadMessagesAsync(team.Conversation, team.Human);
+        var posted = Assert.Single(heard.Items, x => x.Kind == "message" && x.SenderId == team.Interpreter);
+        Assert.Contains("settings page rebuilds", posted.Content);
+
+        // Speaking in the room owes the same durable turn as a human message would.
+        await using var db = await DbAsync();
+        var queued = Assert.Single(await db.Wakes.Where(x => x.ParticipantId == oracle.Id).ToArrayAsync());
+        Assert.Equal("pending", queued.Status);
+        Assert.Contains(posted.Id, JsonSerializer.Deserialize<Guid[]>(queued.SourceMessageIdsJson, Wire) ?? []);
+    }
+
+    [Fact]
+    public async Task Tools_RefuseAnUnboundSession_AnUnentitledAudienceAndReplayTheSameCallOnce()
+    {
+        var team = await TeamAsync();
+        var session = await NewSessionAsync();
+        var tools = ToolsAsync();
+
+        var voiceless = await tools.ExecuteAsync(ToolCall(session, "tina_chat_list_rooms", Args()));
+        Assert.False(voiceless.IsSuccess);
+        Assert.Contains("tina_chat_bind", voiceless.Error);
+
+        Assert.True((await tools.ExecuteAsync(ToolCall(session, "tina_chat_bind", Args(("handle", "thought-partner"))))).IsSuccess);
+
+        var outsider = await Chat.RegisterAsync(new("outsider", "Outsider", ReceiveHumanMessages: true, CanInterpretIntent: true));
+        var badAudience = await tools.ExecuteAsync(ToolCall(session, "tina_chat_send", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("content", "addressing someone who is not here"),
+            ("audience_handles", new[] { "outsider" })), callId: 3));
+        Assert.False(badAudience.IsSuccess);
+        Assert.Contains("not an active member", badAudience.Error);
+
+        var first = await tools.ExecuteAsync(ToolCall(session, "tina_chat_send", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("content", "one message, keyed by its call id")), callId: 11));
+        var replay = await tools.ExecuteAsync(ToolCall(session, "tina_chat_send", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("content", "one message, keyed by its call id")), callId: 11));
+        Assert.True(first.IsSuccess, first.Error);
+        Assert.Equal(first.ResultJson, replay.ResultJson);
+
+        await using var db = await DbAsync();
+        Assert.Equal(1, await db.Messages.CountAsync(x => x.ConversationId == team.Conversation && x.Kind == "message"));
+        Assert.Equal(1, await db.SessionIdentities.CountAsync(x => x.SessionId == session));
+        Assert.NotNull(outsider);
+    }
+
+    [Fact]
+    public async Task Tools_StayInsideWhatTheParticipantMayHear_AndWhatItIsConfiguredToDo()
+    {
+        var team = await TeamAsync();
+        var session = await NewSessionAsync();
+        var tools = ToolsAsync();
+        Assert.True((await tools.ExecuteAsync(ToolCall(session, "tina_chat_bind", Args(("handle", "independent"))))).IsSuccess);
+
+        // The worker receives no human originals, so a human-only note never reaches its page.
+        await Chat.SendAsync(team.Conversation, new(team.Human, "HUMAN_ONLY_NOTE", "tool-private", [team.Human]));
+        var agentNote = await Chat.SendAsync(team.Conversation, new(team.Interpreter, "An agent-authored note the worker may read", "tool-visible"));
+        var inbox = await tools.ExecuteAsync(ToolCall(session, "tina_chat_read_inbox", Args()));
+        Assert.True(inbox.IsSuccess, inbox.Error);
+        Assert.DoesNotContain("HUMAN_ONLY_NOTE", inbox.ResultJson);
+        Assert.Contains("agent-authored note", inbox.ResultJson);
+
+        // The worker holds no interpretation capability: it may speak, not file a brief.
+        var proposed = await tools.ExecuteAsync(ToolCall(session, "tina_chat_propose_intent", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("source_message_ids", new[] { agentNote.Id.ToString("N") }),
+            ("goal", "Do the thing"),
+            ("user_statements", new[] { "the user asked" }),
+            ("constraints", Array.Empty<string>()), ("assumptions", Array.Empty<string>()),
+            ("open_questions", Array.Empty<string>()), ("blocking_questions", Array.Empty<string>()),
+            ("acceptance_criteria", new[] { "it works" }))));
+        Assert.False(proposed.IsSuccess);
+        Assert.Contains("not configured to interpret intent", proposed.Error);
+    }
+
+    /// <summary>
+    /// A missing required query parameter is the caller's mistake, not the host's. Minimal APIs throw
+    /// BadHttpRequestException before the handler runs, so the catch-all must not turn "you forgot
+    /// actor_id" into an opaque 500 that no client can act on.
+    /// </summary>
+    [Fact]
+    public async Task Http_MissingRequiredActor_ReturnsActionableBadRequest_NotInternalError()
+    {
+        var response = await _http.GetAsync("/api/v1/tina-chat/conversations");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("invalid_request", problem.RootElement.GetProperty("code").GetString());
+        Assert.Contains("actor_id", problem.RootElement.GetProperty("detail").GetString());
+    }
+
+    /// <summary>
+    /// A room reaches an authorised goal without any human click: the brief is read, then accepted by
+    /// whoever holds the conversation role. Authorship does not confer the right to decide, and a
+    /// decision carries the revision it was read at so a newer one cannot be silently overwritten.
+    /// </summary>
+    [Fact]
+    public async Task Tools_DecideBriefsAsTheConversationRole_NotAsAHuman()
+    {
+        var team = await TeamAsync();
+        var session = await NewSessionAsync();
+        var tools = ToolsAsync();
+        Assert.True((await tools.ExecuteAsync(ToolCall(session, "tina_chat_bind", Args(("handle", "thought-partner"))))).IsSuccess);
+        var humanNote = await Chat.SendAsync(team.Conversation, new(team.Human, "please make greet reject empty input", "decide-1"));
+
+        var filed = await tools.ExecuteAsync(ToolCall(session, "tina_chat_propose_intent", Args(
+            ("conversation_id", team.Conversation.ToString("N")),
+            ("source_message_ids", new[] { humanNote.Id.ToString("N") }),
+            ("goal", "Reject empty input in greet"),
+            ("user_statements", new[] { "please make greet reject empty input" }),
+            ("constraints", Array.Empty<string>()), ("assumptions", Array.Empty<string>()),
+            ("open_questions", Array.Empty<string>()), ("blocking_questions", Array.Empty<string>()),
+            ("acceptance_criteria", new[] { "an empty argument is refused" }))));
+        Assert.True(filed.IsSuccess, filed.Error);
+        var intentId = JsonDocument.Parse(filed.ResultJson).RootElement.GetProperty("intent_id").GetString()!;
+
+        var listed = await tools.ExecuteAsync(ToolCall(session, "tina_chat_list_intents", Args(("conversation_id", team.Conversation.ToString("N")))));
+        Assert.True(listed.IsSuccess, listed.Error);
+        var page = JsonDocument.Parse(listed.ResultJson).RootElement;
+        var revision = page.GetProperty("conversation_revision").GetInt64();
+        Assert.Equal("proposed", page.GetProperty("intents")[0].GetProperty("status").GetString());
+        Assert.True(page.GetProperty("intents")[0].GetProperty("authored_by_you").GetBoolean());
+
+        var refused = await tools.ExecuteAsync(ToolCall(session, "tina_chat_decide_intent", Args(
+            ("conversation_id", team.Conversation.ToString("N")), ("intent_id", intentId),
+            ("decision", "accepted"), ("expected_revision", revision))));
+        Assert.False(refused.IsSuccess);
+        Assert.Contains("Conversation administration permission is required", refused.Error);
+
+        var owned = await Chat.GetConversationAsync(team.Conversation, team.Human);
+        await Chat.ChangeMemberAsync(team.Conversation, new(team.Human, team.Interpreter, "role", owned.Revision, "admin"));
+        var afterRole = await Chat.GetConversationAsync(team.Conversation, team.Human);
+        var accepted = await tools.ExecuteAsync(ToolCall(session, "tina_chat_decide_intent", Args(
+            ("conversation_id", team.Conversation.ToString("N")), ("intent_id", intentId),
+            ("decision", "accepted"), ("expected_revision", afterRole.Revision))));
+        Assert.True(accepted.IsSuccess, accepted.Error);
+        Assert.Equal("accepted", JsonDocument.Parse(accepted.ResultJson).RootElement.GetProperty("status").GetString());
+
+        await using var db = await DbAsync();
+        var conversation = await db.Conversations.SingleAsync(x => x.Id == team.Conversation);
+        Assert.Equal(Guid.Parse(intentId), conversation.AcceptedIntentId);
+
+        // The revision it read is now stale, and the brief is decided: neither may be rewritten.
+        var stale = await tools.ExecuteAsync(ToolCall(session, "tina_chat_decide_intent", Args(
+            ("conversation_id", team.Conversation.ToString("N")), ("intent_id", intentId),
+            ("decision", "rejected"), ("expected_revision", revision))));
+        Assert.False(stale.IsSuccess);
+    }
+
+    private static JsonElement Args(params (string Name, object Value)[] fields) =>
+        JsonSerializer.SerializeToElement(fields.ToDictionary(x => x.Name, x => x.Value), Wire);
+
+    private TinaChatToolCall ToolCall(Guid sessionId, string toolId, JsonElement args, long callId = 0)
+    {
+        var scope = _identity.Current;
+        return new TinaChatToolCall(scope.TenantId, scope.WorkspaceId, scope.PrincipalId, sessionId, Guid.NewGuid(), callId, toolId, args);
+    }
+
+    private ITinaChatToolGateway ToolsAsync() => _factory.Services.GetRequiredService<ITinaChatToolGateway>();
+
+    /// <summary>A real session row, so a tool binding points at something that exists.</summary>
+    private async Task<Guid> NewSessionAsync()
+    {
+        var id = Guid.NewGuid();
+        await using var cfg = await _factory.Services.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>().CreateDbContextAsync();
+        var modeId = (await cfg.WorkspaceDefaults.SingleAsync(x => x.TenantId == _identity.Current.TenantId && x.WorkspaceId == _identity.Current.WorkspaceId)).DefaultModeVersionId!.Value;
+        await _factory.Services.GetRequiredService<ProjectSessionStore>().CreateSessionAsync(null, "Tool session", modeId, stableSessionId: id);
+        return id;
+    }
+
+    private async Task<TinaChatDbContext> DbAsync() =>
+        await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync();
+
+    private TinaChatWakeService WakesAsync() => _factory.Services.GetRequiredService<TinaChatWakeService>();
+
     private async Task<Team> TeamAsync()
     {
         var human = await Chat.RegisterAsync(new("human", "Human", "human"));
@@ -539,7 +841,10 @@ public sealed class TinaChatTests : IAsyncLifetime
             builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TinadecPersistence:Sqlite:DatabasePath"] = Path.Combine(root, "tinadec.db"),
-                ["TinadecPersistence:DataRoot"] = Path.Combine(root, "data")
+                ["TinadecPersistence:DataRoot"] = Path.Combine(root, "data"),
+                // The drain is a scheduler; tests drive one pass at a time so a background tick
+                // cannot add model calls between an action and its assertion.
+                ["TinadecTinaChat:WakeDrainEnabled"] = "false"
             }));
             builder.ConfigureServices(services =>
             {

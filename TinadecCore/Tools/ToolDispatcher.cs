@@ -47,6 +47,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly ToolDispatchOptions _options;
     private readonly ILogger<ToolDispatcher> _logger;
     private readonly ISessionWorkspaceBinder? _workspaceBinder;
+    private readonly ITinaChatToolGateway? _tinaChat;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -59,7 +60,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         IInFlightToolCallRegistry inFlightCalls,
         ToolDispatchOptions options,
         ILogger<ToolDispatcher> logger,
-        ISessionWorkspaceBinder? workspaceBinder = null)
+        ISessionWorkspaceBinder? workspaceBinder = null,
+        ITinaChatToolGateway? tinaChat = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -72,6 +74,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _options = options;
         _logger = logger;
         _workspaceBinder = workspaceBinder;
+        _tinaChat = tinaChat;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -702,6 +705,11 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             return await ExecuteTaskDispatchToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
+        if (CoreVirtualToolPolicy.IsTinaChat(wire.ToolId))
+        {
+            return await ExecuteTinaChatToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
         if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
         {
             return streaming is not null
@@ -814,6 +822,33 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 title,
                 message = $"Sub-task '{title}' is queued and will run after your current step. Its result is NOT in this reply — check the run evidence before reporting on it."
             })
+        };
+    }
+
+    /// <summary>
+    /// Executes a TinaChat tool in-process against Core's own communication state. Authorization
+    /// already happened the same way as for any other tool - declared surface intersected with the
+    /// frozen manifest, then the per-instance grant - and the communication module re-checks room
+    /// membership, audience entitlement and provenance on every call, so no approval gate applies
+    /// and none is needed: the only writable surface is a message this participant may send.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteTinaChatToolAsync(
+        ToolInvocationScope scope,
+        ToolWireRequestDto wire,
+        CancellationToken cancellationToken)
+    {
+        if (_tinaChat is null)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "TinaChat is not available in this host." };
+        var outcome = await _tinaChat.ExecuteAsync(new TinaChatToolCall(
+            scope.TenantId, scope.WorkspaceId, scope.PrincipalId, scope.SessionId, scope.RunId,
+            wire.ToolCallId, wire.ToolId, wire.Params), cancellationToken).ConfigureAwait(false);
+        if (!outcome.IsSuccess)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = outcome.Error ?? "The chat tool call failed." };
+        return new ToolWireResponseDto
+        {
+            CallId = wire.ToolCallId,
+            IsSuccess = true,
+            Result = JsonDocument.Parse(outcome.ResultJson).RootElement.Clone(),
         };
     }
 

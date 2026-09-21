@@ -3357,10 +3357,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     }
 
     /// <summary>
-    /// Code-owned task outcomes outrank a model verdict. A supervisor cannot pass a
-    /// graph that still contains blocked/failed tasks, and modes without a supervisor
-    /// cannot turn the absence of review into a fabricated success. We replan while
-    /// the configured revision budget remains; afterwards the user must decide.
+    /// Code-owned task outcomes outrank a model verdict, and modes without a supervisor
+    /// cannot turn the absence of review into a fabricated success: every task that did
+    /// not complete is reported in the verdict reasons. A task that never reached a
+    /// verdict (blocked/pending/running) additionally drives the run — replan while the
+    /// revision budget remains, then let the user decide. A task the execution loop
+    /// already closed as failed is not replanned: it has an answer, and reopening it
+    /// only reproduces the same failure. When the graph holds no completed task at all,
+    /// that closed failure is instead escalated to the user, because passing it would
+    /// report success where there is none.
     /// </summary>
     internal static SupervisionVerdict EnforceTaskOutcomeFacts(
         IReadOnlyList<DurableTaskNode> tasks,
@@ -3384,6 +3389,31 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             if (!reasons.Contains(reason, StringComparer.Ordinal)) reasons.Add(reason);
         }
 
+        // A closed failure has an answer: replanning it re-dispatches the same demand
+        // and, for a frozen-manifest defect such as `worker_assignment_invalid`, fails
+        // it again on every round until the budget parks the run.
+        var unresolved = incomplete
+            .Where(item => !string.Equals(item.Task.Status, "failed", StringComparison.Ordinal))
+            .ToArray();
+        if (unresolved.Length == 0)
+        {
+            // Nothing is left to replan. Partial success is a result the user can read:
+            // the reasons above and the per-task evidence the meeting prompt is built
+            // from both carry the failure, so the answer reports what was not achieved.
+            // But a graph with no completed task at all must not wash pure failure into a
+            // pass — that is the case code-owned facts exist for, and the user decides.
+            if (tasks.Any(item => string.Equals(item.Status, "completed", StringComparison.Ordinal)))
+                return verdict with { Reasons = reasons };
+
+            reasons.Add("Every task failed and no completed work remains; the outcome requires user review.");
+            return verdict with
+            {
+                Decision = SupervisionDecision.Escalate,
+                Reasons = reasons,
+                ReviseTaskIndexes = []
+            };
+        }
+
         if (verdict.Decision == SupervisionDecision.Escalate)
         {
             return verdict with { Reasons = reasons };
@@ -3392,7 +3422,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         if (revisionRound < maxRevisionRounds)
         {
             var reviseIndexes = verdict.ReviseTaskIndexes
-                .Concat(incomplete.Select(item => item.Index))
+                .Concat(unresolved.Select(item => item.Index))
                 .Where(index => index >= 0 && index < tasks.Count)
                 .Distinct()
                 .Order()

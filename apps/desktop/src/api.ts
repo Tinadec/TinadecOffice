@@ -8,6 +8,15 @@ export type TinaChatObservedConversationPage = components['schemas']['TinaChatOb
 export type TinaChatObservedDetail = components['schemas']['TinaChatObservedConversationDetail']
 export type TinaChatObservedMessage = components['schemas']['TinaChatObservedMessageDto']
 export type TinaChatObservedMessagePage = components['schemas']['TinaChatObservedMessagePage']
+export type TinaChatParticipant = components['schemas']['TinaChatParticipantDto']
+export type TinaChatConversation = components['schemas']['TinaChatConversationDto']
+export type TinaChatMember = components['schemas']['TinaChatMemberDto']
+export type TinaChatMessage = components['schemas']['TinaChatMessageDto']
+export type TinaChatInboxPage = components['schemas']['TinaChatInboxPage']
+export type TinaChatIntent = components['schemas']['TinaChatIntentDto']
+export type TinaChatIntentContent = components['schemas']['TinaChatIntentContent']
+export type TinaChatExecution = components['schemas']['TinaChatExecutionDto']
+export type TinaChatWorkspacePolicy = components['schemas']['TinaChatWorkspacePolicyDto']
 
 export interface ProjectDto {
   id: string;
@@ -1940,6 +1949,51 @@ export const api = {
     for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value))
     return request<TinaChatObservedMessagePage>(`/api/v1/tina-chat/observer/conversations/${encodeURIComponent(id)}/messages?${search}`, { signal, cache: 'no-store' })
   },
+  // Participant and conversation writes below are actor-scoped: Core re-verifies the authenticated
+  // principal against every actor_id on each call, so a stale local identity fails closed here.
+  tinaChatParticipants: (query?: string, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    if (query) search.set('query', query)
+    return request<TinaChatParticipant[]>(`/api/v1/tina-chat/participants?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatRegisterParticipant: (body: components['schemas']['TinaChatRegisterParticipantRequest']) =>
+    request<TinaChatParticipant>('/api/v1/tina-chat/participants', { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatUpdateParticipant: (id: string, body: components['schemas']['TinaChatUpdateParticipantRequest']) =>
+    request<TinaChatParticipant>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  tinaChatInbox: (id: string, params: { after_sequence?: number; limit?: number } = {}, signal?: AbortSignal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value))
+    return request<TinaChatInboxPage>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}/inbox?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatAcknowledge: (id: string, messageId: string) =>
+    request<void>(`/api/v1/tina-chat/participants/${encodeURIComponent(id)}/inbox/${encodeURIComponent(messageId)}/ack`, { method: 'POST' }),
+  tinaChatConversations: (actorId: string, signal?: AbortSignal) =>
+    request<TinaChatConversation[]>(`/api/v1/tina-chat/conversations?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatCreateConversation: (body: components['schemas']['TinaChatCreateConversationRequest']) =>
+    request<TinaChatConversation>('/api/v1/tina-chat/conversations', { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatConversation: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatConversation>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatMembers: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatMember[]>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/members?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatChangeMember: (id: string, body: components['schemas']['TinaChatMemberRequest']) =>
+    request<TinaChatConversation>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/members`, { method: 'PUT', body: JSON.stringify(body) }),
+  tinaChatMessages: (id: string, params: { actor_id: string; after_sequence?: number; limit?: number }, signal?: AbortSignal) => {
+    const search = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))
+    return request<components['schemas']['TinaChatMessagePage']>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/messages?${search}`, { signal, cache: 'no-store' })
+  },
+  tinaChatSendMessage: (id: string, body: components['schemas']['TinaChatSendMessageRequest']) =>
+    request<TinaChatMessage>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatPolicy: (signal?: AbortSignal) => request<TinaChatWorkspacePolicy>('/api/v1/tina-chat/workspace-policy', { signal, cache: 'no-store' }),
+  tinaChatSetPolicy: (body: components['schemas']['TinaChatWorkspacePolicyRequest']) =>
+    request<TinaChatWorkspacePolicy>('/api/v1/tina-chat/workspace-policy', { method: 'PUT', body: JSON.stringify(body) }),
+  tinaChatIntents: (id: string, actorId: string, signal?: AbortSignal) =>
+    request<TinaChatIntent[]>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents?actor_id=${encodeURIComponent(actorId)}`, { signal, cache: 'no-store' }),
+  tinaChatGenerateIntent: (id: string, body: components['schemas']['TinaChatGenerateIntentRequest']) =>
+    request<TinaChatIntent>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/generate`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatDecideIntent: (id: string, intentId: string, body: components['schemas']['TinaChatIntentDecisionRequest']) =>
+    request<TinaChatIntent>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/${encodeURIComponent(intentId)}/decision`, { method: 'POST', body: JSON.stringify(body) }),
+  tinaChatExecuteIntent: (id: string, intentId: string, body: components['schemas']['TinaChatExecuteIntentRequest']) =>
+    request<TinaChatExecution>(`/api/v1/tina-chat/conversations/${encodeURIComponent(id)}/intents/${encodeURIComponent(intentId)}/execute`, { method: 'POST', body: JSON.stringify(body) }),
   health: () => request<Record<string, unknown>>('/api/v1/health'),
   doctor: () => request<DoctorReportDto>('/api/v1/doctor'),
   readiness: () => request<RuntimeReadinessReceiptDto>('/api/v1/readiness'),

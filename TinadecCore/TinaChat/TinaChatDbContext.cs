@@ -13,6 +13,8 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
     public DbSet<ChatIntent> Intents => Set<ChatIntent>();
     public DbSet<ChatExecution> Executions => Set<ChatExecution>();
     public DbSet<ChatAudit> Audit => Set<ChatAudit>();
+    public DbSet<ChatWake> Wakes => Set<ChatWake>();
+    public DbSet<ChatSessionIdentity> SessionIdentities => Set<ChatSessionIdentity>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -73,11 +75,26 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.HasIndex(x => new { x.TenantId, x.IntentId, x.ParticipantId }).IsUnique();
             e.HasIndex(x => x.SessionId).IsUnique();
             e.Property(x => x.Revision).IsConcurrencyToken();
+            e.Property(x => x.ResultRunStatus).HasMaxLength(32);
         });
         model.Entity<ChatAudit>(e =>
         {
             e.ToTable("tina_chat_audit"); e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.ConversationId });
+        });
+        model.Entity<ChatWake>(e =>
+        {
+            e.ToTable("tina_chat_wakes"); e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.HasIndex(x => new { x.Status, x.AvailableAt });
+            e.HasIndex(x => new { x.ConversationId, x.ParticipantId, x.Status });
+            e.Property(x => x.LastError).HasMaxLength(512);
+        });
+        model.Entity<ChatSessionIdentity>(e =>
+        {
+            e.ToTable("tina_chat_session_identities"); e.HasKey(x => x.SessionId);
+            e.HasIndex(x => new { x.TenantId, x.ParticipantId });
+            e.HasIndex(x => new { x.TenantId, x.OwnerPrincipalId });
         });
         model.UseTinadecSnakeCase();
     }
@@ -196,6 +213,9 @@ public sealed class ChatExecution
     public Guid? ProjectId { get; set; }
     public Guid? RunId { get; set; }
     public long Revision { get; set; } = 1;
+    /// <summary>Set once the outcome has been posted back to the conversation, so a reaper pass never double-posts.</summary>
+    public Guid? ResultMessageId { get; set; }
+    public string? ResultRunStatus { get; set; }
 }
 
 public sealed class ChatAudit
@@ -208,5 +228,43 @@ public sealed class ChatAudit
     public Guid? ConversationId { get; set; }
     public string Action { get; set; } = "";
     public Guid TargetId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Durable wake queue written in the same Serializable transaction as the message that
+/// caused it, so a committed message is never separable from the turns it owes.
+/// One live row per (conversation, participant, reason): a second arrival during a
+/// pending turn merges its sources into the existing row instead of stacking turns.
+/// </summary>
+public sealed class ChatWake
+{
+    public long Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid ConversationId { get; set; }
+    public Guid ParticipantId { get; set; }
+    public string Reason { get; set; } = "message";
+    public string SourceMessageIdsJson { get; set; } = "[]";
+    public string Status { get; set; } = "pending";
+    public int Attempts { get; set; }
+    public DateTimeOffset AvailableAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public string? LastError { get; set; }
+}
+
+/// <summary>
+/// Which named participant a Core session speaks as, claimed by a run whose initiating principal
+/// already controls that participant. Without a binding a session has no voice in a conversation;
+/// with one, every tool call is still re-authorized against the participant's own membership.
+/// </summary>
+public sealed class ChatSessionIdentity
+{
+    public Guid SessionId { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid ParticipantId { get; set; }
+    public Guid OwnerPrincipalId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

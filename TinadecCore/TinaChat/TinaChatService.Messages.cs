@@ -9,7 +9,14 @@ namespace TinadecCore.TinaChat;
 
 public sealed partial class TinaChatService
 {
-    public Task<TinaChatMessageDto> SendAsync(Guid conversationId, TinaChatSendMessageRequest request, CancellationToken ct = default) => WriteAsync(async (db, scope) =>
+    public Task<TinaChatMessageDto> SendAsync(Guid conversationId, TinaChatSendMessageRequest request, CancellationToken ct = default) =>
+        WriteAsync((db, scope) => SendAsync(scope, db, conversationId, request, ct), ct);
+
+    /// <summary>Overload for a caller that already carries a verified scope (tool turns, wake turns).</summary>
+    private Task<TinaChatMessageDto> SendAsync(TenantContext scope, Guid conversationId, TinaChatSendMessageRequest request, CancellationToken ct) =>
+        WriteAsync(scope, (db, _) => SendAsync(scope, db, conversationId, request, ct), ct);
+
+    private async Task<TinaChatMessageDto> SendAsync(TenantContext scope, TinaChatDbContext db, Guid conversationId, TinaChatSendMessageRequest request, CancellationToken ct)
     {
         var (actor, conversation, _) = await AccessAsync(db, scope, conversationId, request.ActorId, ct);
         Required(request.Content, "content", 65536);
@@ -34,7 +41,7 @@ public sealed partial class TinaChatService
         var row = await AppendMessageAsync(db, conversation, actor, request.Content, key, hash, "message", sensitivity,
             request.AllowDerivedSharing, request.ReplyToMessageId, sources, recipients, ct);
         return await ToMessageAsync(db, conversation, actor, row, ct, sources);
-    }, ct);
+    }
 
     public async Task<TinaChatMessagePage> ReadMessagesAsync(Guid conversationId, Guid actorId, long afterSequence = 0, int limit = 50, CancellationToken ct = default)
     {
@@ -61,9 +68,11 @@ public sealed partial class TinaChatService
     }
 
     public async Task<TinaChatInboxPage> ReadInboxAsync(Guid actorId, long afterSequence = 0, int limit = 50, CancellationToken ct = default)
+        => await ReadInboxAsync(await ScopeAsync(ct), actorId, afterSequence, limit, ct);
+
+    private async Task<TinaChatInboxPage> ReadInboxAsync(TenantContext scope, Guid actorId, long afterSequence, int limit, CancellationToken ct)
     {
         ValidatePage(afterSequence, limit);
-        var scope = await ScopeAsync(ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var actor = await OwnedAsync(db, scope, actorId, ct);
         var rows = await (from audience in db.Audiences
@@ -150,15 +159,19 @@ public sealed partial class TinaChatService
             SourceMessageIdsJson = JsonSerializer.Serialize(sources, Json), CreatedAt = DateTimeOffset.UtcNow
         };
         db.Messages.Add(row);
+        var audienceRows = new List<ChatAudience>();
         foreach (var recipient in recipients)
         {
             var original = actor.Kind != "human" || recipient.ReceiveHumanMessages || recipient.Id == actor.Id;
-            db.Audiences.Add(new ChatAudience
+            var audience = new ChatAudience
             {
                 MessageId = row.Id, ParticipantId = recipient.Id, CanReadOriginal = original,
                 CanReceiveDerived = allowDerivedSharing, Acknowledged = recipient.Id == actor.Id
-            });
+            };
+            audienceRows.Add(audience);
+            db.Audiences.Add(audience);
         }
+        await EnqueueWakesAsync(db, conversation, actor, row, recipients, audienceRows, ct);
         return row;
     }
 

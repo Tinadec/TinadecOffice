@@ -79,6 +79,10 @@ public static class TinadecCoreHttpExtensions
                     TinadecCore.DmaEA.RunAdmissionException rae => (StatusCodes.Status409Conflict, "conflict", rae.Message),
                     UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "forbidden", exception.Message),
                     ArgumentException => (StatusCodes.Status400BadRequest, "invalid_request", exception.Message),
+                    // Minimal-API throws this before the handler ever runs when a required route or
+                    // query parameter is missing or unparseable. It carries its own 4xx status, so
+                    // letting it fall through to the catch-all turned "you forgot actor_id" into a 500.
+                    Microsoft.AspNetCore.Http.BadHttpRequestException binding => (binding.StatusCode, "invalid_request", binding.Message),
                     KeyNotFoundException => (StatusCodes.Status404NotFound, "run_not_found", exception.Message),
                     InvalidOperationException ioe when ioe.Message.Contains("model", StringComparison.OrdinalIgnoreCase) || ioe.Message.Contains("Provider", StringComparison.OrdinalIgnoreCase) => (StatusCodes.Status400BadRequest, "model_not_configured", ioe.Message),
                     InvalidOperationException => (StatusCodes.Status409Conflict, "conflict", exception.Message),

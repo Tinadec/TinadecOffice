@@ -24,6 +24,7 @@ import {
   Minus,
   Monitor,
   Moon,
+  MessagesSquare,
   MoreHorizontal,
   Palette,
   PanelRight,
@@ -57,6 +58,7 @@ import ApiDocsSection from '@/settings/sections/ApiDocsSection.vue'
 import AppearanceSection from '@/settings/sections/AppearanceSection.vue'
 import PetsSection from '@/settings/sections/PetsSection.vue'
 import ToolCenterSection from '@/settings/sections/ToolCenterSection.vue'
+import TinaChatSection from '@/settings/sections/TinaChatSection.vue'
 import {
   api,
   type AgentCandidateDto,
@@ -144,7 +146,7 @@ import {
   graphSeedPackManifest,
 } from '@/agentPacks/GraphSeedPack'
 
-type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'archive' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
+type SettingsSection = 'general' | 'model' | 'agentCenter' | 'tools' | 'tinachat' | 'archive' | 'appearance' | 'pets' | 'language' | 'apiDocs' | 'about'
 
 type AgentCenterTab = 'agents' | 'modes' | 'prompts' | 'evolution' | 'runtime'
 
@@ -467,6 +469,7 @@ const navItems = computed(() => [
   { key: 'model' as const, icon: KeyRound, label: t('settings.model') },
   { key: 'agentCenter' as const, icon: Workflow, label: t('settings.agentCenter') },
   { key: 'tools' as const, icon: Terminal, label: t('settings.toolLayer') },
+  { key: 'tinachat' as const, icon: MessagesSquare, label: t('tinaChat.manage') },
   { key: 'archive' as const, icon: Archive, label: t('settings.archiveTrash') },
   { key: 'appearance' as const, icon: Palette, label: t('settings.appearance') },
   { key: 'pets' as const, icon: PawPrint, label: t('settings.pets') },
@@ -3403,6 +3406,10 @@ import '../settings/settings.css'
 
         <template v-if="activeSection === 'tools'">
           <ToolCenterSection />
+        </template>
+
+        <template v-if="activeSection === 'tinachat'">
+          <TinaChatSection />
         </template>
 
         <template v-if="activeSection === 'archive'">

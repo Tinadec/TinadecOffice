@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TinadecCore.Abstractions;
@@ -52,6 +53,17 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
+        // The handoff tool needs the mode catalog and the coordinator, so the composition root wraps
+        // the module's gateway rather than giving the communication module a dependency that would
+        // point back at itself.
+        services.Replace(ServiceDescriptor.Singleton<ITinaChatToolGateway>(sp => new TinaChatHandoffGateway(
+            sp.GetRequiredService<TinaChatService>(),
+            sp.GetRequiredService<ITinaChatRunService>(),
+            sp.GetRequiredService<ITenantContextAccessor>(),
+            sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>())));
+        // TinaChat turns are owed by durable rows, not by this process: one singleton scheduler drains them.
+        services.AddSingleton<TinaChatWakeService>();
+        services.AddHostedService(sp => sp.GetRequiredService<TinaChatWakeService>());
 
         // Governance is registered before DmaEA so it can remain independently
         // packageable. The composition root replaces its fail-closed placeholder

@@ -266,9 +266,12 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         // Note: run.agent_mode records the invocation label (auto by default);
         // the executed roster always comes from the session's persisted mode,
         // which the interactions call above switched to conversation.ask.
+        // The gate ran with no supervisor, so the durable record must say so: the
+        // engine drives the pipeline on a synthetic pass but never writes "pass" as
+        // if a reviewer had approved it.
         var decisions = orchestration.GetProperty("supervision_findings").EnumerateArray()
             .Select(f => f.GetProperty("decision").GetString()).Where(d => d is not null).ToArray();
-        Assert.Equal(new[] { "pass" }, decisions);
+        Assert.Equal(new[] { "skipped" }, decisions);
 
         var manager = _factory.Services.GetRequiredService<ILifecycleManager>();
         var events = await manager.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false);
@@ -682,13 +685,32 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
         Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
 
-        var chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        List<JsonElement> chunks;
+        try
+        {
+            chunks = await active.Completion.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            var orch = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration").ConfigureAwait(false);
+            var execs = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/tool-executions").ConfigureAwait(false);
+            var mgr = _factory.Services.GetRequiredService<ILifecycleManager>();
+            var evts = (await mgr.ReplayEventsAsync(sessionId, 0).ConfigureAwait(false))
+                .Where(e => string.Equals(e.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            throw new TimeoutException(
+                $"Run {runId} did not complete after approval. status="
+                + orch.GetProperty("run").GetProperty("status").GetString()
+                + " summary=" + orch.GetProperty("run").GetProperty("summary").GetString()
+                + " nodes=[" + string.Join(",", orch.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("status").GetString())) + "]"
+                + " execs=[" + string.Join(",", (execs ?? []).Select(e => e.GetProperty("tool_id").GetString() + ":" + e.GetProperty("status").GetString())) + "]"
+                + " events=[" + string.Join(",", evts.Select(e => e.EventType)) + "]", ex);
+        }
         var done = Assert.Single(chunks, chunk => KindOf(chunk) == "done");
         Assert.Equal("completed", done.GetProperty("finish_reason").GetString());
 
         var orchestration = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/orchestration").ConfigureAwait(false);
         Assert.Equal("completed", orchestration.GetProperty("run").GetProperty("status").GetString());
-
         // The replay journal shows the ghost task failed on its own while the
         // sibling task completed.
         var replay = await client.GetFromJsonAsync<JsonElement>($"/api/v1/runs/{runId}/replay").ConfigureAwait(false);
@@ -2164,7 +2186,12 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var approvals = await client.GetFromJsonAsync<JsonElement[]>("/api/v1/approvals?status=pending") ?? [];
+            using var response = await client.GetAsync("/api/v1/approvals?status=pending");
+            // The handler itself cannot throw (filters plus a pure mapping), so a 500 here is the
+            // database refusing a read while the engine commits. The body is the only evidence.
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Approvals poll failed with {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            var approvals = await response.Content.ReadFromJsonAsync<JsonElement[]>() ?? [];
             var match = approvals.FirstOrDefault(item =>
                 item.GetProperty("run_id").ValueKind == JsonValueKind.String
                 && Guid.TryParse(item.GetProperty("run_id").GetString(), out var candidate) && candidate == runId);

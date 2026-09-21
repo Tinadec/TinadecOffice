@@ -18,6 +18,9 @@ public sealed partial class TinaChatService
     }
 
     public async Task<TinaChatIntentDto> GenerateIntentAsync(Guid conversationId, TinaChatGenerateIntentRequest request, CancellationToken ct = default)
+        => await GenerateIntentAsync(await ScopeAsync(ct), conversationId, request, ct);
+
+    private async Task<TinaChatIntentDto> GenerateIntentAsync(TenantContext scope, Guid conversationId, TinaChatGenerateIntentRequest request, CancellationToken ct)
     {
         var sources = Ids(request.SourceMessageIds, "source_message_ids");
         var audience = Ids(request.AudienceParticipantIds, "audience_participant_ids");
@@ -27,7 +30,6 @@ public sealed partial class TinaChatService
         // No database transaction stays open while a model is running.
         await using (var db = await factory.CreateDbContextAsync(ct))
         {
-            var scope = await ScopeAsync(ct);
             var (actor, conversation, _) = await AccessAsync(db, scope, conversationId, request.ActorId, ct);
             RequireInterpreter(actor);
             var existing = await db.Intents.SingleOrDefaultAsync(x => x.ConversationId == conversationId && x.AuthorId == actor.Id && x.ClientRequestId == key, ct);
@@ -46,11 +48,17 @@ public sealed partial class TinaChatService
         }
         var interpreted = await interpreter.InterpretAsync(input, ct);
         ValidateIntent(interpreted);
-        return await SaveIntentAsync(conversationId, new TinaChatProposeIntentRequest(
+        return await SaveIntentAsync(scope, conversationId, new TinaChatProposeIntentRequest(
             request.ActorId, key, request.ExpectedRevision, sources, audience, interpreted), hash, ct);
     }
 
-    private Task<TinaChatIntentDto> SaveIntentAsync(Guid conversationId, TinaChatProposeIntentRequest request, string hash, CancellationToken ct) => WriteAsync(async (db, scope) =>
+    private Task<TinaChatIntentDto> SaveIntentAsync(Guid conversationId, TinaChatProposeIntentRequest request, string hash, CancellationToken ct) =>
+        WriteAsync((db, scope) => SaveIntentAsync(scope, db, conversationId, request, hash, ct), ct);
+
+    private Task<TinaChatIntentDto> SaveIntentAsync(TenantContext scope, Guid conversationId, TinaChatProposeIntentRequest request, string hash, CancellationToken ct) =>
+        WriteAsync(scope, (db, _) => SaveIntentAsync(scope, db, conversationId, request, hash, ct), ct);
+
+    private async Task<TinaChatIntentDto> SaveIntentAsync(TenantContext scope, TinaChatDbContext db, Guid conversationId, TinaChatProposeIntentRequest request, string hash, CancellationToken ct)
     {
         var (actor, conversation, _) = await AccessAsync(db, scope, conversationId, request.ActorId, ct);
         RequireInterpreter(actor);
@@ -78,7 +86,7 @@ public sealed partial class TinaChatService
         db.Intents.Add(intent);
         return new TinaChatIntentDto(intent.Id, conversationId, actor.Id, intent.Revision, intent.Status,
             request.Content, request.SourceMessageIds, null, intent.CreatedAt);
-    }, ct);
+    }
 
     public async Task<TinaChatIntentDto[]> ListIntentsAsync(Guid conversationId, Guid actorId, CancellationToken ct = default)
     {

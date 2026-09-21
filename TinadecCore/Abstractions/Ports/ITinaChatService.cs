@@ -48,6 +48,39 @@ public interface ITinaChatRunService
     Task<TinaChatExecutionDto> ExecuteAsync(Guid conversationId, Guid intentId, TinaChatExecuteIntentRequest request, CancellationToken ct = default);
 }
 
+/// <summary>
+/// Drains the durable wake queue a committed message leaves behind. The queue lives with the
+/// communication module; only the host decides when turns are due, so a restart replays owed
+/// turns instead of losing them.
+/// </summary>
+public interface ITinaChatWakeProcessor
+{
+    Task<int> ProcessPendingWakesAsync(int maxWakes, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Closes the loop a handoff opened: the host reads the run outcome through Core lifecycle state
+/// and reports it here, so an execution never ends in silence. The communication module owns who
+/// may hear the outcome; the host never decides that locally.
+/// </summary>
+public interface ITinaChatExecutionResults
+{
+    Task<TinaChatOpenExecution[]> ListOpenExecutionsAsync(int max, CancellationToken ct = default);
+    Task<TinaChatExecutionResultOutcome> RecordResultAsync(Guid executionId, TinaChatRunOutcome outcome, CancellationToken ct = default);
+}
+
+public sealed record TinaChatOpenExecution(Guid Id, Guid ConversationId, Guid ParticipantId, Guid RunId);
+
+public sealed record TinaChatRunOutcome(string Status, string? Summary, string? ErrorCategory);
+
+public enum TinaChatExecutionResultOutcome
+{
+    Posted,
+    AlreadyPosted,
+    /// <summary>The receiving participant can no longer speak in the conversation; the outcome stays unposted and is not retried.</summary>
+    Undeliverable
+}
+
 /// <summary>Trusted runtime reader. A bound session never falls back to raw chat when authorization is lost.</summary>
 public interface ITinaChatRunInput
 {

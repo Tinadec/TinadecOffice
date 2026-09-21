@@ -35,13 +35,34 @@ public static class CoreVirtualToolPolicy
         string.Equals(toolId, TaskDispatchToolId, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The nine tools that let a governed run act as a named member of a TinaChat conversation. They
+    /// never reach a tool child process: Core executes them against its own communication state, so a
+    /// declared surface, not an approval, is what authorizes them.
+    ///
+    /// Why they exist: without them "talk to your colleagues in the group" is prompt prose the
+    /// model cannot carry out. The wake queue can already hand an agent a turn, but the agent had
+    /// no way to answer, to look somebody up, or to file a brief of its own. Read/accept/handoff
+    /// are in the same list because the conversation role that may decide a brief is held by agents,
+    /// not by a human clicking a button in an observation panel.
+    /// </summary>
+    public static readonly IReadOnlyList<string> TinaChatToolIds =
+    [
+        "tina_chat_bind", "tina_chat_search_people", "tina_chat_list_rooms",
+        "tina_chat_read_inbox", "tina_chat_send", "tina_chat_propose_intent",
+        "tina_chat_list_intents", "tina_chat_decide_intent", "tina_chat_execute_intent",
+    ];
+
+    public static bool IsTinaChat(string? toolId) =>
+        toolId is not null && TinaChatToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// True for ANY Core-owned virtual tool. These are executed by Core itself and are
     /// deliberately absent from the TinadecTools child manifest, so every place that
     /// validates a tool id against the live manifest has to recognise them — otherwise a
     /// legitimately declared virtual tool is dropped as "the process does not offer it".
     /// </summary>
     public static bool IsCoreVirtual(string? toolId) =>
-        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId);
+        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTinaChat(toolId);
 
     /// <summary>True when the caller declared no project (the <see cref="Guid.Empty"/> sentinel).</summary>
     public static bool IsProjectlessScope(Guid projectId) => projectId == ProjectlessProjectId;

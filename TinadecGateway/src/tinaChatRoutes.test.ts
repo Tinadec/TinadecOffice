@@ -39,7 +39,10 @@ test('every TinaChat operation preserves Core path, query, JSON, scope headers a
     }
   }
   assert.equal(calls.length, expectedCount);
-  assert.ok(expectedCount >= 20);
+  // The floor is a contract-size pin, not a lower bound: a projection that silently loses a Core
+  // operation must fail here instead of shrinking the proxied surface unnoticed.
+  assert.equal(Object.keys(contract.paths).length, 17);
+  assert.equal(expectedCount, 24);
 });
 
 test('TinaChat acknowledgement preserves an empty 204 response', { concurrency: false }, async () => {

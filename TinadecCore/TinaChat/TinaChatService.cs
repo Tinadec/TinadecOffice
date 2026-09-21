@@ -16,7 +16,7 @@ public sealed partial class TinaChatService(
     ITinaChatIdentityBoundary identity,
     IContentStore content,
     ITinaChatIntentInterpreter interpreter,
-    ITinaChatObserverAuthority observerAuthority) : ITinaChatService, ITinaChatRunInput, ITinaChatObserver
+    ITinaChatObserverAuthority observerAuthority) : ITinaChatService, ITinaChatRunInput, ITinaChatObserver, ITinaChatWakeProcessor
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private const int MaxMembers = 64;
@@ -68,8 +68,10 @@ public sealed partial class TinaChatService(
     }, ct);
 
     public async Task<TinaChatParticipantDto[]> DiscoverAsync(string? query = null, CancellationToken ct = default)
+        => await DiscoverAsync(await ScopeAsync(ct), query, ct);
+
+    private async Task<TinaChatParticipantDto[]> DiscoverAsync(TenantContext scope, string? query, CancellationToken ct)
     {
-        var scope = await ScopeAsync(ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var term = Optional(query, "query", 256);
         var candidates = db.Participants.Where(x => x.TenantId == scope.TenantId && x.Status == "active"
@@ -132,8 +134,10 @@ public sealed partial class TinaChatService(
     }, ct);
 
     public async Task<TinaChatConversationDto[]> ListConversationsAsync(Guid actorId, CancellationToken ct = default)
+        => await ListConversationsAsync(await ScopeAsync(ct), actorId, ct);
+
+    private async Task<TinaChatConversationDto[]> ListConversationsAsync(TenantContext scope, Guid actorId, CancellationToken ct)
     {
-        var scope = await ScopeAsync(ct);
         await using var db = await factory.CreateDbContextAsync(ct);
         var actor = await OwnedAsync(db, scope, actorId, ct);
         var rows = await (from member in db.Members
@@ -260,12 +264,19 @@ public sealed partial class TinaChatService(
     }
 
     private async Task<T> WriteAsync<T>(Func<TinaChatDbContext, TenantContext, Task<T>> action, CancellationToken ct)
+        => await WriteAsync(await ScopeAsync(ct), action, ct);
+
+    /// <summary>
+    /// Overload for callers that already carry a verified scope. The background wake path uses the
+    /// participant owner's own identity from the durable row instead of the ambient request principal,
+    /// so no turn is ever attributed to whoever happened to make the last HTTP call.
+    /// </summary>
+    private async Task<T> WriteAsync<T>(TenantContext scope, Func<TinaChatDbContext, TenantContext, Task<T>> action, CancellationToken ct)
     {
         // The database, not a process-local lock, serializes audience/policy/sequence updates.
         // A retry rereads the entire authorization decision and the idempotency record.
         for (var attempt = 0; ; attempt++)
         {
-            var scope = await ScopeAsync(ct);
             try
             {
                 await using var db = await factory.CreateDbContextAsync(ct);

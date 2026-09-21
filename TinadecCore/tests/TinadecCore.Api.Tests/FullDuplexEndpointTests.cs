@@ -1127,9 +1127,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
 
         var chunks = await StreamInvokeAsync(client, sessionId, new { content = "执行目标", client_message_id = "evolution-curate" });
         Assert.Equal("completed", chunks.Last(chunk => KindOf(chunk) is "done" or "error").GetProperty("finish_reason").GetString());
-        Assert.True(script.CuratorCalls >= 1, "The experience curator should run at close.");
 
+        // The curator is a bypass dispatch that runs AFTER the terminal done chunk is
+        // appended, so the counter is polled through its durable effect: candidate rows
+        // cannot exist before the curator call returned.
         var agentCandidates = await PollAgentCandidatesAsync(client, TimeSpan.FromSeconds(15));
+        Assert.True(script.CuratorCalls >= 1, "The experience curator should run at close.");
         var candidate = Assert.Single(agentCandidates);
         Assert.Equal("日志巡检执行体", candidate.GetProperty("name").GetString());
         Assert.Equal("execution", candidate.GetProperty("layer").GetString());
