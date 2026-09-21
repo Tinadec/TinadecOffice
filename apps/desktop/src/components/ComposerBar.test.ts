@@ -342,7 +342,7 @@ describe('ComposerBar slash commands', () => {
   it('hides /stop when there is nothing to stop', async () => {
     const wrapper = mountComposer({ canStop: false, modelValue: '/st' })
     await flushPromises()
-    expect(document.querySelector('[data-testid="composer-command-stop"]')).toBeNull()
+    expect(document.querySelector('[data-testid="composer-command-run.stop"]')).toBeNull()
     wrapper.unmount()
   })
 

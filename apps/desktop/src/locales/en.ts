@@ -1528,6 +1528,25 @@ retry: 'Retry',
     attachNeedsSession: 'Send a first message, then attach files',
     removeAttachment: 'Remove {name}',
   },
+  // Labels for the window-wide palette rows. Page names live here rather than being
+  // reused from `sidebar.*`: a palette says what it will do ("Go to Settings"), and
+  // the sidebar's strings are its own navigation chrome.
+  palette: {
+    goChat: 'Go to Chat',
+    goWorkbench: 'Go to Workbench',
+    goCode: 'Go to Code',
+    goChatroom: 'Go to Chatroom',
+    goLibrary: 'Go to Library',
+    goSnapshots: 'Go to Snapshots',
+    goGovernance: 'Go to Governance',
+    goMarket: 'Go to Market',
+    goSettings: 'Go to Settings',
+    keywordConversation: 'conversation session thread',
+    keywordCancel: 'cancel abort interrupt',
+    keywordWaitTurn: 'enqueue wait turn behind',
+    keywordSteer: 'concurrent now interrupt',
+    keywordPreferences: 'preferences options configuration',
+  },
   common: {
     loading: 'Loading…',
     none: 'None',

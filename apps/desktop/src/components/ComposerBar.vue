@@ -10,7 +10,7 @@ import type { PermissionLevel } from '@/types/mode'
 import type { MeetingModelOverrideDto, ProjectDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
-import { filterComposerCommands, parseComposerCommand, type ComposerCommand } from '@/lib/composerCommands'
+import { filterSlashCommands, parseSlashCommand, type AppCommand, type CommandHost } from '@/lib/appCommands'
 import { completeMentionToken, filterMentionEntries, parseMentionToken, type MentionToken } from '@/lib/fileMentions'
 import {
   attachFiles,
@@ -82,12 +82,49 @@ const invokeError = computed(() => (homeController.invokeError as unknown as { v
 const steeringId = ref<string | null>(null)
 const steerTarget = ref('')
 
+/**
+ * The composer's half of `CommandHost`: the parts of running a command that are
+ * local to this component - the textarea's height, the mode props, the stop emit
+ * chain. What a command *does* is no longer decided here, because the palette has to
+ * run the same commands from a place that owns none of these.
+ */
+const commandHost: CommandHost = {
+  canStop: () => Boolean(props.canStop),
+  draft: () => props.modelValue,
+  setDraft: (value) => updateDraft(value),
+  send: (text, dispatch) => {
+    // One-shot dispatch override: the persisted Enter preference the send menu owns
+    // is left alone. The draft is written through the controller rather than by
+    // awaiting two layers of emit, because sendMessage reads it right after.
+    updateDraft(text)
+    resetTextareaHeight()
+    void homeController.sendMessage({
+      dispatch_mode: dispatch,
+      target_run_id: null,
+      mode_version_id: props.modeVersionId ?? null,
+      meeting_model_override: props.meetingModelOverride ?? null,
+    })
+  },
+  // Stop keeps going out over the emit chain instead of calling homeController.stopRun()
+  // here, because that chain is the live path from ChatCard and shortening only one of
+  // its two callers is how the two would drift.
+  stopRun: () => emit('stop'),
+  newSession: () => {
+    resetTextareaHeight()
+    void homeController.createSession(props.selectedProjectId ?? null)
+  },
+  navigate: (routeName) => {
+    void router.push({ name: routeName })
+  },
+  routeName: () => String(router.currentRoute.value.name ?? ''),
+}
+
 const commandIndex = ref(0)
 const commandsDismissed = ref(false)
 const commandSuggestions = computed(() =>
   commandsDismissed.value
     ? []
-    : filterComposerCommands(props.modelValue).filter((command) => command.id !== 'stop' || props.canStop),
+    : filterSlashCommands(props.modelValue, commandHost),
 )
 watch(() => props.modelValue, () => {
   commandIndex.value = 0
@@ -102,41 +139,15 @@ watch(commandSuggestions, async (list) => {
   placeMenu(textareaRef.value, commandMenuStyle, { minWidth: 280, estimatedHeight: 116 })
 })
 
-function acceptCommand(command: ComposerCommand) {
-  updateDraft(`/${command.name}${command.needsArgument ? ' ' : ''}`)
+function acceptCommand(command: AppCommand) {
+  updateDraft(`/${command.slash}${command.needsArgument ? ' ' : ''}`)
   commandsDismissed.value = true
   void nextTick(() => textareaRef.value?.focus())
 }
 
-function runCommand(command: ComposerCommand, argument: string) {
+function runCommand(command: AppCommand, argument: string) {
   commandsDismissed.value = true
-  switch (command.id) {
-    case 'stop':
-      updateDraft('')
-      emit('stop')
-      break
-    case 'new':
-      updateDraft('')
-      resetTextareaHeight()
-      void homeController.createSession(props.selectedProjectId ?? null)
-      break
-    case 'queue':
-    case 'parallel': {
-      // One-shot dispatch override: the persisted Enter preference the send menu owns
-      // is left alone. The draft is written through the controller rather than by
-      // awaiting two layers of emit, because sendMessage reads it right after.
-      const dispatchMode = command.id === 'queue' ? 'queued' : 'parallel'
-      updateDraft(argument)
-      resetTextareaHeight()
-      void homeController.sendMessage({
-        dispatch_mode: dispatchMode,
-        target_run_id: null,
-        mode_version_id: props.modeVersionId ?? null,
-        meeting_model_override: props.meetingModelOverride ?? null,
-      })
-      break
-    }
-  }
+  command.run(commandHost, argument)
 }
 
 function updateDraft(value: string) {
@@ -146,7 +157,7 @@ function updateDraft(value: string) {
 
 /** True when Enter was consumed by a command, so the plain send path must not run. */
 function handleCommandEnter(): boolean {
-  const parsed = parseComposerCommand(props.modelValue)
+  const parsed = parseSlashCommand(props.modelValue)
   if (parsed.kind === 'run') {
     runCommand(parsed.command, parsed.argument)
     return true
@@ -594,9 +605,9 @@ function confirmSteer(id: string) {
               @mouseenter="commandIndex = index"
               @mousedown.prevent="acceptCommand(command)"
             >
-              <code class="composer-command-syntax">/{{ command.name }}{{ command.needsArgument ? ' …' : '' }}</code>
+              <code class="composer-command-syntax">/{{ command.slash }}{{ command.needsArgument ? ' …' : '' }}</code>
               <span class="composer-command-label">{{ t(command.labelKey) }}</span>
-              <span class="composer-command-hint">{{ t(command.hintKey) }}</span>
+              <span v-if="command.hintKey" class="composer-command-hint">{{ t(command.hintKey ?? '') }}</span>
             </li>
           </ul>
         </Teleport>
