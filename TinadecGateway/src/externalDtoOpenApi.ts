@@ -163,6 +163,22 @@ const health = t.Object({
   tool_runtime_url: t.String(),
 }, { additionalProperties: true, description: 'Gateway health fingerprint with forwarded Core health fields.' });
 
+/**
+ * Mirrors Core's MessageAttachmentDto. No content path: Core keeps the storage
+ * reference to itself, and the Gateway has no reason to learn it.
+ */
+const attachment = t.Object({
+  id: t.String(),
+  session_id: t.String(),
+  message_id: nullableString(),
+  file_name: t.String(),
+  media_type: t.String(),
+  content_hash: t.String(),
+  content_length: t.Unsafe({ type: 'integer' }),
+  created_at: nullableString(),
+  bound_at: nullableString(),
+}, { additionalProperties: true });
+
 const preAuthorization = t.Object({
   id: t.String({ format: 'uuid' }),
   run_id: t.String({ format: 'uuid' }),
@@ -184,6 +200,8 @@ export const externalDtoSchemas = {
   SessionList: t.Array(componentRef('Session')),
   Message: message,
   MessageList: t.Array(componentRef('Message')),
+  MessageAttachment: attachment,
+  MessageAttachmentList: t.Array(componentRef('MessageAttachment')),
   Run: run,
   RunList: t.Array(componentRef('Run')),
   TaskNode: taskNode,

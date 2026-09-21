@@ -152,6 +152,16 @@ export interface paths {
     /** Decide approval */
     post: operations["postApiV1ApprovalsByApprovalIdDecision"];
   };
+  "/api/v1/attachments/{attachmentId}": {
+    /** Read attachment metadata */
+    get: operations["getApiV1AttachmentsByAttachmentId"];
+    /** Discard an attachment row */
+    delete: operations["deleteApiV1AttachmentsByAttachmentId"];
+  };
+  "/api/v1/attachments/{attachmentId}/content": {
+    /** Download attachment bytes */
+    get: operations["getApiV1AttachmentsByAttachmentIdContent"];
+  };
   "/api/v1/code/tools": {
     /**
      * Code tool catalog (Core registry)
@@ -602,6 +612,15 @@ export interface paths {
   "/api/v1/sessions/{sessionId}/archive": {
     /** Archive session */
     post: operations["postApiV1SessionsBySessionIdArchive"];
+  };
+  "/api/v1/sessions/{sessionId}/attachments": {
+    /** List session attachments */
+    get: operations["getApiV1SessionsBySessionIdAttachments"];
+    /**
+     * Upload a session attachment
+     * @description Raw request body is the file; filename and media type travel as query parameters. The stored bytes are user-supplied and are served back from the origin the renderer trusts, so Core decides inline vs attachment per type and this route forwards that decision rather than re-deciding it.
+     */
+    post: operations["postApiV1SessionsBySessionIdAttachments"];
   };
   "/api/v1/sessions/{sessionId}/context-packs": {
     /** Session context packs */
@@ -1104,6 +1123,19 @@ export interface components {
       session_id: string;
       [key: string]: unknown;
     };
+    MessageAttachment: {
+      bound_at: string | null;
+      content_hash: string;
+      content_length: number;
+      created_at: string | null;
+      file_name: string;
+      id: string;
+      media_type: string;
+      message_id: string | null;
+      session_id: string;
+      [key: string]: unknown;
+    };
+    MessageAttachmentList: components["schemas"]["MessageAttachment"][];
     MessageList: components["schemas"]["Message"][];
     OrchestrationSnapshot: {
       agent_instances: unknown[];
@@ -2275,6 +2307,48 @@ export interface operations {
     parameters: {
       path: {
         approvalId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Read attachment metadata */
+  getApiV1AttachmentsByAttachmentId: {
+    parameters: {
+      path: {
+        attachmentId: string;
+      };
+    };
+    responses: {
+      /** @description Attachment metadata. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MessageAttachment"];
+        };
+      };
+    };
+  };
+  /** Discard an attachment row */
+  deleteApiV1AttachmentsByAttachmentId: {
+    parameters: {
+      path: {
+        attachmentId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Download attachment bytes */
+  getApiV1AttachmentsByAttachmentIdContent: {
+    parameters: {
+      path: {
+        attachmentId: string;
       };
     };
     responses: {
@@ -3686,6 +3760,41 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** List session attachments */
+  getApiV1SessionsBySessionIdAttachments: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Attachments parked on the session. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MessageAttachmentList"];
+        };
+      };
+    };
+  };
+  /**
+   * Upload a session attachment
+   * @description Raw request body is the file; filename and media type travel as query parameters. The stored bytes are user-supplied and are served back from the origin the renderer trusts, so Core decides inline vs attachment per type and this route forwards that decision rather than re-deciding it.
+   */
+  postApiV1SessionsBySessionIdAttachments: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description Stored attachment metadata, without any storage path. */
+      201: {
+        content: {
+          "application/json": components["schemas"]["MessageAttachment"];
+        };
       };
     };
   };

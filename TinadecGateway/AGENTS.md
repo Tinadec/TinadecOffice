@@ -122,6 +122,13 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `src/externalDtoOpenApi.ts` 为 generated client 消费面（health/projects/sessions/messages/runs/orchestration/task-nodes/supervision-findings/context-versions）提供响应 schema：以 `detail.responses` + swagger `components.schemas` 注册，**不装** Elysia `response:` 运行时校验——Gateway 保持透传，runtimeProxy 测试的 proxied mock 依赖这一点。给新路由补响应 schema 时沿用同一模式，不要用会触发运行时校验的 `response:` 键。
 - `apps/desktop/src/generated/client.ts` 的响应 DTO 是这些组件的 type 别名（`Schemas['Project']` 等）；`AgentPackEnvelopeDto` 保持请求侧宽松手写（App 用打包 manifest 字面量构造）。改外部 DTO 形状时：先改 mapper → 补/改 `externalDtoOpenApi.ts` → `bun test` 重写快照 → `npm run generate:client` → 同一提交入库。
 
+### 会话附件代理（2026-09-21）
+- `GET /api/v1/files/:sessionId/*` **已删除**：它代理到 Core 里从未存在过的路径，所以每个请求都是 Core 回来的 404，而在这个文件里看起来像一个能用的功能。取而代之的是五条 `attachments` 路由（上传 / 列表 / 元数据 / 取字节 / 丢弃），Core 侧真身见 `TinadecCore/AspNetCore/Endpoints/AttachmentEndpoints.cs`。
+- **上传不缓冲、不改码**：`body: request.body` 直接把字节流转给 Core（`proxyStream` 的 `duplex:'half'`）。一旦 Gateway 先 `arrayBuffer()` 缓冲，Core 那个 per-request 32 MiB 上限就变成"先收完再说"，上限的意义没了。文件名与 media type 走 query 参数，不是 multipart：代理要解开的编码越多，与客户端悄悄不一致的地方越多。
+- **安全判定必须穿过代理**：`setStreamHeaders` 只复制 `content-type`，所以下载路由**另外**转发了 `content-disposition`。Core 判定"这类字节不能内联（html/svg 能带脚本，而它们从渲染器信任的同一 origin 发出）"，如果这一句在代理里被丢掉，边界就只存在于源码里而不在客户端实际走的路上。别把它删掉当噪音。
+- 新 DTO `MessageAttachment` / `MessageAttachmentList` 按 `### 外部 DTO 文档面` 那一条的既有流程入库；`apps/desktop` 侧 `MessageAttachmentDto` 是 `Schemas['MessageAttachment']` 别名，不再手写第二份。
+- **仍未做**：附件到消息的绑定（`message_id` 恒 null）、把附件注入模型上下文、Desktop 侧的文件选择器；本批只做了存储面 + 代理面 + 客户端封装。`.qoder/repowiki/**` 里关于旧 files 路由的描述是自动生成的文档，未随本次删除更新。
+
 ### Model/Agent Center
 - 旧 `GET /api/v1/model-center/overview`、`GET /api/v1/agent-center/overview` 与 model-center refresh alias 已删除并返回 404；`PUT /api/v1/agents/:id/runtime-binding` 是**当前有效**代理（`src/index.ts:1523`），不是 404 幽灵路由；模型发现的 canonical 转发路由是 `POST /api/v1/model-providers/:providerInstanceId/models/refresh`（Desktop `api.refreshProviderModels` 调用，快照 `tests/__snapshots__/openapi.external.json` 由 `bun test` 再生成）。
 - Desktop 通过 Gateway 的版本化 provider/route/agent/mode/prompt/default/pack 路径自行组合视图；Gateway 不持久化或推导第二真相源。

@@ -2189,20 +2189,82 @@ const app = new Elysia()
       ws.unsubscribe('collaboration-proxy');
     },
   })
-  .get('/api/v1/files/:sessionId/*', async ({ params, set, request }) => {
+  /**
+   * Session attachments. This block used to be a single
+   * `GET /api/v1/files/:sessionId/*` that forwarded to a Core path which has never
+   * existed, so every request to it round-tripped as a 404 from Core while looking like
+   * a working feature in this file.
+   *
+   * The upload forwards `request.body` unread rather than buffering it. That is both the
+   * point of a thin proxy and what makes Core's per-request size ceiling meaningful: if
+   * the Gateway buffered first, the ceiling would only ever be hit after an unbounded
+   * amount of data had already been accepted from the client.
+   */
+  .post('/api/v1/sessions/:sessionId/attachments', async ({ params, query, request, set }) => {
     const headers = forwardHeaders(request);
-    const filePath = `/${(params as Record<string,string>)['*']}`;
+    const search = new URLSearchParams();
+    const rawQuery = query as Record<string, unknown>;
+    if (rawQuery.filename) search.set('filename', String(rawQuery.filename));
+    if (rawQuery.media_type) search.set('media_type', String(rawQuery.media_type));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/attachments${suffix}`;
     const response = await proxyStream({
       target: 'core',
-      path: `/api/v1/files/${params.sessionId}/${filePath}`,
+      path,
+      method: 'POST',
+      headers: { ...Object.fromEntries(new Headers(headers).entries()), 'content-type': 'application/octet-stream' },
+      body: request.body,
+    });
+    setStatus(set, response.status);
+    set.headers['content-type'] = 'application/json';
+    return await response.json();
+  }, {
+    detail: {
+      summary: 'Upload a session attachment',
+      tags: ['Attachments'],
+      description: 'Raw request body is the file; filename and media type travel as query parameters. The stored bytes are user-supplied and are served back from the origin the renderer trusts, so Core decides inline vs attachment per type and this route forwards that decision rather than re-deciding it.',
+      responses: { 201: externalJsonResponse('MessageAttachment', 'Stored attachment metadata, without any storage path.') },
+    },
+  })
+  .get('/api/v1/sessions/:sessionId/attachments', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/sessions/${encodeURIComponent(params.sessionId)}/attachments`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/json'; return result.data; }
+    return result.data;
+  }, { detail: { summary: 'List session attachments', tags: ['Attachments'], responses: { 200: externalJsonResponse('MessageAttachmentList', 'Attachments parked on the session.') } } })
+  .get('/api/v1/attachments/:attachmentId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    return result.data;
+  }, { detail: { summary: 'Read attachment metadata', tags: ['Attachments'], responses: { 200: externalJsonResponse('MessageAttachment', 'Attachment metadata.') } } })
+  .get('/api/v1/attachments/:attachmentId/content', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}/content`;
+    const response = await proxyStream({
+      target: 'core',
+      path,
       headers: Object.fromEntries(new Headers(headers).entries()),
     });
     setStreamHeaders(set, response);
     setStatus(set, response.status);
-    set.headers['x-request-id'] = (headers as Record<string,string>)['x-request-id'];
-    set.headers['x-tinadec-principal'] = PRINCIPAL_VALUE;
+    // setStreamHeaders copies content-type only. Without forwarding the disposition too,
+    // Core's "this type is not safe to render inline" decision would be dropped here, and
+    // the security boundary would exist in Core but not on the path clients actually use.
+    const disposition = response.headers.get('content-disposition');
+    if (disposition) set.headers['content-disposition'] = disposition;
     return response.body;
-  }, { detail: { summary: 'Stream file', tags: ['System'] } })
+  }, { detail: { summary: 'Download attachment bytes', tags: ['Attachments'] } })
+  .delete('/api/v1/attachments/:attachmentId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/attachments/${encodeURIComponent(params.attachmentId)}`;
+    const result = await proxyJson(path, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) return result.data;
+  }, { detail: { summary: 'Discard an attachment row', tags: ['Attachments'] } })
   .get('/api/v1/sessions/:sessionId/logs', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const response = await proxyStream({

@@ -1,6 +1,7 @@
 import type { AgentPackEnvelope } from '@/agentPacks/GraphSeedPack'
 import { CORE_EVENT_TYPES } from '@/events/coreEventTypes'
 import type { components } from '@/generated/schema'
+import type { MessageAttachmentDto } from '@/generated/client'
 
 export type TinaChatObserverAccess = components['schemas']['TinaChatObserverAccessDto']
 export type TinaChatObservedConversation = components['schemas']['TinaChatObservedConversationDto']
@@ -2286,6 +2287,38 @@ export const api = {
   createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
+  // --- Attachments ---
+  // Bytes never travel as JSON here: Core stores the file and returns a row of references,
+  // so an upload is a raw body with its name and type in the query string. The ceiling is
+  // enforced in Core, and a refusal arrives as a coded error ({ code: 'attachment_too_large' })
+  // that requestResult() already turns into a branchable `err.code`.
+  uploadAttachment: (
+    sessionId: string,
+    bytes: Blob | ArrayBuffer | Uint8Array,
+    fileName: string,
+    mediaType?: string,
+  ) => {
+    const search = new URLSearchParams({ filename: fileName });
+    if (mediaType) search.set('media_type', mediaType);
+    return request<MessageAttachmentDto>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments?${search.toString()}`,
+      { method: 'POST', body: bytes as BodyInit, headers: { 'content-type': 'application/octet-stream' } },
+    );
+  },
+  listAttachments: (sessionId: string) =>
+    request<MessageAttachmentDto[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments`),
+  getAttachment: (attachmentId: string) =>
+    request<MessageAttachmentDto>(`/api/v1/attachments/${encodeURIComponent(attachmentId)}`),
+  deleteAttachment: (attachmentId: string) =>
+    request<void>(`/api/v1/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' }),
+  /**
+   * Direct URL for <img> and download links. It is deliberately a Gateway path, not a
+   * fetch-then-objectURL: Core decides inline vs attachment per media type, and a browser
+   * navigating this URL inherits that decision. Never build a filesystem path here.
+   */
+  attachmentContentUrl: (attachmentId: string) =>
+    `${gatewayUrl}/api/v1/attachments/${encodeURIComponent(attachmentId)}/content`,
+
   listTools: () => request<ToolDescriptorDto[]>('/api/v1/tools'),
   searchTools: (params: { query?: string; domain?: string; source?: string; risk?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();

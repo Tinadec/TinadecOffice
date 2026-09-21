@@ -1064,6 +1064,59 @@
         ],
         "type": "object"
       },
+      "MessageAttachment": {
+        "additionalProperties": true,
+        "properties": {
+          "bound_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "content_length": {
+            "type": "integer"
+          },
+          "created_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "message_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "message_id",
+          "file_name",
+          "media_type",
+          "content_hash",
+          "content_length",
+          "created_at",
+          "bound_at"
+        ],
+        "type": "object"
+      },
+      "MessageAttachmentList": {
+        "items": {
+          "$ref": "#/components/schemas/MessageAttachment"
+        },
+        "type": "array"
+      },
       "MessageList": {
         "items": {
           "$ref": "#/components/schemas/Message"
@@ -4195,6 +4248,79 @@
         ]
       }
     },
+    "/api/v1/attachments/{attachmentId}": {
+      "delete": {
+        "operationId": "deleteApiV1AttachmentsByAttachmentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Discard an attachment row",
+        "tags": [
+          "Attachments"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1AttachmentsByAttachmentId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAttachment"
+                }
+              }
+            },
+            "description": "Attachment metadata."
+          }
+        },
+        "summary": "Read attachment metadata",
+        "tags": [
+          "Attachments"
+        ]
+      }
+    },
+    "/api/v1/attachments/{attachmentId}/content": {
+      "get": {
+        "operationId": "getApiV1AttachmentsByAttachmentIdContent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Download attachment bytes",
+        "tags": [
+          "Attachments"
+        ]
+      }
+    },
     "/api/v1/code/tools": {
       "get": {
         "description": "Core/Tool Provider-owned catalog. Gateway does not maintain tool risk or approval facts.",
@@ -6625,6 +6751,67 @@
         "summary": "Archive session",
         "tags": [
           "Sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/attachments": {
+      "get": {
+        "operationId": "getApiV1SessionsBySessionIdAttachments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAttachmentList"
+                }
+              }
+            },
+            "description": "Attachments parked on the session."
+          }
+        },
+        "summary": "List session attachments",
+        "tags": [
+          "Attachments"
+        ]
+      },
+      "post": {
+        "description": "Raw request body is the file; filename and media type travel as query parameters. The stored bytes are user-supplied and are served back from the origin the renderer trusts, so Core decides inline vs attachment per type and this route forwards that decision rather than re-deciding it.",
+        "operationId": "postApiV1SessionsBySessionIdAttachments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAttachment"
+                }
+              }
+            },
+            "description": "Stored attachment metadata, without any storage path."
+          }
+        },
+        "summary": "Upload a session attachment",
+        "tags": [
+          "Attachments"
         ]
       }
     },
