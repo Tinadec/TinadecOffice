@@ -11,6 +11,7 @@ import {
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   pendingAttachments,
+  readyAttachmentCount,
   reconcileSession,
   removePendingAttachment,
   settleSentAttachments,
@@ -357,5 +358,56 @@ describe('the bundle a send takes', () => {
     settleSentAttachments({ clientIds: [], attachmentIds: [], summaries: [] })
 
     expect(pendingAttachments.value).toHaveLength(1)
+  })
+})
+
+/**
+ * The composer's Send button reads this to decide whether a draft with no text is still a
+ * turn. Both it and `attachmentsForSend` must agree on what "attached" means, because a
+ * button that unlocks on an in-flight upload would send an empty message and lose the file.
+ */
+describe('readyAttachmentCount', () => {
+  it('is empty when nothing is pending', () => {
+    expect(readyAttachmentCount()).toBe(0)
+  })
+
+  it('does not count a chip whose upload has not been answered', async () => {
+    // An array, not a `let`: control-flow analysis narrows a captured `let` back to its initial
+    // `null` at the call site, so `resolveRow?.()` reads as "not callable" under vue-tsc.
+    const resolvers: Array<(row: MessageAttachmentDto) => void> = []
+    upload.mockImplementationOnce(() => new Promise<MessageAttachmentDto>((resolve) => { resolvers.push(resolve) }))
+
+    const started = attachFiles([file()], 'sess-1')
+    await tick()
+
+    expect(pendingAttachments.value[0]!.status).toBe('uploading')
+    expect(readyAttachmentCount()).toBe(0)
+    expect(readyAttachmentCount()).toBe(attachmentsForSend().attachmentIds.length)
+
+    resolvers[0]?.(storedRow('att-7'))
+    await started
+
+    expect(readyAttachmentCount()).toBe(1)
+    expect(readyAttachmentCount()).toBe(attachmentsForSend().attachmentIds.length)
+  })
+
+  it('ignores a failed chip sitting beside a ready one', async () => {
+    upload.mockResolvedValueOnce(storedRow('att-8'))
+    await attachFiles([file({ name: 'good.txt' })], 'sess-1')
+    upload.mockRejectedValueOnce(new Error('network'))
+    await attachFiles([file({ name: 'bad.txt' })], 'sess-1')
+
+    expect(pendingAttachments.value).toHaveLength(2)
+    expect(readyAttachmentCount()).toBe(1)
+  })
+
+  it('goes back to zero when a send carries the chips away', async () => {
+    upload.mockResolvedValue(storedRow('att-9'))
+    await attachFiles([file()], 'sess-1')
+    expect(readyAttachmentCount()).toBe(1)
+
+    settleSentAttachments(attachmentsForSend())
+
+    expect(readyAttachmentCount()).toBe(0)
   })
 })

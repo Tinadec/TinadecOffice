@@ -107,6 +107,8 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `GET /api/v1/sessions/{sessionId}/messages`
 - `GET /api/v1/sessions/{sessionId}/runs`
 - `GET /api/v1/sessions/{sessionId}/orchestration`
+- `GET /api/v1/sessions/{sessionId}/attachments`（本会话已上传、含已绑定与未绑定的行）
+- `GET /api/v1/attachments/{attachmentId}`、`GET /api/v1/attachments/{attachmentId}/content`（按 id 寻址，内联还是下载由 Core 决定）
 - `GET /api/v1/approvals?session_id=...`（仅投影）
 - `GET /api/v1/events?session_id=...&after_seq=...`
 - `GET /api/v1/application-modes`、`GET /api/v1/agent-modes`
@@ -117,6 +119,8 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `POST /api/v1/sessions`
 - `PATCH /api/v1/sessions/{sessionId}`
 - `POST /api/v1/sessions/{sessionId}/interactions`
+- `POST /api/v1/sessions/{sessionId}/attachments`（原始字节走 body，`filename`/`media_type` 在 query；上限与机器码由 Core 给）
+- `DELETE /api/v1/attachments/{attachmentId}`
 - `POST /api/v1/sessions/{sessionId}/interactions/{interactionId}/cancel`
 - `POST /api/v1/sessions/{sessionId}/interactions/{interactionId}/reassign`
 - `POST /api/v1/runs/{runId}/control`（pause/resume/cancel）
@@ -129,6 +133,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 4. `insert` 返回 `context_conflict` 时显示当前 revision 与用户输入，要求用户重新读取后再发。
 5. run 控制只显示适用于当前状态的按钮；控制结果必须以 Core 投影为准。
 6. assistant 正式答复只接受 meeting 的 `delta/done` 或持久消息；worker 输出显示为证据/进度，不能冒充正式答复。
+7. 附件先 `POST .../attachments` 拿到 id，再随 `interactions` 的 `attachment_ids` 一起送出（一条消息最多 8 个，`insert` 不接受附件，因为它不追加消息）。正文为空但带附件是合法的一轮：Core 回 `status: "message_only"` 且**没有** `run_id`。这一条不适用第 3 点——它不是排队，不要显示成队列项，也不要去等一条永不出现的 run 流；文件已经进历史，下一轮的上下文会带上它。
 
 **已修复（2026-09-06）**：`HomeController.ts:429-432` 的注释确认 legacy `invoke-stream` / `POST messages` 回退**已删除**，`POST /interactions` 是唯一准入契约，失败会显式呈现（不再降级成一条没有 run 的普通消息）。`api.ts:2229` 的 `invokeStreamWithAdmission` 只是 interactions+run-stream 的内部适配器，不是旧路由客户端。
 

@@ -127,6 +127,7 @@ export default {
     noProject: '未打开项目',
     placeholder: '默认与会议智能体对话，让它拆解任务、规划执行并调度其他智能体...',
     send: '发送',
+    nothingToSend: '请输入内容，或等待附件上传完成',
     ready: '准备接收第一个任务。',
     startProject: '开始一个项目',
     whatToDo: '告诉会议智能体你要做什么...',

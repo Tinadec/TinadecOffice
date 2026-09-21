@@ -175,15 +175,27 @@ export interface OutgoingAttachments {
 }
 
 /**
+ * A chip is sendable once Core has answered with a row. An upload still in flight is not:
+ * `attachment_ids` names stored rows, so sending early would either drop the file or bind
+ * an id that does not exist yet. One owner for that rule, because the composer's Send
+ * button and the snapshot below must not disagree about what counts as attached.
+ */
+function isSendable(item: PendingAttachment): item is PendingAttachment & { storedRow: MessageAttachmentDto } {
+  return item.status === 'ready' && item.storedRow !== null
+}
+
+/** How many chips a send would carry right now. Lets an attachment-only draft unlock Send. */
+export function readyAttachmentCount(): number {
+  return pending.value.filter(isSendable).length
+}
+
+/**
  * The ready rows, as a snapshot taken before the request goes out. Deliberately not a
  * mutation: a send can fail, and a chip that quietly vanished would leave the user with
  * nothing to retry. Only settleSentAttachments clears, and only after Core has answered.
  */
 export function attachmentsForSend(): OutgoingAttachments {
-  const ready = pending.value.filter(
-    (item): item is PendingAttachment & { storedRow: MessageAttachmentDto } =>
-      item.status === 'ready' && item.storedRow !== null,
-  )
+  const ready = pending.value.filter(isSendable)
   return {
     clientIds: ready.map((item) => item.clientId),
     attachmentIds: ready.map((item) => item.storedRow.id),

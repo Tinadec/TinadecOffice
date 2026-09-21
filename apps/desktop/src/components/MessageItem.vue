@@ -173,7 +173,10 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
             </div>
           </template>
           <template v-else>
-            <p>{{ message.content }}</p>
+            <!-- An attachment-only turn has no body: Core appends it with an empty text
+                 projection, so the paragraph is omitted rather than rendered as a blank
+                 line inside the bubble. -->
+            <p v-if="message.content">{{ message.content }}</p>
             <div v-if="timeLabel" class="user-message-time">
               <Clock :size="9" />
               {{ timeLabel }}

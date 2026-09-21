@@ -744,6 +744,138 @@ public sealed class AttachmentApiTests : IAsyncLifetime
         }
     }
 
+    // ── an attachment with no words: a turn of its own, and not a request ─────────────
+
+    /// <summary>
+    /// The point of this whole slice in one assertion set: a file the user dropped without a
+    /// sentence must land in the transcript, and the next turn's context must carry it. Until
+    /// here the only way to hand over a file was to invent a question to hang it on, because
+    /// the interaction contract read an empty body as a malformed request.
+    /// </summary>
+    [Fact]
+    public async Task AttachOnlyMessage_AppendsItBindsTheFileAndStartsNothing()
+    {
+        var (client, sessionId) = await OpenSessionAsync("file-only");
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes("the log\n"), "server.log", "text/plain");
+
+        var response = await SendAsync(client, sessionId, new
+        {
+            content = "",
+            client_message_id = "file-only-1",
+            dispatch_mode = "queued",
+            attachment_ids = new[] { id }
+        });
+        Assert.True(HttpStatusCode.Created == response.StatusCode, await response.Content.ReadAsStringAsync());
+
+        var body = await BodyAsync(response);
+        Assert.Equal("message_only", body.GetProperty("status").GetString());
+        // Absent, not null: this host drops nulls on write, so "no run" has to be read off the
+        // missing key. Pinned here because a client that inferred it from the status string
+        // would keep working if the shape changed, and then silently start polling a run that
+        // will never exist.
+        Assert.False(body.TryGetProperty("run_id", out _), body.ToString());
+        var messageId = body.GetProperty("message_id").GetGuid();
+
+        var page = await MessagesAsync(client, sessionId);
+        var message = Assert.Single(page.EnumerateArray());
+        Assert.Equal(messageId, message.GetProperty("id").GetGuid());
+        Assert.Equal("user", message.GetProperty("role").GetString());
+        Assert.Equal(string.Empty, message.GetProperty("content").GetString());
+        Assert.Equal("server.log", Assert.Single(message.GetProperty("attachments").EnumerateArray()).GetProperty("file_name").GetString());
+
+        var runs = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/runs");
+        Assert.Empty(runs);
+    }
+
+    [Fact]
+    public async Task AttachOnlyMessage_ReplayOfTheSameClientMessageIdAppendsNoDuplicate()
+    {
+        // A retry is the normal case for an upload-then-send on a flaky link, and there is no
+        // directive row here to replay against: the message's own client id is the only key.
+        var (client, sessionId) = await OpenSessionAsync("file-only-replay");
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes("once\n"), "trace.txt", "text/plain");
+        object Body() => new
+        {
+            content = "   ",
+            client_message_id = "file-only-replay-1",
+            dispatch_mode = "queued",
+            attachment_ids = new[] { id }
+        };
+
+        var first = await BodyAsync(await SendAsync(client, sessionId, Body()));
+        var second = await BodyAsync(await SendAsync(client, sessionId, Body()));
+
+        Assert.True(first.TryGetProperty("message_id", out var firstId), first.ToString());
+        Assert.True(second.TryGetProperty("message_id", out var secondId), second.ToString());
+        Assert.Equal(firstId.GetGuid(), secondId.GetGuid());
+        var page = await MessagesAsync(client, sessionId);
+        Assert.Single(page.EnumerateArray());
+
+        // The pair that keeps the retry allowance from becoming a blanket "any id that exists
+        // somewhere in this session": a different client_message_id may not claim a row that
+        // another message already carries.
+        var thief = await SendAsync(client, sessionId, new
+        {
+            content = "",
+            client_message_id = "file-only-replay-2",
+            dispatch_mode = "queued",
+            attachment_ids = new[] { id }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, thief.StatusCode);
+        Assert.Equal("attachment_not_found", await ErrorCodeAsync(thief));
+        Assert.Single((await MessagesAsync(client, sessionId)).EnumerateArray());
+    }
+
+    [Fact]
+    public async Task BlankSend_WithNothingToCarry_IsStillRefused_AndSaysWhatWouldWork()
+    {
+        var (client, sessionId) = await OpenSessionAsync("blank-refused");
+
+        var nothing = await BodyAsync(await SendAsync(client, sessionId, new
+        {
+            content = "  ",
+            dispatch_mode = "queued"
+        }));
+        Assert.Equal("invalid_request", nothing.GetProperty("code").GetString());
+        // The refusal has to name the other way to open a turn, or "content is required" reads
+        // as a form validation error and the user never learns that attaching was an option.
+        Assert.Contains("attachment", nothing.GetProperty("message").GetString());
+
+        // An empty array is not "carrying an attachment", and it must not sneak past either.
+        var emptyList = await SendAsync(client, sessionId, new
+        {
+            content = "",
+            dispatch_mode = "queued",
+            attachment_ids = Array.Empty<Guid>()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyList.StatusCode);
+        Assert.Equal("invalid_request", await ErrorCodeAsync(emptyList));
+
+        Assert.Equal(0, (await MessagesAsync(client, sessionId)).GetArrayLength());
+    }
+
+    [Fact]
+    public async Task AttachOnlyMessage_ReachesTheNextTurnsContext()
+    {
+        var (client, sessionId) = await OpenSessionAsync("file-only-context");
+        var id = await UploadRecordedAsync(client, sessionId, Encoding.UTF8.GetBytes("stack trace line one"), "crash.log", "text/plain");
+        await SendAsync(client, sessionId, new
+        {
+            content = "",
+            client_message_id = "file-only-context-1",
+            dispatch_mode = "queued",
+            attachment_ids = new[] { id }
+        });
+
+        // The message body is empty, so this section is the only route the file has into the
+        // model's view of the conversation. If it were keyed on the message text instead of the
+        // binding, an attachment-only turn would be invisible here and the feature would be a lie.
+        var section = await AttachmentSectionAsync(sessionId);
+        Assert.Contains("crash.log", section);
+        Assert.Contains($"(id:{id}", section);
+        Assert.Contains("stack trace line one", section);
+    }
+
     private sealed class NoProviderManifestResolver : IToolManifestSnapshotResolver
     {
         private static readonly ToolManifestSnapshot Snapshot = new(

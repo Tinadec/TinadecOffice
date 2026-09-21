@@ -378,7 +378,12 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
 
     public async Task<StoredMessage> AddMessageAsync(Guid sessionId, string content, string role, Guid? runId, Guid? turnId, string? clientMessageId, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("Message content is required.");
+        // Null is a caller that has nothing to say; an explicitly empty body is a turn whose
+        // content is not text. The only such turn today is an attachment-only message, where
+        // the bytes live in a bound attachment row and the body is honestly empty rather than
+        // missing. Anything that should have words and does not is refused at the interaction
+        // boundary, which is the place that can tell the two apart.
+        if (content is null) throw new ArgumentException("Message content is required.");
         var sessionRef = await FindAsync(sessionId, cancellationToken).ConfigureAwait(false) ?? throw new KeyNotFoundException("Session was not found.");
         var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);

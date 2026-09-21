@@ -15,7 +15,7 @@ import {
 } from '@/api'
 import { basenameFromPath } from '@/format'
 import { getDispatchPref } from '@/lib/dispatchPref'
-import { attachmentsForSend, settleSentAttachments } from '@/lib/pendingAttachments'
+import { attachmentsForSend, readyAttachmentCount, settleSentAttachments } from '@/lib/pendingAttachments'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { useNotifications } from '@/composables/useNotifications'
@@ -94,9 +94,9 @@ const {
 
 const { notify, banner, dismissByKey } = useNotifications()
 
-function generateTitle(content: string): string {
+function generateTitle(content: string, attachmentNames: readonly string[] = []): string {
   const trimmed = content.trim()
-  if (!trimmed) return 'New chat'
+  if (!trimmed) return attachmentNames[0] ?? 'New chat'
   const firstLine = trimmed.split('\n')[0]
   if (firstLine.length <= 50) return firstLine
   return firstLine.substring(0, 47) + '...'
@@ -450,7 +450,7 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
       throw err
     }
     if (pendingSessionId.value === sessionId) {
-      const title = generateTitle(snapshotContent)
+      const title = generateTitle(snapshotContent, outgoing.summaries.map((row) => row.file_name))
       try {
         await api.updateSessionTitle(sessionId, title)
         const idx = sessions.value.findIndex((s) => s.id === sessionId)
@@ -715,7 +715,9 @@ export const homeController = {
   promoteQueued,
   sendMessage: async (opts?: { dispatch_mode?: DispatchMode; target_run_id?: string | null; mode_version_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null }) => {
     const content = draft.value.trim()
-    if (!content) return
+    // Empty is sendable when a finished upload is there to speak for the turn; Core appends
+    // it as a message and starts no run. Same rule the Send button reads, from the same owner.
+    if (!content && readyAttachmentCount() === 0) return
     await handleSend(content, opts)
   },
   handleWelcomeSend: (payload: { content: string; permission_mode: PermissionLevel; mode_version_id?: string | null }) => handleSend(payload.content, payload),

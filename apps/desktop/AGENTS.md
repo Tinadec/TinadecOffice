@@ -59,6 +59,11 @@ TinaChat（2026-09-19，2026-09-20 收口为纯观察）：定位是**智能体�
   - **虚拟工具镜像从注释提醒升级为契约**：`toolPresentation.test.ts` 直接 parse `CoreVirtualToolPolicy.cs` 比对 `CORE_VIRTUAL_TOOL_IDS`，并补 `read_attachment: 'read'` 的 kind（否则落进 'other'、没有图标）。这条新契约在本次只改 Core 的那一轮立刻变红，正是 #15「补了译文却没登记来源」同一族。
   - **种子包 2.5.0 → 2.6.0**：`solo_master`/`search`/`global_engineering` 声明 `read_attachment`，`meeting` 保持空工具面。按仓库规矩 version 与 digest 一起动；digest 先拿 HEAD 的旧清单复算，确认能得回原值 `2463dee…` 才信新值 `e34896a…`——防止算法写错却产出「看着对」的新数字。
   - **门禁**：Core `AttachmentApiTests` 32/32（26 既有 + 6 新）；desktop pack + presentation 39/39；四道守卫各自变异验证过。图片/音频仍读不了：这个运行时没有二进制通道，工具直接拒绝而不是回 base64，真视觉通道属独立批次。**未验证**：真机里由模型自己发起一次 `read_attachment`（工具面来自冻结清单，未在 Electron + 真 provider 下走过）。
+- **纯附件消息：不打字也能把文件送进去（2026-09-21，阶段 3c 收尾）**：上传完必须配一句话才发得出去，因为 Send 只读草稿、Core 又把空 `content` 判成畸形请求。现在「正文空 + 有 ready 附件」发得出去，Core 回 `status: "message_only"`、不起 run（登记与理由在 `TinadecCore/AGENTS.md` 5c）。
+  - **Send 的判定只认一个 owner**：`pendingAttachments.isSendable` 同时喂按钮的 `canSend` 与 `attachmentsForSend()`，`HomeController.sendMessage` 读同一份。uploading/failed 的芯片**不**解锁——那时还没有 `attachment_id`，放行了就是发一条空消息把文件丢掉。配对用例：ready 芯片能发、in-flight 芯片不能发（只留一条的话，删掉闸门也能骗绿）。
+  - **只有芯片不算消息**：`MessageItem.vue` 的正文 `<p>` 加了 `v-if`，否则一条空正文会在气泡里留一行空白；附件条本来就按消息自带投影渲染。
+  - **首条消息的标题**：`generateTitle('')` 过去回 `'New chat'`，于是「只发了 crash.log 的会话」在列表里叫 New chat。现在空正文回落到这批附件的文件名。
+  - **wire 形状**：这台主机写 JSON 丢弃 null，所以「没有 run」表现为 `run_id` 键不存在（不是 `null`）。用例把这件事写死，免得以后有人按 `status` 字符串猜。
 
 - **`src/transport/` 那层「留给未来 WS」的壳也删了，并同步纠正写着它的规则（2026-09-21，阶段 3b 第三段）**：四个文件、69 行，唯一入口是 `index.ts` 的再导出，而全仓（含 TinadecUI 卡片壳）**没有一个 importer**；`sseTransport.sse()` 收三个参数、返回一个空 `AbortController`——不发送、不接收、不报错，正是本轮一直在剪的「回答调用者以沉默」那一族。
   - **这是一次有意的规则修订，不是绕过**：`.ponytail/rules.md`（根 `AGENTS.md` 指认的 canonical 规则）原本写着「keep transport seams (`src/transport/`) for the future WS upgrade」，同一条里还说「Run streaming uses `useRunStream`」——后半句在上一刀之后已经指向一个不存在的文件。规则改为陈述现状：run 流只有一个读者 `src/lib/runStream.ts`，可注入的接缝是它的 `fetchImpl`；`src/transport/` 已删并标注 verified 2026-09-21，理由是 Core 至今不暴露任何 WebSocket 端点，所以「WS 升级」是对一份尚不存在的协议做新实现，而不是在这个接口后面换实现。`.ponytail/debt.md` 里那两行（`transport/sseTransport.ts`、`stores/workbench.ts:41`）随之删除，`useRunStream.ts` 那行的路径改指 `lib/runStream.ts`。

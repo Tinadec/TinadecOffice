@@ -42,8 +42,11 @@ public static class InteractionsEndpoints
             .Select(property => property.Name)
             .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "meeting_model_override" or "attachment_ids"));
         if (unknownField is not null) return Results.BadRequest(new { code = "unknown_field", message = $"Field '{unknownField}' is not part of the interaction contract." });
-        var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
-        if (string.IsNullOrWhiteSpace(content)) return Results.BadRequest(new { code = "invalid_request", message = "content is required" });
+        var content = el.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
+        // Not "content is required" here: a message that carries a file does say something, it
+        // just does not say it in words. The refusal belongs below, where the attachment ids have
+        // been parsed, so the two together decide whether this turn says anything at all.
+        var hasText = !string.IsNullOrWhiteSpace(content);
         var clientMessageId = el.TryGetProperty("client_message_id", out var cm) ? cm.GetString() : Guid.NewGuid().ToString("N");
         var modeVersionId = el.TryGetProperty("mode_version_id", out var mv) && Guid.TryParse(mv.GetString(), out var g) ? g : (Guid?)null;
         var dispatchMode = el.TryGetProperty("dispatch_mode", out var dm) ? dm.GetString()?.Trim().ToLowerInvariant() : "queued";
@@ -111,13 +114,32 @@ public static class InteractionsEndpoints
                 // stale id from a session the user has since left — from starting a run
                 // whose message silently carries nothing.
                 var unbound = await attachments.ListAsync(sessionId, ct).ConfigureAwait(false);
-                var missing = ids.Except(unbound.Where(row => row.MessageId is null).Select(row => row.Id)).ToArray();
+                // "Unbound" is the wrong ceiling for a retry. When the first response was lost,
+                // the rows are bound - to the message this same client_message_id already names -
+                // and refusing the resend told the user their own file does not exist. The bind
+                // below treats rows the message already owns as success, so the replay was always
+                // meant to get this far; only this pre-flight blocked it.
+                var replayTarget = string.IsNullOrWhiteSpace(clientMessageId)
+                    ? null
+                    : await conversations.FindMessageByClientMessageIdAsync(sessionId, clientMessageId, ct).ConfigureAwait(false);
+                var presentable = unbound
+                    .Where(row => row.MessageId is null || (replayTarget is not null && row.MessageId == replayTarget.Id))
+                    .Select(row => row.Id);
+                var missing = ids.Except(presentable).ToArray();
                 if (missing.Length > 0)
                 {
                     return Results.BadRequest(new { code = "attachment_not_found", message = $"No unbound attachment in this session has the id(s): {string.Join(", ", missing)}.", missing });
                 }
             }
             attachmentIds = ids;
+        }
+
+        if (!hasText && attachmentIds is not { Count: > 0 })
+        {
+            // Same machine code the empty-content contract has always answered with; only the
+            // message grew, because "content is required" was a lie by omission - attaching the
+            // file is the other way to say something.
+            return Results.BadRequest(new { code = "invalid_request", message = "content is required unless the message carries an attachment." });
         }
 
         // The message is appended first (its id comes from the run admission or the queued
@@ -144,6 +166,35 @@ public static class InteractionsEndpoints
         var chatInput = chatInputs is null ? null : await chatInputs.GetForSessionAsync(sessionId, ct);
         if (chatInput is not null)
             return TinaChatInputLocked(req);
+
+        // A file with no words is not a request, so this turn appends to the transcript and
+        // starts nothing. Run admission keeps its own "message content is required" rule
+        // untouched - what changed is the refusal to pretend that uploading a file is a
+        // question. The next typed turn sees the file: the context builder lists attachments
+        // bound to user messages inside its window, so the bytes reach the model through the
+        // evidence section plus, when needed, `read_attachment` by the id printed there.
+        if (!hasText)
+        {
+            var fileOnlyMessage = await conversations.AppendMessageAsync(
+                sessionId, "user", string.Empty, clientMessageId: clientMessageId, cancellationToken: ct).ConfigureAwait(false);
+            var fileOnlyBind = await BindAttachmentsAsync(fileOnlyMessage.Id).ConfigureAwait(false);
+            if (fileOnlyBind is not null) return fileOnlyBind;
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{fileOnlyMessage.Id}", new
+            {
+                interaction_id = fileOnlyMessage.Id,
+                session_id = sessionId,
+                message_id = fileOnlyMessage.Id,
+                // No run_id key at all: this host drops nulls on write, so "there is no run"
+                // travels as an absent field - which is what the client already tests with
+                // `if (resp.run_id)`. Writing `run_id = null` here would be a comment posing
+                // as data.
+                status = "message_only",
+                attachment_ids = attachmentIds,
+                client_message_id = clientMessageId,
+                context_revision = await conversations.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false),
+                correlation_id = clientMessageId
+            });
+        }
 
         // mode_version validation if provided
         if (modeVersionId.HasValue)

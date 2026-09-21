@@ -22,17 +22,25 @@ const h = vi.hoisted(() => ({
 // The strip's own behaviour is pinned in pendingAttachments.test.ts; here it is only
 // the source of "what a send carries", so the controller's three decisions (forward,
 // clear, refuse) can be read off one call.
-const attach = vi.hoisted(() => ({
-  forSend: vi.fn(() => ({
+const attach = vi.hoisted(() => {
+  const forSend = vi.fn(() => ({
     clientIds: [] as string[],
     attachmentIds: [] as string[],
     summaries: [] as Record<string, unknown>[],
-  })),
-  settle: vi.fn(),
-}))
+  }))
+  return {
+    forSend,
+    // Derived from the same stub the controller forwards, so a case that hands over two ready
+    // rows also moves the count: two independent stubs could disagree and hide a real
+    // disagreement between the two rules inside the double.
+    readyCount: vi.fn(() => forSend().attachmentIds.length),
+    settle: vi.fn(),
+  }
+})
 
 vi.mock('@/lib/pendingAttachments', () => ({
   attachmentsForSend: attach.forSend,
+  readyAttachmentCount: attach.readyCount,
   settleSentAttachments: attach.settle,
 }))
 
@@ -279,5 +287,39 @@ describe('HomeController.sendMessage attachment hand-off', () => {
     expect('attachment_ids' in body).toBe(false)
     // The clear runs but claims nothing: an empty bundle must not drop any chip.
     expect(attach.settle).toHaveBeenCalledWith(empty)
+  })
+
+  /**
+   * The pair below is what gives the send guard its meaning: an empty draft with a finished
+   * upload must go out, and an empty draft with nothing to send must not. Either one alone
+   * passes if the guard is deleted (the first) or if it was never relaxed (the second).
+   */
+  it('sends an empty draft when an upload is there to speak for the turn', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue(outgoing)
+    homeController.updateDraft('')
+    await flushPromises()
+    h.createInteraction.mockResolvedValueOnce({ run_id: null, status: 'message_only' })
+
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(body.content).toBe('')
+    expect(body.attachment_ids).toEqual(['att-1', 'att-2'])
+    expect(attach.settle).toHaveBeenCalledWith(outgoing)
+    // No run means no queued card: the turn is already in the transcript, nothing is waiting.
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('refuses an empty draft with only an in-flight upload, because it names no row', async () => {
+    await readySession()
+    attach.forSend.mockReturnValue({ clientIds: [], attachmentIds: [], summaries: [] })
+    homeController.updateDraft('   ')
+    await flushPromises()
+
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+
+    expect(h.createInteraction).not.toHaveBeenCalled()
+    expect(attach.settle).not.toHaveBeenCalled()
   })
 })

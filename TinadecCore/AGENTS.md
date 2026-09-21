@@ -400,6 +400,12 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - **安全边界写在工具里，不指望调用方**：附件按 (tenant, workspace) 存，比一次对话宽，所以本工具先 `ListAsync(scope.SessionId)` 再按 id 取；直接 `FindAsync(id)` 就能读通别的会话的字节。四道守卫（会话限定、非文本拒绝、页大小上限、上下文行里的 id）各自做过变异：每道只红它对应的用例，无连带。
 - **仍然存在的硬边界**：图片/音频读不到不是这件工具的缺陷，是这个运行时没有二进制通道（会话消息只有一个字符串，CLI/ACP 把它摊平）。工具的回答直说「没有 binary 通道，别猜」，而不是回一段 base64 让模型演它看见了一张图。真正的视觉通道是独立批次。
 
+**5c. 纯附件消息：有话要说但没打字的一轮（2026-09-21）。** 上传完成后不配一句话就发不出去——`content` 在交互契约里一直是必填。现在 `content` 空白且 `attachment_ids` 非空时，Core 追加一条空正文的 user 消息、把附件绑上去，回 `status: "message_only"`，**不带 run_id**（这台主机写 JSON 时丢弃 null，所以「没有 run」在 wire 上表现为该键不存在，桌面本来就用 `if (resp.run_id)` 读它）。
+- **不起 run 是刻意的**：`FullDuplexRunCoordinator` 的 `INVALID_MESSAGE`「Message content is required」原样保留。文件不是请求；为了让 run 跑起来而编一句目标文案，等于把用户没说过的话写在他名下。下一轮有正文的输入进来时，附件经既有的 `session_attachments` 证据段可见（它按「绑在窗口内 user 消息上」过滤，不看正文），需要更多字节就用 5b 那件工具按 id 翻页。
+- 存储侧 `ProjectSessionStore.AddMessageAsync` 的闸门从 `IsNullOrWhiteSpace(content)` 收成 `content is null`：null 是「调用方忘了说话」，空串是「这一轮的内容本来就不是文字」。能产生空串的只有上面那条分支。
+- **顺带修掉一条既有缺陷**：附件预检只认「未绑定」的行，于是**重试同一个 `client_message_id`**（首响应丢在网络里）会被回 `attachment_not_found`——那些行其实已被这条消息 own 了。预检现在额外接受「绑在本 `client_message_id` 所指消息上」的行；换一个 `client_message_id` 仍然拒，配对用例把这条锁住，防止放宽成「会话里存在过就行」。
+- 桌面 Send 的规矩：`正文非空 或 有 ready 附件`。只有 uploading/failed 的芯片不算数——那时还没有 `attachment_id`，发了就是发一条空消息并把文件丢掉；判定只认 `pendingAttachments.isSendable` 一个 owner，按钮与 `attachmentsForSend()` 读同一份，两边不可能各猜一次。
+
 **6. 种子包（`apps/desktop/src/agentPacks/GraphSeedPack/`）升到 2.2.0。** 新增第四模式 `solo` 与**四条模式级管线**（`solo-base`/`vibe-base`/`fixed-base`/`free-base`，各描述主人与子智能体在该模式下的行为），四模式各绑一条、互不相同。
 - **节点 `config` 只能收窄工具面**（`EffectiveTools` = agent ∩ mode），**不能扩增**。所以给主人工具**必须**用一个独立智能体资源 —— 新增 `solo_master`（operation、持 11 件工具含 `write_file`/`shell`/`task_dispatch`、**故意不含 `git_push`**，重副作用派给 `global_engineering`）。若直接给 `meeting` 加工具，三个既有模式会被**一齐判成 solo**。
 - 无声明边的档位下，子智能体必须作为**派生模板**（`agent_types` + 无节点绑定）声明，**不能**声明成节点——否则边权限检查会把派发拒掉。故 `solo` 与 `free_director` 同形：1 节点 + 0 边 + 白名单。

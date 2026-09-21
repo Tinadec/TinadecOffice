@@ -66,6 +66,11 @@ const attachMock = vi.hoisted(() => ({
   removePendingAttachment: vi.fn(async (_clientId: string) => {}),
   reconcileSession: vi.fn(),
   formatAttachmentBytes: vi.fn((bytes: number) => `${bytes}B`),
+  readyAttachmentCount: vi.fn(() =>
+    // The same rule the real module applies, re-expressed here so a composer case can put a
+    // chip in either state. Whether the rule is the right one is lib/pendingAttachments.test.ts.
+    (attachMock.list?.value ?? []).filter((item) => item.status === 'ready' && item.storedRow !== null).length,
+  ),
   MAX_ATTACHMENT_BYTES: 33_554_432,
   TOO_LARGE_CODE: 'attachment_too_large',
 }))
@@ -79,6 +84,7 @@ vi.mock('@/lib/pendingAttachments', async () => {
     removePendingAttachment: attachMock.removePendingAttachment,
     reconcileSession: attachMock.reconcileSession,
     formatAttachmentBytes: attachMock.formatAttachmentBytes,
+    readyAttachmentCount: attachMock.readyAttachmentCount,
     MAX_ATTACHMENT_BYTES: attachMock.MAX_ATTACHMENT_BYTES,
     TOO_LARGE_CODE: attachMock.TOO_LARGE_CODE,
   }
@@ -589,5 +595,51 @@ describe('ComposerBar attachments', () => {
     await flushPromises()
     expect(wrapper.find('.composer-attachments').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  /**
+   * A file with no words used to be unsendable: Send read the draft alone, so the user had
+   * to invent a sentence to hang the upload on. Core now appends such a turn and starts no
+   * run, so the button's rule is "text or a finished upload" - and an upload still in flight
+   * must NOT unlock it, because it names no stored row yet.
+   */
+  describe('Send unlocks for an attachment-only turn', () => {
+    function withStoredRow(clientId: string): PendingAttachment {
+      return row({ clientId, storedRow: { id: 'row-1' } as PendingAttachment['storedRow'] })
+    }
+
+    it('stays disabled while the draft is empty and nothing is pending', async () => {
+      attachMock.list.value = []
+      const wrapper = mountComposer({ sessionId: 'sess-1', modelValue: '' })
+      await flushPromises()
+      expect(wrapper.find('.welcome-dialog-send').attributes('disabled')).toBeDefined()
+      wrapper.unmount()
+    })
+
+    it('enables and emits submit on a ready chip with no text', async () => {
+      attachMock.list.value = [withStoredRow('r1')]
+      const wrapper = mountComposer({ sessionId: 'sess-1', modelValue: '' })
+      await flushPromises()
+
+      const send = wrapper.find('.welcome-dialog-send')
+      expect(send.attributes('disabled')).toBeUndefined()
+      await send.trigger('click')
+      expect(wrapper.emitted('submit')).toHaveLength(1)
+      wrapper.unmount()
+      attachMock.list.value = []
+    })
+
+    it('stays disabled while the only chip is still uploading', async () => {
+      attachMock.list.value = [row({ clientId: 'u1', status: 'uploading', attachmentId: null })]
+      const wrapper = mountComposer({ sessionId: 'sess-1', modelValue: '' })
+      await flushPromises()
+
+      const send = wrapper.find('.welcome-dialog-send')
+      expect(send.attributes('disabled')).toBeDefined()
+      await send.trigger('click')
+      expect(wrapper.emitted('submit')).toBeUndefined()
+      wrapper.unmount()
+      attachMock.list.value = []
+    })
   })
 })

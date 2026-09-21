@@ -127,6 +127,7 @@ export default {
     noProject: 'No project opened',
     placeholder: 'Talk to the Meeting Agent by default. It will split the task, plan execution, and dispatch other agents.',
     send: 'Send',
+    nothingToSend: 'Type a message, or wait for the attachment to finish uploading',
     ready: 'Ready for the first task.',
     startProject: 'Start a project',
     whatToDo: 'Tell the Meeting Agent what you want to do...',

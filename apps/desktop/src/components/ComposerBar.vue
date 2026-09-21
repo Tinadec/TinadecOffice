@@ -17,6 +17,7 @@ import {
   formatAttachmentBytes,
   MAX_ATTACHMENT_BYTES,
   pendingAttachments,
+  readyAttachmentCount,
   reconcileSession,
   removePendingAttachment,
   TOO_LARGE_CODE,
@@ -303,6 +304,12 @@ const attachments = pendingAttachments
 // yet) has nowhere to put bytes. The entries stay visible and disabled rather than
 // vanishing, so the menu does not change shape between the two surfaces.
 const canAttach = computed(() => Boolean(props.sessionId))
+/**
+ * A file with no words is a turn of its own: Core appends it to the transcript and starts no
+ * run. So Send unlocks on either half. Only *ready* chips count - an upload still in flight
+ * names no stored row, and sending early would drop the file.
+ */
+const canSend = computed(() => Boolean(props.modelValue.trim()) || readyAttachmentCount() > 0)
 
 function openFilePicker(accept: string) {
   showPlusMenu.value = false
@@ -395,7 +402,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 function submit(pref?: DispatchPref) {
   const content = props.modelValue.trim()
-  if (!content) return
+  if (!content && !canSend.value) return
   if (props.hero) {
     // Start-page send: full welcome payload, no dispatch menu.
     resetTextareaHeight()
@@ -665,7 +672,9 @@ function confirmSteer(id: string) {
             variant="ghost"
             size="icon"
             class="welcome-dialog-send"
-            :disabled="!modelValue.trim()"
+            data-testid="composer-send"
+            :disabled="!canSend"
+            :aria-label="canSend ? t('chat.send') : t('chat.nothingToSend')"
             @click="submit()"
           >
             <span v-if="busy" class="composer-send-spinner" role="status" aria-label="sending" />
