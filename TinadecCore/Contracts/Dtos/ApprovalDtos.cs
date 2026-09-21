@@ -69,6 +69,27 @@ public sealed class ApprovalResponseDto
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Redacted, bounded projection of the tool call parameters — the payload a
+    /// reviewer needs to decide. Never the raw parameters: file bodies and MCP
+    /// payloads come back as a size plus hash, and secret-shaped keys are dropped.
+    /// Empty for rows minted before this field existed.
+    /// </summary>
+    [JsonPropertyName("arguments")]
+    public string Arguments { get; init; } = string.Empty;
+
+    /// <summary>Command text for shell-class calls, when the tool names one.</summary>
+    [JsonPropertyName("command")]
+    public string? Command { get; init; }
+
+    /// <summary>Working directory the command would run in, when the call sets one.</summary>
+    [JsonPropertyName("cwd")]
+    public string? Cwd { get; init; }
+
+    /// <summary>Target path or ref the call acts on, when the tool names one.</summary>
+    [JsonPropertyName("resource_path")]
+    public string? ResourcePath { get; init; }
+
     [JsonPropertyName("status")]
     public string Status { get; init; } = string.Empty;
 

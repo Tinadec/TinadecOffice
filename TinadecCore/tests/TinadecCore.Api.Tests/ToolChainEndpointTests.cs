@@ -86,6 +86,24 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         var runId = ack.GetProperty("run_id").GetGuid();
 
         var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+
+        // Walkthrough defect 2: the row a human is asked to decide carried no target,
+        // no command and no parameters — just "Tool permission request requires
+        // authorization.". This park is a permission envelope, and ToolDispatcher has
+        // already bound its execution row, so the frozen evidence digest must be on the
+        // wire: the file it names, and not the bytes being written into it.
+        var parkDetail = await (await client.GetAsync($"/api/v1/approvals/{approvalId}"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("permission", parkDetail.GetProperty("kind").GetString());
+        Assert.Equal("write_file", parkDetail.GetProperty("tool_id").GetString());
+        var parkSummary = parkDetail.GetProperty("summary").GetString();
+        Assert.Contains("write_file", parkSummary, StringComparison.Ordinal);
+        Assert.Contains("probe.txt", parkSummary, StringComparison.Ordinal);
+        Assert.EndsWith("probe.txt", parkDetail.GetProperty("resource_path").GetString(), StringComparison.Ordinal);
+        var parkArguments = parkDetail.GetProperty("arguments").GetString() ?? string.Empty;
+        Assert.Contains("filepath", parkArguments, StringComparison.Ordinal);
+        Assert.DoesNotContain("hello", parkArguments, StringComparison.Ordinal);
+
         var decideResponse = await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" });
         Assert.Equal(HttpStatusCode.OK, decideResponse.StatusCode);
 

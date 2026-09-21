@@ -519,12 +519,28 @@ public sealed class UserToolActionService : IUserToolActionService, IUserToolAct
         if (existing is not null) return existing.Id;
         var now = DateTimeOffset.UtcNow;
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        // A reviewer cannot decide "User requested 'write_file'" without knowing which
+        // file. The parameters are read back exactly once here, at mint, so the
+        // approvals list stays a pure projection; a content failure leaves the row
+        // without evidence rather than blocking an approval that must exist.
+        var argumentsDigest = string.Empty;
+        try
+        {
+            var mintParameters = await ReadContentAsync(action.ParametersReference, action.ParametersHash,
+                action.ParametersLength, "application/json", cancellationToken).ConfigureAwait(false);
+            argumentsDigest = ApprovalEvidenceProjector.Encode(
+                ApprovalEvidenceProjector.Project(action.ToolId, mintParameters));
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or UnauthorizedAccessException)
+        {
+        }
         var row = new ApprovalRequestRecord
         {
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, ProjectId = action.ProjectId,
             UserToolActionId = action.Id, Kind = "user_tool", ToolId = action.ToolId, Risk = action.Risk,
             RequestHash = action.ParametersHash, NonceHash = ToolParametersHash.Compute(nonce),
             NonceSecretReference = $"approval_nonce_{scope.TenantId:N}_{Guid.NewGuid():N}", ParametersReference = action.ParametersReference,
+            ArgumentsDigest = argumentsDigest,
             Summary = $"User requested '{action.ToolId}'.", Status = "pending", ExpiresAt = now.AddMinutes(30),
             RequestedByPrincipalId = scope.PrincipalId, CreatedAt = now, UpdatedAt = now, Nonce = nonce
         };

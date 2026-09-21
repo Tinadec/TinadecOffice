@@ -493,7 +493,11 @@ public sealed class ControlPlaneService
         if (string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
         {
             var permissions = await _authorization.ListPermissionRequestsAsync(null, run, null, ct).ConfigureAwait(false);
-            result.AddRange(permissions.Where(x => x.Status is PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser).Select(ToPermissionResponse));
+            var parks = permissions
+                .Where(x => x.Status is PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser)
+                .ToList();
+            var evidence = await LoadParkEvidenceAsync(db, parks.Select(x => x.Id).ToList(), ct);
+            result.AddRange(parks.Select(x => ToPermissionResponse(x, evidence.GetValueOrDefault(x.Id))));
         }
         return Results.Ok(result.OrderByDescending(x => x is ApprovalResponseDto approval ? approval.CreatedAt : DateTimeOffset.MinValue));
     }
@@ -586,7 +590,11 @@ public sealed class ControlPlaneService
         var row = await db.ApprovalRequests.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId, ct);
         if (row is not null) return Results.Ok(ToResponse(row));
         var permission = await _authorization.GetPermissionRequestAsync(id, ct).ConfigureAwait(false);
-        return permission is null ? Results.NotFound() : Results.Ok(ToPermissionResponse(permission.Request));
+        if (permission is null) return Results.NotFound();
+        if (permission.Request.Status is not (PermissionRequestStatuses.AwaitingDelegate or PermissionRequestStatuses.AwaitingUser))
+            return Results.Ok(ToPermissionResponse(permission.Request, evidence: null));
+        var parkEvidence = await LoadParkEvidenceAsync(db, [id], ct);
+        return Results.Ok(ToPermissionResponse(permission.Request, parkEvidence.GetValueOrDefault(id)));
     }
     public async Task<IResult> DecideApproval(Guid id, ApprovalDecisionRequestDto input, CancellationToken ct)
     {
@@ -835,22 +843,71 @@ public sealed class ControlPlaneService
         return new RunScopeOutcome(row.Id, grant.Id, released);
     }
 
-    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row) => new()
-    { Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt };
-
-    private static ApprovalResponseDto ToPermissionResponse(PermissionRequestSnapshot value) => new()
+    private static ApprovalResponseDto ToResponse(ApprovalRequestRecord row)
     {
-        Id = value.Id,
-        RunId = value.RunId,
-        TaskId = value.TaskId,
-        AgentInstanceId = value.SubjectAgentInstanceId,
-        Kind = "permission",
-        ToolId = value.Claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? value.Claim.Resource[7..] : value.Claim.Resource,
-        Risk = value.Risk,
-        Summary = "Tool permission request requires authorization.",
-        Status = "pending",
-        ExpiresAt = value.ExpiresAt,
-        CreatedAt = value.CreatedAt,
-        UpdatedAt = value.UpdatedAt
-    };
+        // Rows minted before the evidence digest landed decode to nothing and keep
+        // showing only their stored summary — the projection never invents facts.
+        var hasEvidence = ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var evidence);
+        return new ApprovalResponseDto
+        {
+            Id = row.Id, ProjectId = row.ProjectId, SessionId = row.SessionId, RunId = row.RunId, TaskId = row.TaskId, AgentInstanceId = row.AgentInstanceId, ExecutionId = row.ExecutionId, Kind = row.Kind, ToolId = row.ToolId, Risk = row.Risk, Summary = row.Summary, Arguments = hasEvidence ? evidence.Arguments : string.Empty, Command = evidence.Command, Cwd = evidence.WorkingDirectory, ResourcePath = evidence.ResourcePath, Status = row.Status, RequestHash = row.RequestHash, ConsumedByExecutionId = row.ConsumedByExecutionId, Decision = row.Decision, DecisionReason = row.DecisionReason, DecidedAt = row.DecidedAt, ConsumedAt = row.ConsumedAt, ExpiresAt = row.ExpiresAt, CreatedAt = row.CreatedAt, UpdatedAt = row.UpdatedAt
+        };
+    }
+
+    /// <summary>
+    /// A policy park is decided by a human, but the parameters that motivated it are on
+    /// the tool execution row: ToolDispatcher binds execution.permission_request_id
+    /// before it returns, so the link already exists while the request is pending.
+    /// Without this join the reviewer sees a claim string and nothing else.
+    /// </summary>
+    private async Task<Dictionary<Guid, ApprovalEvidence>> LoadParkEvidenceAsync(
+        LifecycleDbContext db, List<Guid> permissionRequestIds, CancellationToken ct)
+    {
+        var evidence = new Dictionary<Guid, ApprovalEvidence>();
+        if (permissionRequestIds.Count == 0) return evidence;
+        var rows = await db.ToolExecutions.AsNoTracking().Where(x =>
+            x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId
+            && x.PermissionRequestId != null && permissionRequestIds.Contains(x.PermissionRequestId.Value))
+            .Select(x => new { PermissionRequestId = x.PermissionRequestId, x.ArgumentsDigest })
+            .ToListAsync(ct).ConfigureAwait(false);
+        foreach (var row in rows)
+        {
+            if (row.PermissionRequestId is { } permissionId
+                && ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var projected))
+            {
+                evidence[permissionId] = projected;
+            }
+        }
+        return evidence;
+    }
+
+    private static ApprovalResponseDto ToPermissionResponse(
+        PermissionRequestSnapshot value,
+        ApprovalEvidence? evidence)
+    {
+        // A policy park used to report nothing but "requires authorization". When it
+        // came from a tool call the execution's frozen digest names the real target;
+        // otherwise the claim itself is the most specific fact available.
+        var resource = value.Claim.Resource;
+        return new ApprovalResponseDto
+        {
+            Id = value.Id,
+            RunId = value.RunId,
+            TaskId = value.TaskId,
+            AgentInstanceId = value.SubjectAgentInstanceId,
+            Kind = "permission",
+            ToolId = resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase) ? resource[7..] : resource,
+            Risk = value.Risk,
+            Summary = evidence?.Summary ?? "Tool permission request requires authorization.",
+            Arguments = evidence?.Arguments ?? JsonSerializer.Serialize(new { capability = value.Claim.Capability, action = value.Claim.Action, resource }),
+            Command = evidence?.Command,
+            Cwd = evidence?.WorkingDirectory,
+            ResourcePath = evidence?.ResourcePath
+                ?? (resource.StartsWith("path://", StringComparison.OrdinalIgnoreCase) ? resource[7..] : null),
+            Status = "pending",
+            ExpiresAt = value.ExpiresAt,
+            CreatedAt = value.CreatedAt,
+            UpdatedAt = value.UpdatedAt
+        };
+    }
 }

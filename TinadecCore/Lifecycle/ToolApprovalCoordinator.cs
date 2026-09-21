@@ -87,6 +87,12 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
 
         var now = DateTimeOffset.UtcNow;
         var executionId = Guid.NewGuid();
+        // Freeze what the human will be asked to judge at the moment the call is
+        // admitted. Deriving it later would mean re-reading a content blob the run
+        // may already have superseded, and a list endpoint is not the place to
+        // parse parameter payloads.
+        var evidence = ApprovalEvidenceProjector.Project(request.ToolId, request.ParametersJson);
+        var argumentsDigest = ApprovalEvidenceProjector.Encode(evidence);
         var approvalId = needsApproval && !request.DeferApproval ? Guid.NewGuid() : (Guid?)null;
         var execution = new ToolExecutionRecord
         {
@@ -109,6 +115,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Status = needsApproval && !request.DeferApproval ? "awaiting_approval" : "requested",
             ParametersHash = request.ParametersHash,
             ParametersReference = parameters.Value,
+            ArgumentsDigest = argumentsDigest,
             ParametersLength = parameters.Length,
             Attempt = 1,
             CreatedAt = now,
@@ -138,7 +145,11 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                     Risk = NormalizeRisk(request.Risk),
                     RequestHash = request.ParametersHash,
                     ParametersReference = parameters.Value,
-                    Summary = Truncate(request.Summary, 4096),
+                    ArgumentsDigest = argumentsDigest,
+                    // The caller's own summary wins when it supplied one (user tool
+                    // actions phrase these in user terms); otherwise the projected
+                    // command/path is what makes the row decidable at all.
+                    Summary = Truncate(string.IsNullOrWhiteSpace(request.Summary) ? evidence.Summary : request.Summary, 4096),
                     Status = "pending",
                     ExpiresAt = now.Add(_decisionWindow),
                     RequestedByPrincipalId = scope.PrincipalId,
@@ -242,6 +253,10 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         row.ApprovalId = Guid.NewGuid();
         row.Status = "awaiting_approval";
         row.UpdatedAt = DateTimeOffset.UtcNow;
+        // The deferred mint reaches this path with only the execution row in hand.
+        // Its frozen evidence digest is what lets the approval name the command or
+        // path instead of the bare tool id plus an agent GUID.
+        var hasEvidence = ApprovalEvidenceProjector.TryDecode(row.ArgumentsDigest, out var executionEvidence);
         var approval = new ApprovalRequestRecord
         {
             Id = row.ApprovalId.Value,
@@ -258,7 +273,10 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Risk = row.Risk,
             RequestHash = row.ParametersHash,
             ParametersReference = row.ParametersReference,
-            Summary = $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.",
+            ArgumentsDigest = row.ArgumentsDigest,
+            Summary = Truncate(hasEvidence
+                ? executionEvidence.Summary
+                : $"Tool '{row.ToolId}' requested by agent {row.AgentInstanceId}.", 4096),
             Status = "pending",
             ExpiresAt = row.UpdatedAt.Add(_decisionWindow),
             RequestedByPrincipalId = scope.PrincipalId,
@@ -922,6 +940,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
             Status = needsApproval ? "awaiting_approval" : "requested",
             ParametersHash = source.ParametersHash,
             ParametersReference = source.ParametersReference,
+            ArgumentsDigest = source.ArgumentsDigest,
             ParametersLength = source.ParametersLength,
             WorkspaceSnapshotId = source.WorkspaceSnapshotId,
             WorkspaceSnapshotHash = source.WorkspaceSnapshotHash,
@@ -949,6 +968,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
                 Risk = source.Risk,
                 RequestHash = source.ParametersHash,
                 ParametersReference = source.ParametersReference,
+                ArgumentsDigest = source.ArgumentsDigest,
                 Summary = $"Retry for tool '{source.ToolId}' after unknown outcome from execution {source.Id}.",
                 Status = "pending",
                 ExpiresAt = now.Add(_decisionWindow),
