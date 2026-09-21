@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ComposerBar from './ComposerBar.vue'
 
@@ -18,6 +18,9 @@ const homeMock = vi.hoisted(() => ({
   promoteQueued: vi.fn(),
   editQueued: vi.fn(),
   dismissQueued: vi.fn(),
+  updateDraft: vi.fn(),
+  sendMessage: vi.fn(async () => {}),
+  createSession: vi.fn(async () => {}),
 }))
 
 const dispatchMock = vi.hoisted(() => ({
@@ -40,7 +43,7 @@ vi.mock('@/lib/dispatchPref', () => ({
 
 vi.mock('@/api', () => apiMock)
 
-function mountComposer(props: Partial<{ busy: boolean; modelValue: string; modeVersionId: string | null }> = {}) {
+function mountComposer(props: Partial<{ busy: boolean; canStop: boolean; modelValue: string; modeVersionId: string | null }> = {}) {
   return mount(ComposerBar, {
     props: {
       busy: false,
@@ -257,5 +260,67 @@ describe('ComposerBar mode selector (single source: the published modes)', () =>
     wrapper.unmount()
     document.body.innerHTML = ''
     apiMock.api.listAgentModeTopologies.mockResolvedValue([])
+  })
+})
+
+describe('ComposerBar slash commands', () => {
+  async function pressEnter(wrapper: ReturnType<typeof mountComposer>) {
+    await wrapper.find('textarea').trigger('keydown', { key: 'Enter', shiftKey: false })
+    await flushPromises()
+  }
+
+  afterEach(() => {
+    // homeMock is module-level: without this, "not.toHaveBeenCalled" reads the
+    // previous test's call.
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('offers commands as soon as the line starts with a slash', async () => {
+    const wrapper = mountComposer({ canStop: true, modelValue: '/' })
+    await flushPromises()
+    expect(document.querySelectorAll('[data-testid="composer-commands"] li')).toHaveLength(4)
+    wrapper.unmount()
+  })
+
+  it('hides /stop when there is nothing to stop', async () => {
+    const wrapper = mountComposer({ canStop: false, modelValue: '/st' })
+    await flushPromises()
+    expect(document.querySelector('[data-testid="composer-command-stop"]')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('completes a half-typed argument command instead of sending it', async () => {
+    const wrapper = mountComposer({ modelValue: '/queue' })
+    await flushPromises()
+    await pressEnter(wrapper)
+    // The literal "/queue" must never reach the model as a prompt.
+    expect(homeMock.sendMessage).not.toHaveBeenCalled()
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(homeMock.updateDraft).toHaveBeenCalledWith('/queue ')
+    wrapper.unmount()
+  })
+
+  it('sends the payload of /queue as a one-shot queued dispatch', async () => {
+    const wrapper = mountComposer({ modelValue: '/queue 帮我跑测试', modeVersionId: 'mv-1' })
+    await flushPromises()
+    await pressEnter(wrapper)
+    expect(homeMock.updateDraft).toHaveBeenCalledWith('帮我跑测试')
+    expect(homeMock.sendMessage).toHaveBeenCalledWith({
+      dispatch_mode: 'queued',
+      target_run_id: null,
+      mode_version_id: 'mv-1',
+      meeting_model_override: null,
+    })
+    wrapper.unmount()
+  })
+
+  it('leaves prose that merely starts with a slash on the normal send path', async () => {
+    const wrapper = mountComposer({ modelValue: '/etc/hosts 里这一行是什么意思' })
+    await flushPromises()
+    await pressEnter(wrapper)
+    expect(homeMock.sendMessage).not.toHaveBeenCalled()
+    expect(wrapper.emitted('submit')).toBeTruthy()
+    wrapper.unmount()
   })
 })

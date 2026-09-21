@@ -44,6 +44,7 @@ const panelSources = import.meta.glob(
     // it labels nothing and translates no key.
     './../components/MessageItem.vue',
     './../components/MessageList.vue',
+    './../components/ComposerBar.vue',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>

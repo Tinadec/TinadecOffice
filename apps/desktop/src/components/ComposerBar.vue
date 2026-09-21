@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowUp, ChevronDown, FolderOpen, FolderPlus, Image, FileText, Plus, Settings, Sparkles, Square } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { ref, computed, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiButton, UiScrollArea } from '@/components/ui'
 import ModeSelector from './ModeSelector.vue'
@@ -10,6 +10,7 @@ import type { PermissionLevel } from '@/types/mode'
 import type { MeetingModelOverrideDto, ProjectDto } from '@/api'
 import { homeController } from '@/controllers/HomeController'
 import { getDispatchPref, type DispatchPref } from '@/lib/dispatchPref'
+import { filterComposerCommands, parseComposerCommand, type ComposerCommand } from '@/lib/composerCommands'
 import { computeDropdownPlacement, type DropdownPlacement } from '@/lib/dropdownPlacement'
 
 const { t } = useI18n()
@@ -67,6 +68,86 @@ const activeRuns = homeController.activeRuns
 const invokeError = computed(() => (homeController.invokeError as unknown as { value: string | null } | undefined)?.value ?? null)
 const steeringId = ref<string | null>(null)
 const steerTarget = ref('')
+
+const commandIndex = ref(0)
+const commandsDismissed = ref(false)
+const commandSuggestions = computed(() =>
+  commandsDismissed.value
+    ? []
+    : filterComposerCommands(props.modelValue).filter((command) => command.id !== 'stop' || props.canStop),
+)
+watch(() => props.modelValue, () => {
+  commandIndex.value = 0
+  commandsDismissed.value = false
+})
+
+const commandMenuStyle = ref<DropdownPlacement>({ position: 'fixed', left: '0px' })
+watch(commandSuggestions, async (list) => {
+  if (!list.length) return
+  await nextTick()
+  placeMenu(textareaRef.value, commandMenuStyle, { minWidth: 280, estimatedHeight: 116 })
+})
+
+function acceptCommand(command: ComposerCommand) {
+  updateDraft(`/${command.name}${command.needsArgument ? ' ' : ''}`)
+  commandsDismissed.value = true
+  void nextTick(() => textareaRef.value?.focus())
+}
+
+function runCommand(command: ComposerCommand, argument: string) {
+  commandsDismissed.value = true
+  switch (command.id) {
+    case 'stop':
+      updateDraft('')
+      emit('stop')
+      break
+    case 'new':
+      updateDraft('')
+      resetTextareaHeight()
+      void homeController.createSession(props.selectedProjectId ?? null)
+      break
+    case 'queue':
+    case 'parallel': {
+      // One-shot dispatch override: the persisted Enter preference the send menu owns
+      // is left alone. The draft is written through the controller rather than by
+      // awaiting two layers of emit, because sendMessage reads it right after.
+      const dispatchMode = command.id === 'queue' ? 'queued' : 'parallel'
+      updateDraft(argument)
+      resetTextareaHeight()
+      void homeController.sendMessage({
+        dispatch_mode: dispatchMode,
+        target_run_id: null,
+        mode_version_id: props.modeVersionId ?? null,
+        meeting_model_override: props.meetingModelOverride ?? null,
+      })
+      break
+    }
+  }
+}
+
+function updateDraft(value: string) {
+  homeController.updateDraft(value)
+  emit('update:modelValue', value)
+}
+
+/** True when Enter was consumed by a command, so the plain send path must not run. */
+function handleCommandEnter(): boolean {
+  const parsed = parseComposerCommand(props.modelValue)
+  if (parsed.kind === 'run') {
+    runCommand(parsed.command, parsed.argument)
+    return true
+  }
+  if (parsed.kind === 'incomplete') {
+    acceptCommand(parsed.command)
+    return true
+  }
+  const highlighted = commandSuggestions.value[commandIndex.value]
+  if (highlighted) {
+    acceptCommand(highlighted)
+    return true
+  }
+  return false
+}
 
 const selectedProject = computed(() =>
   props.projects?.find((p) => p.id === props.selectedProjectId) ?? null
@@ -177,8 +258,30 @@ function submit(pref?: DispatchPref) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  const suggestions = commandSuggestions.value
+  if (suggestions.length) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      commandIndex.value = (commandIndex.value + delta + suggestions.length) % suggestions.length
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      commandsDismissed.value = true
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      acceptCommand(suggestions[commandIndex.value] ?? suggestions[0])
+      return
+    }
+  }
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
+    if (suggestions.length || props.modelValue.trimStart().startsWith('/')) {
+      if (handleCommandEnter()) return
+    }
     submit()
   }
 }
@@ -215,17 +318,17 @@ function confirmSteer(id: string) {
           <div class="queued-content">{{ item.content }}</div>
           <div class="queued-actions">
             <template v-if="steeringId === item.id">
-              <select v-model="steerTarget" class="composer-select-input queued-run-select">
-                <option value="" disabled>选择目标 run</option>
+              <select v-model="steerTarget" class="composer-select-input queued-run-select" :aria-label="t('composer.selectTargetRun')">
+                <option value="" disabled>{{ t('composer.selectTargetRun') }}</option>
                 <option v-for="r in activeRuns" :key="r.id" :value="r.id">{{ r.id.slice(0,8) }} · {{ r.status }}</option>
               </select>
-              <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">确认引导</button>
+              <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">{{ t('composer.confirmSteer') }}</button>
             </template>
             <template v-else>
-              <button class="queued-action" @click="startSteer(item.id)">引导</button>
-              <button class="queued-action" @click="homeController.promoteQueued(item.id)">并列</button>
-              <button class="queued-action" @click="homeController.editQueued(item.id)">编辑</button>
-              <button class="queued-action" @click="homeController.dismissQueued(item.id)">×</button>
+              <button class="queued-action" @click="startSteer(item.id)">{{ t('composer.steer') }}</button>
+              <button class="queued-action" @click="homeController.promoteQueued(item.id)">{{ t('composer.parallel') }}</button>
+              <button class="queued-action" @click="homeController.editQueued(item.id)">{{ t('composer.edit') }}</button>
+              <button class="queued-action" :aria-label="t('composer.dismiss')" @click="homeController.dismissQueued(item.id)">×</button>
             </template>
           </div>
         </div>
@@ -257,6 +360,32 @@ function confirmSteer(id: string) {
             </div>
           </Teleport>
         </div>
+
+        <Teleport to="body">
+          <ul
+            v-if="commandSuggestions.length"
+            class="composer-commands-portal"
+            :style="commandMenuStyle"
+            data-testid="composer-commands"
+            role="listbox"
+            :aria-label="t('composer.commands')"
+          >
+            <li
+              v-for="(command, index) in commandSuggestions"
+              :key="command.id"
+              role="option"
+              :aria-selected="index === commandIndex"
+              :class="{ 'is-active': index === commandIndex }"
+              :data-testid="`composer-command-${command.id}`"
+              @mouseenter="commandIndex = index"
+              @mousedown.prevent="acceptCommand(command)"
+            >
+              <code class="composer-command-syntax">/{{ command.name }}{{ command.needsArgument ? ' …' : '' }}</code>
+              <span class="composer-command-label">{{ t(command.labelKey) }}</span>
+              <span class="composer-command-hint">{{ t(command.hintKey) }}</span>
+            </li>
+          </ul>
+        </Teleport>
 
         <textarea
           ref="textareaRef"
@@ -329,8 +458,8 @@ function confirmSteer(id: string) {
     <!-- Docked-only dispatch menu: teleported so the dialog's overflow:hidden never clips it. -->
     <Teleport v-if="!hero" to="body">
       <div v-if="showAskMenu" class="ask-menu" :style="askMenuStyle">
-        <button class="ask-menu-item" @click="submit('queued')">排队发送</button>
-        <button class="ask-menu-item" @click="submit('parallel')">并列发送</button>
+        <button class="ask-menu-item" @click="submit('queued')">{{ t('composer.sendQueued') }}</button>
+        <button class="ask-menu-item" @click="submit('parallel')">{{ t('composer.sendParallel') }}</button>
       </div>
     </Teleport>
 
