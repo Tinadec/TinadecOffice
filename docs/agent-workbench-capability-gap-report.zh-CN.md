@@ -59,6 +59,8 @@
    **同时记一次自我纠正的往返**：本批中途我曾把"注册方是 EF"这句**作废**，依据是"EF 的 Sqlite 程序集里没有 `RegisterFunction` 符号"——那次作废是错的：`RegisterFunction` 是 EF Relational 层的模型 API 名，SQLite 提供程序落的是 `CreateFunction`/`CreateCollation`；真正的凭据是现场 journal 消息 + 按正确符号名重扫。教训写进本文件：**推翻一条旧结论需要与立论同等强度的证据，猜错符号名会把对的改成错的**。
    顺带量到并仍然成立的约束：全仓连接串只设 `DataSource`（`Persistence/ServiceCollectionExtensions.cs:102-107`，无 `Pooling`/`Cache`/`DefaultTimeout`/`Mode=Memory`）；每个 Api 测试类实例一份 temp 库文件，且 `xunit.runner.json` 关掉程序集与 collection 并行——**所以碰撞不是"多个测试宿主共享池"，而是同一个 host 内部的并发**（后台写者确实存在：`DmaEA/FullDuplexRunEngine.cs`、`Runtime/RecoveryCoordinator.cs`、`Runtime/TinaChatWakeService.cs`）；全仓也没有任何 `journal_mode`/`busy_timeout` 设置，只有迁移期 `PRAGMA foreign_keys`。
    **修法回到连接生命周期**，两条候选都还没验证：① 让池化 `Open()` 不再撞上仍带 active statement 的物理句柄（关池 / 收敛连接生命周期）；② 在读路径对 Error 5 做**定向**重试——它不是 busy/lock 码，但重试确实会再走一次注册，所以是候选修法而不是纯粹掩盖。**定向实验仍未做**（C 级）。诊断前置本身已落地并**已被这条真实红验证**：原因进 `AspNetCore/ServerFailureJournal`（只在 DI 可见，绝不上外线），9 个断言站经 `ServerFailureReports.AssertStatusAsync` 打印 problem body + `server cause: …`，另有 6 例 journal 测试与一条真 host 读回断言。
+
+   **同日定向实验的增量（见 §5d，务必按它的可信度分级读）**：这一族**不止 SQLite**。同一棵树在负载下第一次拿到第二族的完整机理——`CliRuntimeTests.CliProcessManager_ReusesReachableServerUrlWithoutSpawning` 的可达性探测在 CPU 饥饿下判成"没在跑"，于是走到 `SpawnAsync` 去启动一个测试故意配的不存在二进制（`DmaEA/CliRuntime/CliProcessManager.cs:131`）。它与 SQLite 无关，形状相同：**时序敏感的守卫在负载下翻到失败分支，而失败分支的报错指向别处**。收口动作因此收窄成一条具体的：探测超时必须 report 成"我没等到（带超时值）"，而不是静默改走 spawn。同轮的 `GATE_EXIT=4`（连摘要都没打出来）**不记在产品头上**——同一任务的输出里有 `bash: fork: Resource temporarily unavailable` 与 `0xC000026B`，是我自己的负载循环耗尽了进程位；所以"负载下全量必崩"这句话本仓**没有**证据，能说的只有"这台机器在 40 轮 vitest 并发下无法干净跑完一次全量"。
 6. **孤儿测试工程**：`tests/Tinadec.Contracts.Tests` 引用了不存在的 `../../src/TinadecCore/TinadecCore.csproj`，且**不在任何 `.slnx` 里**——它不红，因为没人跑它。删或修都要用户定（未动）。
 7. **架构债**（任务 #9，本批**修正了其中一条的因果**）：
    - ~~Home / Workbench 两页职责重叠，合并~~ —— **这条提法是错的**，两处证据：①`docs/app-core-ui.md` §3.1 规定两页各司其职（Home=meeting 入口/项目/会话/消息/队列，Workbench=run/task graph/worker/supervision/context），L644-645 还是两条独立的验收项；②真正重复的是"同一个 orchestration 快照有两套类型两条读路径"，而 `pages/WorkbenchPage.vue:130` 那句 `as unknown as never` 不是偷懒：生成的 `OrchestrationSnapshot` 把 `nodes`/`context_packs`/`flows`/`step_results`/`agent_instances` 全声明成 **`unknown[]`**（实测 `src/generated/schema.d.ts`），而 `src/api.ts:1941` 手写的才是完整类型。**结论：这条债被 §3 第一条（任务 #30 响应体 schema）挡住**——现在删 cast 只会把 cast 挪进组件内部。顺序改为先 #30 再回来。Workbench 的 lineage + `RunLaneCanvas` 也没有 Home 等价物，合并会真丢功能。
@@ -80,6 +82,15 @@
 - **Gateway** `bun test src` → `BUN_EXIT=0`、**58 pass / 0 fail**（上一批 56；本批 +2：query/cursor 逐字转发、`invalid_query` 不被改写成 `conflict`）。
 - **Desktop**：`npx vitest run` `VITEST_EXIT=0`（**79 文件通过 / 1 跳过、733 例通过 / 14 跳过**，比上一批 +1 文件 / +14 例，正好是 `modelUsage.test.ts` 7 例 + `OrchestrationTab.test.ts` 新 7 例），`npm run typecheck` `TSC_EXIT=0`，`npm run build` `BUILD_EXIT=0`，electron 侧 `node --test` `ELECTRON_EXIT=0`（24/24，本批没动主进程代码，跑它是为了不拿"没跑"当"不会坏"）。`npm run check:drift` 在提交前 `DRIFT_EXIT=1`——它以 `git diff --exit-code -- src/generated/` 收尾，未提交的有意契约变更必然让它红，所以这条读法是"还没提交"而不是"漂了"；它的实质一半单独量过：连跑两次 `generate:client`，`schema.d.ts` 的 sha1 前后都是 `deb0ece…8533`，**再生成是幂等的**，也就是说除本批有意新增的那 9 行之外没有任何二阶漂移。
 - **契约覆盖率的变动是量出来的**：同一脚本改前/改后各跑一次——Core 由 220 个 operation 里 40 个带响应体变成 **41 个（18.6%）**，网关由 229 个里 48 个变成 **49 个（21.4%）**。同一批第一次出现"用一条 Core 测试去读 OpenAPI 文档里的字段名"这种用法（而不是只把快照当文本比对）。
+
+### 5d. 2026-09-22 第四批：#25 的负载定向实验（结论：一半成立，一半是我的仪器坏了）
+
+同一棵已提交树（`e474197`）上做 A/B：先顺序跑一次全量当对照（§5c 第一条，`GATE_EXIT=0`、Api 448/448、21m32s），再在同一条命令里"Api 全量 + 桌面 `npx vitest run` 循环"制造负载。**读数如下，但两条的可信度不同**：
+
+- **成立的一半**：负载下 00:07:32 出现一条真实失败，而且**不是 SQLite Error 5 那一族**——`CliRuntimeTests.CliProcessManager_ReusesReachableServerUrlWithoutSpawning` 抛 `InvalidOperationException: CLI runtime 'claude-cli' binary_path 'C:\missing\claude.exe' could not be started … 系统找不到指定的文件`。用例名就是它的断言（"**不 spawn**，复用可达 URL"），而 `CliProcessManager.SpawnAsync`（`DmaEA/CliRuntime/CliProcessManager.cs:131`，经 `EnsureRunningAsync:66`）被走到了 ⇒ **可达性探测在负载下判为"没在跑"，于是去 spawn 一个测试故意配的不存在二进制**。这是与 Error 5 同形状、不同子系统的第二族：**一个时序敏感的探测在 CPU 饥饿下翻到失败分支**。上一批只把它当"负载敏感标签"，这一批第一次拿到了翻在哪一行。
+- **不成立的一半（诚实撤回）**：这一轮 `GATE_EXIT=4`，日志里**没有测试摘要**——但原因不能记在产品头上。同一个后台任务的输出末尾是 `bash: fork: Resource temporarily unavailable` 与 `dofork: child -1 - forked process … died unexpectedly, exit code 0xC000026B, errno 11`：**是我的负载循环（每轮 npx 会派生一批子进程）把机器的进程位耗尽**，中止至少部分是仪器自身失效。所以本批**不能**说"负载下 Api 必崩"，只能说"负载下出现了一条机制明确的探测翻转，且我这台机器无法在 40 轮 vitest 并发下干净地跑完一次全量"。这条正是"读数一致时先怀疑量具"的又一次兑现：先查仪器，再下结论。
+- 附带量到的负载刻度：`LOAD_ITER` 时间戳显示桌面 vitest 单轮从空闲的 ~47 s 涨到 20:27→20:29 的 ~2 min 以上，随后循环停在 20:29 再无写入（进程位耗尽）。
+- **对 §6 次序的影响**：#22（桌面 CI）**继续排在 #25 之后**，而且这一批给了它一条新的具体理由：CI runner 若与别的构建并发，第一次失败可能是探测翻转或 runner 自身没进程位，而不是产品回归——那种红的失败集合是**不可知**的（连摘要都没有）。#25 剩下的定向工作因此收窄成一件事：**给 `CliProcessManager` 的可达性探测补一个能区分"没在跑"与"我没等到"的路径**（探测超时应当是失败并带上超时值，而不是静默去 spawn），这条改完，这一族在负载下的表现才会变成可读的断言而不是随机分支。
 
 ### 5b. 2026-09-22 第二批：5xx 自报原因 + `SettingsPage` 抽出 `AgentPacksPanel`
 
