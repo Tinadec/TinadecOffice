@@ -187,9 +187,14 @@ public sealed class AutoApprovePolicyTests
         var shell = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("shell", "low", Guid.NewGuid()));
         var suffix = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("file_delete", "low", Guid.NewGuid()));
 
+        // web_fetch does not touch the workspace, so nothing but this list keeps the
+        // read-only auto-release from handing a run free egress.
+        var egress = await policy.EvaluateAsync(new ToolApprovalAutoPolicyContext("web_fetch", "low", Guid.NewGuid()));
+
         Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, listed.Outcome);
         Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, shell.Outcome);
         Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, suffix.Outcome);
+        Assert.Equal(ToolApprovalAutoPolicyOutcome.NotEngaged, egress.Outcome);
     }
 
     /// <summary>

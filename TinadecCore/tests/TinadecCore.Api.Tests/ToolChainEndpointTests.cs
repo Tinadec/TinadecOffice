@@ -1940,6 +1940,11 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
                 // Mirrors the real descriptor: an approved MCP call is an external
                 // surface, not a workspace mutation (declared explicitly on the tool).
                 new() { Id = "mcp_invoke", Description = "In-process fake mcp probe", RequiresApproval = true, Risk = "medium", MutatesWorkspace = false },
+                // Same shape for web_fetch: egress, approval-gated, not a mutation. The
+                // GraphSeedPack's search template now declares it, and the spawnable
+                // ceiling intersects declared scopes against the frozen manifest — an
+                // unadvertised id there denies the spawn rather than widening the surface.
+                new() { Id = "web_fetch", Description = "In-process fake web probe", RequiresApproval = true, Risk = "high", MutatesWorkspace = false },
                 // The git tools are part of the GraphSeedPack templates' declared scope
                 // (read tooling plus the engineering write set), so the
                 // spawnable-ceiling intersection needs them in the frozen manifest even

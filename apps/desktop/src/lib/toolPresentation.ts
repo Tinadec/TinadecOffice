@@ -24,8 +24,8 @@ import {
  *
  * The id sets below are not transcribed from a document. They are the output of a live
  * stdio session against the built provider (`tool_id: "#manifest"`, protocol v2,
- * manifest_hash `aab13ada12a6ef0385ddd7b8faf2f68fb50fd7874a50e91d611fbd9ad4712713`,
- * 49 tools) plus Core's own declarations, cited per constant. `toolPresentation.test.ts`
+ * manifest_hash `d578f134e326f0f4d229e60a7409fd9c73e73d168650bcafe8e8d20dd0ecba06`,
+ * 50 tools) plus Core's own declarations, cited per constant. `toolPresentation.test.ts`
  * pins both directions: every id this module branches on must be in a measured set, and
  * the six invented ids must never reappear as quoted tool ids anywhere in `src/`.
  */
@@ -80,6 +80,7 @@ export const PROVIDER_TOOL_IDS = [
   'sandbox_status',
   'shell',
   'stat',
+  'web_fetch',
   'write_file'
 ] as const
 
@@ -132,6 +133,7 @@ const KIND_BY_ID: Record<string, ToolKind> = {
   read_file: 'read',
   read_attachment: 'read',
   stat: 'read',
+  web_fetch: 'read',
   ls: 'list',
   file_search: 'search',
   write_file: 'write',

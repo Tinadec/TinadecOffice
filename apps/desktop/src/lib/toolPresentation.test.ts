@@ -23,8 +23,8 @@ import {
  */
 const MEASURED_MANIFEST = {
   protocol_version: 2,
-  manifest_hash: 'aab13ada12a6ef0385ddd7b8faf2f68fb50fd7874a50e91d611fbd9ad4712713',
-  tool_count: 49
+  manifest_hash: 'd578f134e326f0f4d229e60a7409fd9c73e73d168650bcafe8e8d20dd0ecba06',
+  tool_count: 50
 } as const
 
 /** Ids the old display layer branched on and which no layer has ever advertised. */
