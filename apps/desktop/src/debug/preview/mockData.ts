@@ -25,7 +25,7 @@ import type {
   ExtensionSourceDto,
   MarketCatalogItemDto,
   InstalledExtensionDto,
-  McpServerDto,
+  McpInventoryDto,
   AcpAdapterDto,
   CodeToolExecuteResultDto,
 } from '@/api'
@@ -1537,11 +1537,36 @@ export function mockInstalledExtensions(): InstalledExtensionDto[] {
   ]
 }
 
-export function mockMcpServers(): McpServerDto[] {
-  return [
-    { id: 'mcp-001', extension_id: 'github-mcp', name: 'GitHub MCP', transport: 'stdio', status: 'connected', tools: ['github.list_repos', 'github.create_issue', 'github.create_pr'], updated_at: iso(-60 * 3) },
-    { id: 'mcp-002', extension_id: 'filesystem-mcp', name: 'Filesystem MCP', transport: 'stdio', status: 'disconnected', tools: [], updated_at: iso(-60 * 24) },
-  ]
+/**
+ * Matches what `GET /api/v1/mcp/servers` actually answers. The previous version of this mock
+ * carried `extension_id`, `transport` and `updated_at` — none of which the route sends — which is
+ * how the detail card learned to render a runtime list that stayed permanently empty in the real
+ * app while looking correct in the preview gallery.
+ */
+export function mockMcpInventory(): McpInventoryDto {
+  return {
+    source: 'tool_provider',
+    workspace_root: 'C:\\work\\demo',
+    config_path: 'C:\\work\\demo\\mcp_servers.json',
+    servers: [
+      {
+        id: 'github',
+        name: 'GitHub',
+        status: 'connected',
+        tools: [
+          { id: 'list_repos', name: 'list_repos', description: 'List repositories visible to the token.' },
+          { id: 'create_issue', name: 'create_issue', description: 'Open an issue.' },
+        ],
+      },
+      {
+        id: 'legacy-fs',
+        name: 'Filesystem',
+        status: 'error',
+        error: "MCP server process exited unexpectedly (exit code: 1). 'npx' is not recognized as an internal or external command.",
+        tools: [],
+      },
+    ],
+  }
 }
 
 export function mockAcpAdapters(): AcpAdapterDto[] {
@@ -1937,7 +1962,7 @@ export interface MockDataBundle {
   extensionSources: ExtensionSourceDto[]
   marketCatalog: MarketCatalogItemDto[]
   installedExtensions: InstalledExtensionDto[]
-  mcpServers: McpServerDto[]
+  mcpInventory: McpInventoryDto
   acpAdapters: AcpAdapterDto[]
   gitDiffPreview: CodeToolExecuteResultDto | null
   gitPushPlan: CodeToolExecuteResultDto | null
@@ -1966,7 +1991,7 @@ export function buildMockDataBundle(sessionId: string = 'sess-tinadec-1001'): Mo
     extensionSources: mockExtensionSources(),
     marketCatalog: mockMarketCatalog(),
     installedExtensions: mockInstalledExtensions(),
-    mcpServers: mockMcpServers(),
+    mcpInventory: mockMcpInventory(),
     acpAdapters: mockAcpAdapters(),
     gitDiffPreview: mockGitDiffPreview(),
     gitPushPlan: mockGitPushPlan(),

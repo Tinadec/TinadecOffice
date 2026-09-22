@@ -1013,6 +1013,61 @@
         ],
         "type": "object"
       },
+      "McpInventory": {
+        "additionalProperties": true,
+        "properties": {
+          "config_path": {
+            "type": "string"
+          },
+          "dropped_rows": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "servers": {
+            "items": {},
+            "type": "array"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "servers"
+        ],
+        "type": "object"
+      },
+      "McpServerTools": {
+        "additionalProperties": true,
+        "properties": {
+          "config_path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "server": {},
+          "server_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "server_id"
+        ],
+        "type": "object"
+      },
       "MeetingModelOverride": {
         "additionalProperties": true,
         "properties": {
@@ -5102,97 +5157,18 @@
       "get": {
         "operationId": "getApiV1McpServers",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInventory"
+                }
+              }
+            },
+            "description": "Inventory read through the Tool Provider; `source` says whether the empty list means \"nothing configured\" or \"could not look\"."
+          }
         },
         "summary": "List MCP servers (Core-owned)",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/connect": {
-      "post": {
-        "operationId": "postApiV1McpServersByServerIdConnect",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "serverId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "MCP connect (proxy to Core)",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/disconnect": {
-      "post": {
-        "operationId": "postApiV1McpServersByServerIdDisconnect",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "serverId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "MCP disconnect (proxy to Core)",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/reload": {
-      "post": {
-        "operationId": "postApiV1McpServersByServerIdReload",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "serverId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "Reload MCP server",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/status": {
-      "get": {
-        "operationId": "getApiV1McpServersByServerIdStatus",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "serverId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {}
-        },
-        "summary": "MCP status (proxy to Core)",
         "tags": [
           "System"
         ]
@@ -5212,83 +5188,18 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerTools"
+                }
+              }
+            },
+            "description": "One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory."
+          }
         },
         "summary": "List MCP server tools",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/tools/{toolName}/call": {
-      "post": {
-        "operationId": "postApiV1McpServersByServerIdToolsByToolNameCall",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "serverId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "toolName",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "properties": {
-                  "arguments": {
-                    "patternProperties": {
-                      "^(.*)$": {}
-                    },
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "properties": {
-                  "arguments": {
-                    "patternProperties": {
-                      "^(.*)$": {}
-                    },
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "text/plain": {
-              "schema": {
-                "properties": {
-                  "arguments": {
-                    "patternProperties": {
-                      "^(.*)$": {}
-                    },
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {}
-        },
-        "summary": "MCP tool call (proxy to Core)",
         "tags": [
           "System"
         ]

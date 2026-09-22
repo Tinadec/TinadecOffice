@@ -54,7 +54,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | Model/Agent 配置代理 | `src/index.ts` | 版本化 provider/route/Agent/Mode/Prompt/default 路径；旧 overview 路由已删除，`PUT /api/v1/agents/:id/runtime-binding` 仍是当前代理（`src/index.ts:1523` → Core `AspNetCore/Endpoints/AgentConfigurationEndpoints.cs:21`）。 |
 | Agent Pack 代理 | `src/index.ts`, `src/runtimeProxy.test.ts`, `tests/__snapshots__/openapi.external.json` | 四条显式薄代理；保留 ETag、`If-Match`、`Idempotency-Key` 和 Core ProblemDetails code。 |
 | Code tools 传输 | `src/index.ts`, `src/toolRuntimeClient.ts` | Desktop 工具目录代理 Core，用户执行请求原样转发 Tool Provider |
-| MCP 路由 | `src/mcp/mcpRoutes.ts` | 纯代理到 Tool Runtime |
+| MCP 读代理 | `src/index.ts` | 只有 Core 实现的两条 GET；`source` 字段逐字透传，网关不判断"连不连得上"（历史上这里还有 5 条 Core 从不存在的路由，见 `DELETED FILES`） |
 | 测试 | `src/coreClient.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
 
 ## CONVENTIONS
@@ -155,6 +155,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 - `src/debugProxy.ts` — 调试代理（合并到 `coreClient.ts` 和 `websocket.ts`）
 - `src/mcp/McpConnectionManager.ts` — MCP 连接管理（迁移到 Tool Runtime）
 - `src/mcp/McpClient.ts` — MCP 客户端（迁移到 Tool Runtime）
+- `src/mcp/mcpRoutes.ts`（2026-09-22）— 曾经代理 `connect`/`disconnect`/`status`/`tools/{toolName}/call` 四条 **Core 从未注册**的路由，所以这四面只能 404；其中 `tools/{toolName}/call` 若真通了就是一条绕过审批门直达 MCP 工具的口子。表格旧行写的"纯代理到 Tool Runtime"也是错的：它代理的是 Core。改由 `src/mcpProxy.test.ts` 钉住"契约里只剩两条读路由 + 幻影不再被代理"。
 
 ## ANTI-PATTERNS
 - 不要在 Gateway 中添加持久状态

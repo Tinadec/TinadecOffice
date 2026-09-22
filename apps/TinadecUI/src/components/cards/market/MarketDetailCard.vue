@@ -21,7 +21,8 @@ const { t } = useI18n()
 
 const {
   busy, preview, directPreview, directForm,
-  selectedItem, selectedInstalled, selectedRuntime,
+  selectedItem, selectedInstalled,
+  mcpServers, mcpReadSucceeded, mcpReason, mcpConfigPath,
   start, approveAndInstallCatalog, previewDirectInstall, approveAndInstallDirect,
   toggleExtension, removeExtension,
 } = marketController
@@ -91,12 +92,30 @@ onMounted(() => {
         </ul>
       </div>
 
-      <div v-if="selectedRuntime.length > 0" class="market-section">
-        <h3>{{ t('market.runtime') }}</h3>
-        <div class="market-runtime-line" v-for="runtime in selectedRuntime" :key="runtime">
-          <Globe2 :size="14" />
-          <span>{{ runtime }}</span>
-        </div>
+      <div class="market-section" data-testid="market-mcp">
+        <h3>{{ t('market.mcpServers') }}</h3>
+        <!-- Three different answers, three different sentences. An empty list and an unreadable
+             list used to look identical, which is how "the Tool Provider never started" read as
+             "you have no MCP servers". -->
+        <p v-if="!mcpReadSucceeded" class="quiet" data-testid="market-mcp-unavailable">
+          {{ mcpReason || t('market.mcpUnreadable') }}
+        </p>
+        <template v-else>
+          <p v-if="mcpServers.length === 0" class="quiet" data-testid="market-mcp-none">
+            {{ t('market.mcpNone') }}
+          </p>
+          <div
+            class="market-runtime-line"
+            v-for="server in mcpServers"
+            :key="server.id"
+            :data-status="server.status"
+            data-testid="market-mcp-server"
+          >
+            <Globe2 :size="14" />
+            <span>{{ server.name }} · {{ server.status }}</span>
+          </div>
+          <p v-if="mcpConfigPath" class="quiet">{{ t('market.mcpConfigFile') }}: {{ mcpConfigPath }}</p>
+        </template>
       </div>
 
       <div class="market-action-row">

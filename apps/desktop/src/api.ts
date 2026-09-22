@@ -705,14 +705,53 @@ export interface ExtensionInstallResultDto {
   preview: ExtensionInstallPreviewDto;
 }
 
+/**
+ * The two answers `source` can carry. Kept as constants because the whole point of the field is
+ * that a page must branch on it: an empty `servers` list under `tool_provider` means nothing is
+ * configured, and under `tool_provider_unavailable` means Core could not ask the Tool Provider.
+ * Typed as a string on the DTO — Core owns the vocabulary and may extend it, and this renderer
+ * would rather show an unknown source honestly than fail a type assertion at a boundary.
+ */
+export const MCP_SOURCE_PROVIDER = 'tool_provider';
+export const MCP_SOURCE_UNAVAILABLE = 'tool_provider_unavailable';
+
+export interface McpToolDto {
+  id: string;
+  name: string;
+  description?: string | null;
+  /** Absent on the inventory route, which deliberately does not ask for schemas. */
+  input_schema?: unknown;
+}
+
 export interface McpServerDto {
   id: string;
-  extension_id: string;
   name: string;
-  transport: string;
+  /** Passed through from the provider (`connected` / `error`); never upgraded by Core. */
   status: string;
-  tools: string[];
-  updated_at: string;
+  /** The provider's own failure text for this server. Absent when it answered. */
+  error?: string | null;
+  tools: McpToolDto[];
+}
+
+export interface McpInventoryDto {
+  source: string;
+  reason?: string | null;
+  workspace_root?: string | null;
+  /** The file the Tool Provider read, as it reported it. */
+  config_path?: string | null;
+  /** Rows Core could not identify. Present only when something was dropped. */
+  dropped_rows?: number | null;
+  servers: McpServerDto[];
+}
+
+export interface McpServerToolsDto {
+  source: string;
+  reason?: string | null;
+  workspace_root?: string | null;
+  config_path?: string | null;
+  server_id: string;
+  /** Present only when the inventory read completed and the id matched. */
+  server?: McpServerDto | null;
 }
 
 export interface AcpAdapterDto {
@@ -2490,9 +2529,9 @@ export const api = {
   disableExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/disable`, { method: 'POST' }),
   updateExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/update`, { method: 'POST' }),
   deleteExtension: (extensionId: string) => request<void>(`/api/v1/extensions/${encodeURIComponent(extensionId)}`, { method: 'DELETE' }),
-  listMcpServers: () => request<McpServerDto[]>('/api/v1/mcp/servers'),
-  reloadMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/reload`, { method: 'POST' }),
-  connectMcpServer: (serverId: string) => request<McpServerDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/connect`, { method: 'POST' }),
+  listMcpServers: () => request<McpInventoryDto>('/api/v1/mcp/servers'),
+  listMcpServerTools: (serverId: string) =>
+    request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),
   listAcpAdapters: () => request<AcpAdapterDto[]>('/api/v1/acp/adapters'),
   probeAcpAdapter: (adapterId: string) => request<AcpAdapterDto>(`/api/v1/acp/adapters/${encodeURIComponent(adapterId)}/probe`, { method: 'POST' }),
   listAgentModes: () => request<AgentModeDto[]>('/api/v1/agent-modes'),

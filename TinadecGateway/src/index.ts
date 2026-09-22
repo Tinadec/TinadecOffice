@@ -14,7 +14,6 @@ import {
   isPublicPath,
   type AuthContext,
 } from './auth.js';
-import { mcpRoutes } from './mcp/mcpRoutes.js';
 import { findWsRoute, buildTargetWsUrl } from './websocket.js';
 import { proxyStream, setStreamHeaders } from './streaming.js';
 import { ensureRequestId, PRINCIPAL_VALUE } from './headers.js';
@@ -185,7 +184,6 @@ const app = new Elysia()
     }
     if (authResult.context) requestAuthContexts.set(request, authResult.context);
   })
-  .use(mcpRoutes)
   .get('/api/v1/health', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/health', { headers });
@@ -1466,7 +1464,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/mcp/servers'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List MCP servers (Core-owned)', tags: ['System'] } })
+  }, { detail: { summary: 'List MCP servers (Core-owned)', tags: ['System'], responses: { 200: externalJsonResponse('McpInventory', 'Inventory read through the Tool Provider; `source` says whether the empty list means "nothing configured" or "could not look".') } } })
   .get('/api/v1/mcp/servers/:serverId/tools', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/mcp/servers/${params.serverId}/tools`, { headers });
@@ -1474,15 +1472,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/mcp/servers/${params.serverId}/tools`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List MCP server tools', tags: ['System'] } })
-  .post('/api/v1/mcp/servers/:serverId/reload', async ({ params, set, request }) => {
-    const headers = forwardHeaders(request);
-    const result = await proxyJson(`/api/v1/mcp/servers/${params.serverId}/reload`, { method: 'POST', headers });
-    setStatus(set, result.status);
-    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/mcp/servers/${params.serverId}/reload`); }
-    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
-    return result.data;
-  }, { detail: { summary: 'Reload MCP server', tags: ['System'] } })
+  }, { detail: { summary: 'List MCP server tools', tags: ['System'], responses: { 200: externalJsonResponse('McpServerTools', 'One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory.') } } })
   .get('/api/v1/acp/adapters', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/acp/adapters', { headers });

@@ -24,7 +24,13 @@ public sealed class McpToolSummary
     [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
     [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
     [JsonPropertyName("description")] public string? Description { get; set; }
-    [JsonPropertyName("input_schema")] public JsonElement InputSchema { get; set; }
+    /// <summary>
+    /// The server's input schema, or null when the caller asked for no schemas. This must stay
+    /// nullable: a non-nullable <see cref="JsonElement"/> left at its default cannot be written by
+    /// the serializer at all, so withholding schemas used to fail the whole call — including
+    /// <c>mcp_search</c>, whose <c>include_schema</c> defaults to false, on every non-empty result.
+    /// </summary>
+    [JsonPropertyName("input_schema")] public JsonElement? InputSchema { get; set; }
 }
 
 public sealed class McpServerToolList

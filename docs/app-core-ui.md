@@ -393,7 +393,8 @@ PromptPipeline 是 DmaEA 正式提示词配置。旧 `prompt-fragments` 页面�
 这些页面必须按 Core 实际状态显示：
 
 - Market extension source/catalog/install 当前有占位端点，501 显示“未启用”，不创建本地安装记录。
-- MCP server/tool/reload 当前是占位；不在 Gateway 或 Desktop 自行连接 MCP。
+- MCP 只有两条读路由，且**读数来自 Tool Provider 而不是 Core 自己**：`GET /api/v1/mcp/servers` 返回 `{source, reason?, workspace_root?, config_path?, dropped_rows?, servers[]}`，`GET /api/v1/mcp/servers/{serverId}/tools` 返回 `{source, reason?, config_path?, server_id, server?}`。`source` 是必读字段：`tool_provider` 才是"看过了"，`tool_provider_unavailable` 要显示 `reason` 而**不能**显示"没有配置任何服务器"。`status:"error"` 的服务器仍在清单里并带 provider 原文，UI 不得把它画成"已停用"。
+- MCP **没有**连接、断开、状态、reload、直接调用工具这些端点，Gateway/Desktop 也不得自行连接或缓存 MCP：配置与连接都归工具进程，清单每次现读。要"刷新"就是重新发一次 GET。
 - ACP `permission.request` 本阶段继续 fail-closed；不能把 ACP 请求当成已授权。
 - Debug traces/spans/metrics/processes/simulate/breakpoints 当前多为占位；只允许测试环境使用，生产页面不得伪造 trace 或 tool result。
 

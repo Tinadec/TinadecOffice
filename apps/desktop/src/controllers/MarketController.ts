@@ -1,6 +1,6 @@
 import { computed, reactive, ref, watch } from 'vue'
 import i18n from '@/i18n'
-import { api, type AcpAdapterDto, type ExtensionInstallPreviewDto, type ExtensionSourceDto, type InstalledExtensionDto, type MarketCatalogItemDto, type McpServerDto } from '@/api'
+import { api, MCP_SOURCE_PROVIDER, type AcpAdapterDto, type ExtensionInstallPreviewDto, type ExtensionSourceDto, type InstalledExtensionDto, type MarketCatalogItemDto, type McpInventoryDto, type McpServerDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ const { notify, status, confirm, dismissByKey } = useNotifications()
 const sources = ref<ExtensionSourceDto[]>([])
 const catalog = ref<MarketCatalogItemDto[]>([])
 const installed = ref<InstalledExtensionDto[]>([])
-const mcpServers = ref<McpServerDto[]>([])
+const mcpInventory = ref<McpInventoryDto | null>(null)
 const acpAdapters = ref<AcpAdapterDto[]>([])
 const selectedCatalogId = ref('')
 const kindFilter = ref('all')
@@ -79,14 +79,19 @@ const selectedInstalled = computed(() => {
   return item ? installedByExtensionId.value.get(item.extension_id) ?? null : null
 })
 
-const selectedRuntime = computed(() => {
-  const extension = selectedInstalled.value
-  if (!extension) return []
-  return [
-    ...mcpServers.value.filter((server) => server.extension_id === extension.id).map((server) => `${server.name} · ${server.transport}`),
-    ...acpAdapters.value.filter((adapter) => adapter.extension_id === extension.id).map((adapter) => `${adapter.name} · ${adapter.command}`),
-  ]
-})
+/**
+ * The MCP servers Core could actually see, plus the answer to "why is this list empty".
+ *
+ * There is deliberately no attribution from a catalog item to a server: Core reads the inventory
+ * from the Tool Provider's config file, which knows nothing about which extension wrote it, so a
+ * per-item runtime list would be invented. The previous version of this computed filtered on
+ * `server.extension_id` — a field the route never sent — which made it permanently empty.
+ */
+const mcpServers = computed<McpServerDto[]>(() => mcpInventory.value?.servers ?? [])
+const mcpSource = computed(() => mcpInventory.value?.source ?? '')
+const mcpReadSucceeded = computed(() => mcpSource.value === MCP_SOURCE_PROVIDER)
+const mcpReason = computed(() => mcpInventory.value?.reason ?? '')
+const mcpConfigPath = computed(() => mcpInventory.value?.config_path ?? '')
 
 const builtinSource = computed(() => sources.value.find((s) => s.location.includes('tinadec://')))
 
@@ -118,7 +123,7 @@ async function loadAll() {
   loading.value = true
   try {
     await ensureBuiltInSources()
-    const [sourceList, installedList, servers, adapters] = await Promise.all([
+    const [sourceList, installedList, inventory, adapters] = await Promise.all([
       api.listExtensionSources(),
       api.listInstalledExtensions(),
       api.listMcpServers(),
@@ -126,7 +131,7 @@ async function loadAll() {
     ])
     sources.value = sourceList
     installed.value = installedList
-    mcpServers.value = servers
+    mcpInventory.value = inventory
     acpAdapters.value = adapters
     if (!sourceFilter.value) {
       const builtin = sourceList.find((s) => s.location.includes('tinadec://'))
@@ -216,12 +221,6 @@ async function approveAndInstallCatalog() {
     if (!installedExtension || ['failed', 'error', 'blocked'].includes(installedExtension.status)) {
       throw new Error(installedExtension?.status_message || `${item.display_name} was not installed.`)
     }
-    if (item.kind === 'mcp-server') {
-      const server = mcpServers.value.find((s) => s.extension_id === installedExtension!.id)
-      if (server) {
-        try { await api.connectMcpServer(server.id) } catch { /* async */ }
-      }
-    }
     notify.success({ message: installedExtension.status_message || `${item.display_name} installed.`, source: 'market' })
   })
 }
@@ -287,10 +286,11 @@ function start() {
 }
 
 export const marketController = {
-  sources, catalog, installed, mcpServers, acpAdapters,
+  sources, catalog, installed, acpAdapters,
+  mcpInventory, mcpServers, mcpSource, mcpReadSucceeded, mcpReason, mcpConfigPath,
   selectedCatalogId, kindFilter, sourceFilter, query, busy, loading,
   preview, directPreview, sourceForm, directForm,
-  selectedItem, installedByExtensionId, selectedInstalled, selectedRuntime, builtinSource,
+  selectedItem, installedByExtensionId, selectedInstalled, builtinSource,
   start,
   loadAll, loadCatalog, loadPreview,
   addSource, refreshSource,

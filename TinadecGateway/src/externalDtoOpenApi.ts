@@ -223,6 +223,31 @@ const modelInvocationPage = t.Object({
   next_cursor: t.Optional(t.String()),
 }, { additionalProperties: true });
 
+/**
+ * The MCP inventory envelope. Typed at the envelope level for one reason: `source` is the field
+ * that separates "no MCP server is configured" from "Core could not ask the Tool Provider", and
+ * those two used to arrive as the same empty array. Per-server and per-tool rows stay opaque
+ * because the gateway forwards them verbatim — mirroring them here would put a second copy of
+ * Core's DTOs in a layer that cannot enforce either one.
+ */
+const mcpInventory = t.Object({
+  source: t.String(),
+  reason: t.Optional(t.String()),
+  workspace_root: t.Optional(t.String()),
+  config_path: t.Optional(t.String()),
+  dropped_rows: t.Optional(t.Number()),
+  servers: t.Array(t.Unknown()),
+}, { additionalProperties: true });
+
+const mcpServerTools = t.Object({
+  source: t.String(),
+  reason: t.Optional(t.String()),
+  workspace_root: t.Optional(t.String()),
+  config_path: t.Optional(t.String()),
+  server_id: t.String(),
+  server: t.Optional(t.Unknown()),
+}, { additionalProperties: true });
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   Project: project,
@@ -247,6 +272,8 @@ export const externalDtoSchemas = {
   Assignment: assignment,
   OrchestrationSnapshot: orchestrationSnapshot,
   ModelInvocationPage: modelInvocationPage,
+  McpInventory: mcpInventory,
+  McpServerTools: mcpServerTools,
   Health: health,
   PreAuthorization: preAuthorization,
 };

@@ -1321,6 +1321,139 @@
         "type": "object"
       },
       "JsonElement": {},
+      "McpInventoryDto": {
+        "properties": {
+          "config_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dropped_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerDto"
+            },
+            "type": "array"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpServerDto": {
+        "properties": {
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "McpServerToolsDto": {
+        "properties": {
+          "config_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "server": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/McpServerDto"
+              }
+            ]
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "McpToolDto": {
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "input_schema": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "MeetingModelOverrideDto": {
         "properties": {
           "model": {
@@ -5667,18 +5800,13 @@
       "get": {
         "responses": {
           "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "TinadecCore.Api"
-        ]
-      }
-    },
-    "/api/v1/mcp/servers/{serverId}/reload": {
-      "post": {
-        "responses": {
-          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInventoryDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
@@ -5689,9 +5817,36 @@
     },
     "/api/v1/mcp/servers/{serverId}/tools": {
       "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "serverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerToolsDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
           }
         },
         "tags": [

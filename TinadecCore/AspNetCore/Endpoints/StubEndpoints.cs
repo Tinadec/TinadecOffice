@@ -342,14 +342,10 @@ public static class StubEndpoints
     }
 
     // ──────────────────────────────────────────────────────────
-    // MCP / ACP
+    // ACP (MCP reads live in McpEndpoints: the inventory belongs to the Tool Provider)
     // ──────────────────────────────────────────────────────────
     private static void MapMcpAcpStubs(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/mcp/servers", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/mcp/servers/{serverId}/tools", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/mcp/servers/{serverId}/reload", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-
         app.MapGet("/api/v1/acp/adapters", () => Results.Ok(Array.Empty<object>()));
         app.MapPost("/api/v1/acp/adapters/{adapterId}/probe", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
     }

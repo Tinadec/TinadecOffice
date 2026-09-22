@@ -26,7 +26,8 @@ import type {
   ExtensionSourceDto,
   MarketCatalogItemDto,
   InstalledExtensionDto,
-  McpServerDto,
+  McpInventoryDto,
+  McpServerToolsDto,
   AcpAdapterDto,
   CodeToolExecuteResultDto,
   CodeToolExecuteRequestDto,
@@ -362,9 +363,18 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
       delay({ ...data().installedExtensions[0], id: extensionId } as InstalledExtensionDto, scenario.value),
     deleteExtension: (_extensionId: string) => emptyDelay(undefined as unknown as void, scenario.value),
 
-    listMcpServers: () => delay(data().mcpServers as McpServerDto[], scenario.value),
-    reloadMcpServer: (serverId: string) =>
-      delay({ ...data().mcpServers[0], id: serverId, status: 'connected' } as McpServerDto, scenario.value),
+    listMcpServers: () => delay(data().mcpInventory as McpInventoryDto, scenario.value),
+    listMcpServerTools: (serverId: string) => {
+      const server = data().mcpInventory.servers.find((item) => item.id === serverId)
+        ?? data().mcpInventory.servers[0]
+      return delay({
+        source: data().mcpInventory.source,
+        workspace_root: data().mcpInventory.workspace_root,
+        config_path: data().mcpInventory.config_path,
+        server_id: server?.id ?? serverId,
+        server,
+      } as McpServerToolsDto, scenario.value)
+    },
     listAcpAdapters: () => delay(data().acpAdapters as AcpAdapterDto[], scenario.value),
     probeAcpAdapter: (adapterId: string) =>
       delay({ ...data().acpAdapters[0], id: adapterId, status: 'active', status_message: '探测成功' } as AcpAdapterDto, scenario.value),

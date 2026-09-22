@@ -82,7 +82,7 @@ internal sealed class McpClientPool : IAsyncDisposable
             Id = tool.Name,
             Name = tool.Name,
             Description = tool.Description,
-            InputSchema = includeSchema ? tool.JsonSchema.Clone() : default
+            InputSchema = includeSchema ? tool.JsonSchema.Clone() : null
         };
     }
 }

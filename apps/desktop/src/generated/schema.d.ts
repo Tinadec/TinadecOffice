@@ -347,29 +347,9 @@ export interface paths {
     /** List MCP servers (Core-owned) */
     get: operations["getApiV1McpServers"];
   };
-  "/api/v1/mcp/servers/{serverId}/connect": {
-    /** MCP connect (proxy to Core) */
-    post: operations["postApiV1McpServersByServerIdConnect"];
-  };
-  "/api/v1/mcp/servers/{serverId}/disconnect": {
-    /** MCP disconnect (proxy to Core) */
-    post: operations["postApiV1McpServersByServerIdDisconnect"];
-  };
-  "/api/v1/mcp/servers/{serverId}/reload": {
-    /** Reload MCP server */
-    post: operations["postApiV1McpServersByServerIdReload"];
-  };
-  "/api/v1/mcp/servers/{serverId}/status": {
-    /** MCP status (proxy to Core) */
-    get: operations["getApiV1McpServersByServerIdStatus"];
-  };
   "/api/v1/mcp/servers/{serverId}/tools": {
     /** List MCP server tools */
     get: operations["getApiV1McpServersByServerIdTools"];
-  };
-  "/api/v1/mcp/servers/{serverId}/tools/{toolName}/call": {
-    /** MCP tool call (proxy to Core) */
-    post: operations["postApiV1McpServersByServerIdToolsByToolNameCall"];
   };
   "/api/v1/memory-candidates": {
     /** List memory candidates */
@@ -1127,6 +1107,24 @@ export interface components {
       predicate: string;
       required_criteria: string[];
       waiting_task: string;
+      [key: string]: unknown;
+    };
+    McpInventory: {
+      config_path?: string;
+      dropped_rows?: number;
+      reason?: string;
+      servers: unknown[];
+      source: string;
+      workspace_root?: string;
+      [key: string]: unknown;
+    };
+    McpServerTools: {
+      config_path?: string;
+      reason?: string;
+      server?: unknown;
+      server_id: string;
+      source: string;
+      workspace_root?: string;
       [key: string]: unknown;
     };
     MeetingModelOverride: {
@@ -2851,60 +2849,11 @@ export interface operations {
   /** List MCP servers (Core-owned) */
   getApiV1McpServers: {
     responses: {
+      /** @description Inventory read through the Tool Provider; `source` says whether the empty list means "nothing configured" or "could not look". */
       200: {
-        content: never;
-      };
-    };
-  };
-  /** MCP connect (proxy to Core) */
-  postApiV1McpServersByServerIdConnect: {
-    parameters: {
-      path: {
-        serverId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /** MCP disconnect (proxy to Core) */
-  postApiV1McpServersByServerIdDisconnect: {
-    parameters: {
-      path: {
-        serverId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /** Reload MCP server */
-  postApiV1McpServersByServerIdReload: {
-    parameters: {
-      path: {
-        serverId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-    };
-  };
-  /** MCP status (proxy to Core) */
-  getApiV1McpServersByServerIdStatus: {
-    parameters: {
-      path: {
-        serverId: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["McpInventory"];
+        };
       };
     };
   };
@@ -2916,35 +2865,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description One named server with its tools and schemas; 404 mcp_server_not_found only after Core actually read the inventory. */
       200: {
-        content: never;
-      };
-    };
-  };
-  /** MCP tool call (proxy to Core) */
-  postApiV1McpServersByServerIdToolsByToolNameCall: {
-    parameters: {
-      path: {
-        serverId: string;
-        toolName: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": {
-          arguments?: Record<string, never>;
+        content: {
+          "application/json": components["schemas"]["McpServerTools"];
         };
-        "multipart/form-data": {
-          arguments?: Record<string, never>;
-        };
-        "text/plain": {
-          arguments?: Record<string, never>;
-        };
-      };
-    };
-    responses: {
-      200: {
-        content: never;
       };
     };
   };

@@ -62,6 +62,7 @@ const ALLOWED_CODES = new Set([
   'mode_unavailable',
   'tool_runtime_not_configured',
   'tool_provider_not_configured',
+  'mcp_server_not_found',
   'forbidden',
   'conflict',
   'invalid_agent_pack_manifest',
