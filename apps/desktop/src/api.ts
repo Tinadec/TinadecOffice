@@ -1283,22 +1283,43 @@ export interface AgentRuntimeInstanceDto {
   updated_at?: string | null;
 }
 
+/**
+ * Receipt of `POST /sessions/{id}/interactions`. Core writes this body and the gateway
+ * forwards it untouched, so these are the wire keys — not an idealised interaction record.
+ * One type covers four outcomes and `status` is what tells them apart: a started run
+ * (`run_id` + `turn_id`), a queued turn (`run_id`, no `turn_id`… `status: 'queued'`), a
+ * steering insert (`status: 'steering_injected'`, the only branch that echoes `content`),
+ * and an attachment-only message (`status: 'message_only'`, no run at all). Absence is the
+ * wire representation of null: this host drops nulls on write, which is why the send path
+ * tests `if (resp.run_id)` rather than comparing it to null.
+ */
 export interface SessionInteractionDto {
-  id: string;
+  interaction_id: string;
   session_id: string;
-  run_id?: string | null;
-  turn_id?: string | null;
-  content: string;
-  client_message_id: string;
-  mode_version_id?: string | null;
-  dispatch_mode: 'queued' | 'insert' | 'parallel' | string;
-  target_run_id?: string | null;
-  meeting_model_override?: MeetingModelOverrideDto | null;
-  permission_mode?: string | null;
+  status: 'queued' | 'steering_injected' | 'message_only' | string;
+  run_id?: string;
+  turn_id?: string;
+  message_id?: string;
+  dispatch_mode?: DispatchMode;
+  mode_version_id?: string;
+  meeting_model_override?: MeetingModelOverrideDto;
+  client_message_id?: string;
+  correlation_id?: string;
+  content?: string;
+  attachment_ids?: string[];
+  context_revision?: number;
+  stream_cursor?: number;
+  reason?: string;
+}
+
+/** `.../interactions/{id}/reassign` and `.../cancel` answer about the acted-on run only. */
+export interface InteractionActionDto {
+  interaction_id: string;
+  run_id: string;
   status: string;
-  error?: { code?: string; message?: string; detail?: string | null } | null;
-  created_at: string;
-  updated_at?: string | null;
+  dispatch_mode?: DispatchMode;
+  target_run_id?: string;
+  action?: string;
 }
 
 export type DispatchMode = 'queued' | 'insert' | 'parallel';
@@ -2381,8 +2402,8 @@ export const api = {
   },
   // interactions (queued/insert/parallel)
   createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; attachment_ids?: string[] }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
-  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
-  cancelInteraction: (sessionId: string, interactionId: string) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
+  reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
+  cancelInteraction: (sessionId: string, interactionId: string) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   // --- Attachments ---
   // Bytes never travel as JSON here: Core stores the file and returns a row of references,
   // so an upload is a raw body with its name and type in the query string. The ceiling is
