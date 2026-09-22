@@ -790,6 +790,17 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
           'session_history',
           'reviewed_memory',
         ],
+        // One row per surviving item, in the same order as `sources` — the shape Core mints. A mock
+        // that invented a second shape here would teach this panel a contract the server never sends.
+        source_tokens: [
+          { source: 'structured_session_state', tokens: 42 },
+          { source: 'task_context', tokens: 180 },
+          { source: 'workspace_instructions', tokens: 900 },
+          { source: 'workspace_skills', tokens: 260 },
+          { source: 'session_history', tokens: 1500 },
+          { source: 'reviewed_memory', tokens: 238 },
+        ],
+        dropped_sources: [{ source: 'session_attachments', tokens: 2400 }],
         created_at: iso(-60 * 3),
       },
       {
@@ -805,6 +816,14 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
           'accepted_intent',
           'session_history',
         ],
+        // An empty drop list beside a priced pack is a real answer: this one had room for everything.
+        source_tokens: [
+          { source: 'structured_session_state', tokens: 42 },
+          { source: 'task_context', tokens: 180 },
+          { source: 'accepted_intent', tokens: 620 },
+          { source: 'session_history', tokens: 638 },
+        ],
+        dropped_sources: [],
         created_at: iso(-60 * 2),
       },
     ],

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
-import type { ContextPackDto, OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
+import type { ContextBudgetShareDto, ContextPackDto, OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
 import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
@@ -32,6 +32,44 @@ const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
  */
 function packLabel(pack: ContextPackDto): string {
   return pack.lane_key ? `Lane '${pack.lane_key}' pack` : 'Planner pack'
+}
+
+/**
+ * One source can contribute several items (`reviewed_memory` adds one per promoted
+ * entry), so the cost is summed per name. Listing every item separately would show
+ * the same source at several prices and hide the number that actually matters —
+ * what that source cost the pack in total.
+ */
+function sumBySource(shares: ContextBudgetShareDto[] | undefined): Map<string, number> {
+  const totals = new Map<string, number>()
+  for (const share of shares ?? []) {
+    totals.set(share.source, (totals.get(share.source) ?? 0) + share.tokens)
+  }
+  return totals
+}
+
+/**
+ * The wire lists one entry per evidence item, so a source that contributed several
+ * entries appears several times. It is rendered once, with its summed price: the
+ * question this row answers is which sources the model was told, not how many items
+ * each one happened to add — the "N evidence" chip already says that.
+ */
+function sourceNames(pack: ContextPackDto): string[] {
+  return [...new Set(pack.sources)]
+}
+
+/**
+ * Absent on events written before the pack reported costs, so a missing price
+ * renders as a bare name rather than as "0 tokens" — the latter would read as a
+ * measured free item.
+ */
+function sourceLabel(pack: ContextPackDto, source: string): string {
+  const tokens = sumBySource(pack.source_tokens).get(source)
+  return tokens === undefined ? source : `${source} · ${tokens}`
+}
+
+function droppedShares(pack: ContextPackDto): Array<{ source: string; tokens: number }> {
+  return [...sumBySource(pack.dropped_sources)].map(([source, tokens]) => ({ source, tokens }))
 }
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof ListTree }> = [
@@ -148,12 +186,31 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             <span>{{ pack.evidence_count }} evidence</span>
             <span>{{ pack.estimated_tokens }} / {{ pack.token_budget }} tokens</span>
           </div>
-          <div v-if="pack.sources.length" class="orchestration-tags" data-testid="context-pack-sources">
-            <span v-for="source in pack.sources" :key="source">{{ source }}</span>
+          <div
+            v-if="pack.sources.length"
+            class="orchestration-tags"
+            role="list"
+            aria-label="Evidence sources this pack carried, with the tokens each cost"
+            data-testid="context-pack-sources"
+          >
+            <span
+              v-for="source in sourceNames(pack)"
+              :key="source"
+              role="listitem"
+              data-testid="context-pack-source"
+            >{{ sourceLabel(pack, source) }}</span>
           </div>
           <p v-else class="quiet">
             No evidence list was recorded for this pack — it was written before the pack started
             naming its sources, so its contents are unknown here rather than empty.
+          </p>
+          <!-- Available but cut: the pack answered "which sources" without saying which
+               ones the budget removed, and those are two different answers to "why did the
+               agent ignore the project rules". -->
+          <p v-if="droppedShares(pack).length" class="quiet" data-testid="context-pack-dropped">
+            Cut by the token budget:
+            <span v-for="share in droppedShares(pack)" :key="share.source" data-testid="context-pack-dropped-source">{{ share.source }} ({{ share.tokens }} tokens)</span>
+            — available when this pack was built, but they did not fit, so the model was not told them.
           </p>
         </div>
       </article>

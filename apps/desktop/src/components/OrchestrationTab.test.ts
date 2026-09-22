@@ -82,6 +82,52 @@ describe('OrchestrationTab context packs', () => {
     expect(row.find('[data-testid="context-pack-sources"]').exists()).toBe(false)
   })
 
+  it('prices each source and collapses the ones that contributed several items', () => {
+    const row = mountTab([pack({
+      sources: ['workspace_instructions', 'session_history', 'reviewed_memory', 'reviewed_memory'],
+      source_tokens: [
+        { source: 'workspace_instructions', tokens: 900 },
+        { source: 'session_history', tokens: 40 },
+        { source: 'reviewed_memory', tokens: 7 },
+        { source: 'reviewed_memory', tokens: 5 },
+      ],
+    })]).get('[data-testid="context-pack-row"]')
+
+    const sources = row.findAll('[data-testid="context-pack-source"]').map((tag) => tag.text())
+    expect(sources).toContain('workspace_instructions · 900')
+    // Two items from one source must not render as two prices for the same name.
+    expect(sources.filter((text) => text.startsWith('reviewed_memory'))).toEqual(['reviewed_memory · 12'])
+    // The chips are a list, not a run of adjacent text: without the roles a screen reader reads
+    // "workspace_instructions · 900session_history · 40" as one word, because the markup has no
+    // whitespace between spans (the gap is CSS). Same convention as the composer's attachment strip.
+    const list = row.get('[data-testid="context-pack-sources"]')
+    expect(list.attributes('role')).toBe('list')
+    expect(list.findAll('[role="listitem"]')).toHaveLength(3)
+  })
+
+  it('shows what the budget crowded out, because a missing name in the pack is not a missing fact', () => {
+    const row = mountTab([pack({
+      source_tokens: [{ source: 'workspace_instructions', tokens: 900 }],
+      dropped_sources: [{ source: 'workspace_skills', tokens: 2100 }],
+    })]).get('[data-testid="context-pack-row"]')
+
+    const dropped = row.findAll('[data-testid="context-pack-dropped-source"]')
+    expect(dropped).toHaveLength(1)
+    expect(dropped[0].text()).toBe('workspace_skills (2100 tokens)')
+    expect(row.text()).toContain('the model was not told them')
+  })
+
+  it('invents no price and no cut for an event written before either was recorded', () => {
+    const row = mountTab([pack()]).get('[data-testid="context-pack-row"]')
+
+    // A bare name is the honest rendering of "no price recorded"; "· 0" would claim
+    // the source was measured free.
+    expect(row.get('[data-testid="context-pack-source"]').text()).toBe('workspace_instructions')
+    expect(row.find('[data-testid="context-pack-dropped"]').exists()).toBe(false)
+    expect(row.text()).not.toContain('undefined')
+    expect(row.text()).not.toContain('NaN')
+  })
+
   it('labels a pack by the one field that separates them, because the wire carries no summary', () => {
     const laneRow = mountTab([pack({ lane_key: 'implementation' })]).get('[data-testid="context-pack-row"]')
     expect(laneRow.text()).toContain("Lane 'implementation' pack")

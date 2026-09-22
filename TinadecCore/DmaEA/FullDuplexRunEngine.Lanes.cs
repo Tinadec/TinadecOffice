@@ -1434,6 +1434,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 estimated_tokens = context.EstimatedTokens,
                 token_budget = context.TokenBudget,
                 sources = context.Evidence.Select(item => item.Source).ToArray(),
+                source_tokens = BudgetShares(context.Evidence),
+                dropped_sources = BudgetShares(context.Dropped),
                 context_revision = checkpoint.ContextRevision
             }, cancellationToken).ConfigureAwait(false);
 

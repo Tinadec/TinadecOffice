@@ -242,6 +242,57 @@ public sealed class WorkspaceInstructionApiTests : IAsyncLifetime
         Assert.True(pack.EstimatedTokens <= 1024);
     }
 
+    [Fact]
+    public async Task EvidenceTheBudgetCutsIsNamedWithItsPriceInsteadOfVanishing()
+    {
+        // Until the cut itself was recorded, a short pack and an empty workspace produced the same
+        // observable run: `evidence_count` of 1 and no complaint. This is the shape where the two
+        // part — instructions the run kept and a transcript too large to ride along with them.
+        var (workspaceRoot, sessionId, projectId) = await OpenWorkspaceAsync("cut",
+            ("AGENTS.md", new string('y', 6000)));
+        var client = _factory!.CreateClient();
+        for (var turn = 0; turn < 3; turn++)
+            await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = new string('m', 2000) });
+
+        var pack = await _factory!.Services.GetRequiredService<IContextProvider>().BuildContextAsync(
+            new ContextBuildRequest(sessionId.ToString(), null)
+            {
+                Workspace = BindingOf(projectId, workspaceRoot),
+                TokenBudget = 600,
+            });
+
+        Assert.All(pack.Evidence, item => Assert.NotEqual("session_history", item.Source));
+        var cut = Assert.Single(pack.Dropped);
+        Assert.Equal("session_history", cut.Source);
+        // A name without a price cannot answer the question the panel exists to ask, which is how
+        // much room the source would have needed — that is what tells you to raise the budget
+        // rather than to go looking for a source that was never there.
+        Assert.True(cut.EstimatedTokens > 0, "a dropped source priced at nothing explains nothing");
+        Assert.Equal(pack.Evidence.Sum(item => item.EstimatedTokens), pack.EstimatedTokens);
+        Assert.True(pack.EstimatedTokens <= pack.TokenBudget);
+    }
+
+    [Fact]
+    public async Task EvidenceThatFitsLeavesTheDroppedListEmptyRatherThanAbsent()
+    {
+        // The negative control: without it the assertion above could be satisfied by a builder that
+        // drops something on every pack.
+        var (workspaceRoot, sessionId, projectId) = await OpenWorkspaceAsync("roomy",
+            ("AGENTS.md", "Use pnpm, never npm."));
+        var client = _factory!.CreateClient();
+        await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/messages", new { content = "short question" });
+
+        var pack = await _factory!.Services.GetRequiredService<IContextProvider>().BuildContextAsync(
+            new ContextBuildRequest(sessionId.ToString(), null)
+            {
+                Workspace = BindingOf(projectId, workspaceRoot),
+                TokenBudget = 8192,
+            });
+
+        Assert.NotEmpty(pack.Evidence);
+        Assert.Empty(pack.Dropped);
+    }
+
     // ── the containment rule the reader is built on ─────────────────────────────────
 
     [Theory]

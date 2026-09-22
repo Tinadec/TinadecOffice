@@ -1546,6 +1546,12 @@ export interface ToolExecutionTimelineItemDto {
   checkpoint_summary: string;
 }
 
+/** One evidence item in a context pack and the estimated tokens it cost. */
+export interface ContextBudgetShareDto {
+  source: string;
+  tokens: number;
+}
+
 /**
  * One `context.packed` event of a run: what that run was actually told.
  *
@@ -1566,6 +1572,19 @@ export interface ContextPackDto {
   token_budget: number;
   /** Evidence sources that survived the budget, in pack order. Empty for events written before this field existed. */
   sources: string[];
+  /**
+   * What each surviving item cost, one row per item and in the same order as `sources`, so a reader
+   * can pair a name with a price by index. One source can contribute several rows (`reviewed_memory`
+   * adds one per promoted entry), which is why the panel sums by name before showing it.
+   */
+  source_tokens?: ContextBudgetShareDto[];
+  /**
+   * Items the token budget crowded out, priced the same way. Absent on events written before either
+   * key existed, and this host cannot tell that apart from an empty list — so the reader pairs
+   * against `source_tokens`: a pack that names its evidence without pricing it has no budget data,
+   * while empty rows beside a priced pack is the real answer that nothing was cut.
+   */
+  dropped_sources?: ContextBudgetShareDto[];
   created_at: string;
 }
 

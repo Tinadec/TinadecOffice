@@ -741,6 +741,21 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Contains("workspace_instructions", sources);
         Assert.Contains("workspace_skills", sources);
         Assert.Equal(plannerPack.GetProperty("evidence_count").GetInt32(), sources.Length);
+
+        // A name list says what the model was told; it cannot say what that cost, which is the
+        // difference between "raise the budget" and "retrieve fewer memories" when a pack runs over.
+        // One row per evidence item, paired with `sources` by index — the projection must preserve
+        // the mint order rather than regroup it, so the reader never has to guess which price is
+        // whose. Nothing was crowded out in this scripted run, and the wire has to be able to say
+        // that as its own answer instead of leaving the key off.
+        var sourceTokens = plannerPack.GetProperty("source_tokens").EnumerateArray().ToArray();
+        Assert.Equal(sources.Length, sourceTokens.Length);
+        Assert.Equal(sources, sourceTokens.Select(value => value.GetProperty("source").GetString()));
+        Assert.Equal(plannerPack.GetProperty("estimated_tokens").GetInt32(),
+            sourceTokens.Sum(value => value.GetProperty("tokens").GetInt32()));
+        Assert.All(sourceTokens, value => Assert.True(value.GetProperty("tokens").GetInt32() > 0));
+        Assert.Empty(plannerPack.GetProperty("dropped_sources").EnumerateArray());
+
         // A main-planner pack belongs to no lane. The projection serialises that as an explicit null,
         // while the durable payload drops it, so a reader has to survive both shapes — which is what
         // the desktop's `string | null | undefined` is for, and why it is pinned here rather than assumed.

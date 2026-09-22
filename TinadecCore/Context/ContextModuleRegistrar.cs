@@ -178,11 +178,17 @@ internal sealed class ContextProvider : IContextProvider
         }
 
         var budgeted = new List<ContextEvidence>();
+        var dropped = new List<ContextEvidence>();
         var used = 0;
         foreach (var item in candidates)
         {
             if (item.EstimatedTokens > tokenBudget - used)
             {
+                // This `continue` used to be the only thing that ever happened to a cut item: the pack
+                // came back shorter and nothing anywhere said which source went missing or what it
+                // would have cost, so "the workspace has no instructions" and "the instructions did
+                // not fit" were indistinguishable to whoever read the run.
+                dropped.Add(item);
                 continue;
             }
 
@@ -197,6 +203,7 @@ internal sealed class ContextProvider : IContextProvider
             TokenBudget = tokenBudget,
             EstimatedTokens = used,
             Evidence = budgeted,
+            Dropped = dropped,
             Metadata = new Dictionary<string, string>
             {
                 ["runtime_profile_id"] = request.RuntimeProfileId,

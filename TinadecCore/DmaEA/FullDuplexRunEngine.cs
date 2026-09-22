@@ -1191,6 +1191,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             // the question anyone asks when the model misbehaves, which is "did it get the project
             // rules at all" — a budget that crowded out an item leaves no other trace.
             sources = context.Evidence.Select(item => item.Source).ToArray(),
+            // One row per evidence item, in the same order as `sources`, so a reader can pair an item
+            // with its price by index. Aggregating here would lose the difference between one
+            // expensive history and eight cheap memories, which is the difference between raising a
+            // budget and narrowing retrieval.
+            source_tokens = BudgetShares(context.Evidence),
+            dropped_sources = BudgetShares(context.Dropped),
             context_revision = checkpoint.ContextRevision
         }, cancellationToken).ConfigureAwait(false);
 
@@ -2233,6 +2239,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         grants.Count == 0
             ? []
             : grants.Select(grant => $"{grant.Level}:{grant.PathPrefix}").Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    /// <summary>
+    /// Per-item token prices in the spelling both <c>context.packed</c> mint sites write, so the wire
+    /// keys cannot drift apart between the main planner and a lane planner. Content stays out: events
+    /// are durable and readable by anything holding the run id, so quoting a dropped paragraph there
+    /// would copy workspace text outside the frozen root that was never granted to the reader.
+    /// </summary>
+    private static object[] BudgetShares(IReadOnlyList<ContextEvidence> items) =>
+        [.. items.Select(item => new { source = item.Source, tokens = item.EstimatedTokens })];
 
     /// <summary>
     /// A persisted assignment naming a spawnable-template slug routes to that

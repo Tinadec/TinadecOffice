@@ -528,6 +528,8 @@ public static class DmaeaEndpoints
                     estimated_tokens = PayloadInt(e.Payload, "estimated_tokens") ?? 0,
                     token_budget = PayloadInt(e.Payload, "token_budget") ?? 0,
                     sources = PayloadArray(e.Payload, "sources"),
+                    source_tokens = PayloadShares(e.Payload, "source_tokens"),
+                    dropped_sources = PayloadShares(e.Payload, "dropped_sources"),
                     created_at = e.Timestamp
                 }).ToList()
             }, Options);
@@ -659,6 +661,38 @@ public static class DmaeaEndpoints
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Array)
             return v.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToArray();
         return [];
+    }
+
+    /// <summary>
+    /// Reads the <c>[{ source, tokens }]</c> rows written by <c>BudgetShares</c>, dropping a row whose
+    /// shape does not match rather than guessing a price for it.
+    /// <para>
+    /// A malformed row would otherwise reach the surface as <c>NaN</c> or <c>undefined</c>, which is how
+    /// the compression-ratio bug in this very panel read as a measurement of zero.
+    /// </para>
+    /// <para>
+    /// An event from before these keys existed yields an empty list, which the wire cannot tell apart
+    /// from "nothing was priced" — an absent key and an empty array are the same bytes once this host
+    /// serialises them. The reader distinguishes the two by pairing against <c>sources</c>: a pack that
+    /// names its evidence but carries no rows has no price data, while an empty list beside a priced
+    /// pack is the real answer that nothing was crowded out.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<object> PayloadShares(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        var root = PayloadRoot(payload);
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var shares = new List<object>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            if (!item.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String) continue;
+            if (!item.TryGetProperty("tokens", out var tokens) || tokens.ValueKind != JsonValueKind.Number || !tokens.TryGetInt32(out var price)) continue;
+            shares.Add(new { source = source.GetString(), tokens = price });
+        }
+        return shares;
     }
 
     private static int? PayloadInt(IReadOnlyDictionary<string, object?> payload, string key)
