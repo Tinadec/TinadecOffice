@@ -4329,7 +4329,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             config.Context.DefaultTokenBudget,
             config.Context.RecentMessageLimit,
             config.Memory.RetrievalLimit,
-            config.TinaChatInput), cancellationToken).ConfigureAwait(false);
+            config.TinaChatInput)
+        {
+            // Same rule as the prompt assembly: the root comes from the freeze, so the context
+            // builder reads the project's own instructions from the directory this run was granted.
+            Workspace = config.Workspace,
+        }, cancellationToken).ConfigureAwait(false);
 
     private async Task<string> GenerateMeetingResponseAsync(
         FrozenRunConfigurationV1 configuration,

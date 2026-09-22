@@ -19,7 +19,7 @@ public sealed class ContextModuleRegistrar : IModuleRegistrar
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "strategies"],
-            Capabilities = ["context_pack", "evidence_gathering", "token_budget"],
+            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions"],
             Language = "C#",
             MafPrimitives = ["context"],
             RegistrationStatus = ModuleRegistrationStatus.NotConfigured
@@ -127,6 +127,15 @@ internal sealed class ContextProvider : IContextProvider
             candidates.Add(attachmentEvidence);
         }
 
+        // Instructions sit ahead of history and memory on purpose: they are directives about the
+        // repository, not another record of what happened. The two always-small items above stay in
+        // front, because a pack that drops its own revision or its assigned task is unusable.
+        var instructionEvidence = BuildWorkspaceInstructionEvidence(request);
+        if (instructionEvidence is not null)
+        {
+            candidates.Add(instructionEvidence);
+        }
+
         if (messages.Count != 0)
         {
             var history = string.Join('\n', messages.Select(message => $"{message.Role}: {message.Content}"));
@@ -203,6 +212,111 @@ internal sealed class ContextProvider : IContextProvider
     private const int MaxListedAttachments = 16;
     private const int MaxInlineCharsPerAttachment = 4 * 1024;
     private const int MaxInlineCharsTotal = 8 * 1024;
+
+    /// <summary>Runs whose project instructions are held. Oldest evicted first; a miss only costs a re-read.</summary>
+    private const int MemoisedRuns = 64;
+    private readonly Dictionary<string, InstructionRead> _instructionReads = [];
+    private readonly Queue<string> _instructionOrder = new();
+    private readonly object _instructionLock = new();
+
+    private sealed record InstructionRead(string? Text, string? FileName);
+
+    /// <summary>
+    /// The project's own instructions for an agent, read from the frozen workspace root and from
+    /// nowhere else: that root is the one admission proved belongs to this session's tenant and
+    /// workspace, so a run is shown the conventions of the code it was granted, never of a directory
+    /// it was not. A missing file, an unreadable directory and a projectless run all yield no
+    /// evidence rather than a failed pack — the run can still work without the project's prose.
+    ///
+    /// Read once per run. Re-reading it on every agent turn would let an edit mid-flight change what
+    /// the same run is told, while what it may *do* stayed frozen; the next run picks up the new text.
+    /// </summary>
+    private ContextEvidence? BuildWorkspaceInstructionEvidence(ContextBuildRequest request)
+    {
+        if (request.Workspace is not { } workspace) return null;
+        var charLimit = WorkspaceInstructionPolicy.InlineCharLimit(
+            request.TokenBudget ?? _settings.Current.DefaultTokenBudget);
+        if (charLimit <= 0) return null;
+
+        var cacheKey = request.RunId is { Length: > 0 } runId ? runId + "|" + workspace.RootPath : null;
+        var read = cacheKey is null
+            ? ReadInstructions(workspace.RootPath, charLimit)
+            : RememberedInstructions(cacheKey, workspace.RootPath, charLimit);
+        if (string.IsNullOrWhiteSpace(read.Text)) return null;
+
+        return new ContextEvidence
+        {
+            Source = "workspace_instructions",
+            Content = read.Text,
+            EstimatedTokens = EstimateTokens(read.Text),
+            Metadata = new Dictionary<string, string>
+            {
+                ["instruction_file"] = read.FileName ?? string.Empty,
+                ["char_limit"] = charLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            }
+        };
+    }
+
+    private InstructionRead RememberedInstructions(string cacheKey, string rootPath, int charLimit)
+    {
+        lock (_instructionLock)
+        {
+            if (_instructionReads.TryGetValue(cacheKey, out var cached)) return cached;
+        }
+
+        var read = ReadInstructions(rootPath, charLimit);
+
+        lock (_instructionLock)
+        {
+            if (_instructionReads.TryAdd(cacheKey, read)) _instructionOrder.Enqueue(cacheKey);
+            while (_instructionOrder.Count > MemoisedRuns)
+            {
+                _instructionReads.Remove(_instructionOrder.Dequeue());
+            }
+        }
+
+        return read;
+    }
+
+    private static InstructionRead ReadInstructions(string rootPath, int charLimit)
+    {
+        IReadOnlyCollection<string> present;
+        try
+        {
+            present = Directory.GetFiles(rootPath).Select(Path.GetFileName).OfType<string>().ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new InstructionRead(null, null);
+        }
+
+        if (WorkspaceInstructionPolicy.Select(present) is not { } fileName) return new InstructionRead(null, null);
+        var path = Path.Combine(rootPath, fileName);
+        try
+        {
+            var info = new FileInfo(path);
+            // ResolveLinkTarget only answers for a real link, so an ordinary file pays nothing here.
+            // A link is followed to its target and refused if that target left the root: the run's
+            // prompt tells the model nothing outside the root is readable, and this reader must not be
+            // the component that proves that sentence false.
+            if (info.ResolveLinkTarget(returnFinalTarget: true) is { } target
+                && !WorkspaceInstructionPolicy.IsInsideRoot(rootPath, target.FullName))
+            {
+                return new InstructionRead(WorkspaceInstructionPolicy.EscapesRoot(fileName), fileName);
+            }
+
+            if (info.Length > WorkspaceInstructionPolicy.MaxFileBytes)
+            {
+                return new InstructionRead(WorkspaceInstructionPolicy.Deferred(fileName, info.Length), fileName);
+            }
+
+            return new InstructionRead(WorkspaceInstructionPolicy.Frame(fileName, File.ReadAllText(path), charLimit), fileName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new InstructionRead(null, null);
+        }
+    }
 
     /// <summary>
     /// Which media types can be quoted as text lives in <see cref="AttachmentContentPolicy"/>, shared

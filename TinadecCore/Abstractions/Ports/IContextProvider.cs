@@ -51,4 +51,13 @@ public sealed record ContextBuildRequest(
     int? TokenBudget = null,
     int? RecentMessageLimit = null,
     int? ReviewedMemoryLimit = null,
-    TinaChatInputBinding? TinaChatInput = null);
+    TinaChatInputBinding? TinaChatInput = null)
+{
+    /// <summary>
+    /// The run's frozen workspace, when one is bound. Carried in rather than looked up, exactly like
+    /// <see cref="FrozenPromptAssemblyRequest.Workspace"/>: admission already proved this root belongs
+    /// to this session's tenant and workspace, and a context builder that re-resolved a root from the
+    /// store could read a directory the run was never granted.
+    /// </summary>
+    public FrozenWorkspaceBinding? Workspace { get; init; }
+}

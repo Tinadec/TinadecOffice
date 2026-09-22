@@ -76,6 +76,7 @@
 | 会话级工具表面与技能信任 | hermes-agent | 有效工具集按会话来源折叠；curator 只治理演化产生的资产 |
 | 记忆生命周期与注入形态 | TencentDB-Agent-Memory | 六态生命周期、confidence/expires_at 自动降级、InjectionMode 四分法 |
 | 会话态回退与快照三元组 | Codex、Gemini CLI | 回退不改 ID 追加新版本；对话+commitHash+toolCall 恢复点 |
+| 工作区指令文件入场（2026-09-22 落地） | Codex、OpenCode、Gemini CLI、hermes-agent | 候选名优先级 `AGENTS.override.md > AGENTS.md > CLAUDE.md > CONTEXT.md`；**一个目录只赢一份**（hermes：一种项目类型胜出）；正文封顶 = 上下文预算 1/4、绝对 24k 字符（Codex 32KiB 同源量级）；**截断必须写在模型读的正文里**（hermes：不给指令工具做分页，"模型只读第一页就跳过余下"）；随附一句"低于冻结权限"的优先序声明（Gemini CLI：上下文指令不得覆盖 Core Mandates）。**不取**：OpenCode 的无上限附带、Codex 的全局 `~/.codex/AGENTS.md` 前置（本仓工作区根外一律不可读）。落点与规则见 `TinadecCore/AGENTS.md` PROJECT INSTRUCTIONS REACH THE MODEL |
 
 ## 3. Microsoft Agent Framework：技术底座
 

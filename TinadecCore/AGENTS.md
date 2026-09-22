@@ -308,6 +308,17 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - 测试锚点：`AgentFramework.Tests/WorkspaceBaselineTests.cs`、`WorkspaceResourceClaimTests.cs`、`ModePublishGateTests.cs`；`Api.Tests/FullDuplexEndpointTests.InvokeStream_PromptCarriesTheFrozenWorkspaceRootAndPathContract`、`ToolChainEndpointTests`（假 manifest 必须覆盖种子包工具面，否则 `spawnable_template_tools_unauthorized`）。
 - 未收口（登记）：`command_run` 的 `additional_read_paths/additional_write_paths` 可越出工作区并被 `persist_grants` 持久化（沙箱自有 `ValidateWorkingDirectory/EnsureNotBroadWriteTarget`，属产品决策）；与冻结 `ReadOnlyRoots` 的联动（进程键仍只按主根）留待后续批次。
 
+## PROJECT INSTRUCTIONS REACH THE MODEL (2026-09-22)
+定位：让"项目自己写给智能体的规矩"成为模型可见的一等上下文——此前本仓库任何位置都没有把工作区文件正文喂给模型，只有准入期那份有界顶层清单（只列名）。**不改冻结体 schema、无数据库迁移**：正文按需在装配时读，根仍由冻结体给。规则来源与"故意不取"的部分已登记在 `docs/tinadec-core-reference-decisions.zh-CN.md` §2 决策映射。
+
+- `Abstractions/Ports/WorkspaceInstructionPolicy.cs` 是这些规则的唯一出处（与 `AttachmentContentPolicy` 同族同层）：候选名优先级 `AGENTS.override.md > AGENTS.md > CLAUDE.md > CONTEXT.md`、**一个目录只赢一份**（同时给多份等于让模型自己仲裁冲突）、文件正文上限 = 上下文预算的 1/4（绝对上限 24k 字符）、超过 512KiB 的正文不读、`IsInsideRoot` 判定，以及两条"说清楚为什么不给全文"的模型可见文案 `Deferred` / `EscapesRoot`。
+- `Abstractions/Ports/IContextProvider.cs`：`ContextBuildRequest.Workspace` 是 init 属性（与 `FrozenPromptAssemblyRequest.Workspace` 同规则：根随请求带来，不回库重算；从 `ISessionLocator` 另查一次就等于允许读到没 grants 的目录）。
+- `Context/ContextModuleRegistrar.cs`：新证据 `Source = "workspace_instructions"`（`Source` 是自由串，加来源不动契约）。排位在 `structured_session_state`/`task_context` 之后、附件与会话历史之前——指令是关于仓库的指令，但不该把对话挤掉。**按 run 记忆**（`RunId|RootPath`，64 条 FIFO）：run 的权限在准入时就冻住了，同一 run 中途换一套说法会让提示前缀漂移；编辑在下一个 run 生效。
+- `DmaEA/FullDuplexRunEngine.cs` 的 `BuildContextAsync` 注入 `config.Workspace`（与 `AssemblePromptAsync` 同源）。模块能力清单同步加 `workspace_instructions`（`ContextModuleRegistrar`）：能力此前只写"能装配上下文包"，看不出这份包里有仓库自己的规矩。
+- 安全边界：只枚举根目录一层，正文只走 `Path.Combine(root, <白名单文件名>)`；符号链接解析后若落在根外即拒读并说明原因——运行提示词已向模型承诺"根外不可读"，这个读取器不能成为推翻它的组件。
+- 测试锚点：`Api.Tests/WorkspaceInstructionApiTests.cs`（16 条，覆盖优先级、被抑制文件确实未出现、无指令文件、无工作区、截断与超上限两种文案、run 内稳定 / 下个 run 才见新值、指令不得挤掉会话历史、`IsInsideRoot` 六型）+ `FullDuplexEndpointTests.InvokeStream_SendsTheProjectInstructionFileInTheMessagesTheModelReads`（真实 run 走完 准入 → 上下文 → 派发）。后者刻意断言**消息正文**而非 `ChatOptions.Instructions`：装配器只拥有角色文案，证据活在消息里，只断言角色的话，"文件在上下文里造好却在派发前丢掉"照样能绿。为此 `ScriptedChatClient` 新增 `Prompts`（与 `Instructions` 同一把锁、两条路径各自记录一次，流式非 meeting 分支由委托的 `GetResponseAsync` 记录）。
+- 未收口（登记）：只读根目录一层，子目录嵌套指令文件（opencode 交给读工具惰性附带、hermes 作为工具结果附带）本仓尚未选择落点；`Skills` 模块仍是零消费者骨架；桌面端"哪条证据真到了模型"的可视化属阶段 6。
+
 ## CHAIN CLOSURE — 缝合「模型 → 工具 → 结果回模型」接缝（2026-09-17）
 
 定位：本批次只缝接缝，**不改**「对话身份与执行体分离」「静态一次性规划」两条产品定义（架构级取舍另立第二批次）。六处语义变更，每处都配了「旧语义残留」审计（见文末）。

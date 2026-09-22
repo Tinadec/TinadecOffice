@@ -664,6 +664,37 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvokeStream_SendsTheProjectInstructionFileInTheMessagesTheModelReads()
+    {
+        // The frozen-root fact above tells a run *where* it is; this one tells it what the
+        // project demands. Asserted against the recorded messages rather than Instructions
+        // because the prompt assembler owns roles and evidence travels in the messages —
+        // a role-only assertion would pass while the file was dropped between context
+        // build and dispatch, which is the gap this slice closes.
+        var root = Path.GetFullPath(Path.Combine(_root, "workspace"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "AGENTS.md"),
+            "# Project rules\nEvery summary must cite PRE-FROZEN-PROJECT-RULE.\n");
+
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "按项目规矩总结", client_message_id = "instructions-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("PRE-FROZEN-PROJECT-RULE", StringComparison.Ordinal)
+            && prompt.Contains("Every summary must cite", StringComparison.Ordinal)
+            && prompt.Contains("[workspace_instructions]", StringComparison.Ordinal)
+            && prompt.Contains("AGENTS.md", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task OperationalTriggers_ActivateBypassRolesWithoutCreatingLineageInstances()
     {
         var script = new ScriptedChatClient()
@@ -2140,10 +2171,28 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         public int WorkerGateEntries;
         private readonly object _instructionsGate = new();
         private readonly List<string> _instructions = [];
+        private readonly List<string> _prompts = [];
 
         public IReadOnlyList<string> Instructions
         {
             get { lock (_instructionsGate) return _instructions.ToArray(); }
+        }
+
+        /// <summary>Message texts the pipeline actually sent, joined per call. Instructions are
+        /// frozen agent roles; what the run learned (workspace instructions, attachments,
+        /// evidence) travels in the messages, so asserting a role alone cannot prove it.</summary>
+        public IReadOnlyList<string> Prompts
+        {
+            get { lock (_instructionsGate) return _prompts.ToArray(); }
+        }
+
+        private void Record(string? instructions, string prompt)
+        {
+            lock (_instructionsGate)
+            {
+                if (!string.IsNullOrWhiteSpace(instructions)) _instructions.Add(instructions);
+                if (!string.IsNullOrWhiteSpace(prompt)) _prompts.Add(prompt);
+            }
         }
 
         public ScriptedChatClient WhenPlanner(string script) { _planner = script; return this; }
@@ -2194,10 +2243,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         {
             var prompt = string.Join('\n', messages.Select(m => m.Text));
             var instructions = options?.Instructions;
-            if (!string.IsNullOrWhiteSpace(instructions))
-            {
-                lock (_instructionsGate) _instructions.Add(instructions);
-            }
+            Record(instructions, prompt);
             var isPlanner = instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal);
@@ -2456,13 +2502,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             ChatOptions? options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            if (!string.IsNullOrWhiteSpace(options?.Instructions))
-            {
-                lock (_instructionsGate) _instructions.Add(options.Instructions);
-            }
             var isMeeting = options?.Instructions?.Contains("You are the meeting agent", StringComparison.Ordinal) ?? false;
             if (isMeeting)
             {
+                // The delegate below records for every other role; the meeting branch returns
+                // without it, and the meeting prompt is the one the user finally reads.
+                Record(options?.Instructions, string.Join('\n', messages.Select(m => m.Text)));
                 if (BeforeMeeting is not null) await BeforeMeeting.WaitAsync(cancellationToken);
                 var chunks = (_meeting ?? "回复").Chunk(2).ToArray();
                 foreach (var chunk in chunks)
