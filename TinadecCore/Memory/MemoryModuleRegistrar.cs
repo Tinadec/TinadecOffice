@@ -201,15 +201,25 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
         return await ToCandidateAsync(row, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<MemoryCandidate>> ListCandidatesAsync(string? status = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MemoryCandidate>> ListCandidatesAsync(MemoryCandidateQuery? query = null, CancellationToken cancellationToken = default)
     {
-        var scope = _tenant.Current;
+        var filter = query ?? new MemoryCandidateQuery();
+        var status = ReviewVocabulary.Normalize(filter.Status, ReviewVocabulary.CandidateStatuses, "status");
+        var scope = ReviewVocabulary.Normalize(filter.Scope, ReviewVocabulary.Scopes, "scope");
+        var kind = ReviewVocabulary.Normalize(filter.Kind, null, "kind");
+        var limit = ReviewVocabulary.ClampLimit(filter.Limit);
+        var tenant = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var query = db.MemoryCandidates.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId);
-        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status.Trim().ToLowerInvariant());
+        var rowsQuery = db.MemoryCandidates.AsNoTracking().Where(x => x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId);
+        if (status is not null) rowsQuery = rowsQuery.Where(x => x.Status == status);
+        if (scope is not null) rowsQuery = rowsQuery.Where(x => x.Scope == scope);
+        if (kind is not null) rowsQuery = rowsQuery.Where(x => x.Kind == kind);
+        if (filter.RunId is { } runId) rowsQuery = rowsQuery.Where(x => x.SourceRunId == runId);
+        if (filter.ProjectId is { } projectId) rowsQuery = rowsQuery.Where(x => x.ProjectId == projectId);
         // SQLite cannot translate DateTimeOffset ordering; sort on the client instead.
-        var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await rowsQuery.ToListAsync(cancellationToken).ConfigureAwait(false);
         rows.Sort((a, b) => b.CreatedAt.CompareTo(a.CreatedAt));
+        if (limit is { } candidateLimit) rows = rows.Take(candidateLimit).ToList();
         var result = new List<MemoryCandidate>(rows.Count);
         foreach (var row in rows) result.Add(await ToCandidateAsync(row, cancellationToken).ConfigureAwait(false));
         return result;
@@ -250,14 +260,23 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
         return await ToCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<LongTermMemoryItem>> ListItemsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<LongTermMemoryItem>> ListItemsAsync(MemoryItemQuery? query = null, CancellationToken cancellationToken = default)
     {
-        var scope = _tenant.Current;
+        var filter = query ?? new MemoryItemQuery();
+        var status = ReviewVocabulary.Normalize(filter.Status, ReviewVocabulary.ItemStatuses, "status");
+        var scope = ReviewVocabulary.Normalize(filter.Scope, ReviewVocabulary.Scopes, "scope");
+        var kind = ReviewVocabulary.Normalize(filter.Kind, null, "kind");
+        var limit = ReviewVocabulary.ClampLimit(filter.Limit);
+        var tenant = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await db.MemoryItems.AsNoTracking()
-            .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var rowsQuery = db.MemoryItems.AsNoTracking().Where(x => x.TenantId == tenant.TenantId && x.WorkspaceId == tenant.WorkspaceId);
+        if (status is not null) rowsQuery = rowsQuery.Where(x => x.Status == status);
+        if (scope is not null) rowsQuery = rowsQuery.Where(x => x.Scope == scope);
+        if (kind is not null) rowsQuery = rowsQuery.Where(x => x.Kind == kind);
+        if (filter.ProjectId is { } projectId) rowsQuery = rowsQuery.Where(x => x.ProjectId == projectId);
+        var rows = await rowsQuery.ToListAsync(cancellationToken).ConfigureAwait(false);
         rows.Sort((a, b) => b.UpdatedAt.CompareTo(a.UpdatedAt));
+        if (limit is { } itemLimit) rows = rows.Take(itemLimit).ToList();
         var result = new List<LongTermMemoryItem>(rows.Count);
         foreach (var row in rows) result.Add(await ToItemAsync(db, row, cancellationToken).ConfigureAwait(false));
         return result;
@@ -280,7 +299,7 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
     private static void ValidateProposal(MemoryCandidateProposal proposal)
     {
         if (proposal.SourceRunId == Guid.Empty || proposal.GeneratedByInstanceId == Guid.Empty) throw new ArgumentException("Candidate provenance is required.", nameof(proposal));
-        if (proposal.Scope is not ("principal" or "workspace" or "project" or "agent")) throw new ArgumentException("Invalid memory scope.", nameof(proposal));
+        if (!ReviewVocabulary.Scopes.Contains(proposal.Scope)) throw new ArgumentException("Invalid memory scope.", nameof(proposal));
         if (string.IsNullOrWhiteSpace(proposal.Kind) || string.IsNullOrWhiteSpace(proposal.Content)) throw new ArgumentException("Memory kind and content are required.", nameof(proposal));
     }
 
@@ -294,7 +313,7 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
     {
         var data = System.Text.Json.JsonSerializer.Deserialize<MemoryCandidateProposal>(await ReadTextAsync(row.ContentReference, row.ContentHash, row.ContentLength, cancellationToken).ConfigureAwait(false))
             ?? throw new InvalidDataException("Memory candidate content is invalid.");
-        return new MemoryCandidate(row.Id, row.SourceRunId, row.GeneratedByInstanceId, row.Scope, row.Kind, row.Status, row.Confidence, data.Content, row.DecisionReason, row.PromotedMemoryItemId, row.CreatedAt, row.UpdatedAt);
+        return new MemoryCandidate(row.Id, row.SourceRunId, row.GeneratedByInstanceId, row.Scope, row.Kind, row.Status, row.Confidence, data.Content, row.DecisionReason, row.PromotedMemoryItemId, row.CreatedAt, row.UpdatedAt, data.Evidence, data.Applicability, data.ExpiryCondition);
     }
 
     private async Task<LongTermMemoryItem> ToItemAsync(MemoryDbContext db, MemoryItemRecord row, CancellationToken cancellationToken)
@@ -302,7 +321,7 @@ internal sealed class LongTermMemoryService : ILongTermMemoryService
         var version = await db.MemoryVersions.AsNoTracking().SingleAsync(x => x.Id == row.CurrentVersionId, cancellationToken).ConfigureAwait(false);
         var data = System.Text.Json.JsonSerializer.Deserialize<MemoryCandidateProposal>(await ReadTextAsync(version.ContentReference, version.ContentHash, version.ContentLength, cancellationToken).ConfigureAwait(false))
             ?? throw new InvalidDataException("Memory item content is invalid.");
-        return new LongTermMemoryItem(row.Id, row.Scope, row.Kind, row.Status, row.CurrentVersion, data.Content, row.CreatedAt, row.UpdatedAt, row.RevokedAt);
+        return new LongTermMemoryItem(row.Id, row.Scope, row.Kind, row.Status, row.CurrentVersion, data.Content, row.CreatedAt, row.UpdatedAt, row.RevokedAt, data.Applicability, data.ExpiryCondition);
     }
 
     private async Task<string> ReadTextAsync(string reference, string hash, long length, CancellationToken cancellationToken)

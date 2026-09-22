@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.DmaEA;
 
@@ -27,6 +28,7 @@ public static class EvolutionEndpoints
                 var candidates = await instances.ListCandidatesAsync(status, ct);
                 return Results.Ok(candidates.Select(ToProposal));
             }
+            catch (ReviewFilterValueException ex) { return MemoryReviewEndpoints.ReviewFilterFailure(ex); }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message }); }
         });
 

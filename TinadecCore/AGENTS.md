@@ -352,6 +352,19 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - 验证：`Api.Tests/WorkspaceFileReviewApiTests.cs` 16 例（四种 status、预算外文件不可撤且明说原因、二进制/截断两侧正文、撤销一个不影响兄弟、审阅后被改走 → 409、五种越界路径形状、未知快照带码 404）。哈希一律从列表响应里读回再喂回去，断言的是**铸造方自己写出的值**。
 - 已知缺口（诚实）：`Gateway` 只做无状态转发，白名单加了 5 个码——其中 `workspace_conflict` 是**既有整体还原早已在发、过去只到网关就被压成 `conflict` 的码**，这条顺带修掉了；桌面契约的**半边有保护**：网关外部 OpenAPI 变了就必须重新生成 `apps/desktop/src/generated/schema.d.ts`（`npm run check:drift` 抓到过本批三条路径，请求体与路径参数因此在契约里），但 `/api/v1/workspace-snapshots/*` 在快照里**没有响应体 schema**（`responses.200.content: never`），所以响应字段漂移看不见——桌面 `api.ts` 里这三个响应的类型是手写的，字段回归靠 Core 测试 + `SnapshotsPage.test.ts` 的调用参数断言两头夹住。给代理路由加响应 schema 需要 Elysia 真的校验/序列化转发体，本仓所有代理路由都没有，不该在这里单开一例。逐文件还原**不走** `UserToolAction` 审批环（与整体还原同为显式用户命令），子目录嵌套快照、按 run 聚合的变更清单尚未做。
 
+## MEMORY REVIEW QUEUE IS FILTERABLE AND SHOWS ITS GROUNDS (2026-09-22)
+定位：让"记忆评审"从一张只能瞪着的空表变成能筛、能判、能遗忘的面。链路本身是真的——策展人在 run 收尾写候选（`FullDuplexRunEngine.cs` 的 `_longTermMemory.CreateCandidateAsync`），晋升后的条目经 `MemoryStore.RetrieveAsync` 以 `reviewed_memory` 来源进入 prompt（默认 `[memory] retrieval_limit = 8`，检索是"作用域过滤 + 关键词打分"，不是语义向量）。缺的是把这份事实交给人：`/api/v1/memory-items` 与 `.../revoke` 在网关根本没有路由，桌面端从未调用过任何记忆端点。
+
+- **候选/条目现在带 `evidence` / `applicability` / `expiry_condition`**。这三个字段一直躺在存储的 `MemoryCandidateProposal` JSON 里（`ToCandidateAsync`/`ToItemAsync` 反序列化的就是整个 proposal），只是投影没往外给——只看一句"该用 pnpm"而看不到"依据是什么、什么时候不再成立"，评审就变成了对句子本身表态。加字段是**读已有数据**，没有新列、没有迁移；老候选读回来是 null（缺失即无，不补空串）。
+- **封闭词表的筛选值一律校验，绝不静默返回空**：`Abstractions/Ports/ReviewVocabulary.cs` 持有 `CandidateStatuses`/`ItemStatuses`/`Scopes`/`MaxLimit`，写路径（`ValidateProposal`）与读路径共用同一组集合，防止队列表和评审面对不上。值不合法 → `ReviewFilterValueException`（自带机器码与字段名）→ 400 `{code, message, field}`。此前 `INVALID_STATUS` 的 catch 在两条列表路由上是**死代码**：`ListCandidatesAsync` 只做 `status.Trim().ToLower()` 比较，拼错的状态返回 `[]`——"这个范围没东西"和"你拼错了"在界面上长得一样，而后者会让人关掉页面。
+- `run_id`/`project_id` 以字符串绑定、手工 `Guid.TryParse`，因为最小 API 的 `Guid?` 参数绑定失败发生在 handler **之前**，抓不住、也就给不出机器码（同 TinaChat `actor_id` 那一类）。拒绝码复用契约里已有的 `INVALID_RUN_ID`/`INVALID_PROJECT_ID`/`INVALID_REQUEST`，**没有新增码**；`kind` 是开放词表（配置决定），只 trim 不校验，按存储拼写匹配。
+- 分页：`limit` 存在即 `Math.Min(limit, 500)`，`0` 被当成字面的"我要 0 行"。缺省仍是全量（不改既有调用方语义）。列表每行都要读一次内容 blob（`ReadTextAsync`），所以筛选必须在进库之前做完、`limit` 必须有上界——**没有分页游标**是这段的已知缺口。
+- 撤销是**幂等**的（`RevokeAsync` 对已 revoked 直接回同一行），不是冲突；候选二次裁决才是冲突（`ALREADY_DECIDED` → 409）。
+- **撤销的理由无处可存**：`MemoryItemRecord` 没有 reason 列，`RevokeAsync(itemId, reason)` 收下就丢。桌面因此**不收集**撤销理由、Core 测试也不发——收一个会被扔掉的答案等于教用户输入噪音。要留这条审计得加列（本仓 schema 走 `DbContextMigrationParticipant` 自研路径，不是 EF Migrations），另立一批。
+- 网关：补 `GET /api/v1/memory-items`、`POST /api/v1/memory-items/:itemId/revoke` 两条无状态代理；`memory-candidates` 的白名单**删掉了 `session_id`**（候选只有 `source_run_id`，没有会话列），其余按 Core 真正兑现的键转发。`errorMapper` 的 `CODE_MAP` 补 `INVALID_STATUS`/`INVALID_DECISION` → `invalid_request`、`ALREADY_DECIDED` → `conflict`：漏在表外的码会被 `normalizeCode` 压成 `conflict`，把"你传错了"说成"稍后重试"。
+- 验证：`Api.Tests/MemoryReviewApiTests.cs`（裁决/筛选/分页/幂等/字段回读，种子走策展人同一个 `ILongTermMemoryService` 端口而不是新造形状）；网关 `runtimeProxy.test.ts` 两条新用例——一条钉路径与白名单（含 `session_id` 必须**不**出现在转发 URL 里），一条用 4 个真实 Core 码断言映射结果，去掉 `CODE_MAP` 三行后该用例立即变红。
+- 已知缺口（诚实）：检索排序仍是关键词命中比例，向量化路由未配置，因此"语义相近但换了词"的记忆召不回来；`applicability/expiry` 进不了模型（`MemoryEntry` 只带 content），所以"条件失效"目前只有人在看、模型不知道；候选列表响应没有分页游标，翻 500 条以上只能靠更窄的筛选。
+
 ## CHAIN CLOSURE — 缝合「模型 → 工具 → 结果回模型」接缝（2026-09-17）
 
 定位：本批次只缝接缝，**不改**「对话身份与执行体分离」「静态一次性规划」两条产品定义（架构级取舍另立第二批次）。六处语义变更，每处都配了「旧语义残留」审计（见文末）。

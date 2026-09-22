@@ -524,3 +524,74 @@ test('approval pre-authorization creation surfaces Core validation as ProblemDet
   assert.equal(problem.instance, '/api/v1/approvals/pre-authorizations');
   assert.equal(problem.trace_id, 'trace-pre-auth-1');
 });
+
+test('memory item review routes stay stateless Core proxies', { concurrency: false }, async () => {
+  const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+    });
+    return new Response(JSON.stringify({ proxied: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  const responses = [
+    // session_id is not a candidate filter (a candidate names its run, not its
+    // session), so it must not reach Core at all.
+    new Request('http://gateway.local/api/v1/memory-candidates?status=proposed&scope=workspace&run_id=run-1&session_id=session-1'),
+    new Request('http://gateway.local/api/v1/memory-items?status=active&kind=fact&limit=20'),
+    new Request('http://gateway.local/api/v1/memory-items/item-1/revoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    }),
+  ];
+  for (const request of responses) {
+    const response = await app.handle(request);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { proxied: true });
+  }
+
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ['GET', 'http://127.0.0.1:48731/api/v1/memory-candidates?status=proposed&scope=workspace&run_id=run-1'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/memory-items?status=active&kind=fact&limit=20'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/memory-items/item-1/revoke'],
+  ]);
+});
+
+// Core names review failures with its own UPPER_SNAKE codes. Left out of the
+// mapper they all fall through to the default, which turns "you sent a value this
+// queue cannot use" into the one code that means "try again later".
+test('memory review failures keep their 4xx meaning instead of collapsing to conflict', { concurrency: false }, async () => {
+  const cases: Array<{ method: string; path: string; coreCode: string; status: number; expected: string }> = [
+    { method: 'GET', path: '/api/v1/memory-candidates?run_id=yesterday', coreCode: 'INVALID_RUN_ID', status: 400, expected: 'invalid_request' },
+    { method: 'POST', path: '/api/v1/memory-candidates/candidate-1/promote', coreCode: 'INVALID_DECISION', status: 400, expected: 'invalid_request' },
+    { method: 'POST', path: '/api/v1/memory-candidates/candidate-1/reject', coreCode: 'ALREADY_DECIDED', status: 409, expected: 'conflict' },
+    { method: 'POST', path: '/api/v1/memory-items/item-1/revoke', coreCode: 'NOT_FOUND', status: 404, expected: 'not_found' },
+  ];
+
+  for (const testCase of cases) {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      code: testCase.coreCode,
+      message: 'review refused',
+      field: 'run_id',
+    }), { status: testCase.status, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+
+    const response = await app.handle(new Request(`http://gateway.local${testCase.path}`, {
+      method: testCase.method,
+      headers: { 'content-type': 'application/json' },
+      body: testCase.method === 'POST' ? JSON.stringify({ reason: 'because' }) : undefined,
+    }));
+
+    assert.equal(response.status, testCase.status, testCase.path);
+    assert.equal(response.headers.get('content-type'), 'application/problem+json');
+    const problem = await response.json() as Record<string, unknown>;
+    assert.equal(problem.code, testCase.expected, `${testCase.path} (${testCase.coreCode})`);
+    assert.equal(problem.detail, 'review refused');
+    assert.equal(problem.instance, testCase.path.split('?')[0]);
+  }
+});

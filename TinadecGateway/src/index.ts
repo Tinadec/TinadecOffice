@@ -1054,7 +1054,11 @@ const app = new Elysia()
   .get('/api/v1/memory-candidates', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
     const search = new URLSearchParams();
-    for (const key of ['status', 'scope', 'kind', 'session_id', 'run_id', 'project_id', 'limit']) {
+    // Only filters Core answers. A candidate has no session (it names the run that
+    // proposed it), so session_id is not forwarded: a knob the wire advertises but
+    // Core ignores is worse than no knob, because the caller cannot tell a filtered
+    // empty queue from an unfiltered one.
+    for (const key of ['status', 'scope', 'kind', 'run_id', 'project_id', 'limit']) {
       const value = (query as Record<string,unknown>)[key];
       if (value !== undefined && value !== '') search.set(key, String(value));
     }
@@ -1081,6 +1085,28 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Reject memory candidate', tags: ['System'] } })
+  .get('/api/v1/memory-items', async ({ query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const search = new URLSearchParams();
+    for (const key of ['status', 'scope', 'kind', 'project_id', 'limit']) {
+      const value = (query as Record<string,unknown>)[key];
+      if (value !== undefined && value !== '') search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const result = await proxyJson(`/api/v1/memory-items${suffix}`, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/memory-items'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List promoted memory items', tags: ['System'] } })
+  .post('/api/v1/memory-items/:itemId/revoke', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/memory-items/${params.itemId}/revoke`, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/memory-items/${params.itemId}/revoke`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Revoke a memory item', tags: ['System'] } })
   .post('/api/v1/tools/shell', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/tools/shell', { method: 'POST', body: body as Record<string, unknown>, headers });

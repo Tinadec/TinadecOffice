@@ -749,6 +749,54 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvokeStream_SendsPromotedMemoryAndKeepsAnUnreviewedCandidateOutOfThePrompt()
+    {
+        // The reason a review queue exists is that saying yes here changes what the model is
+        // told there. Until now nothing in the repository asserted that trip: the curator wrote
+        // candidates, promotion produced an active item, and the retrieval leg that is supposed to
+        // read them back was only reachable by reading the code.
+        // The other half of the same rule is asserted in the same run: a candidate nobody reviewed
+        // must stay out of the prompt, because "proposed" and "true about this workspace" are
+        // different claims and the model cannot tell them apart once both are in its context.
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var factory = CreateFactory(script);
+        var client = factory.CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var memory = factory.Services.GetRequiredService<ILongTermMemoryService>();
+        var proposed = await memory.CreateCandidateAsync(new MemoryCandidateProposal(
+            Guid.NewGuid(), Guid.NewGuid(), "workspace", "preference",
+            "PROMOTED-MEMORY-REACHES-THE-MODEL-4f92: changelog notes go in one line.", 0.9));
+        var promoted = await client.PostAsJsonAsync(
+            $"/api/v1/memory-candidates/{proposed.Id}/promote", new { reason = "reviewed by hand" });
+        Assert.Equal(HttpStatusCode.OK, promoted.StatusCode);
+
+        await memory.CreateCandidateAsync(new MemoryCandidateProposal(
+            Guid.NewGuid(), Guid.NewGuid(), "workspace", "preference",
+            "UNREVIEWED-CANDIDATE-STAYS-OUT-9b13: changelog notes go in a table.", 0.95));
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "写 changelog", client_message_id = "memory-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("[reviewed_memory]", StringComparison.Ordinal)
+            && prompt.Contains("PROMOTED-MEMORY-REACHES-THE-MODEL-4f92", StringComparison.Ordinal));
+        Assert.All(script.Prompts, prompt =>
+            Assert.DoesNotContain("UNREVIEWED-CANDIDATE-STAYS-OUT-9b13", prompt, StringComparison.Ordinal));
+
+        var runId = RunIdOf(chunks.First(chunk => chunk.TryGetProperty("run_id", out _)));
+        var packs = (await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/runs/{runId}/orchestration")).GetProperty("context_packs");
+        Assert.Contains(
+            "reviewed_memory",
+            packs.EnumerateArray().First().GetProperty("sources").EnumerateArray().Select(value => value.GetString()));
+    }
+
+    [Fact]
     public async Task OperationalTriggers_ActivateBypassRolesWithoutCreatingLineageInstances()
     {
         var script = new ScriptedChatClient()

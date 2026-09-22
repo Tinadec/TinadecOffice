@@ -5334,6 +5334,40 @@
         ]
       }
     },
+    "/api/v1/memory-items": {
+      "get": {
+        "operationId": "getApiV1Memory-items",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List promoted memory items",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/memory-items/{itemId}/revoke": {
+      "post": {
+        "operationId": "postApiV1Memory-itemsByItemIdRevoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "itemId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke a memory item",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/api/v1/model-catalog-readiness": {
       "get": {
         "operationId": "getApiV1Model-catalog-readiness",

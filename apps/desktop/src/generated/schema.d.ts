@@ -383,6 +383,14 @@ export interface paths {
     /** Reject memory candidate */
     post: operations["postApiV1Memory-candidatesByCandidateIdReject"];
   };
+  "/api/v1/memory-items": {
+    /** List promoted memory items */
+    get: operations["getApiV1Memory-items"];
+  };
+  "/api/v1/memory-items/{itemId}/revoke": {
+    /** Revoke a memory item */
+    post: operations["postApiV1Memory-itemsByItemIdRevoke"];
+  };
   "/api/v1/model-catalog-readiness": {
     /** Model catalog readiness */
     get: operations["getApiV1Model-catalog-readiness"];
@@ -2961,6 +2969,27 @@ export interface operations {
     parameters: {
       path: {
         candidateId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** List promoted memory items */
+  "getApiV1Memory-items": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Revoke a memory item */
+  "postApiV1Memory-itemsByItemIdRevoke": {
+    parameters: {
+      path: {
+        itemId: string;
       };
     };
     responses: {

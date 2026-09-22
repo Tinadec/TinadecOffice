@@ -410,9 +410,10 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var scope = _tenant.Current;
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var query = db.Candidates.AsNoTracking().Where(item => item.TenantId == scope.TenantId && item.WorkspaceId == scope.WorkspaceId);
-        if (!string.IsNullOrWhiteSpace(status))
+        var normalized = ReviewVocabulary.Normalize(status, ReviewVocabulary.CandidateStatuses, "status");
+        if (normalized is not null)
         {
-            query = query.Where(item => item.Status == status.Trim().ToLowerInvariant());
+            query = query.Where(item => item.Status == normalized);
         }
 
         var rows = await query.ToListAsync(cancellationToken).ConfigureAwait(false);

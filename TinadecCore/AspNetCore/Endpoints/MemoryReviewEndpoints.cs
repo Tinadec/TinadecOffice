@@ -14,34 +14,59 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// produces an immutable agent version bound later by an explicit mode edit.
 /// Memory review and tool approvals are deliberately separate state machines
 /// (never share decision tokens).
+///
+/// Every list filter is validated here rather than passed through unfilled: a queue
+/// that answers "nothing to review" to a misspelled filter teaches the reviewer to
+/// trust an empty shelf.
 /// </summary>
 public static class MemoryReviewEndpoints
 {
     public static IEndpointRouteBuilder MapMemoryReviewEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/memory-candidates", async (string? status, ILongTermMemoryService memory, CancellationToken ct) =>
+        app.MapGet("/api/v1/memory-candidates", async (string? status, string? scope, string? kind, string? run_id, string? project_id, string? limit, ILongTermMemoryService memory, CancellationToken ct) =>
         {
             try
             {
-                var candidates = await memory.ListCandidatesAsync(status, ct);
+                var candidates = await memory.ListCandidatesAsync(new MemoryCandidateQuery(
+                    status,
+                    scope,
+                    kind,
+                    ReviewVocabulary.ParseId(run_id, "run_id", "INVALID_RUN_ID"),
+                    ReviewVocabulary.ParseId(project_id, "project_id", "INVALID_PROJECT_ID"),
+                    ReviewVocabulary.ParseLimit(limit)), ct);
                 return Results.Ok(candidates.Select(ToMemoryCandidate));
             }
+            catch (ReviewFilterValueException ex) { return ReviewFilterFailure(ex); }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message }); }
         });
 
-        app.MapGet("/api/v1/memory-items", async (ILongTermMemoryService memory, CancellationToken ct) =>
-            Results.Ok((await memory.ListItemsAsync(ct)).Select(item => new
+        app.MapGet("/api/v1/memory-items", async (string? status, string? scope, string? kind, string? project_id, string? limit, ILongTermMemoryService memory, CancellationToken ct) =>
+        {
+            try
             {
-                id = item.Id,
-                scope = item.Scope,
-                kind = item.Kind,
-                status = item.Status,
-                version = item.Version,
-                content = item.Content,
-                created_at = item.CreatedAt,
-                updated_at = item.UpdatedAt,
-                revoked_at = item.RevokedAt
-            })));
+                var items = await memory.ListItemsAsync(new MemoryItemQuery(
+                    status,
+                    scope,
+                    kind,
+                    ReviewVocabulary.ParseId(project_id, "project_id", "INVALID_PROJECT_ID"),
+                    ReviewVocabulary.ParseLimit(limit)), ct);
+                return Results.Ok(items.Select(item => new
+                {
+                    id = item.Id,
+                    scope = item.Scope,
+                    kind = item.Kind,
+                    status = item.Status,
+                    version = item.Version,
+                    content = item.Content,
+                    applicability = item.Applicability,
+                    expiry_condition = item.ExpiryCondition,
+                    created_at = item.CreatedAt,
+                    updated_at = item.UpdatedAt,
+                    revoked_at = item.RevokedAt
+                }));
+            }
+            catch (ReviewFilterValueException ex) { return ReviewFilterFailure(ex); }
+        });
 
         app.MapPost("/api/v1/memory-candidates/{candidateId}/promote", async (Guid candidateId, ReviewDecisionRequest? request, ILongTermMemoryService memory, CancellationToken ct) =>
             await DecideMemoryAsync(memory, candidateId, "promoted", request, ct));
@@ -61,6 +86,8 @@ public static class MemoryReviewEndpoints
                     kind = item.Kind,
                     status = item.Status,
                     version = item.Version,
+                    applicability = item.Applicability,
+                    expiry_condition = item.ExpiryCondition,
                     revoked_at = item.RevokedAt
                 });
             }
@@ -74,6 +101,7 @@ public static class MemoryReviewEndpoints
                 var candidates = await instances.ListCandidatesAsync(status, ct);
                 return Results.Ok(candidates.Select(ToAgentCandidate));
             }
+            catch (ReviewFilterValueException ex) { return ReviewFilterFailure(ex); }
             catch (ArgumentException ex) { return Results.BadRequest(new { code = "INVALID_STATUS", message = ex.Message }); }
         });
 
@@ -85,6 +113,13 @@ public static class MemoryReviewEndpoints
 
         return app;
     }
+
+    /// <summary>
+    /// A refused filter answers with the field it got wrong. Shared with the agent
+    /// candidate queue, which narrows with the same vocabulary.
+    /// </summary>
+    internal static IResult ReviewFilterFailure(ReviewFilterValueException ex)
+        => Results.BadRequest(new { code = ex.Code, message = ex.Message, field = ex.FieldName });
 
     private static async Task<IResult> DecideMemoryAsync(ILongTermMemoryService memory, Guid candidateId, string decision, ReviewDecisionRequest? request, CancellationToken ct)
     {
@@ -120,6 +155,9 @@ public static class MemoryReviewEndpoints
         status = candidate.Status,
         confidence = candidate.Confidence,
         content = candidate.Content,
+        evidence = candidate.Evidence,
+        applicability = candidate.Applicability,
+        expiry_condition = candidate.ExpiryCondition,
         decision_reason = candidate.DecisionReason,
         promoted_memory_item_id = candidate.PromotedMemoryItemId,
         created_at = candidate.CreatedAt,
