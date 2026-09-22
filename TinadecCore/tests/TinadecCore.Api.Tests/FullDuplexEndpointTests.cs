@@ -695,6 +695,39 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvokeStream_SendsTheSkillIndexAndKeepsEverySkillBodyOnDisk()
+    {
+        // Progressive disclosure is only real if its second half survives the trip to the model: an
+        // index that arrives while the bodies ride along with it charges every turn of every run for
+        // every skill in the repository. Asserted against the recorded messages, and against all of
+        // them — a body leaking into any one role's prompt breaks the rule as far as the model is
+        // concerned, whichever role it was.
+        var root = Path.GetFullPath(Path.Combine(_root, "workspace"));
+        var skillDirectory = Path.Combine(root, "skills", "changelog");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"),
+            "---\nname: changelog\ndescription: Group the commits since the last tag into one note.\n---\n\nBODY-MUST-STAY-ON-DISK-7c41\n");
+
+        var script = new ScriptedChatClient()
+            .WhenPlanner("[{\"task_key\":\"task-1\",\"title\":\"任务A\",\"description\":\"\",\"success_criteria\":[\"完成\"],\"dependencies\":[],\"required_capabilities\":[],\"required_tools\":[],\"priority\":1,\"risk\":\"low\"}]")
+            .WhenWorker("已完成任务")
+            .WhenSupervisor("{\"decision\":\"pass\",\"reasons\":[\"ok\"],\"revise_task_indexes\":[]}")
+            .WhenMeeting("全部完成。");
+        var client = CreateFactory(script).CreateClient();
+        var sessionId = await CreateSessionAsync(client);
+
+        var chunks = await StreamInvokeAsync(client, sessionId, new { content = "写发版说明", client_message_id = "skills-prompt" });
+        Assert.Equal("done", KindOf(chunks.Last(chunk => KindOf(chunk) is "done" or "error")));
+
+        Assert.Contains(script.Prompts, prompt =>
+            prompt.Contains("[workspace_skills]", StringComparison.Ordinal)
+            && prompt.Contains("skills/changelog/SKILL.md", StringComparison.Ordinal)
+            && prompt.Contains("Group the commits since the last tag into one note.", StringComparison.Ordinal));
+        Assert.All(script.Prompts, prompt =>
+            Assert.DoesNotContain("BODY-MUST-STAY-ON-DISK-7c41", prompt, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task OperationalTriggers_ActivateBypassRolesWithoutCreatingLineageInstances()
     {
         var script = new ScriptedChatClient()

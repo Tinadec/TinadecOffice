@@ -155,8 +155,7 @@ public sealed class WorkspaceFileReviewApiTests : IAsyncLifetime
         var diff = await _factory!.CreateClient()
             .GetFromJsonAsync<JsonElement>($"/api/v1/workspace-snapshots/{snapshotId}/files/diff?path=src/note.txt");
 
-        Assert.NotNull(diff);
-        Assert.Equal("modified", diff!.GetProperty("status").GetString());
+        Assert.Equal("modified", diff.GetProperty("status").GetString());
         Assert.Equal("BEFORE-LINE\nshared\n", diff.GetProperty("before").GetProperty("text").GetString());
         Assert.Equal("shared\nAFTER-LINE\n", diff.GetProperty("after").GetProperty("text").GetString());
         Assert.True(diff.GetProperty("before").GetProperty("present").GetBoolean());

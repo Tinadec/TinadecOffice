@@ -19,7 +19,7 @@ public sealed class ContextModuleRegistrar : IModuleRegistrar
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "strategies"],
-            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions"],
+            Capabilities = ["context_pack", "evidence_gathering", "token_budget", "workspace_instructions", "workspace_skills"],
             Language = "C#",
             MafPrimitives = ["context"],
             RegistrationStatus = ModuleRegistrationStatus.NotConfigured
@@ -134,6 +134,15 @@ internal sealed class ContextProvider : IContextProvider
         if (instructionEvidence is not null)
         {
             candidates.Add(instructionEvidence);
+        }
+
+        // Skills go next to instructions, in the same tier and for the same reason: they say how this
+        // repository wants work done. They come second because the index is only useful to a model
+        // that already read the rules — and it is one line per skill, so it is cheap next to history.
+        var skillEvidence = BuildWorkspaceSkillEvidence(request);
+        if (skillEvidence is not null)
+        {
+            candidates.Add(skillEvidence);
         }
 
         if (messages.Count != 0)
@@ -316,6 +325,214 @@ internal sealed class ContextProvider : IContextProvider
         {
             return new InstructionRead(null, null);
         }
+    }
+
+    private sealed record SkillRead(string? Text, int Count, int Refused, int Omitted);
+
+    private readonly Dictionary<string, SkillRead> _skillReads = [];
+    private readonly Queue<string> _skillOrder = new();
+    private readonly object _skillLock = new();
+
+    /// <summary>
+    /// The workspace's own skill index, from the frozen root only, for the same reason instructions
+    /// are read from there and nowhere else. Only the name and description of each skill are shown;
+    /// the body is the model's to open, which is what keeps a repository with twenty skills from
+    /// paying twenty bodies on every turn.
+    ///
+    /// Read once per run, like instructions: an index that changed mid-flight would leave the model
+    /// holding a path list that the next turn's pack contradicts.
+    /// </summary>
+    private ContextEvidence? BuildWorkspaceSkillEvidence(ContextBuildRequest request)
+    {
+        if (request.Workspace is not { } workspace) return null;
+        var charLimit = WorkspaceSkillPolicy.InlineCharLimit(
+            request.TokenBudget ?? _settings.Current.DefaultTokenBudget);
+        if (charLimit <= 0) return null;
+
+        var cacheKey = request.RunId is { Length: > 0 } runId ? runId + "|" + workspace.RootPath : null;
+        var read = cacheKey is null
+            ? ReadSkills(workspace.RootPath, charLimit)
+            : RememberedSkills(cacheKey, workspace.RootPath, charLimit);
+        if (string.IsNullOrWhiteSpace(read.Text)) return null;
+
+        return new ContextEvidence
+        {
+            Source = "workspace_skills",
+            Content = read.Text,
+            EstimatedTokens = EstimateTokens(read.Text),
+            Metadata = new Dictionary<string, string>
+            {
+                ["skill_count"] = read.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["skill_refused"] = read.Refused.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["skill_omitted"] = read.Omitted.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["char_limit"] = charLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            }
+        };
+    }
+
+    private SkillRead RememberedSkills(string cacheKey, string rootPath, int charLimit)
+    {
+        lock (_skillLock)
+        {
+            if (_skillReads.TryGetValue(cacheKey, out var cached)) return cached;
+        }
+
+        var read = ReadSkills(rootPath, charLimit);
+
+        lock (_skillLock)
+        {
+            if (_skillReads.TryAdd(cacheKey, read)) _skillOrder.Enqueue(cacheKey);
+            while (_skillOrder.Count > MemoisedRuns)
+            {
+                _skillReads.Remove(_skillOrder.Dequeue());
+            }
+        }
+
+        return read;
+    }
+
+    private static SkillRead ReadSkills(string rootPath, int charLimit)
+    {
+        var found = new List<WorkspaceSkillPolicy.Skill>();
+        var refusals = new List<WorkspaceSkillPolicy.Refusal>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var omitted = 0;
+
+        foreach (var skillRoot in WorkspaceSkillPolicy.SkillRoots)
+        {
+            WalkForSkills(rootPath, Path.Combine(rootPath, skillRoot), 0, found, refusals, names, ref omitted);
+        }
+
+        if (found.Count == 0 && refusals.Count == 0) return new SkillRead(null, 0, 0, 0);
+        var text = WorkspaceSkillPolicy.Frame(found, refusals, charLimit, omitted);
+        return new SkillRead(text, found.Count, refusals.Count, omitted);
+    }
+
+    /// <summary>
+    /// One directory step. A directory holding a SKILL.md is a skill and is not descended into, which
+    /// is what makes <c>skills/&lt;name&gt;/SKILL.md</c> and a grouping level
+    /// (<c>skills/&lt;group&gt;/&lt;name&gt;/SKILL.md</c>) both work while a documentation tree under
+    /// a skill directory stays out of the index. Every path is reported relative to the workspace
+    /// root, because that is the string the model types into a file tool.
+    /// </summary>
+    private static void WalkForSkills(
+        string rootPath,
+        string directory,
+        int depth,
+        List<WorkspaceSkillPolicy.Skill> found,
+        List<WorkspaceSkillPolicy.Refusal> refusals,
+        HashSet<string> names,
+        ref int omitted)
+    {
+        if (depth > WorkspaceSkillPolicy.SearchDepth) return;
+
+        string skillFile;
+        string[] children;
+        try
+        {
+            if (!Directory.Exists(directory)) return;
+            skillFile = Path.Combine(directory, WorkspaceSkillPolicy.SkillFileName);
+            children = Directory.GetDirectories(directory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return;
+        }
+
+        // Ordinal sort because the filesystem does not promise an order, and "first occurrence wins"
+        // for a duplicated name is only a rule if the walk itself is reproducible. Without this the
+        // index can flicker between two runs of the same untouched directory.
+        Array.Sort(children, StringComparer.Ordinal);
+
+        // The skills root itself is never a skill: SKILL.md beside a group of skill directories would
+        // advertise the collection as one of its members.
+        if (depth >= 1 && File.Exists(skillFile))
+        {
+            var relative = RelativeTo(rootPath, skillFile);
+            if (relative is null)
+            {
+                refusals.Add(new WorkspaceSkillPolicy.Refusal(
+                    Path.GetFileNameWithoutExtension(directory), "resolves outside the workspace root"));
+                return;
+            }
+
+            if (found.Count >= WorkspaceSkillPolicy.MaxSkills)
+            {
+                omitted++;
+                return;
+            }
+
+            ReadOneSkill(rootPath, skillFile, relative, found, refusals, names);
+            return;
+        }
+
+        foreach (var child in children)
+        {
+            WalkForSkills(rootPath, child, depth + 1, found, refusals, names, ref omitted);
+        }
+    }
+
+    private static void ReadOneSkill(
+        string rootPath,
+        string path,
+        string relative,
+        List<WorkspaceSkillPolicy.Skill> found,
+        List<WorkspaceSkillPolicy.Refusal> refusals,
+        HashSet<string> names)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            // Same rule the instruction reader applies: the run's prompt promises nothing outside the
+            // root is readable, so a reader that followed a link out would be the component that
+            // proves that promise false.
+            if (info.ResolveLinkTarget(returnFinalTarget: true) is { } target
+                && !WorkspaceInstructionPolicy.IsInsideRoot(rootPath, target.FullName))
+            {
+                refusals.Add(new WorkspaceSkillPolicy.Refusal(relative, "is a link that resolves outside the workspace root"));
+                return;
+            }
+
+            if (info.Length > WorkspaceSkillPolicy.MaxFileBytes)
+            {
+                refusals.Add(new WorkspaceSkillPolicy.Refusal(relative, $"is larger than {WorkspaceSkillPolicy.MaxFileBytes} bytes"));
+                return;
+            }
+
+            if (!WorkspaceSkillPolicy.TryRead(
+                    File.ReadAllText(path),
+                    Path.GetFileName(Path.GetDirectoryName(path)) ?? string.Empty,
+                    relative,
+                    out var skill,
+                    out var reason))
+            {
+                refusals.Add(new WorkspaceSkillPolicy.Refusal(relative, reason));
+                return;
+            }
+
+            // First occurrence wins, as in the reference: two directories claiming one name means the
+            // index line the model repeats could open either file, and the tie is broken by walk
+            // order, not by a guess about which one the author meant.
+            if (!names.Add(skill!.Name))
+            {
+                refusals.Add(new WorkspaceSkillPolicy.Refusal(relative, $"another skill already claims the name '{skill.Name}'"));
+                return;
+            }
+
+            found.Add(skill);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            refusals.Add(new WorkspaceSkillPolicy.Refusal(relative, "could not be read"));
+        }
+    }
+
+    private static string? RelativeTo(string rootPath, string path)
+    {
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+        return full[(root.Length + 1)..].Replace(Path.DirectorySeparatorChar, '/');
     }
 
     /// <summary>

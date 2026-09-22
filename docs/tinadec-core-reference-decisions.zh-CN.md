@@ -77,6 +77,7 @@
 | 记忆生命周期与注入形态 | TencentDB-Agent-Memory | 六态生命周期、confidence/expires_at 自动降级、InjectionMode 四分法 |
 | 会话态回退与快照三元组 | Codex、Gemini CLI | 回退不改 ID 追加新版本；对话+commitHash+toolCall 恢复点 |
 | 工作区指令文件入场（2026-09-22 落地） | Codex、OpenCode、Gemini CLI、hermes-agent | 候选名优先级 `AGENTS.override.md > AGENTS.md > CLAUDE.md > CONTEXT.md`；**一个目录只赢一份**（hermes：一种项目类型胜出）；正文封顶 = 上下文预算 1/4、绝对 24k 字符（Codex 32KiB 同源量级）；**截断必须写在模型读的正文里**（hermes：不给指令工具做分页，"模型只读第一页就跳过余下"）；随附一句"低于冻结权限"的优先序声明（Gemini CLI：上下文指令不得覆盖 Core Mandates）。**不取**：OpenCode 的无上限附带、Codex 的全局 `~/.codex/AGENTS.md` 前置（本仓工作区根外一律不可读）。落点与规则见 `TinadecCore/AGENTS.md` PROJECT INSTRUCTIONS REACH THE MODEL |
+| 工作区技能以索引入场（2026-09-22 落地） | agent-framework(MAF)、hermes-agent | 布局与校验整体照搬 MAF `AgentFileSkillsSource`：`skills/<name>/SKILL.md` + 一层分组、frontmatter 必填 `name`/`description`、名字字符集与 64/1024 上限、**name 必须等于目录名**、同名先到先得；hermes 的 SKILL.md 元数据规范同一来源。**渐进披露只给 name+description+路径，正文留在盘上由现成文件工具去取**（封顶 8k 字符、40 条，预算装不下一行就整条不发）。**本仓多做的三件**：拒收原因写进索引（MAF 只 `LogWarning`，而写文件的人没有日志窗口）；目录序数排序，否则"先到先得"取决于文件系统；按 run 冻结。**不取**：`load_skill`/`read_skill_resource`/`run_skill_script` 三个工具面（动冻结工具清单，且脚本执行须先进审批环）、`resources/`+`scripts/` 发现、`allowed-tools` 能力提示、curator 自动治理与 `.usage.json` 用量侧车。落点与规则见 `TinadecCore/AGENTS.md` WORKSPACE SKILLS REACH THE MODEL AS AN INDEX |
 
 ## 3. Microsoft Agent Framework：技术底座
 

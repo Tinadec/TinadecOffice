@@ -317,7 +317,20 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - `DmaEA/FullDuplexRunEngine.cs` 的 `BuildContextAsync` 注入 `config.Workspace`（与 `AssemblePromptAsync` 同源）。模块能力清单同步加 `workspace_instructions`（`ContextModuleRegistrar`）：能力此前只写"能装配上下文包"，看不出这份包里有仓库自己的规矩。
 - 安全边界：只枚举根目录一层，正文只走 `Path.Combine(root, <白名单文件名>)`；符号链接解析后若落在根外即拒读并说明原因——运行提示词已向模型承诺"根外不可读"，这个读取器不能成为推翻它的组件。
 - 测试锚点：`Api.Tests/WorkspaceInstructionApiTests.cs`（16 条，覆盖优先级、被抑制文件确实未出现、无指令文件、无工作区、截断与超上限两种文案、run 内稳定 / 下个 run 才见新值、指令不得挤掉会话历史、`IsInsideRoot` 六型）+ `FullDuplexEndpointTests.InvokeStream_SendsTheProjectInstructionFileInTheMessagesTheModelReads`（真实 run 走完 准入 → 上下文 → 派发）。后者刻意断言**消息正文**而非 `ChatOptions.Instructions`：装配器只拥有角色文案，证据活在消息里，只断言角色的话，"文件在上下文里造好却在派发前丢掉"照样能绿。为此 `ScriptedChatClient` 新增 `Prompts`（与 `Instructions` 同一把锁、两条路径各自记录一次，流式非 meeting 分支由委托的 `GetResponseAsync` 记录）。
-- 未收口（登记）：只读根目录一层，子目录嵌套指令文件（opencode 交给读工具惰性附带、hermes 作为工具结果附带）本仓尚未选择落点；`Skills` 模块仍是零消费者骨架；桌面端"哪条证据真到了模型"的可视化属阶段 6。
+- 未收口（登记）：指令文件仍只读根目录一层，子目录嵌套指令文件（opencode 交给读工具惰性附带、hermes 作为工具结果附带）本仓尚未选择落点；桌面端"哪条证据真到了模型"的可视化属阶段 6。**工作区技能已于同日接入**（见下节 WORKSPACE SKILLS），`Skills` 模块本身仍是零消费者骨架——技能发现落在 Context，因为发现需要一个已冻结的工作区根，而 `ISkillProvider.ListSkillsAsync(agentId)` 只有 agent 身份、没有根。
+
+## WORKSPACE SKILLS REACH THE MODEL AS AN INDEX (2026-09-22)
+定位：让仓库自己写的 `SKILL.md` 能被智能体看见，但**不把二十个技能的正文装进每一轮**。上一段解决"项目对智能体提要求"，这一段解决"项目把成套操作流程交给智能体按需取用"——两者是同一条边界的两种文档，共用同一套安全前提（只读冻结根、符号链接落根外即拒、按 run 记忆所以提示前缀不漂移）。
+
+规则**取自 Agent Skills 格式与 MAF 的实现**（`agent-framework/dotnet/src/Microsoft.Agents.AI/Skills/File/AgentFileSkillsSource.cs`、ADR `docs/decisions/0037-agent-skills-design.md`），不是本仓自创：
+- 布局 `skills/<name>/SKILL.md`，另允许一层分组目录（`skills/<group>/<name>/SKILL.md`），**再深不算技能**（`SearchDepth = 2`）。含 SKILL.md 的目录不再下探，所以技能包内的 `references/`、`scripts/` 不会被误当成第二个技能。
+- frontmatter 必须有 `name`/`description`；`name` 只能小写字母数字加单连字符、≤64，且**必须等于自己所在目录名**——否则"用一个叫 X 的技能"和"打开路径 Y"不再是同一件事。`description` ≤1024，超长直接拒（截断等于替作者说话）。key 大小写不敏感、值可加引号、BOM 开头也认（Windows 编辑器默认）。
+- 同名技能按**目录序数排序**先到先得（文件系统不保证顺序，不排序就等于让赢家随机）；被压掉的那条进"拒收清单"并写明原因。
+- **渐进披露的两半都被断言**：证据 `Source = "workspace_skills"` 只列 name+description+路径；`SkillsAreAdvertisedByNameAndDescriptionAndNothingElse` 钉住正文不外泄，端到端 `InvokeStream_SendsTheSkillIndexAndKeepsEverySkillBodyOnDisk` 再对**每一条 prompt** 断言正文标记缺席（泄漏到任何一个角色都算破规则）。变异验证：把正文塞进 `Skill.Description` → 4 例红，含这两例。
+- **拒收要出声**：MAF 对畸形 SKILL.md 只 `LogWarning` 后跳过；本仓把它写进索引正文（`MaxRefusalLines = 5` 行，超出只报数量），因为写文件的人面前没有日志窗口，"我加了技能但智能体不理我"否则无从诊断。元数据 `skill_count`/`skill_refused`/`skill_omitted` 是同一件事的可数面。
+- 装不下就闭嘴：`InlineCharLimit` 与指令同一个换算（1 token = 1 char，封顶 `MaxIndexChars = 8000`），预算连一行都放不下时整条证据不发（只喊"有技能"却不给名字，是花钱买误导）；`MaxSkills = 40` 之外只报数。
+- **正文谁来取**：不新开 `load_skill` 工具。索引给的是根内相对路径，模型用现成文件工具打开——与 MAF 少一个工具面，也不动冻结工具清单；代价是本仓没有技能内资源/脚本的发现与执行（`resources/`、`scripts/` 未实现），且**无项目会话**（工具清单只有 `create_workspace`）本就无根可读，自然也没有技能。
+- 验证：`Api.Tests/WorkspaceSkillApiTests.cs` 11 例（走真 `IContextProvider` + 真文件系统）+ `WorkspaceSkillPolicyTests.cs` 21 例（纯规则，逐条报出拒绝理由），合计 32 例全绿。
 
 ## PER-FILE SNAPSHOT REVIEW (2026-09-22)
 定位：让"智能体改了哪些文件、这一条能不能单独撤回"成为可回答的问题。此前工作区快照只有**整棵目录树**这一个粒度：`/api/v1/projects/{id}/snapshots` 建快照、`/api/v1/workspace-snapshots/{id}/restore` 整体还原（`expected_workspace_hash` 不匹配就整批冲突），而逐文件的清单其实一直都在——`WorkspaceSnapshotProviderSupport.CaptureFilesAsync` 每个文件写 `Path/Length/Sha256`，小文件还带 `ContentBase64`（上限 `MaxSingleFileBytes = 8MiB` + 总量预算），只是从没有任何端点把它交出去过。本段是"读已有数据"，**没有新增存储、没有迁移**。
