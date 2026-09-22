@@ -132,6 +132,28 @@ test('agent-runtime-instances thin proxy forwards run_id query', async () => {
   assert.equal(captured, 'http://127.0.0.1:48731/api/v1/agent-runtime-instances?run_id=run-1');
 });
 
+test('model-invocations thin proxy forwards the filters and the cursor walk', async () => {
+  let captured = '';
+  mockFetch((input) => {
+    captured = typeof input === 'string' ? input : input.toString();
+    return new Response(JSON.stringify({ items: [{ id: 'inv-1', input_tokens: 5 }], next_cursor: 'Y3Vyc29yLTI' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const r = await app.handle(new Request('http://gateway.local/api/v1/model-invocations?run_id=run-1&limit=200&cursor=Y3Vyc29yLTE'));
+  assert.equal(r.status, 200);
+  // The desktop rolls these pages into one run total, so a limit or cursor dropped on the way
+  // through would surface as a confidently wrong number rather than an error.
+  assert.equal(captured, 'http://127.0.0.1:48731/api/v1/model-invocations?run_id=run-1&limit=200&cursor=Y3Vyc29yLTE');
+});
+
+test('a rejected model-invocations filter is not rewritten into a retryable conflict', async () => {
+  mockFetch(() => new Response(JSON.stringify({
+    type: 'https://tinadec.dev/errors/invalid_query', title: 'invalid_query', status: 400, code: 'invalid_query', detail: 'run_id must be a UUID.',
+  }), { status: 400, headers: { 'content-type': 'application/problem+json' } }));
+  const mapped = await app.handle(new Request('http://gateway.local/api/v1/model-invocations?run_id=not-a-uuid'));
+  assert.equal(mapped.status, 400);
+  assert.equal((await mapped.json() as { code: string }).code, 'invalid_query');
+});
+
 test('interactions thin proxy validates dispatch_mode and insert target_run_id before proxy', async () => {
   let proxied = 0;
   mockFetch(() => {

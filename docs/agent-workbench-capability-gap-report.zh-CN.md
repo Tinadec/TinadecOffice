@@ -1,6 +1,6 @@
 # TinadecOffice 智能体工作台 — 能力差距报告（2026-09-22）
 
-范围：`Everything-changed` 分支上从阶段 0（`a673112`，锁定绿色基线并收口 TinaChat 唤醒/交接环）起的 45 个提交，加本批第 46 个。对标对象：codex、opencode、hermes-agent、gemini-cli、cline、harness-mix、Claude Desktop 的公开形态。
+范围：`Everything-changed` 分支上从阶段 0（`a673112`，锁定绿色基线并收口 TinaChat 唤醒/交接环）起的 49 个提交（含上一批的 `296c377`、`efae106`），加本批——本批按 Conventional Commits 分两次落地：Core 那条读路径的修复，和它上面新长的用量面。对标对象：codex、opencode、hermes-agent、gemini-cli、cline、harness-mix、Claude Desktop 的公开形态。
 
 ## 判据（三个等级，不可混用）
 
@@ -12,7 +12,7 @@
 
 ## 1. 结论一句话
 
-工作台侧的功能面（编辑重发、附件、指令文件、技能、记忆评审、上下文可见性、逐文件评审与撤销、命令面板、终端、受治理的网络出口、50 个 provider 工具）**已成体系且有自动化证据**；**没有**的是三件不同性质的事：真实模型从未被测过（C）、语义检索/视觉输入这类模型能力面（C）、以及交付工程本身没有 CI（C）。
+工作台侧的功能面（编辑重发、附件、指令文件、技能、记忆评审、上下文可见性、**一次 run 的 token 用量**、逐文件评审与撤销、命令面板、终端、受治理的网络出口、50 个 provider 工具）**已成体系且有自动化证据**；**没有**的是三件不同性质的事：真实模型从未被测过（C）、语义检索/视觉输入这类模型能力面（C）、以及交付工程本身没有 CI（C）。
 
 ## 2. A 级：本轮或此前有测试穿过
 
@@ -33,13 +33,15 @@
 | 晋升记忆真的进 prompt、未评审候选真的不进 | `MemoryStore.RetrieveAsync` | `FullDuplexEndpointTests.InvokeStream_SendsPromotedMemoryAndKeepsAnUnreviewedCandidateOutOfThePrompt` |
 | `web_fetch`：受治理的网络出口（SSRF connect 期防护、逐跳复验、一份失败只说一件事） | `TinadecTools/Tools/Web/` + `HumanOnlyTools` | `7bceecb`，`WebFetchTests.cs` 51 例（含"绝不向被拒地址开 socket"的生产 handler 用例）；把守卫短路后恰好 3 例红 |
 | 终端：本地 node-pty + 智能体终端（`shell` 工具的 Core 会话，事件日志回放 + 审计输入） | 桌面 `useTerminal`/`useTerminalSource` | 存在且被 `useTerminal.test.ts`/`TerminalCallBlock.test.ts` 覆盖（本批复核其架构注释与 `shell` 工具在实测清单中的事实） |
+| 一次 run 花了多少：按 `model × provider` 分组的 token 与调用数，读不到就明说读不到 | Core `model-invocations` 分页 → 网关透传 → `OrchestrationTab.vue` + `lib/modelUsage.ts` | 本批。Core `ModelInvocationQueryTests.cs` 7 例——其中 2 例**先在未修复的构建上跑红**（`from`/`to` 窗口、并列时间戳的游标），另有 1 例钉住 OpenAPI 里 token 三字段并禁止 `prompt_tokens`/`completion_tokens` 回来；桌面 `modelUsage.test.ts` 7 例 + `OrchestrationTab.test.ts` 14 例（新 7），断"分组求和 == 每行 `total_tokens` 之和""缺字段渲染成'未报告'而不是 0""翻页被截断时必须自称是下限"。**注意这一行的 A 级只覆盖"读得到、算得对、说得出边界"**：没有任何单价，所以它不是成本面板（见 §4 第 11 条） |
 | 一次 5xx 会自己留下原因（进程内有界环，不上外线；测试主机读回） | Core `AspNetCore/ServerFailureJournal.cs` | `ServerFailureJournalTests.cs` 6 例：同一次响应**同时**断 body 不含异常类型名 + journal 含最内层消息；4xx 不进环；裸宿主（未 `AddTinadecCoreHttp`）仍能回 500；环形淘汰；`Describe()` 把"给修的人看的那一行"格式钉死（含外层/最内层两段）。消费面：`ServerFailureReports.AssertStatusAsync` 是这句话唯一的构造点，9 个断言站（FullDuplex/ToolChain/Unattended 三个 stream helper 的 admission·run-stream·replay）经它读回；另有一条经真 Core host 的读回断言（`Interactions_StaleContextRevision_Returns409` 断 `LastFailure()` 报"没有 5xx"）。**并且它已在真实红例上兑现过一次**：本批整解门禁的一条 `POST /interactions` 500 第一次带出 `server cause: … SQLite Error 5: 'unable to delete/modify collation sequence due to active statements'`（详见 §4.5 第 5 条）。自 host 走 `CliRuntimeTestServers` 既有做法 |
 
 ## 3. B 级：实现落地，但有一半边没人看
 
 - **状态码本身也是没契约的**。上一句还只说"响应体缺 schema"，实测更糟：Core 快照里 `POST /api/v1/sessions/{id}/interactions` 声明的是 **`200 OK`（且无 content）**，而 `InteractionsEndpoints.cs` 的四条出口全部 `Results.Created` 实际返回 **201**——224 个 2xx 响应声明里只有 **4 个**写了 201。也就是说契约不但没描述字段，还**写错了状态码**，任何按它生成的客户端（`generated/schema.d.ts`）拿到的是不存在的形状。桌面 `api.ts` 因此在两处各自手写这个 receipt（`api.ts:2559` 与 `api.ts:2183` 的内联声明），`turn_id` 只从 SSE 帧读、从不从 receipt 读——**三份互相不知道对方的存在**（任务 #23 收这条）。同理：receipt 有四种形状（admitted / `message_only` 无 `run_id` / steering / queued replay），一个"全字段可选"的 DTO 只会把"哪个键配哪个 `status`"这件事继续藏起来，所以要按 `status` 可辨识联合来写，而不是摊平。
-- **大多数响应体根本没有契约**。实测两份 OpenAPI 快照：`TinadecCore/tests/__snapshots__/openapi.core.json` 220 个 operation **全部声明了 2xx 状态码，但只有 40 个（18%）带响应体 schema**；`TinadecGateway/tests/__snapshots__/openapi.external.json` 229 个里 48 个（21%）。也就是说 `npm run check:drift` 能护住的只有那一小截——`/api/v1/runs/{id}/orchestration`、`/api/v1/workspace-snapshots/*` 这类返回裸匿名对象的读路由在两份快照里都是 `content: none`，响应字段漂移完全看不见。**这是任务 #21 那类缺陷（桌面 DTO 声明 Core 从不发送的字段）能连着发生三次的结构性原因**，不是粗心：没有任何机器面会因为它写错字段而变红。当下夹住字段的是两头——Core 测试断铸造侧、页面测试断调用侧。补法是把读路由改成有类型的响应（现仓惯例是 `.Produces<T>(status)`：实测 65 处、集中在 4 个文件；`TypedResults`/`WithResponse<T>` 零使用），但那会连带改动 190 条路由的 OpenAPI 面貌，属于阶段 8 的重构窗口，不做零敲碎打（任务 #30）。补完还得和 `openapi.core.json`/`openapi.external.json` 两份快照、`schema.d.ts` 再生成、DTO、测试与中文产品定义**同一次改动**落地（`docs/architecture.md` 的 PUBLIC API VERSION RULE 要求同批），两条 `git diff --exit-code` 门禁会各自把关。
-- **桌面端全部界面证据都在 happy-dom 里**。没有一次真 Electron 像素级复看：命令面板首屏密度、`Context Packs` 那行新加的裁掉句（明显比 chip 长，会不会拉爆行高未知）、快照评审卡塞进密集卡片后的观感。类型与测试全绿不等于这些面能用。
+- **大多数响应体根本没有契约**。实测两份 OpenAPI 快照：`TinadecCore/tests/__snapshots__/openapi.core.json` 220 个 operation **全部声明了 2xx 状态码，但只有 41 个（18.6%）带响应体 schema**；`TinadecGateway/tests/__snapshots__/openapi.external.json` 229 个里 49 个（21.4%）。两边各 +1 是本批的 `model-invocations`——也就是说**"给一个读路由补上类型"目前是唯一被实测推进过的进度**，其余 179/180 条仍然一测未动。也就是说 `npm run check:drift` 能护住的只有那一小截——`/api/v1/runs/{id}/orchestration`、`/api/v1/workspace-snapshots/*` 这类返回裸匿名对象的读路由在两份快照里都是 `content: none`，响应字段漂移完全看不见。**这是任务 #21 那类缺陷（桌面 DTO 声明 Core 从不发送的字段）能连着发生三次的结构性原因**，不是粗心：没有任何机器面会因为它写错字段而变红。当下夹住字段的是两头——Core 测试断铸造侧、页面测试断调用侧。补法是把读路由改成有类型的响应（现仓惯例是 `.Produces<T>(status)`：实测 65 处、集中在 4 个文件；`TypedResults`/`WithResponse<T>` 零使用），但那会连带改动 190 条路由的 OpenAPI 面貌，属于阶段 8 的重构窗口，不做零敲碎打（任务 #30）。补完还得和 `openapi.core.json`/`openapi.external.json` 两份快照、`schema.d.ts` 再生成、DTO、测试与中文产品定义**同一次改动**落地（`docs/architecture.md` 的 PUBLIC API VERSION RULE 要求同批），两条 `git diff --exit-code` 门禁会各自把关。
+- **用量面的"另一半"仍然没契约**：本批给 Core 那条路由补上了类型，但网关按自己的透传惯例把数组元素写成 `t.Array(t.Unknown())`，所以重新生成的 `apps/desktop/src/generated/schema.d.ts` 拿到的是 `items: unknown[]`——**桌面那侧的字段类型仍然只存在于手写 `api.ts` 里**。这次推进的实质是：字段名第一次被钉在一个会自动变红的地方（Core 快照 + 一条读它的断言），而不是"生成的客户端终于知道有哪些字段"。同一句话也解释了 §4.7 第一条为什么还不能动。要收掉它得让网关给这个页面声明元素 schema，那属于 #30 的一部分。
+- **桌面端全部界面证据都在 happy-dom 里**。没有一次真 Electron 像素级复看：命令面板首屏密度、`Context Packs` 那行新加的裁掉句（明显比 chip 长，会不会拉爆行高未知）、快照评审卡塞进密集卡片后的观感、**本批新增的 Model Usage 块（一行 chip 里塞"模型 · token 数 · 未报告数 · 调用数"，长模型名下的换行与截断没看过）**。类型与测试全绿不等于这些面能用。另外这个面沿用了 `OrchestrationTab.vue` 的既有做法——**整份文件是硬编码英文，一个 `t()` 都没有**，所以它不在 `i18nParity.test.ts` 的登记面里；这是 #10（可访问性/设计令牌/文案契约扩面）要一并收的历史账，不是本批新引入的偏离。
 - **`web_fetch` 的礼貌性与缓存**：无 robots.txt、无 ETag/If-Modified-Since、无 HTTP 代理与自定义 CA（企业内网场景）；HTML→文本是手写扫描器，SPA 骨架可能取到空壳。工具描述里未承诺能渲染，因此不算撒谎，但算缺口。
 - **上下文可视化只到"来源 + 价格 + 被裁"这一层**。装配之后的第二处裁剪（`Prompts/PromptsModuleRegistrar.cs` 的片段预算，结果写进 `PromptAssemblyResult.Warnings`）**至今没有读者**——模型最终真正读到的片段，与 `context.packed` 说的那份之间，还隔着一段无人观察的裁剪。
 
@@ -65,9 +67,19 @@
 8. **撤销记忆的理由无处可存**：`MemoryItemRecord` 没有 reason 列，`RevokeAsync(itemId, reason)` 收下就丢。桌面因此刻意**不收集**撤销理由——收一个会被扔掉的答案等于教用户输入噪音。要留这条审计得加列（本仓 schema 走 `DbContextMigrationParticipant` 自研路径，不是 EF Migrations）。
 9. **`web_search` 没做**。它需要外部搜索 API 密钥与配额治理，本仓没有这个配置面；宁可登记为缺口也不做假实现。
 10. **候选列表没有分页游标**：`limit` 有上界 500，但没有 next-cursor，翻 500 条以上只能靠更窄的筛选。列表每行还要读一次内容 blob，所以筛选必须在进库前做完。
-11. **几类工作台常见能力本仓完全没有**，此前散在各阶段里没有汇总：生命周期 hooks/自定义命令、编辑器级诊断（LSP）接线、行内 tab 补全、跨会话全局搜索、成本/配额面板（`ModelUsage` 已在 Core 侧记账并进 `DmaeaEndpoints`，但桌面没有一个"这一轮花了多少"的汇总面）。这一条我**没有逐条核对参考项目的实现细节**，只断言"本仓没有"，不借用别人的功能清单当自己的需求。
+11. **几类工作台常见能力本仓完全没有**，此前散在各阶段里没有汇总：生命周期 hooks/自定义命令、编辑器级诊断（LSP）接线、行内 tab 补全、跨会话全局搜索。这一条我**没有逐条核对参考项目的实现细节**，只断言"本仓没有"，不借用别人的功能清单当自己的需求。**其中的成本/用量面本批已经交付了一半**（见 §2 与 §3）：`model-invocations` 现在有一个"这一轮花了多少 token"的读面，但**仍然没有金额**——本仓没有任何单价表，也没有能放它的配置面，所以这块面板刻意只说 tokens，并写明了为什么。剩下的部分照旧是缺口：跨 run/跨会话的汇总、按 provider 的配额与上限、"这次改动值不值这么多"的比较。
+12. **异常按消息字符串分类，会把基础设施故障伪装成产品错误**（本批现场撞到的）。`AspNetCore/TinadecCoreHttpExtensions.cs` 有一条 `InvalidOperationException when Message.Contains("model"|"Provider") => 400 model_not_configured`，而 EF 的"这条 LINQ 翻译不了"消息里天然带着实体类名——`DbSet<ModelInvocationRecord>` 里的 "Model" 就足够让一次**查询翻译失败**以"模型没配好"的身份返回 400。后果不是难看：调用方看到的是"去配一下模型"，真因是"这个过滤器在本仓的 SQLite 上从来不能用"，而 400 也**不会进上一批刚上线的 5xx journal**（`server cause: the handler recorded no 5xx`），于是新诊断面在这条路上恰好帮不上。本批只修了那一条路由，**没有动全局分类规则**（它服务所有路由，改法的影响面我看不到全）。要收的是：给"未映射的基础设施异常"一个不会被字符串劫持的落点，并让 4xx 的机器码能反查到自己那句 detail。另外同源的、已被本仓三处注释写明但**没有任何一条测试守着**的规则也一并登记在这里：SQLite 翻译不了 `DateTimeOffset` 列与参数的比较，任何新读路由直接写 `Where(x => x.SomethingAt >= value)` 都会变成上面这种 400。
 
 ## 5. 阶段末门禁实测（按批次记账，全部读日志里自己写的 `GATE_EXIT`/`EXIT`，不看管道退出码）
+
+### 5c. 2026-09-22 第三批：`model-invocations` 读路径修复 + run 用量面上线
+
+- **Core 全量** `dotnet test TinadecCore/TinadecCore.slnx` → **`GATE_EXIT=0`**：Governance 44/44、Architecture 17/17、AgentFramework 329/329、**Api 448/448（21m32s）**。这是这条工作线上**第一次不带抖动红的 Core 全量**（上一批 440/441、再上一批 434/435，红都在 #25 家族）。但**这次绿不能算 #25 好转**：本批全程顺序跑，没有任何并行门禁抢 CPU（上一批我并行了，那一轮 Api 36m40s），"负载放大这一族"的假设因此既没被否证也没被证实——#25 的定向实验仍未做，保持 C 级。
+- **修复有牙的 A/B（先红后绿，顺序就是证据）**：同一 filter `FullyQualifiedName~ModelInvocationQueryTests` 在**未修复**的构建上 `GATE_EXIT=1`、**2 红 / 5 绿**，两条红（`Page_FiltersByStartedAtWindow`、`Page_CursorReturnsEveryRowExactlyOnce_WhenTimestampsTie`）都停在 400，detail 就是 `The LINQ expression … could not be translated`；修复后同一命令 `GATE_EXIT=0`、**7/7**。
+- **文档定稿后重跑两个读文档的快门禁**：`GOV_EXIT=0`（44/44）、`ARCH_EXIT=0`（17/17）。
+- **Gateway** `bun test src` → `BUN_EXIT=0`、**58 pass / 0 fail**（上一批 56；本批 +2：query/cursor 逐字转发、`invalid_query` 不被改写成 `conflict`）。
+- **Desktop**：`npx vitest run` `VITEST_EXIT=0`（**79 文件通过 / 1 跳过、733 例通过 / 14 跳过**，比上一批 +1 文件 / +14 例，正好是 `modelUsage.test.ts` 7 例 + `OrchestrationTab.test.ts` 新 7 例），`npm run typecheck` `TSC_EXIT=0`，`npm run build` `BUILD_EXIT=0`，electron 侧 `node --test` `ELECTRON_EXIT=0`（24/24，本批没动主进程代码，跑它是为了不拿"没跑"当"不会坏"）。`npm run check:drift` 在提交前 `DRIFT_EXIT=1`——它以 `git diff --exit-code -- src/generated/` 收尾，未提交的有意契约变更必然让它红，所以这条读法是"还没提交"而不是"漂了"；它的实质一半单独量过：连跑两次 `generate:client`，`schema.d.ts` 的 sha1 前后都是 `deb0ece…8533`，**再生成是幂等的**，也就是说除本批有意新增的那 9 行之外没有任何二阶漂移。
+- **契约覆盖率的变动是量出来的**：同一脚本改前/改后各跑一次——Core 由 220 个 operation 里 40 个带响应体变成 **41 个（18.6%）**，网关由 229 个里 48 个变成 **49 个（21.4%）**。同一批第一次出现"用一条 Core 测试去读 OpenAPI 文档里的字段名"这种用法（而不是只把快照当文本比对）。
 
 ### 5b. 2026-09-22 第二批：5xx 自报原因 + `SettingsPage` 抽出 `AgentPacksPanel`
 
@@ -92,4 +104,4 @@
 **本批之后要改两处排序判断**（都是证据变了，不是偏好变了）：
 
 1. 第 5 条（#25）**成本降了**：原因现在会自己出现在红例消息里，剩下的是两条候选修法各做一次的定向实验，而不是从零猜机制。同时多了一条**未被验证但很可能的放大器**——我自己把桌面门禁与 Core 门禁并行跑，那一轮 Api 从 16m 涨到 36m40s。所以做 4（CI）之前应先把"门禁必须顺序跑"定成规则，否则 CI 会把这一族放大成常态。
-2. 新增第 8 条候选：**成本/用量面（任务 #32）比原先估计的更便宜也更值钱**——Core 已记 `model-invocations` 且带分页游标、也已在网关外部契约里，桌面**零消费者**。它不需要新依赖、不需要外部密钥，是这批之后最容易兑现的"对标 Codex/Claude Desktop"能力；唯一要克制的是**没有单价配置面，所以不许把它做成"金额"面板**。
+2. ~~新增第 8 条候选：**成本/用量面（任务 #32）比原先估计的更便宜也更值钱**~~ —— **本批已兑现**（§2 新行 + §3 两条限制）。留在这里是因为它兑现了一件比"多一个面板"更值钱的事：**给一条从不被测的路由写第一条测试，当场测出它的三个过滤器是死的**（§4 第 12 条）。这直接支持 §6 的原有次序判断——#30（给读路由补响应体 schema）不该被当作"文档工程"往后推：本批就是先补了一条类型、再补了一条读它的断言，两者一起才让字段名和状态码变得可证。下一步次序建议改为：**按"哪个面即将被用户读到"来挑 #30 的路由清单**，而不是按文件顺序扫；候选仍然是 §4 第 12 条里那条规则可能藏身的其它日期形状读路由。

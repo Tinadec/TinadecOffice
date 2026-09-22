@@ -1168,6 +1168,22 @@
         },
         "type": "array"
       },
+      "ModelInvocationPage": {
+        "additionalProperties": true,
+        "properties": {
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "OrchestrationSnapshot": {
         "additionalProperties": true,
         "properties": {
@@ -5384,7 +5400,16 @@
       "get": {
         "operationId": "getApiV1Model-invocations",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInvocationPage"
+                }
+              }
+            },
+            "description": "Page of Core model invocation audit records; the query string is forwarded to Core untouched."
+          }
         },
         "summary": "Page model invocation audit records",
         "tags": [

@@ -1405,7 +1405,20 @@ export interface ModelStreamChunkDto {
     tool_id: string;
     arguments: Record<string, unknown>;
   } | null;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  /**
+   * Core's `ModelUsage` on the wire: `input_tokens` / `output_tokens` / `total_tokens`, every one of
+   * which Core may omit rather than send as null, because a provider can complete a call without
+   * reporting usage at all. This declaration used to name `prompt_tokens` / `completion_tokens`,
+   * which no Core build ever emitted — the field was unreadable rather than zero.
+   */
+  usage?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    reasoning_tokens?: number | null;
+    additional_counts?: Record<string, number> | null;
+  } | null;
   finish_reason?: string | null;
   error_category?: string | null;
   is_retryable?: boolean;

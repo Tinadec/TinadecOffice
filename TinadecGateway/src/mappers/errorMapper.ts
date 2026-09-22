@@ -36,6 +36,8 @@ const CODE_MAP: Record<string, string> = {
 
 const ALLOWED_CODES = new Set([
   'invalid_request',
+  'invalid_query',
+  'invalid_cursor',
   'unauthorized',
   'forbidden',
   'method_not_allowed',

@@ -155,6 +155,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `GET /api/v1/sessions/{sessionId}/context-versions?run_id=...`
 - `GET /api/v1/sessions/{sessionId}/context-packs`（恒空占位）
 - `GET /api/v1/sessions/{sessionId}/supervision-findings`（恒空占位）
+- `GET /api/v1/model-invocations?run_id=...&limit=200&cursor=...`（Core 的模型调用审计分页；一个 run 的合计是桌面按游标走完的客户端汇总，Core 不做分组）
 
 **必须展示**：
 
@@ -164,10 +165,12 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - task 节点状态、依赖、风险、成功标准和 step result；
 - supervision 的 pass/revise/escalate、原因、revision round；
 - context version、base revision、冲突和压缩事件；
-- tool execution 的 prepare/authorized/approval/running/completed/blocked/outcome_unknown。
+- tool execution 的 prepare/authorized/approval/running/completed/blocked/outcome_unknown；
+- 这个 run 的模型用量：按 `model × provider` 分组的 token 与调用次数（同名的不同 provider 才附 provider 标识）。provider 没上报用量的行要显示"未上报"并给出条数，不能计成 0；游标走到上限时要说明这是下限而不是合计。
 
 **不可做**：
 
+- 不把"没有单价配置面"做成金额：本仓没有任何每模型单价，用量面只说 tokens。
 - 不把“模型返回了 JSON”显示成授权或监督通过。
 - 不在 Desktop 生成或修改 run frozen configuration。
 - 不把 `completed_with_escalation` 当成合法终态；监督 escalate 必须停在 `awaiting_user`，等待用户继续、修正或取消。

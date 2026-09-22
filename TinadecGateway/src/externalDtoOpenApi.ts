@@ -212,6 +212,17 @@ const preAuthorization = t.Object({
   revoked: t.Unsafe({ type: 'boolean' }),
 }, { additionalProperties: true });
 
+/**
+ * Core's ModelInvocationPageDto, deliberately shallow. Core drops null keys when it
+ * writes, so a field-by-field mirror would declare `input_tokens: number | null` for
+ * rows where the key is simply absent — and "absent" is the one thing this page needs
+ * to say: it means the provider reported no usage, not that the call cost nothing.
+ */
+const modelInvocationPage = t.Object({
+  items: t.Array(t.Unknown()),
+  next_cursor: t.Optional(t.String()),
+}, { additionalProperties: true });
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   Project: project,
@@ -235,6 +246,7 @@ export const externalDtoSchemas = {
   ContextVersionList: t.Array(componentRef('ContextVersion')),
   Assignment: assignment,
   OrchestrationSnapshot: orchestrationSnapshot,
+  ModelInvocationPage: modelInvocationPage,
   Health: health,
   PreAuthorization: preAuthorization,
 };

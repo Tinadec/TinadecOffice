@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
-import type { ContextBudgetShareDto, ContextPackDto, OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
+import { api, type ContextBudgetShareDto, type ContextPackDto, type ModelInvocationDto, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto, type ToolDescriptorDto } from '../api'
+import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
 import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
@@ -24,6 +25,65 @@ type TabKey = 'timeline' | 'catalog' | 'stats'
 const activeTab = ref<TabKey>('timeline')
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
+
+/**
+ * Core caps a page of the invocation audit at 200 and pages by cursor only, so a run total is a
+ * client-side walk. Five pages is already 1000 calls: enough for any run that a human reads, and
+ * small enough that opening this panel cannot fan out into dozens of requests. Past the cap the
+ * panel says it stopped — a walk cut short printed as a total would be a smaller lie than a wrong
+ * one only to someone who cannot tell the two apart.
+ */
+const USAGE_PAGE_SIZE = 200
+const USAGE_PAGE_LIMIT = 5
+
+const usage = ref<ModelUsageSummary | null>(null)
+const usageState = ref<'idle' | 'loading' | 'ready' | 'unavailable'>('idle')
+
+async function loadModelUsage(runId?: string | null): Promise<void> {
+  usage.value = null
+  if (!runId) {
+    usageState.value = 'idle'
+    return
+  }
+  usageState.value = 'loading'
+  try {
+    const rows: ModelInvocationDto[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < USAGE_PAGE_LIMIT; page++) {
+      const result = await api.listModelInvocations({ run_id: runId, limit: USAGE_PAGE_SIZE, cursor })
+      rows.push(...result.items)
+      cursor = result.next_cursor ?? undefined
+      if (!cursor) break
+    }
+    usage.value = summarizeModelInvocations(rows, { truncated: Boolean(cursor) })
+    usageState.value = 'ready'
+  } catch {
+    usageState.value = 'unavailable'
+  }
+}
+
+watch(() => props.snapshot?.run?.id, (runId) => { void loadModelUsage(runId) }, { immediate: true })
+
+/** The provider is named only when two rows would otherwise read as one model. */
+const ambiguousModels = computed(() => {
+  const seen = new Set<string>()
+  const shared = new Set<string>()
+  for (const group of usage.value?.groups ?? []) {
+    const key = group.model ?? ''
+    if (seen.has(key)) shared.add(key)
+    else seen.add(key)
+  }
+  return shared
+})
+
+function usageGroupLabel(group: ModelUsageGroup): string {
+  const name = group.model ?? 'unnamed model'
+  const via = ambiguousModels.value.has(group.model ?? '') ? ` via ${group.providerId.slice(0, 8)}` : ''
+  const calls = `${group.calls} ${group.calls === 1 ? 'call' : 'calls'}`
+  if (group.totalTokens === null) return `${name}${via} · no token usage reported · ${calls}`
+  const partial = group.unpricedCalls > 0 ? ` (${group.unpricedCalls} unreported)` : ''
+  return `${name}${via} · ${group.totalTokens.toLocaleString('en-US')} tokens${partial} · ${calls}`
+}
 
 /**
  * A context pack has no summary on the wire — the sentence the engine hands `AppendEventAsync` never
@@ -213,6 +273,48 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             — available when this pack was built, but they did not fit, so the model was not told them.
           </p>
         </div>
+      </article>
+
+      <article class="orchestration-block" data-testid="model-usage">
+        <div class="orchestration-block-head">
+          <BarChart3 :size="15" />
+          <strong>Model Usage</strong>
+        </div>
+        <div v-if="usageState === 'loading'" class="quiet">
+          Reading this run's model invocation audit…
+        </div>
+        <div v-else-if="usageState === 'unavailable'" class="quiet" data-testid="model-usage-unavailable">
+          The invocation audit could not be read, so no token figures are shown. An unread audit is
+          not a zero-cost run.
+        </div>
+        <div v-else-if="!usage || usage.calls === 0" class="quiet" data-testid="model-usage-empty">
+          No model calls recorded for this run yet.
+        </div>
+        <template v-else>
+          <p v-if="usage.truncated" class="quiet" data-testid="model-usage-truncated">
+            Partial: this run has more than {{ USAGE_PAGE_LIMIT * USAGE_PAGE_SIZE }} recorded calls
+            and the walk stopped there, so the figures below are a floor rather than a total.
+          </p>
+          <div
+            class="orchestration-tags"
+            role="list"
+            aria-label="Tokens and calls per model in this run"
+          >
+            <span
+              v-for="group in usage.groups"
+              :key="group.key"
+              role="listitem"
+              data-testid="model-usage-group"
+            >{{ usageGroupLabel(group) }}</span>
+          </div>
+          <p v-if="usage.unpricedCalls" class="quiet" data-testid="model-usage-unpriced">
+            {{ usage.unpricedCalls }} of {{ usage.calls }} calls reported no token usage at all —
+            a failed or unreported call, not a free one.
+          </p>
+          <p class="quiet">
+            Tokens only: this build has no per-model price table, so no amount is shown.
+          </p>
+        </template>
       </article>
 
       <article class="orchestration-block">

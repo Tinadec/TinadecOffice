@@ -1168,6 +1168,11 @@ export interface components {
       [key: string]: unknown;
     };
     MessageList: components["schemas"]["Message"][];
+    ModelInvocationPage: {
+      items: unknown[];
+      next_cursor?: string;
+      [key: string]: unknown;
+    };
     OrchestrationSnapshot: {
       agent_instances: unknown[];
       assignments: components["schemas"]["Assignment"][];
@@ -3009,8 +3014,11 @@ export interface operations {
   /** Page model invocation audit records */
   "getApiV1Model-invocations": {
     responses: {
+      /** @description Page of Core model invocation audit records; the query string is forwarded to Core untouched. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["ModelInvocationPage"];
+        };
       };
     };
   };
