@@ -403,6 +403,59 @@ const app = new Elysia()
       allow_conflicts: t.Optional(t.Boolean()),
     }, { additionalProperties: true }),
   })
+  // Per-file review of one snapshot: which paths moved, what each one looked like before, and how
+  // to undo exactly one of them. Core owns the comparison; these routes only forward it, so the
+  // gateway cannot become a second place that decides whether a file changed.
+  .get('/api/v1/workspace-snapshots/:snapshotId/files', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'List per-file changes of a workspace snapshot', tags: ['Projects'] } })
+  .get('/api/v1/workspace-snapshots/:snapshotId/files/diff', async ({ params, query, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files/diff?path=${encodeURIComponent(query.path)}`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Read the two bodies behind one file change', tags: ['Projects'] },
+    query: t.Object({ path: t.String() }),
+  })
+  .post('/api/v1/workspace-snapshots/:snapshotId/files/restore', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/workspace-snapshots/${encodeURIComponent(params.snapshotId)}/files/restore`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, {
+    detail: { summary: 'Restore one file from a workspace snapshot', tags: ['Projects'] },
+    body: t.Object({
+      path: t.String(),
+      // Present-and-empty asserts "the file was absent"; omitting it is refused by Core, and that
+      // distinction is the whole guard, so the schema must not rewrite one into the other.
+      expected_sha256: t.Nullable(t.String()),
+    }, { additionalProperties: true }),
+  })
   .get('/api/v1/workspace-defaults', async ({ set, request }) => {
     const headers = forwardHeaders(request);
     const path = '/api/v1/workspace-defaults';

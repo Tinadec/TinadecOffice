@@ -353,6 +353,199 @@ internal sealed class WorkspaceSnapshotService : IWorkspaceSnapshotService
             providerResult.Conflicts, providerResult.AppliedFileCount, now);
     }
 
+    /// <summary>
+    /// One file's text is served to a reviewer up to this many bytes. It is a preview ceiling, not
+    /// a safety limit: the hash below the text is what a restore is compared against, and a file
+    /// over the ceiling still restores whole.
+    /// </summary>
+    private const long MaxDiffTextBytes = 256 * 1024;
+
+    public async Task<IReadOnlyList<WorkspaceFileChange>> ListFileChangesAsync(
+        Guid snapshotId,
+        CancellationToken cancellationToken = default)
+    {
+        var (manifest, _, current, _) = await ReadSnapshotWithCurrentAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        return Compare(manifest, current);
+    }
+
+    public async Task<WorkspaceFileDiff?> GetFileDiffAsync(
+        Guid snapshotId,
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        var (row, project) = await ReadSnapshotRowAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        var relative = ResolveRelativeInsideRoot(project.RootPath, path)
+            ?? throw new WorkspaceSnapshotPathException(path);
+        var manifest = await ReadManifestAsync(row, cancellationToken).ConfigureAwait(false);
+        var stored = manifest.Files.FirstOrDefault(x => string.Equals(x.Path, relative, StringComparison.Ordinal));
+        var diskPath = Path.Combine(Path.GetFullPath(project.RootPath), relative.Replace('/', Path.DirectorySeparatorChar));
+        var disk = File.Exists(diskPath)
+            ? new WorkspaceSnapshotFile(relative, new FileInfo(diskPath).Length,
+                await WorkspaceSnapshotProviderSupport.HashFileAsync(diskPath, cancellationToken).ConfigureAwait(false), null)
+            : null;
+        if (stored is null && disk is null) return null;
+        var status = Status(stored, disk);
+        return new WorkspaceFileDiff(
+            relative,
+            status,
+            Side(stored, stored?.ContentBase64 is null ? null
+                : Convert.FromBase64String(stored.ContentBase64)),
+            Side(disk, disk is null ? null : await File.ReadAllBytesAsync(diskPath, cancellationToken).ConfigureAwait(false)),
+            Restorable: stored?.ContentBase64 is not null);
+    }
+
+    public async Task<WorkspaceFileChange> RestoreFileAsync(
+        Guid snapshotId,
+        WorkspaceFileRestoreRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null) throw new ArgumentException("A file restore request is required.", nameof(request));
+        if (request.ExpectedSha256 is null)
+            throw new ArgumentException(
+                "expected_sha256 is required: name the hash that was reviewed, or an empty string to assert the file was absent.",
+                nameof(request));
+        var (row, project) = await ReadSnapshotRowAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        var relative = ResolveRelativeInsideRoot(project.RootPath, request.Path)
+            ?? throw new WorkspaceSnapshotPathException(request.Path);
+        var manifest = await ReadManifestAsync(row, cancellationToken).ConfigureAwait(false);
+        var stored = manifest.Files.FirstOrDefault(x => string.Equals(x.Path, relative, StringComparison.Ordinal))
+            ?? throw new WorkspaceSnapshotConflictException(
+                "This workspace snapshot has no record of that file.",
+                [$"file:{relative}:not_in_snapshot"]);
+        if (stored.ContentBase64 is null)
+            throw new WorkspaceSnapshotFileNotCapturedException(relative);
+
+        var target = Path.Combine(Path.GetFullPath(project.RootPath), relative.Replace('/', Path.DirectorySeparatorChar));
+        var bytes = Convert.FromBase64String(stored.ContentBase64);
+        var live = File.Exists(target)
+            ? await WorkspaceSnapshotProviderSupport.HashFileAsync(target, cancellationToken).ConfigureAwait(false)
+            : null;
+        // The caller was shown a hash by the listing or the diff; writing over anything else would
+        // silently discard an edit made after they looked. An empty expectation is the reviewer
+        // saying "there was no file here", so a file that appeared in the meantime blocks too.
+        var reviewed = request.ExpectedSha256.Length == 0
+            ? live is null
+            : live is not null && FixedEquals(request.ExpectedSha256, live);
+        if (!reviewed)
+            throw new WorkspaceSnapshotConflictException(
+                "The file changed after it was reviewed.",
+                [$"file:{relative}:content_unavailable"]);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        await File.WriteAllBytesAsync(target, bytes, cancellationToken).ConfigureAwait(false);
+        return new WorkspaceFileChange(relative, "unchanged", stored.Sha256, stored.Sha256, stored.Length, bytes.LongLength, Restorable: true);
+    }
+
+    private async Task<(WorkspaceSnapshotDocument Manifest, WorkspaceSnapshotRecord Row, WorkspaceSnapshotDocument Current, ProjectReference Project)>
+        ReadSnapshotWithCurrentAsync(Guid snapshotId, CancellationToken cancellationToken)
+    {
+        var (row, project) = await ReadSnapshotRowAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+        var manifest = await ReadManifestAsync(row, cancellationToken).ConfigureAwait(false);
+        var provider = ResolveProvider(project.RootPath, manifest.ProviderKind);
+        // MaxBytes of one asks the provider for hashes only. A listing answers "which files moved
+        // out of line with the snapshot", and copying every small file into memory to find out
+        // would make the read side as expensive as taking another snapshot.
+        var current = await provider.CaptureAsync(new WorkspaceSnapshotCaptureRequest(
+            project.RootPath, manifest.IncludeHidden, 100_000, 1), cancellationToken).ConfigureAwait(false);
+        return (manifest, row, current, project);
+    }
+
+    private async Task<(WorkspaceSnapshotRecord Row, ProjectReference Project)> ReadSnapshotRowAsync(
+        Guid snapshotId,
+        CancellationToken cancellationToken)
+    {
+        if (snapshotId == Guid.Empty) throw new ArgumentException("Snapshot id is required.", nameof(snapshotId));
+        var scope = _tenant.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.WorkspaceSnapshots.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.Id == snapshotId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId,
+            cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Workspace snapshot was not found.");
+        var project = await _sessions.FindProjectAsync(row.ProjectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Project was not found.");
+        if (project.TenantId != scope.TenantId || project.WorkspaceId != scope.WorkspaceId)
+            throw new UnauthorizedAccessException("Project is outside the current tenant/workspace.");
+        return (row, project);
+    }
+
+    private static IReadOnlyList<WorkspaceFileChange> Compare(
+        WorkspaceSnapshotDocument stored,
+        WorkspaceSnapshotDocument current)
+    {
+        var currentByPath = current.Files.ToDictionary(x => x.Path, StringComparer.Ordinal);
+        var rows = new List<WorkspaceFileChange>();
+        foreach (var entry in stored.Files)
+        {
+            currentByPath.TryGetValue(entry.Path, out var live);
+            currentByPath.Remove(entry.Path);
+            rows.Add(Change(entry, live));
+        }
+        foreach (var extra in currentByPath.Values.OrderBy(x => x.Path, StringComparer.Ordinal))
+        {
+            rows.Add(Change(null, extra));
+        }
+        return rows;
+    }
+
+    private static WorkspaceFileChange Change(WorkspaceSnapshotFile? stored, WorkspaceSnapshotFile? live) => new(
+        (stored ?? live!).Path,
+        Status(stored, live),
+        stored?.Sha256,
+        live?.Sha256,
+        stored?.Length,
+        live?.Length,
+        Restorable: stored?.ContentBase64 is not null);
+
+    private static string Status(WorkspaceSnapshotFile? stored, WorkspaceSnapshotFile? live)
+    {
+        if (stored is null) return "added";
+        if (live is null) return "deleted";
+        return string.Equals(stored.Sha256, live.Sha256, StringComparison.OrdinalIgnoreCase) ? "unchanged" : "modified";
+    }
+
+    private static WorkspaceFileSide Side(WorkspaceSnapshotFile? file, byte[]? bytes)
+    {
+        if (file is null) return new WorkspaceFileSide(false, null, null, Binary: false, Truncated: false, Text: null);
+        if (bytes is null)
+            // The manifest has the row but not the body: the file was over the provider's content
+            // ceiling when the snapshot was taken. Say "no preview" rather than letting an empty
+            // string read as "the file became empty".
+            return new WorkspaceFileSide(true, file.Length, file.Sha256, Binary: false, Truncated: true, Text: null);
+        var truncated = file.Length > MaxDiffTextBytes;
+        var window = truncated ? bytes[..checked((int)MaxDiffTextBytes)] : bytes;
+        if (IsBinary(window))
+            return new WorkspaceFileSide(true, file.Length, file.Sha256, Binary: true, truncated, null);
+        return new WorkspaceFileSide(true, file.Length, file.Sha256, Binary: false, truncated,
+            Encoding.UTF8.GetString(window));
+    }
+
+    private static bool IsBinary(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty) return false;
+        if (bytes.IndexOf((byte)0) >= 0) return true;
+        try { return Encoding.UTF8.GetString(bytes.ToArray()).IndexOf('\uFFFD') >= 0; }
+        catch (ArgumentException) { return true; }
+    }
+
+    /// <summary>
+    /// Turns a caller-supplied path into the manifest's own spelling, or null when it does not
+    /// name a file inside the root. The manifest stores forward-slash relative paths, so the
+    /// comparison is done on the normalized form; <c>..</c>, absolute paths and drive- or
+    /// UNC-qualified segments all fall outside and are refused rather than clamped.
+    /// </summary>
+    private static string? ResolveRelativeInsideRoot(string workspaceRoot, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var candidate = path.Trim().Replace('\\', '/');
+        if (candidate.StartsWith('/') || candidate.Contains(":") || Path.IsPathRooted(path)) return null;
+        var root = Path.GetFullPath(workspaceRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string full;
+        try { full = Path.GetFullPath(Path.Combine(root, candidate.Replace('/', Path.DirectorySeparatorChar))); }
+        catch (ArgumentException) { return null; }
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+        return full[(root.Length + 1)..].Replace(Path.DirectorySeparatorChar, '/');
+    }
+
     private IWorkspaceSnapshotProvider ResolveProvider(string workspaceRoot, string? kind = null)
     {
         if (!string.IsNullOrWhiteSpace(kind))

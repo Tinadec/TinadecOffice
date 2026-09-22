@@ -319,6 +319,16 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - 测试锚点：`Api.Tests/WorkspaceInstructionApiTests.cs`（16 条，覆盖优先级、被抑制文件确实未出现、无指令文件、无工作区、截断与超上限两种文案、run 内稳定 / 下个 run 才见新值、指令不得挤掉会话历史、`IsInsideRoot` 六型）+ `FullDuplexEndpointTests.InvokeStream_SendsTheProjectInstructionFileInTheMessagesTheModelReads`（真实 run 走完 准入 → 上下文 → 派发）。后者刻意断言**消息正文**而非 `ChatOptions.Instructions`：装配器只拥有角色文案，证据活在消息里，只断言角色的话，"文件在上下文里造好却在派发前丢掉"照样能绿。为此 `ScriptedChatClient` 新增 `Prompts`（与 `Instructions` 同一把锁、两条路径各自记录一次，流式非 meeting 分支由委托的 `GetResponseAsync` 记录）。
 - 未收口（登记）：只读根目录一层，子目录嵌套指令文件（opencode 交给读工具惰性附带、hermes 作为工具结果附带）本仓尚未选择落点；`Skills` 模块仍是零消费者骨架；桌面端"哪条证据真到了模型"的可视化属阶段 6。
 
+## PER-FILE SNAPSHOT REVIEW (2026-09-22)
+定位：让"智能体改了哪些文件、这一条能不能单独撤回"成为可回答的问题。此前工作区快照只有**整棵目录树**这一个粒度：`/api/v1/projects/{id}/snapshots` 建快照、`/api/v1/workspace-snapshots/{id}/restore` 整体还原（`expected_workspace_hash` 不匹配就整批冲突），而逐文件的清单其实一直都在——`WorkspaceSnapshotProviderSupport.CaptureFilesAsync` 每个文件写 `Path/Length/Sha256`，小文件还带 `ContentBase64`（上限 `MaxSingleFileBytes = 8MiB` + 总量预算），只是从没有任何端点把它交出去过。本段是"读已有数据"，**没有新增存储、没有迁移**。
+
+- 三条新端点都在 `AspNetCore/Endpoints/WorkspaceSnapshotEndpoints.cs`：`GET /api/v1/workspace-snapshots/{id}/files`（逐路径 status：`added|deleted|modified|unchanged` + 前后哈希/长度 + `restorable`）、`GET .../files/diff?path=`（两侧正文，预览上限 256KiB，超限/二进制只给哈希）、`POST .../files/restore`（`{path, expected_sha256}`）。
+- **比较基线是"现在"**：快照是在写之前拍的（`Tools/ToolDispatcher.cs` 的 `execution:{id}:prewrite`），所以一行回答的是"这次写留下了什么、现在还在不在"，而不是"那次写改了哪几个字节"。用户的自行编辑同样会显出来——这与 `git status` 语义一致，卡片用快照时间说明白。**刻意没有做** run/session 作用域的基线：`workspace_snapshots` 只有 `project_id`，要做归属就得改冻结体或新增关联表，那是另一件事。
+- `expected_sha256` 是**必填**：字段缺失 → 400 `invalid_request`。空串是另一个事实——"我当时看这里没有文件"，删掉的行只有靠它才能撤销；把两者混为一谈就等于允许盲目覆盖。**`restorable: false` 不是冲突**：正文因超出预算未被捕获时走专门的 `WorkspaceSnapshotFileNotCapturedException` → 409 `file_content_not_captured`，因为"没人改过，但这条本来就撤不回"和"有竞争"是两句话。
+- 越界拒绝：`ResolveRelativeInsideRoot` 只接受解析后仍落在根内的相对路径（`..`、绝对路径、盘符/UNC 全部拒绝），抛出专门的 `WorkspaceSnapshotPathException` → 两条路由同为 400 `path_outside_workspace`；缺 `expected_sha256` 才是 400 `invalid_request`。**同一个失败只能有一个机器码**，否则客户端只能靠 message 文本判断边界。符号链接不在其列——这里读的是快照正文与根内文件，不做链接跟随。
+- 验证：`Api.Tests/WorkspaceFileReviewApiTests.cs` 16 例（四种 status、预算外文件不可撤且明说原因、二进制/截断两侧正文、撤销一个不影响兄弟、审阅后被改走 → 409、五种越界路径形状、未知快照带码 404）。哈希一律从列表响应里读回再喂回去，断言的是**铸造方自己写出的值**。
+- 已知缺口（诚实）：`Gateway` 只做无状态转发，白名单加了 5 个码——其中 `workspace_conflict` 是**既有整体还原早已在发、过去只到网关就被压成 `conflict` 的码**，这条顺带修掉了；桌面 `api.ts` 里这三个响应的类型是**手写**的——`/api/v1/workspace-snapshots/*` 在 OpenAPI 快照里没有响应体 schema，`check:drift` 抓不到字段漂移，字段回归目前靠 Core 测试 + `SnapshotsPage.test.ts` 的调用参数断言两头夹住，没有跨语言自动契约。逐文件还原**不走** `UserToolAction` 审批环（与整体还原同为显式用户命令），子目录嵌套快照、按 run 聚合的变更清单尚未做。
+
 ## CHAIN CLOSURE — 缝合「模型 → 工具 → 结果回模型」接缝（2026-09-17）
 
 定位：本批次只缝接缝，**不改**「对话身份与执行体分离」「静态一次性规划」两条产品定义（架构级取舍另立第二批次）。六处语义变更，每处都配了「旧语义残留」审计（见文末）。

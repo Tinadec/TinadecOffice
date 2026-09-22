@@ -99,6 +99,9 @@ test('workspace governance routes stay stateless Core proxies and preserve If-Ma
     new Request('http://gateway.local/api/v1/workspace-defaults/draft', { method: 'PUT', headers, body: JSON.stringify({ default_agent_mode_id: 'mode-1' }) }),
     new Request('http://gateway.local/api/v1/workspace-defaults/publish', { method: 'POST', headers }),
     new Request('http://gateway.local/api/v1/workspace-defaults/archive', { method: 'POST', headers }),
+    new Request('http://gateway.local/api/v1/workspace-snapshots/snapshot-1/files'),
+    new Request('http://gateway.local/api/v1/workspace-snapshots/snapshot-1/files/diff?path=src%2Fnote.txt'),
+    new Request('http://gateway.local/api/v1/workspace-snapshots/snapshot-1/files/restore', { method: 'POST', headers, body: JSON.stringify({ path: 'gone.txt', expected_sha256: '' }) }),
   ];
 
   const responses: Response[] = [];
@@ -118,9 +121,18 @@ test('workspace governance routes stay stateless Core proxies and preserve If-Ma
     ['PUT', 'http://127.0.0.1:48731/api/v1/workspace-defaults/draft'],
     ['POST', 'http://127.0.0.1:48731/api/v1/workspace-defaults/publish'],
     ['POST', 'http://127.0.0.1:48731/api/v1/workspace-defaults/archive'],
+    ['GET', 'http://127.0.0.1:48731/api/v1/workspace-snapshots/snapshot-1/files'],
+    // The path survives as a query value on the URL Core reads it from. A proxy that parsed and
+    // dropped it would answer every diff with Core's "path is required" 400, so this entry is the
+    // whole proof that the diff route can be used at all.
+    ['GET', 'http://127.0.0.1:48731/api/v1/workspace-snapshots/snapshot-1/files/diff?path=src%2Fnote.txt'],
+    ['POST', 'http://127.0.0.1:48731/api/v1/workspace-snapshots/snapshot-1/files/restore'],
   ]);
   assert.equal(requests[0]!.headers.get('if-match'), '"6"');
   assert.deepEqual(JSON.parse(requests[5]!.body ?? ''), { default_agent_mode_id: 'mode-1' });
+  // `expected_sha256: ""` means "this file was absent when I looked" and must not be rewritten into
+  // a missing field on the way through — that distinction is the restore guard for an undelete.
+  assert.deepEqual(JSON.parse(requests[10]!.body ?? ''), { path: 'gone.txt', expected_sha256: '' });
 });
 
 test('agent pack routes are stateless Core proxies and preserve install guards', { concurrency: false }, async () => {

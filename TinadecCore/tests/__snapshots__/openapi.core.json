@@ -3235,6 +3235,20 @@
         },
         "type": "object"
       },
+      "WorkspaceFileRestoreRequestDto": {
+        "properties": {
+          "expected_sha256": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "WorkspaceRestoreRequestDto": {
         "properties": {
           "allow_conflicts": {
@@ -8900,6 +8914,99 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/files": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/files/diff": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/workspace-snapshots/{snapshotId}/files/restore": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshotId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkspaceFileRestoreRequestDto"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK"
