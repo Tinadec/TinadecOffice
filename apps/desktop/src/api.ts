@@ -635,31 +635,72 @@ export interface EventEnvelope {
   error?: { code: string; message: string; detail?: string | null } | null;
 }
 
+/**
+ * A market source as Core stores it. There is no `created_at`: the row has one, the route does
+ * not send it, and this interface used to promise it — which is how a UI ends up rendering a
+ * field that is undefined on every machine.
+ */
 export interface ExtensionSourceDto {
   id: string;
   name: string;
   kind: string;
   location: string;
   enabled: boolean;
-  last_refreshed_at?: string | null;
-  created_at: string;
+  revision: number;
+  last_refreshed_at?: string;
+  /** Why the last refresh did not land. Present alongside the row so an empty catalog can be read as an outage. */
+  last_error?: string;
+  entry_count: number;
 }
 
+/** The list is an envelope because `supported_kinds` decides what the picker may offer at all. */
+export interface MarketSourceListDto {
+  sources: ExtensionSourceDto[];
+  supported_kinds: string[];
+}
+
+/** One refresh's answer. `outcome` is the field to branch on, not `fetched_rows`. */
+export interface MarketRefreshDto {
+  source_id: string;
+  outcome: 'fetched' | 'blocked' | 'unavailable' | string;
+  fetched_rows: number;
+  refused_rows: number;
+  removed_rows: number;
+  pages_fetched: number;
+  truncated_pages: boolean;
+  reason?: string;
+  refreshed_at?: string;
+}
+
+/**
+ * One catalog row: what a source claimed, not what is installed. `publisher`, `capabilities`,
+ * `permissions`, `status`, and `installed_extension_id` used to be declared here and sent by
+ * nobody — the registry publishes no such fields, and an install surface that does will carry them
+ * with its own source.
+ */
 export interface MarketCatalogItemDto {
   catalog_id: string;
   source_id: string;
+  source_name: string;
   extension_id: string;
-  kind: 'skill' | 'mcp-server' | 'acp-adapter' | 'tool-pack' | string;
+  kind: 'mcp-server' | 'skill' | 'acp-adapter' | 'tool-pack' | string;
   version: string;
-  publisher: string;
   display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  status: string;
-  installed_extension_id?: string | null;
+  description?: string;
+  homepage?: string;
+  registry_type?: string;
+  transports: string[];
+  manifest_hash: string;
+  refreshed_at: string;
+  expires_at: string;
+}
+
+export interface MarketCatalogPageDto {
+  items: MarketCatalogItemDto[];
+  total_available: number;
+  has_more: boolean;
+  /** Newest refresh among the matching rows; absent means nothing matched. */
+  as_of?: string;
 }
 
 export interface InstalledExtensionDto {
@@ -2499,21 +2540,32 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(settings)
   }),
-  listExtensionSources: () => request<ExtensionSourceDto[]>('/api/v1/market/sources'),
+  listExtensionSources: () => request<MarketSourceListDto>('/api/v1/market/sources'),
   createExtensionSource: (source: { name: string; kind: string; location: string; enabled?: boolean }) => request<ExtensionSourceDto>('/api/v1/market/sources', {
     method: 'POST',
     body: JSON.stringify(source)
   }),
-  refreshExtensionSource: (sourceId: string) => request<ExtensionSourceDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}/refresh`, {
+  setExtensionSourceEnabled: (sourceId: string, enabled: boolean) => request<ExtensionSourceDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled })
+  }),
+  deleteExtensionSource: (sourceId: string) => request<void>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE'
+  }),
+  refreshExtensionSource: (sourceId: string) => request<MarketRefreshDto>(`/api/v1/market/sources/${encodeURIComponent(sourceId)}/refresh`, {
     method: 'POST'
   }),
-  listMarketCatalog: (params: { kind?: string; query?: string; source_id?: string } = {}) => {
+  // `q`, not `query`: this used to send a parameter name Core has never read, so the search box
+  // narrowed nothing over the wire while every mocked test passed.
+  listMarketCatalog: (params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.kind && params.kind !== 'all') search.set('kind', params.kind);
-    if (params.query) search.set('query', params.query);
+    if (params.q) search.set('q', params.q);
     if (params.source_id) search.set('source_id', params.source_id);
+    if (params.limit !== undefined) search.set('limit', String(params.limit));
+    if (params.offset) search.set('offset', String(params.offset));
     const suffix = search.toString() ? `?${search.toString()}` : '';
-    return request<MarketCatalogItemDto[]>(`/api/v1/market/catalog${suffix}`);
+    return request<MarketCatalogPageDto>(`/api/v1/market/catalog${suffix}`);
   },
   getMarketCatalogItem: (catalogId: string) => request<MarketCatalogItemDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}`),
   previewExtensionInstall: (input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) => request<ExtensionInstallPreviewDto>('/api/v1/extensions/install-preview', {

@@ -339,6 +339,12 @@ export interface paths {
     /** Create market source */
     post: operations["postApiV1MarketSources"];
   };
+  "/api/v1/market/sources/{sourceId}": {
+    /** Delete a market source */
+    delete: operations["deleteApiV1MarketSourcesBySourceId"];
+    /** Enable or disable a market source */
+    patch: operations["patchApiV1MarketSourcesBySourceId"];
+  };
   "/api/v1/market/sources/{sourceId}/refresh": {
     /** Refresh market source */
     post: operations["postApiV1MarketSourcesBySourceIdRefresh"];
@@ -1107,6 +1113,59 @@ export interface components {
       predicate: string;
       required_criteria: string[];
       waiting_task: string;
+      [key: string]: unknown;
+    };
+    MarketCatalogEntry: {
+      catalog_id: string;
+      description?: string;
+      display_name: string;
+      expires_at: string;
+      extension_id: string;
+      homepage?: string;
+      kind: string;
+      manifest_hash: string;
+      refreshed_at: string;
+      registry_type?: string;
+      source_id: string;
+      source_name: string;
+      transports: string[];
+      version: string;
+      [key: string]: unknown;
+    };
+    MarketCatalogPage: {
+      as_of?: string;
+      has_more: boolean;
+      items: unknown[];
+      total_available: number;
+      [key: string]: unknown;
+    };
+    MarketRefresh: {
+      fetched_rows: number;
+      outcome: string;
+      pages_fetched: number;
+      reason?: string;
+      refreshed_at?: string;
+      refused_rows: number;
+      removed_rows: number;
+      source_id: string;
+      truncated_pages: boolean;
+      [key: string]: unknown;
+    };
+    MarketSource: {
+      enabled: boolean;
+      entry_count: number;
+      id: string;
+      kind: string;
+      last_error?: string;
+      last_refreshed_at?: string;
+      location: string;
+      name: string;
+      revision: number;
+      [key: string]: unknown;
+    };
+    MarketSourceList: {
+      sources: unknown[];
+      supported_kinds: string[];
       [key: string]: unknown;
     };
     McpInventory: {
@@ -2799,8 +2858,11 @@ export interface operations {
   /** Get market catalog */
   getApiV1MarketCatalog: {
     responses: {
+      /** @description A page of stored claims, with total_available and as_of so a short page cannot be read as a small market. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["MarketCatalogPage"];
+        };
       };
     };
   };
@@ -2812,24 +2874,62 @@ export interface operations {
       };
     };
     responses: {
+      /** @description One entry as its source described it, including the metadata digest Core computed over that description. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["MarketCatalogEntry"];
+        };
       };
     };
   };
   /** List market sources */
   getApiV1MarketSources: {
     responses: {
+      /** @description Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["MarketSourceList"];
+        };
       };
     };
   };
   /** Create market source */
   postApiV1MarketSources: {
     responses: {
+      /** @description The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketSource"];
+        };
+      };
+    };
+  };
+  /** Delete a market source */
+  deleteApiV1MarketSourcesBySourceId: {
+    parameters: {
+      path: {
+        sourceId: string;
+      };
+    };
+    responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  /** Enable or disable a market source */
+  patchApiV1MarketSourcesBySourceId: {
+    parameters: {
+      path: {
+        sourceId: string;
+      };
+    };
+    responses: {
+      /** @description The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketSource"];
+        };
       };
     };
   };
@@ -2841,8 +2941,11 @@ export interface operations {
       };
     };
     responses: {
+      /** @description `outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog. */
       200: {
-        content: never;
+        content: {
+          "application/json": components["schemas"]["MarketRefresh"];
+        };
       };
     };
   };

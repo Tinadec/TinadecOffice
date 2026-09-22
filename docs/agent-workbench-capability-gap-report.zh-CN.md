@@ -80,6 +80,44 @@
 
 ## 5. 阶段末门禁实测（按批次记账，全部读日志里自己写的 `GATE_EXIT`/`EXIT`，不看管道退出码）
 
+### 5f. 2026-09-23 第六批：市场面从"表存在但没人写"变成一条能读的路（#36 / M1）
+
+- **这条比 §5e 那一类更糟**：MCP 至少是"投影没写"——`mcp_list` 早就把答案算好了。市场这两张表
+  （`extension_sources` / `extension_catalog_entries`）自骨架起**零写入者、零读者**，所以 M1 不是补投影，
+  是从 adapter 开始建。桌面还每次加载都 POST 两个 `tinadec://` 假源，501 被 `catch {}` 吞掉——
+  这就是"预览画廊里满、真机上永远空"的完整成因链。
+- **出口面是这条增量里唯一真正新的东西**：provider 侧新增预留控制工具 `#fetch`（复用 `WebFetchGuard`，
+  不改其策略），Core 侧新增 `IMarketCatalogService` + 官方 MCP Registry adapter。两侧策略**故意分开放**：
+  Core 决定"可以打哪个 URL"（https-only、无 userinfo/query/fragment、查询串由 Core 自己拼），
+  provider 决定"这个地址能不能连"（connect 期按即将拨号的 IP 判定）。理由写在代码注释里：
+  Core 再开一套 HTTP 栈，就是第二份需要同步、需要审计的策略。
+- **三种结局只有一种能删行**是本批的语义核心。`fetched` / `blocked` / `unavailable` 之外还有一条
+  `truncated_pages`（页数上限砍断 cursor 链）：此时**一行都不删**、`removed_rows: 0`，
+  因为"没读完"不是"市场变小了"。`refused_rows` 单独存在：无 name 或无 version 的行不落库但必须报数。
+- **一次为 M2 预埋的不变量**：`(SourceId, ExtensionId, Version)` upsert 保留原行 `Id`，
+  `manifest_hash` 对键序不敏感（对内容敏感）。这两条现在没有消费者，M2 的"固定版本"一上来就靠它们。
+- **搜索转义是量出来的**：去掉 `EscapeLike` 后 `q="%"` 从命中 1 行变 3 行，且只有那一条测试变红。
+- **诚实缺口**：只有一个 adapter（`skill_repository`/`cli_runtime` 创建即 400，留给 M3/M4）；
+  装不了任何东西（`/extensions/*` 七条仍 501，且新增一例断言它必须是 501 而不是空 200）；
+  真实 registry 端到端一次没跑过（CI 不出网）；分页是 `offset`，并发刷新会让第二页漂移；
+  `expires_at` 只上报没人读；删除源是硬删——M2 让安装引用 `catalog_id` 之后必须先加引用守卫。
+
+- **两条实现限制，本轮新登记（不是缺口清单里的旧账）**：
+  ① `reason` 直接把 provider/异常的 `Message` 原文外发给客户端——这与 `McpEndpoints` 的既有做法一致，
+  但 `docs/security.md` 的"不把内部细节交给调用方"口径并没有一条测试守着这条新路由；
+  ② `ListCatalogAsync` 对同一过滤条件**枚举两次**（一次取 `total_available`/`as_of`，一次取页），
+  所以并发刷新能让"共 3 条"和"这一页 2 条"来自两个瞬间。它属于下面那条 offset 缺口的同一根因，
+  换游标可以一起解决，本批不换是因为没有消费者在翻页（M4 才做分页 UI）。
+- **阶段末门禁实测（顺序跑，逐个读日志自己写的退出码）**：Core `Api.Tests` `exit=0`、**486/486**（16m19s）；
+  `TinadecTools.Tests` `exit=0`、**292/292**；Governance **44/44**、Architecture **17/17**、AgentFramework **329/329**；
+  Gateway `bun test src` `exit=0`、**70/70**；Desktop `vitest run` `exit=0`（**738 通过 / 14 跳过**）、
+  `typecheck` `exit=0`、`vite build` `exit=0`、electron `node --test` **24/24**；
+  `check:drift` `exit=1`（按机制必然：它以 `git diff --exit-code` 收尾，本批契约是有意变更且未提交），
+  其实质另量——连跑两次 `generate:client` 后 `schema.d.ts` sha1 恒为 `420a35ba…218576`。
+  **顺带一条对 #25 的正面观测**：上一批同树顺序跑 457/457，这一批把三个门禁从并行改成顺序后，
+  486 例里负载族一条没红——与 §5d 的 A/B 结论同向（并发放大），但**仍不构成根因证明**，
+  因为本批同时新增了 29 例，样本不是同一份。
+
 ### 5e. 2026-09-23 第五批：MCP 人类侧第一次读到真东西（#35）
 
 - **Core 全量** `dotnet test Api.Tests` → **`API_EXIT=0`、457/457、15m44s**（上一批 448 例 / 21m32s；多的 9 例正是本批新写的 `McpInventoryApiTests`）。`TinadecTools.Tests` **`TOOLS_EXIT=0`、284/284**；网关 `bun test src` **`BUN_EXIT=0`、63 pass / 0 fail**（+5 条）。

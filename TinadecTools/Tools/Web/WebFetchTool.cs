@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Tools;
@@ -31,9 +32,30 @@ public sealed class WebFetchResult
     [JsonPropertyName("note")] public string? Note { get; set; }
 }
 
+/// <summary>
+/// Payload of the reserved <c>#fetch</c> control call. Deliberately not
+/// <see cref="WebFetchResult"/>: a catalog page is parsed by Core, not read by a
+/// model, so it needs the document as it arrived — no HTML-to-text extraction,
+/// no character ceiling that silently cuts a JSON body in half.
+/// </summary>
+public sealed class RawFetchResult
+{
+    [JsonPropertyName("success")] public bool Success { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+    [JsonPropertyName("blocked")] public bool Blocked { get; set; }
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("status_code")] public int StatusCode { get; set; }
+    [JsonPropertyName("media_type")] public string? MediaType { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("truncated")] public bool Truncated { get; set; }
+    [JsonPropertyName("byte_count")] public int ByteCount { get; set; }
+    [JsonPropertyName("declared_bytes")] public long DeclaredBytes { get; set; } = -1;
+}
+
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(WebFetchArgs))]
 [JsonSerializable(typeof(WebFetchResult))]
+[JsonSerializable(typeof(RawFetchResult))]
 internal partial class WebFetchToolJsonContext : JsonSerializerContext { }
 
 public static class WebFetchTool
@@ -48,6 +70,39 @@ public static class WebFetchTool
     public const int DefaultTimeoutMs = 15_000;
     public const int MinTimeoutMs = 1_000;
     public const int MaxTimeoutMs = 60_000;
+
+    // ---- the reserved #fetch control call: Core's own catalog reads ----
+    internal const string RawFetchToolId = "#fetch";
+    private const string RawUserAgent = "TinadecOffice-core/1.0 (#fetch; catalog reads)";
+    private const string RawAcceptHeader = "application/json;q=1.0, text/plain;q=0.5, */*;q=0.1";
+    public const int RawDefaultMaxBytes = 2 * 1024 * 1024;
+    public const int RawCeilingBytes = 8 * 1024 * 1024;
+    public const int RawDefaultTimeoutMs = 20_000;
+
+    private const string RawFetchInputSchema =
+        "{\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\"}," +
+        "\"max_bytes\":{\"type\":\"integer\"},\"timeout_ms\":{\"type\":\"integer\"}}," +
+        "\"required\":[\"url\"],\"additionalProperties\":false}";
+
+    /// <summary>
+    /// Registers the reserved <c>#fetch</c> transport. This is not a model tool:
+    /// <c>#</c>-prefixed ids are kept out of the manifest, so Core is the only caller.
+    /// It carries no approval gate for the same reason <c>mcp_list</c> does not — the
+    /// decision "which URL may be read" is made by Core's allowlist before the call
+    /// exists, and this layer only refuses targets that are not public addresses.
+    /// Splitting it that way is deliberate: the provider cannot be trusted to know
+    /// which catalog is authorized, and Core cannot be trusted to remember that every
+    /// socket it opens needs an address policy.
+    /// </summary>
+    public static void RegisterControl() => ToolRegistry.Register(
+        RawFetchToolId,
+        (request, cancellationToken) => FetchRawAsync(request, null, cancellationToken),
+        requiresApproval: false,
+        description: "Reserved transport for Core-owned catalog reads: one public http(s) URL fetched as raw text, no HTML extraction. Never model-visible.",
+        inputSchemaJson: RawFetchInputSchema,
+        risk: "low",
+        mutatesWorkspace: false,
+        retrySafety: "safe");
 
     [ToolFunction("web_fetch", RequiresApproval = true, MutatesWorkspace = false, ConfirmationFields = ["confirm_fetch"],
         Description = "Fetch one public http(s) URL into text (approval-gated; confirm_fetch must be non-empty to run). Only text-like media types get a body, capped at max_bytes/max_chars with truncated=true when cut. Private, loopback, link-local (including cloud metadata) and tunnel addresses come back blocked=true — that is policy, not a network failure, so retrying the same target will not help. A 4xx/5xx keeps success=false but still returns the readable body: report status_code rather than guessing whether the page exists.")]
@@ -199,6 +254,156 @@ public static class WebFetchTool
             }
         }
     }
+
+    /// <summary>
+    /// The handler behind <c>#fetch</c>. A 3xx is an answer here, not a step to
+    /// take: the URL came from Core's own allowlist, so a redirect means the
+    /// allowlisted document moved, and following it would return bytes Core never
+    /// decided to read.
+    /// </summary>
+    internal static async ValueTask<ToolCallResponse<JsonElement>> FetchRawAsync(
+        ToolCallRequest<JsonElement> request,
+        Func<string, CancellationToken, Task<IPAddress[]>>? resolve,
+        CancellationToken cancellationToken,
+        Func<HttpMessageHandler>? handlerFactory = null)
+    {
+        var url = RawString(request.Params, "url");
+        if (string.IsNullOrWhiteSpace(url))
+            return RawFail(request.ToolCallId, "#fetch requires a non-empty url.");
+
+        if (!WebFetchGuard.TryBuildTarget(url, out var target, out var urlError))
+            return RawResult(request.ToolCallId, new RawFetchResult { Blocked = true, Url = url, Error = urlError });
+
+        var maxBytes = Clamp(RawInt(request.Params, "max_bytes"), 1, RawCeilingBytes, RawDefaultMaxBytes);
+        var timeoutMs = Clamp(RawInt(request.Params, "timeout_ms"), MinTimeoutMs, MaxTimeoutMs, RawDefaultTimeoutMs);
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(timeoutMs);
+
+        var resolver = resolve ?? ((host, token) => Dns.GetHostAddressesAsync(host, token));
+        using var client = new HttpClient(handlerFactory?.Invoke() ?? CreateGuardedHandler(resolver), disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, target);
+            message.Headers.TryAddWithoutValidation("User-Agent", RawUserAgent);
+            message.Headers.TryAddWithoutValidation("Accept", RawAcceptHeader);
+
+            using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
+            var status = (int)response.StatusCode;
+            var mediaType = WebFetchContent.MediaTypeOf(response.Content.Headers.ContentType?.MediaType);
+            var declared = response.Content.Headers.ContentLength ?? -1;
+
+            if (status is >= 300 and < 400)
+            {
+                var towards = response.Headers.Location is { } hop ? new Uri(target, hop).ToString() : "no Location header";
+                return RawResult(request.ToolCallId, new RawFetchResult
+                {
+                    Url = target.ToString(),
+                    StatusCode = status,
+                    MediaType = mediaType,
+                    DeclaredBytes = declared,
+                    Error = $"#fetch does not follow redirects: HTTP {status} points at {towards}.",
+                });
+            }
+
+            var (bytes, truncated) = await ReadCappedAsync(response, maxBytes, budget.Token).ConfigureAwait(false);
+            if (!WebFetchContent.IsTextual(mediaType))
+            {
+                return RawResult(request.ToolCallId, new RawFetchResult
+                {
+                    Url = target.ToString(),
+                    StatusCode = status,
+                    MediaType = mediaType,
+                    ByteCount = bytes.Length,
+                    DeclaredBytes = declared,
+                    Error = $"#fetch returns text only: this response is {(mediaType.Length == 0 ? "an unlabelled media type" : mediaType)} ({bytes.Length} byte(s)) and its body was not captured.",
+                });
+            }
+
+            var encoding = WebFetchContent.ResolveEncoding(response.Content.Headers.ContentType?.ToString(), out _);
+            var failure = status switch
+            {
+                < 200 or >= 300 => $"HTTP {status} from {target.Host}",
+                _ when truncated => $"the body exceeded max_bytes ({maxBytes} byte(s)), so this document is incomplete and cannot be parsed; the ceiling is {RawCeilingBytes}",
+                _ => null,
+            };
+
+            return RawResult(request.ToolCallId, new RawFetchResult
+            {
+                // Unlike web_fetch, a cut-off page is not partially useful here: the
+                // reader is a parser, and half a JSON document would otherwise be
+                // stored as "this source has N entries".
+                Success = failure is null,
+                Error = failure,
+                Url = target.ToString(),
+                StatusCode = status,
+                MediaType = mediaType,
+                Body = encoding.GetString(bytes),
+                Truncated = truncated,
+                ByteCount = bytes.Length,
+                DeclaredBytes = declared,
+            });
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return RawResult(request.ToolCallId, new RawFetchResult
+            {
+                Url = target.ToString(),
+                Error = $"'{target}' did not answer within {timeoutMs} ms (timeout_ms accepts up to {MaxTimeoutMs}).",
+            });
+        }
+        catch (Exception ex)
+        {
+            var refusal = FindRefusal(ex);
+            if (refusal is not null)
+            {
+                return RawResult(request.ToolCallId, new RawFetchResult
+                {
+                    Blocked = true,
+                    Url = target.ToString(),
+                    Error = refusal.Reason,
+                });
+            }
+
+            return RawResult(request.ToolCallId, new RawFetchResult
+            {
+                Url = target.ToString(),
+                Error = $"'{target}' could not be fetched: {ex.Message}",
+            });
+        }
+    }
+
+    private static string? RawString(JsonElement params_, string name) =>
+        params_.ValueKind == JsonValueKind.Object && params_.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int RawInt(JsonElement params_, string name) =>
+        params_.ValueKind == JsonValueKind.Object && params_.TryGetProperty(name, out var value) && value.TryGetInt32(out var number)
+            ? number
+            : 0;
+
+    private static ToolCallResponse<JsonElement> RawResult(long callId, RawFetchResult result) => new()
+    {
+        CallId = callId,
+        // `blocked`, a non-2xx, a redirect and a truncation are all answers the
+        // caller has to read, so they travel as a successful call carrying a failed
+        // result — the same split web_fetch makes. Only a malformed request is a
+        // wire-level failure.
+        IsSuccess = true,
+        Response = JsonSerializer.SerializeToElement(result, WebFetchToolJsonContext.Default.RawFetchResult),
+    };
+
+    private static ToolCallResponse<JsonElement> RawFail(long callId, string message) => new()
+    {
+        CallId = callId,
+        IsSuccess = false,
+        Response = JsonSerializer.SerializeToElement(message, ToolCallJsonContext.Default.String),
+    };
 
     /// <summary>
     /// The address check runs here, inside the connect callback, so a name that

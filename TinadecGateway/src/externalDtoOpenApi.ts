@@ -248,6 +248,75 @@ const mcpServerTools = t.Object({
   server: t.Optional(t.Unknown()),
 }, { additionalProperties: true });
 
+/**
+ * The market source list. Typed at the envelope because `supported_kinds` is the field a picker
+ * must read: the kinds an install can be pointed at are decided by which adapters this build has,
+ * and a client that guesses gets a 400 it cannot predict.
+ */
+const marketSourceList = t.Object({
+  sources: t.Array(t.Unknown()),
+  supported_kinds: t.Array(t.String()),
+}, { additionalProperties: true });
+
+const marketSource = t.Object({
+  id: t.String(),
+  name: t.String(),
+  kind: t.String(),
+  location: t.String(),
+  enabled: t.Boolean(),
+  revision: t.Number(),
+  last_refreshed_at: t.Optional(t.String()),
+  last_error: t.Optional(t.String()),
+  entry_count: t.Number(),
+}, { additionalProperties: true });
+
+/**
+ * One refresh's answer. `outcome` is the whole point: fetched / blocked / unavailable are three
+ * facts about the same unchanged-looking catalog, and only the first one entitles a reader to
+ * treat an entry count as the state of the market.
+ */
+const marketRefresh = t.Object({
+  source_id: t.String(),
+  outcome: t.String(),
+  fetched_rows: t.Number(),
+  refused_rows: t.Number(),
+  removed_rows: t.Number(),
+  pages_fetched: t.Number(),
+  truncated_pages: t.Boolean(),
+  reason: t.Optional(t.String()),
+  refreshed_at: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/** Rows stay opaque per the standing convention; the paging and freshness keys do not. */
+const marketCatalogPage = t.Object({
+  items: t.Array(t.Unknown()),
+  total_available: t.Number(),
+  has_more: t.Boolean(),
+  as_of: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * One catalog row, typed on purpose: `manifest_hash` and `version` are what a later install must
+ * be pinned to, so the field names have to be part of the contract rather than a client's guess
+ * at Core's DTO.
+ */
+const marketCatalogEntry = t.Object({
+  catalog_id: t.String(),
+  source_id: t.String(),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  display_name: t.String(),
+  description: t.Optional(t.String()),
+  homepage: t.Optional(t.String()),
+  registry_type: t.Optional(t.String()),
+  transports: t.Array(t.String()),
+  manifest_hash: t.String(),
+  refreshed_at: t.String(),
+  expires_at: t.String(),
+}, { additionalProperties: true });
+
 export const externalDtoSchemas = {
   MeetingModelOverride: meetingModelOverride,
   Project: project,
@@ -274,6 +343,11 @@ export const externalDtoSchemas = {
   ModelInvocationPage: modelInvocationPage,
   McpInventory: mcpInventory,
   McpServerTools: mcpServerTools,
+  MarketSourceList: marketSourceList,
+  MarketSource: marketSource,
+  MarketRefresh: marketRefresh,
+  MarketCatalogPage: marketCatalogPage,
+  MarketCatalogEntry: marketCatalogEntry,
   Health: health,
   PreAuthorization: preAuthorization,
 };

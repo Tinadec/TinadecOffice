@@ -18,12 +18,13 @@ public sealed class SkillsModuleRegistrar : IModuleRegistrar
         builder.Services.AddDbContextFactory<IntegrationDbContext>((sp, options) => options.UseTinadecDatabase(sp));
         builder.Services.AddSingleton<IStorageMigrationParticipant, DbContextMigrationParticipant<IntegrationDbContext>>();
         builder.Services.AddSingleton<ISkillProvider, SkillProvider>();
+        builder.Services.AddSingleton<IMarketCatalogService, MarketCatalogService>();
         builder.RegisterModule(new ModuleDescriptor
         {
             ModuleId = ModuleId,
             Version = "0.1.0",
             Dependencies = ["abstractions", "persistence"],
-            Capabilities = ["file_skills", "class_skills", "inline_skills", "skill_md", "sep_2640", "extension_installations", "mcp_acp_integrations"],
+            Capabilities = ["file_skills", "class_skills", "inline_skills", "skill_md", "sep_2640", "extension_installations", "mcp_acp_integrations", "market_catalog"],
             Language = "C#",
             MafPrimitives = ["skills"],
             RegistrationStatus = ModuleRegistrationStatus.NotConfigured

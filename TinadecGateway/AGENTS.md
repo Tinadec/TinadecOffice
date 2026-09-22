@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-09-19
-**Last Updated By:** TinaChat 契约投影实际为 17 路径/24 操作，代理测试改为精确计数钉住；其余记录保留
-**Last Verified Commit:** `a82ed34` 之后的 TinaChat 唤醒闭环工作树
+**Last Updated:** 2026-09-23
+**Last Updated By:** 市场读面从"代理到 Core 桩"变成代理到真实现（六条 + 五个类型化 200），并顺手修掉网关自己一条静默缺陷：catalog 代理曾发 `query`/`sourceId`，Core 读的是 `q`/`source_id`，两个名字都不报错都只是没人读，于是搜索与按源筛选穿过网关时静默失效。上一批是 TinaChat 契约投影实际为 17 路径/24 操作，代理测试改为精确计数钉住；其余记录保留
+**Last Verified Commit:** `e0c0e08` 之后的工作树：`bun test src` `BUN_EXIT=0`、**70 pass / 0 fail**（63 + 7 例新增 `src/marketProxy.test.ts`）。`tests/__snapshots__/openapi.external.json` 随本批再生成（+293/−5：market 五条路径 + 五个组件），外部快照后须再跑 `npm run generate:client -w @tinadec/desktop`。上一批是 TinaChat 唤醒闭环（`a82ed34`）。
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -55,6 +55,7 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 | Agent Pack 代理 | `src/index.ts`, `src/runtimeProxy.test.ts`, `tests/__snapshots__/openapi.external.json` | 四条显式薄代理；保留 ETag、`If-Match`、`Idempotency-Key` 和 Core ProblemDetails code。 |
 | Code tools 传输 | `src/index.ts`, `src/toolRuntimeClient.ts` | Desktop 工具目录代理 Core，用户执行请求原样转发 Tool Provider |
 | MCP 读代理 | `src/index.ts` | 只有 Core 实现的两条 GET；`source` 字段逐字透传，网关不判断"连不连得上"（历史上这里还有 5 条 Core 从不存在的路由，见 `DELETED FILES`） |
+| 市场读代理 | `src/index.ts`, `src/marketProxy.test.ts` | 六条 `/api/v1/market/*`（sources GET/POST/PATCH/DELETE、refresh、catalog 两条）纯透传，五类信封带 `detail.responses` 类型。**目录查询参数名按 Core 的拼写转发**（`q`/`source_id`/`limit`/`offset`）：这里曾发 `query` 与 `sourceId`，Core 从来没读过这两个名字，所以搜索框在真机上什么都不会筛而每个 mock 过测试的调用方都是绿的 |
 | 测试 | `src/coreClient.test.ts`, `src/modelAgentCenter.test.ts`, `src/runtimeProxy.test.ts` | Bun test |
 
 ## CONVENTIONS
@@ -87,6 +88,18 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
 
 ### 全双工运行期代理
 - **TinaChat（2026-09-18）**：`registerTinaChatRoutes` 挂载 `/api/v1/tina-chat`，参与现有认证与转发头路径，使用 `proxyRaw` 保留 Core JSON/ProblemDetails/204/ETag。OpenAPI `detail` 只用于文档，不新增响应裁剪或本地业务验证。`scripts/sync-tina-chat-contract.mjs` 从 Core snapshot 提取相应路径及递归 schema，生成投影随 Gateway 提交以支持独立构建；`bun run generate:tina-chat-contract` 生成、`bun run check:tina-chat-contract` 验证漂移，外部快照后在根目录执行 `npm run generate:client -w @tinadec/desktop`。普通 session interaction 也可能返回 TinaChat 隔离拒绝；通用 `errorMapper` 必须保留公开 `tina_chat_input_locked`，不能降级为 `conflict`。TinaChat 自身没有群消息 SSE/WS 推送，收件箱为游标拉取；执行输出复用 Core run stream。智能体侧的唤醒与结果回群发生在 Core（`tina_chat_wakes` + Core 调度循环），不经过 Gateway，Gateway 不排空、不定时、不持任何通信状态。`src/tinaChatRoutes.test.ts` 现按契约枚举每一条操作逐条验证透传，并把路径数与操作数钉成 17/24——投影缩水会直接失败，不再只检查下限。
+- **市场读面（2026-09-23，#36 / M1）**：`/api/v1/market/*` 从"代理到 Core 桩"变成代理到真实现
+  （Core 侧记录见 `TinadecCore/AGENTS.md` 的 THE MARKET PANEL WAS POINTING AT A SURFACE THAT WAS NEVER BUILT 段）。
+  网关只做三件事：改路径参数名（`{sourceId}`/`{catalogId}`）、按 Core 的拼写转发查询串、把六个 200 钉上类型。
+  **本批顺手修掉一条自己的缺陷**：catalog 代理曾把 `query` 与 `sourceId` 发给 Core，而 Core 读的是
+  `q` 与 `source_id`——两个名字都不报错，都只是没人读，所以搜索与按源筛选穿过网关时静默失效。
+  现在 `marketProxy.test.ts` 断转发串里必须出现 `q=`/`source_id=`，并**断 `query=` 与 `sourceId` 不出现**。
+  `errorMapper` 的 `ALLOWED_CODES` 补六个市场码（`market_source_not_found`/`market_entry_not_found`/
+  `market_source_exists`/`market_source_disabled`/`unsupported_market_source_kind`/`invalid_market_source`）：
+  漏在白名单外会被压成 `conflict`，把"这个 kind 没有 adapter"说成"稍后重试"。
+  `DELETE /market/sources/{id}` 成功回 204 无体，因此它是六条里唯一没有响应 schema 的一条。
+  契约：`tests/__snapshots__/openapi.external.json` 已再生成；`apps/desktop/src/generated/schema.d.ts` 同一提交内重生成。
+  仍**没有**代理的路由：`/api/v1/extensions/*` 七条（Core 仍 501，属 M2/M3）。
 - **终端会话路由 (2026-08-31)**：`GET /api/v1/terminals`、`POST /api/v1/terminals/:terminalSessionId/stdin`、`POST /api/v1/terminals/:terminalSessionId/kill` 是 Core 的纯透传（Tags: Terminal）。终端实时输出走既有 `GET /api/v1/runs/:runId/stream` SSE 代理，不需要单独的 WS 通道；`/ws/terminal` 无效桩仍未启用。openapi.external.json 快照已随新路由再生成（快照测试已修复为「先写后断言」，漂移会重新生成文件并由 `git diff --exit-code` 把关）。
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` **已退役**（`src/index.ts:540` 起不再注册，返回 404）；当前入口是 `POST /api/v1/sessions/{sessionId}/interactions`（`interactionsMapper` 只做薄枚举校验），运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。
 - `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model_override`（结构化 `{provider_instance_id, model}`，Desktop 依赖它们感知当前模式；旧自由文本模型字段与分散 provider 字段已于 2026-08-27 重构删除）。

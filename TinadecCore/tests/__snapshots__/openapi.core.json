@@ -1156,6 +1156,35 @@
         },
         "type": "object"
       },
+      "CreateMarketSourceRequestDto": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "kind": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "location": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CreateMessageRequest": {
         "properties": {
           "content": {
@@ -1321,6 +1350,232 @@
         "type": "object"
       },
       "JsonElement": {},
+      "MarketCatalogEntryDto": {
+        "properties": {
+          "catalog_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "manifest_hash": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "registry_type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "transports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MarketCatalogPageDto": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MarketCatalogEntryDto"
+            },
+            "type": "array"
+          },
+          "total_available": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketRefreshDto": {
+        "properties": {
+          "fetched_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "pages_fetched": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "refused_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "removed_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "truncated_pages": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "entry_count": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_refreshed_at": {
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceListDto": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/MarketSourceDto"
+            },
+            "type": "array"
+          },
+          "supported_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MarketSourceStateRequestDto": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "McpInventoryDto": {
         "properties": {
           "config_path": {
@@ -5742,23 +5997,77 @@
       "get": {
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogPageDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       }
     },
     "/api/v1/market/catalog/{catalogId}": {
       "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogEntryDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       }
     },
@@ -5766,33 +6075,223 @@
       "get": {
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceListDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       },
       "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMarketSourceRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{sourceId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      },
+      "patch": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketSourceStateRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
         ]
       }
     },
     "/api/v1/market/sources/{sourceId}/refresh": {
       "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketRefreshDto"
+                }
+              }
+            },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [
-          "TinadecCore.Api"
+          "Market"
         ]
       }
     },
@@ -9481,6 +9980,9 @@
     },
     {
       "name": "Attachments"
+    },
+    {
+      "name": "Market"
     },
     {
       "name": "TinaChat"

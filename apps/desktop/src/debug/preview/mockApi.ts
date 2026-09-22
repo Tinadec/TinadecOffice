@@ -25,6 +25,7 @@ import type {
   PromptFragmentDto,
   ExtensionSourceDto,
   MarketCatalogItemDto,
+  MarketRefreshDto,
   InstalledExtensionDto,
   McpInventoryDto,
   McpServerToolsDto,
@@ -288,7 +289,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         scenario.value,
       ),
 
-    listExtensionSources: () => delay(data().extensionSources as ExtensionSourceDto[], scenario.value),
+    listExtensionSources: () => delay(data().extensionSources, scenario.value),
     createExtensionSource: (source: { name: string; kind: string; location: string; enabled?: boolean }) =>
       delay(
         {
@@ -297,20 +298,38 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           kind: source.kind,
           location: source.location,
           enabled: source.enabled ?? true,
-          last_refreshed_at: null,
-          created_at: new Date().toISOString(),
+          revision: 1,
+          entry_count: 0,
         } as ExtensionSourceDto,
         scenario.value,
       ),
-    refreshExtensionSource: (sourceId: string) =>
+    setExtensionSourceEnabled: (sourceId: string, enabled: boolean) =>
       delay(
-        { ...data().extensionSources[0], id: sourceId, last_refreshed_at: new Date().toISOString() } as ExtensionSourceDto,
+        { ...data().extensionSources.sources.find((s) => s.id === sourceId)!, enabled } as ExtensionSourceDto,
         scenario.value,
       ),
-    listMarketCatalog: (_params: { kind?: string; query?: string; source_id?: string } = {}) =>
-      delay(data().marketCatalog as MarketCatalogItemDto[], scenario.value),
+    deleteExtensionSource: () => delay(undefined as void, scenario.value),
+    refreshExtensionSource: (sourceId: string) =>
+      delay(
+        {
+          source_id: sourceId,
+          outcome: 'fetched',
+          fetched_rows: data().marketCatalog.items.length,
+          refused_rows: 0,
+          removed_rows: 0,
+          pages_fetched: 1,
+          truncated_pages: false,
+          refreshed_at: new Date().toISOString(),
+        } as MarketRefreshDto,
+        scenario.value,
+      ),
+    listMarketCatalog: (_params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) =>
+      delay(data().marketCatalog, scenario.value),
     getMarketCatalogItem: (catalogId: string) =>
-      delay(data().marketCatalog.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog[0] as MarketCatalogItemDto, scenario.value),
+      delay(
+        (data().marketCatalog.items.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog.items[0]) as MarketCatalogItemDto,
+        scenario.value,
+      ),
     previewExtensionInstall: (_input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) =>
       delay(
         {

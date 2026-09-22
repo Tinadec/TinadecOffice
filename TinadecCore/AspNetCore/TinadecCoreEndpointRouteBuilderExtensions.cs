@@ -29,6 +29,7 @@ public static class TinadecCoreEndpointRouteBuilderExtensions
         endpoints.MapDirectToolEndpoints();
         endpoints.MapTerminalEndpoints();
         endpoints.MapMcpEndpoints();
+        endpoints.MapMarketEndpoints();
         endpoints.MapTinaChatEndpoints();
         endpoints.MapStubEndpoints();
         return endpoints;

@@ -79,7 +79,7 @@ onMounted(() => {
         <p>{{ item.description }}</p>
         <div class="market-chip-row">
           <span>{{ kindLabel(item.kind) }}</span>
-          <span>{{ item.publisher }}</span>
+          <span>{{ item.source_name }}</span>
           <span>{{ item.version }}</span>
         </div>
       </div>

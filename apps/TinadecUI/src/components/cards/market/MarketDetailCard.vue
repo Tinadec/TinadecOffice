@@ -63,7 +63,7 @@ onMounted(() => {
       <div class="market-detail-grid">
         <div>
           <span>{{ t('market.source') }}</span>
-          <strong>{{ selectedItem.source_kind }}</strong>
+          <strong>{{ selectedItem.source_name }}</strong>
         </div>
         <div>
           <span>{{ t('market.version') }}</span>
@@ -71,18 +71,16 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="market-section">
-        <h3>{{ t('market.capabilities') }}</h3>
+      <div v-if="selectedItem.transports.length" class="market-section">
+        <h3>{{ t('market.transports') }}</h3>
         <div class="market-chip-row wrap">
-          <span v-for="capability in selectedItem.capabilities" :key="capability">{{ capability }}</span>
+          <span v-for="transport in selectedItem.transports" :key="transport">{{ transport }}</span>
         </div>
       </div>
 
-      <div class="market-section">
-        <h3>{{ t('market.permissions') }}</h3>
-        <div class="market-chip-row wrap">
-          <span v-for="permission in selectedItem.permissions" :key="permission">{{ permission }}</span>
-        </div>
+      <div v-if="selectedItem.homepage" class="market-section">
+        <h3>{{ t('market.homepage') }}</h3>
+        <p class="market-detail-copy">{{ selectedItem.homepage }}</p>
       </div>
 
       <div v-if="preview" class="market-risk-panel">

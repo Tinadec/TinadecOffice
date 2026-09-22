@@ -1363,7 +1363,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'List market sources', tags: ['System'] } })
+  }, { detail: { summary: 'List market sources', tags: ['System'], responses: { 200: externalJsonResponse('MarketSourceList', 'Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows.') } } })
   .post('/api/v1/market/sources', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/market/sources', { method: 'POST', body: body as Record<string, unknown>, headers });
@@ -1371,7 +1371,23 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/sources'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Create market source', tags: ['System'] } })
+  }, { detail: { summary: 'Create market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read.') } } })
+  .patch('/api/v1/market/sources/:sourceId', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'PATCH', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Enable or disable a market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketSource', 'The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows.') } } })
+  .delete('/api/v1/market/sources/:sourceId', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}`, { method: 'DELETE', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}`); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Delete a market source', tags: ['System'] } })
   .post('/api/v1/market/sources/:sourceId/refresh', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/market/sources/${params.sourceId}/refresh`, { method: 'POST', headers });
@@ -1379,20 +1395,26 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/sources/${params.sourceId}/refresh`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Refresh market source', tags: ['System'] } })
+  }, { detail: { summary: 'Refresh market source', tags: ['System'], responses: { 200: externalJsonResponse('MarketRefresh', '`outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog.') } } })
   .get('/api/v1/market/catalog', async ({ query, set, request }) => {
     const headers = forwardHeaders(request);
+    // Names as Core reads them. This proxy used to send `query` and `sourceId`, which Core has
+    // never looked at, so a search box and a source filter both answered "the whole catalog"
+    // through the gateway while every unit test mocked the request and passed.
     const params = new URLSearchParams();
     const q = query as Record<string,unknown>;
     if (q.kind) params.set('kind', String(q.kind));
-    if (q.query) params.set('query', String(q.query));
-    if (q.source_id) params.set('sourceId', String(q.source_id));
-    const result = await proxyJson(`/api/v1/market/catalog?${params.toString()}`, { headers });
+    if (q.q) params.set('q', String(q.q));
+    if (q.source_id) params.set('source_id', String(q.source_id));
+    if (q.limit) params.set('limit', String(q.limit));
+    if (q.offset) params.set('offset', String(q.offset));
+    const suffix = params.toString();
+    const result = await proxyJson(`/api/v1/market/catalog${suffix ? `?${suffix}` : ''}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/catalog'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Get market catalog', tags: ['System'] } })
+  }, { detail: { summary: 'Get market catalog', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogPage', 'A page of stored claims, with total_available and as_of so a short page cannot be read as a small market.') } } })
   .get('/api/v1/market/catalog/:catalogId', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/market/catalog/${params.catalogId}`, { headers });
@@ -1400,7 +1422,7 @@ const app = new Elysia()
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, `/api/v1/market/catalog/${params.catalogId}`); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
-  }, { detail: { summary: 'Get catalog item', tags: ['System'] } })
+  }, { detail: { summary: 'Get catalog item', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogEntry', 'One entry as its source described it, including the metadata digest Core computed over that description.') } } })
   .post('/api/v1/extensions/install-preview', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/extensions/install-preview', { method: 'POST', body: body as Record<string, unknown>, headers });

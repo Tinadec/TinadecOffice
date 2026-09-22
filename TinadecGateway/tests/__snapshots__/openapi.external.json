@@ -1013,6 +1013,198 @@
         ],
         "type": "object"
       },
+      "MarketCatalogEntry": {
+        "additionalProperties": true,
+        "properties": {
+          "catalog_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "manifest_hash": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "type": "string"
+          },
+          "registry_type": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "transports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalog_id",
+          "source_id",
+          "source_name",
+          "extension_id",
+          "kind",
+          "version",
+          "display_name",
+          "transports",
+          "manifest_hash",
+          "refreshed_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "MarketCatalogPage": {
+        "additionalProperties": true,
+        "properties": {
+          "as_of": {
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "total_available": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total_available",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "MarketRefresh": {
+        "additionalProperties": true,
+        "properties": {
+          "fetched_rows": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "pages_fetched": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "type": "string"
+          },
+          "refused_rows": {
+            "type": "number"
+          },
+          "removed_rows": {
+            "type": "number"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "truncated_pages": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_id",
+          "outcome",
+          "fetched_rows",
+          "refused_rows",
+          "removed_rows",
+          "pages_fetched",
+          "truncated_pages"
+        ],
+        "type": "object"
+      },
+      "MarketSource": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "entry_count": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "last_refreshed_at": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "location",
+          "enabled",
+          "revision",
+          "entry_count"
+        ],
+        "type": "object"
+      },
+      "MarketSourceList": {
+        "additionalProperties": true,
+        "properties": {
+          "sources": {
+            "items": {},
+            "type": "array"
+          },
+          "supported_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources",
+          "supported_kinds"
+        ],
+        "type": "object"
+      },
       "McpInventory": {
         "additionalProperties": true,
         "properties": {
@@ -5079,7 +5271,16 @@
       "get": {
         "operationId": "getApiV1MarketCatalog",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogPage"
+                }
+              }
+            },
+            "description": "A page of stored claims, with total_available and as_of so a short page cannot be read as a small market."
+          }
         },
         "summary": "Get market catalog",
         "tags": [
@@ -5101,7 +5302,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCatalogEntry"
+                }
+              }
+            },
+            "description": "One entry as its source described it, including the metadata digest Core computed over that description."
+          }
         },
         "summary": "Get catalog item",
         "tags": [
@@ -5113,7 +5323,16 @@
       "get": {
         "operationId": "getApiV1MarketSources",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSourceList"
+                }
+              }
+            },
+            "description": "Durable sources plus the kinds this build has an adapter for; an empty list here really does mean nothing is configured, because these are Core rows."
+          }
         },
         "summary": "List market sources",
         "tags": [
@@ -5123,9 +5342,69 @@
       "post": {
         "operationId": "postApiV1MarketSources",
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSource"
+                }
+              }
+            },
+            "description": "The stored source. Core builds the request from kind+location; a url, command, or path in this body is not read."
+          }
         },
         "summary": "Create market source",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/sources/{sourceId}": {
+      "delete": {
+        "operationId": "deleteApiV1MarketSourcesBySourceId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Delete a market source",
+        "tags": [
+          "System"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1MarketSourcesBySourceId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sourceId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSource"
+                }
+              }
+            },
+            "description": "The only editable field is enabled; name, kind, and location are not, so a source cannot be re-pointed under existing rows."
+          }
+        },
+        "summary": "Enable or disable a market source",
         "tags": [
           "System"
         ]
@@ -5145,7 +5424,16 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketRefresh"
+                }
+              }
+            },
+            "description": "`outcome` separates a completed read from a blocked or unreachable one; only the first changed the catalog."
+          }
         },
         "summary": "Refresh market source",
         "tags": [

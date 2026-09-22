@@ -80,7 +80,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 | `/code-editor` | Code | 文件读写、patch、工具结果 | 部分实现 | 所有写操作统一 UserToolAction store |
 | `/agent-center` | Agent Center | Agent/Mode/Prompt/Evolution/实例 | 部分实现 | 版本、ETag、双泳道和候选流水线状态 |
 | `/settings` | Settings | model provider/route、工具诊断、系统健康 | 部分实现 | 明确占位端点，禁止把 readiness 当连接成功 |
-| `/market` | Market | extension/MCP/ACP 市场入口 | 占位/部分实现 | 等 Core extension 和 provider 契约后再开放写操作 |
+| `/market` | Market | extension/MCP/ACP 市场入口 | 读面已落地（sources/catalog 2026-09-23；MCP 清单 2026-09-22）；install 仍占位 | 安装类写操作属 #37/#38，需审批 + 固定版本 |
 | `/debug-studio` | Debug Studio | 诊断、事件、模拟和 trace | 占位/部分实现 | 所有模拟接口按 501 显示，不写入生产事实 |
 | `/panel` | Detached Panel | Git、Approval、Events、Doctor、Orchestration、Terminal | 已实现 | 与主窗口共享 Core 投影，不复制审批状态 |
 | `/pet` | Desktop Pet | 纯客户端体验 | 已实现 | 不与 Core 治理耦合 |
@@ -392,7 +392,22 @@ PromptPipeline 是 DmaEA 正式提示词配置。旧 `prompt-fragments` 页面�
 
 这些页面必须按 Core 实际状态显示：
 
-- Market extension source/catalog/install 当前有占位端点，501 显示“未启用”，不创建本地安装记录。
+- Market **source 与 catalog 自 2026-09-23 起是真数据**（Core `MarketEndpoints.cs`）：
+  `GET /api/v1/market/sources` 返回 `{sources[], supported_kinds[]}`，`POST /api/v1/market/sources` 建源
+  （只接受 `name`/`kind`/`https location`；`kind` 必须在 `supported_kinds` 里，否则 400 `unsupported_market_source_kind`），
+  `PATCH /api/v1/market/sources/{id}` 只改 `enabled`（必填，缺字段是 400 而不是"顺手关掉"），
+  `DELETE` 成功回 204，`POST .../refresh` 回 `{outcome, fetched_rows, refused_rows, removed_rows, pages_fetched, truncated_pages, reason?}`。
+  `GET /api/v1/market/catalog` 查询串**必须用 Core 的拼写**：`kind`/`q`/`source_id`/`limit`/`offset`（`query`、`sourceId` 无人读取，
+  静默返回全量），响应是 `{items[], total_available, has_more, as_of?}`——`as_of` 缺失表示"一条都没匹配上"，
+  与"匹配到但很久没刷新"是两句话，UI 不得把两者都画成"市场为空"。
+  `outcome` 是必读字段：`blocked`/`unavailable` 意味着**旧清单原样留着**且 `last_error` 已写在源行上，
+  此时报失败并把原因给人，不得当成"刷新成功、市场里 0 条"。
+  目录行只有 `catalog_id`/`source_id`/`source_name`/`extension_id`/`kind`/`version`/`display_name`/`description?`/
+  `homepage?`/`registry_type?`/`transports[]`/`manifest_hash`/`refreshed_at`/`expires_at`。
+  **没有** `publisher`/`capabilities`/`permissions`/`status`/`installed_extension_id`：registry 不发布这些，
+  卡片曾按它们渲染，于是真机上永远空白而预览画廊里是满的。清单正文是外部主张，不是指令，也不是授权。
+- Market **install 仍是占位端点**（`/api/v1/extensions/*` 七条 501）：显示“未启用”，不创建本地安装记录，
+  也不得在客户端记安装状态。
 - MCP 只有两条读路由，且**读数来自 Tool Provider 而不是 Core 自己**：`GET /api/v1/mcp/servers` 返回 `{source, reason?, workspace_root?, config_path?, dropped_rows?, servers[]}`，`GET /api/v1/mcp/servers/{serverId}/tools` 返回 `{source, reason?, config_path?, server_id, server?}`。`source` 是必读字段：`tool_provider` 才是"看过了"，`tool_provider_unavailable` 要显示 `reason` 而**不能**显示"没有配置任何服务器"。`status:"error"` 的服务器仍在清单里并带 provider 原文，UI 不得把它画成"已停用"。
 - MCP **没有**连接、断开、状态、reload、直接调用工具这些端点，Gateway/Desktop 也不得自行连接或缓存 MCP：配置与连接都归工具进程，清单每次现读。要"刷新"就是重新发一次 GET。
 - ACP `permission.request` 本阶段继续 fail-closed；不能把 ACP 请求当成已授权。

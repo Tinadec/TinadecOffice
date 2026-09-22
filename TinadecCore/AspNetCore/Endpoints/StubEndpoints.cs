@@ -326,12 +326,10 @@ public static class StubEndpoints
     // ──────────────────────────────────────────────────────────
     private static void MapMarketExtensionStubs(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/market/sources", () => Results.Ok(Array.Empty<object>()));
-        app.MapPost("/api/v1/market/sources", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapPost("/api/v1/market/sources/{sourceId}/refresh", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
-        app.MapGet("/api/v1/market/catalog", () => Results.Ok(Array.Empty<object>()));
-        app.MapGet("/api/v1/market/catalog/{catalogId}", () => Results.NotFound(new { code = "NOT_FOUND", message = "Catalog item not found." }));
-
+        // The five market routes are mapped by MarketEndpoints: sources and catalog entries are
+        // durable Core rows now, refreshed through the Tool Provider's #fetch control tool.
+        // The extension lifecycle below is still unimplemented — an install that writes no files
+        // would be a worse lie than a 501.
         app.MapPost("/api/v1/extensions/install-preview", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
         app.MapPost("/api/v1/extensions/install", () => Results.Json(new { code = "NOT_IMPLEMENTED" }, statusCode: 501));
         app.MapGet("/api/v1/extensions/installed", () => Results.Ok(Array.Empty<object>()));

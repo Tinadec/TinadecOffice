@@ -24,6 +24,8 @@ import type {
   PromptFragmentDto,
   ExtensionSourceDto,
   MarketCatalogItemDto,
+  MarketCatalogPageDto,
+  MarketSourceListDto,
   InstalledExtensionDto,
   McpInventoryDto,
   AcpAdapterDto,
@@ -1511,22 +1513,89 @@ export function mockPromptFragments(): PromptFragmentDto[] {
 // 扩展市场数据
 // ============================================================
 
-export function mockExtensionSources(): ExtensionSourceDto[] {
-  return [
-    { id: 'src-builtin-001', name: 'Tinadec Curated', kind: 'marketplace-url', location: 'tinadec://marketplace/curated', enabled: true, last_refreshed_at: iso(-60 * 6), created_at: iso(-60 * 24 * 30) },
-    { id: 'src-local-002', name: '本地扩展目录', kind: 'directory', location: 'D:/workspace/extensions', enabled: true, last_refreshed_at: iso(-60 * 12), created_at: iso(-60 * 24 * 20) },
-  ]
+/**
+ * Matches what `GET /api/v1/market/sources` and `GET /api/v1/market/catalog` answer now that Core
+ * stores them. The previous version of these two mocks invented `publisher`, `capabilities`,
+ * `permissions`, `status`, and a `tinadec://` source kind no adapter reads — so the cards rendered
+ * rows that the real app can only ever leave blank, while the preview gallery looked finished.
+ */
+export function mockExtensionSources(): MarketSourceListDto {
+  return {
+    sources: [
+      {
+        id: 'src-mcp-registry',
+        name: 'Official MCP Registry',
+        kind: 'mcp_registry',
+        location: 'https://registry.modelcontextprotocol.io/v0/servers',
+        enabled: true,
+        revision: 1,
+        last_refreshed_at: iso(-60 * 6),
+        entry_count: 3,
+      },
+      {
+        id: 'src-unreachable',
+        name: 'Partner registry',
+        kind: 'mcp_registry',
+        location: 'https://market.example.invalid/v0/servers',
+        enabled: true,
+        revision: 2,
+        last_error: 'the target address is not allowed',
+        entry_count: 0,
+      },
+    ],
+    supported_kinds: ['mcp_registry'],
+  }
 }
 
-export function mockMarketCatalog(): MarketCatalogItemDto[] {
-  return [
-    { catalog_id: 'cat-001', source_id: 'src-builtin-001', extension_id: 'web-search-pro', kind: 'tool-pack', version: '1.2.0', publisher: 'Tinadec', display_name: 'Web Search Pro', description: '增强的网页搜索工具包，支持多引擎与结果聚合', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/web-search-pro', capabilities: ['web.search', 'web.aggregate'], permissions: ['network:read'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-002', source_id: 'src-builtin-001', extension_id: 'github-mcp', kind: 'mcp-server', version: '0.3.1', publisher: 'Tinadec', display_name: 'GitHub MCP Server', description: '通过 MCP 协议接入 GitHub，支持仓库、Issue、PR 管理', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/servers/github-mcp', capabilities: ['github.repo', 'github.issue', 'github.pr'], permissions: ['network:read', 'network:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-003', source_id: 'src-builtin-001', extension_id: 'figma-acp', kind: 'acp-adapter', version: '0.1.0', publisher: 'Tinadec', display_name: 'Figma ACP Adapter', description: '通过 ACP 协议接入 Figma，支持设计稿读取与导出', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/adapters/figma-acp', capabilities: ['figma.read', 'figma.export'], permissions: ['network:read'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-004', source_id: 'src-builtin-001', extension_id: 'db-tools', kind: 'tool-pack', version: '2.0.0', publisher: 'Tinadec', display_name: 'Database Tools', description: '数据库查询与迁移工具包，支持 PostgreSQL / MySQL / SQLite', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/db-tools', capabilities: ['data.query', 'data.migrate'], permissions: ['fs:read', 'fs:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-005', source_id: 'src-builtin-001', extension_id: 'image-gen-skill', kind: 'skill', version: '1.0.0', publisher: 'Tinadec', display_name: 'Image Generation Skill', description: '为智能体添加图像生成能力，支持 DALL-E / Stable Diffusion', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/skills/image-gen', capabilities: ['media.generate'], permissions: ['network:read', 'network:write'], status: 'available', installed_extension_id: null },
-    { catalog_id: 'cat-006', source_id: 'src-local-002', extension_id: 'custom-linter', kind: 'tool-pack', version: '0.4.2', publisher: 'Local', display_name: 'Custom Linter', description: '本地自定义代码检查工具', source_kind: 'directory', source_location: 'D:/workspace/extensions/custom-linter', capabilities: ['code.lint'], permissions: ['fs:read'], status: 'available', installed_extension_id: null },
+export function mockMarketCatalog(): MarketCatalogPageDto {
+  const rows: MarketCatalogItemDto[] = [
+    {
+      catalog_id: 'cat-001',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.github/github-mcp-server',
+      kind: 'mcp-server',
+      version: '2025.10.1',
+      display_name: 'GitHub MCP Server',
+      description: 'Read and write GitHub repositories, issues, and pull requests over MCP.',
+      homepage: 'https://github.com/github/github-mcp-server',
+      registry_type: 'docker',
+      transports: ['streamable-http', 'stdio'],
+      manifest_hash: 'a3f1c0d2e4b5a6978899aabbccddeeff00112233445566778899aabbccddeeff',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+    },
+    {
+      catalog_id: 'cat-002',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.filesense/filesense',
+      kind: 'mcp-server',
+      version: '2.0.4',
+      display_name: 'FileSense',
+      description: 'Semantic file search over a local workspace.',
+      registry_type: 'npm',
+      transports: ['stdio'],
+      manifest_hash: 'b4e2d1c3f5a6970889a0b1c2d3e4f5061728394a5b6c7d8e9f00112233445566',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+    },
+    {
+      catalog_id: 'cat-003',
+      source_id: 'src-mcp-registry',
+      source_name: 'Official MCP Registry',
+      extension_id: 'io.github.example/no-description',
+      kind: 'mcp-server',
+      version: '0.1.0',
+      display_name: 'io.github.example/no-description',
+      transports: [],
+      manifest_hash: 'c5f3e2d4a6b70819a0b1c2d3e4f506172839405a6b7c8d9e0f11223344556677',
+      refreshed_at: iso(-60 * 6),
+      expires_at: iso(60 * 24 * 6),
+    },
   ]
+
+  return { items: rows, total_available: rows.length, has_more: false, as_of: iso(-60 * 6) }
 }
 
 export function mockInstalledExtensions(): InstalledExtensionDto[] {
@@ -1959,8 +2028,8 @@ export interface MockDataBundle {
   tools: ToolDescriptorDto[]
   harnessManifest: HarnessManifestDto | null
   promptFragments: PromptFragmentDto[]
-  extensionSources: ExtensionSourceDto[]
-  marketCatalog: MarketCatalogItemDto[]
+  extensionSources: MarketSourceListDto
+  marketCatalog: MarketCatalogPageDto
   installedExtensions: InstalledExtensionDto[]
   mcpInventory: McpInventoryDto
   acpAdapters: AcpAdapterDto[]

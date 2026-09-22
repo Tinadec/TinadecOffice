@@ -286,3 +286,52 @@ describe('invokeStream compat', () => {
   })
 })
 
+
+describe('market catalog query string', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * The catalog used to be requested as `?query=`, a parameter neither Core nor the gateway
+   * reads, so the search box narrowed nothing end-to-end while every mocked test passed. The
+   * name is the whole assertion; the envelope is the other half of the same fix.
+   */
+  it('sends the search term under the name Core reads, and unwraps the page', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({
+        items: [],
+        total_available: 0,
+        has_more: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+
+    const page = await api.listMarketCatalog({ kind: 'all', q: 'git hub', source_id: 'src-1', offset: 50 })
+
+    const url = urls[0]!
+    expect(url).toContain('q=git+hub')
+    expect(url).toContain('source_id=src-1')
+    expect(url).toContain('offset=50')
+    expect(url).not.toContain('query=')
+    // kind=all is the UI's "no filter", not a kind Core stores.
+    expect(url).not.toContain('kind=')
+    expect(page.items).toEqual([])
+    expect(page.total_available).toBe(0)
+  })
+
+  it('asks for nothing when there is nothing to filter by', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({ items: [], total_available: 0, has_more: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }))
+
+    await api.listMarketCatalog()
+    expect(urls[0]).not.toContain('?')
+  })
+})

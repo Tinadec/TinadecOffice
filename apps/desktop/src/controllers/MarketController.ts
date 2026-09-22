@@ -9,10 +9,6 @@ import { useNotifications } from '@/composables/useNotifications'
 // source of truth instead of each opening its own fetch.
 // ---------------------------------------------------------------------------
 
-export const BUILT_IN_SOURCES = [
-  { name: 'Tinadec Curated', kind: 'marketplace-url', location: 'tinadec://marketplace/curated' },
-  { name: 'Tinadec Community', kind: 'marketplace-url', location: 'tinadec://marketplace/community' },
-] as const
 
 // Module-level composables are safe (they share module refs); `useI18n` is NOT
 // callable outside setup(), so translate via the global instance instead.
@@ -106,36 +102,25 @@ async function run(label: string, action: () => Promise<void>) {
   }
 }
 
-async function ensureBuiltInSources() {
-  for (const builtIn of BUILT_IN_SOURCES) {
-    const exists = sources.value.some((s) => s.location === builtIn.location || s.name === builtIn.name)
-    if (!exists) {
-      try {
-        await api.createExtensionSource({ name: builtIn.name, kind: builtIn.kind, location: builtIn.location, enabled: true })
-      } catch {
-        // source may already exist
-      }
-    }
-  }
-}
-
 async function loadAll() {
   loading.value = true
   try {
-    await ensureBuiltInSources()
-    const [sourceList, installedList, inventory, adapters] = await Promise.all([
+    const [sourceListResult, installedList, inventory, adapters] = await Promise.all([
       api.listExtensionSources(),
       api.listInstalledExtensions(),
       api.listMcpServers(),
       api.listAcpAdapters(),
     ])
+    // The envelope also carries supported_kinds, which the add-source form needs before it can
+    // offer a kind this build can read; it is still hardcoded there, and that is registered as a
+    // gap rather than papered over by dropping the field on the floor here.
+    const sourceList = sourceListResult.sources
     sources.value = sourceList
     installed.value = installedList
     mcpInventory.value = inventory
     acpAdapters.value = adapters
     if (!sourceFilter.value) {
-      const builtin = sourceList.find((s) => s.location.includes('tinadec://'))
-      sourceFilter.value = builtin?.id ?? sourceList[0]?.id ?? ''
+      sourceFilter.value = sourceList[0]?.id ?? ''
     }
     await loadCatalog()
     dismissByKey('market-load')
@@ -155,11 +140,12 @@ async function loadAll() {
 
 async function loadCatalog() {
   try {
-    catalog.value = await api.listMarketCatalog({
+    const page = await api.listMarketCatalog({
       kind: kindFilter.value,
-      query: query.value.trim(),
+      q: query.value.trim(),
       source_id: sourceFilter.value || undefined,
     })
+    catalog.value = page.items
     if (!catalog.value.some((item) => item.catalog_id === selectedCatalogId.value)) {
       selectedCatalogId.value = catalog.value[0]?.catalog_id ?? ''
     }
@@ -199,9 +185,19 @@ async function addSource() {
 
 async function refreshSource(sourceId: string) {
   await run('refresh source', async () => {
-    await api.refreshExtensionSource(sourceId)
+    const outcome = await api.refreshExtensionSource(sourceId)
     await loadAll()
-    notify.success({ message: 'Source refreshed.', source: 'market' })
+    // A refresh that was blocked or never reached the market leaves the catalog standing, which
+    // looks exactly like success from the outside. Say which of the three happened.
+    if (outcome.outcome !== 'fetched') {
+      throw new Error(outcome.reason || `The source did not answer (${outcome.outcome}).`)
+    }
+    notify.success({
+      message: outcome.truncated_pages
+        ? `Refreshed ${outcome.fetched_rows} entry/entries from ${outcome.pages_fetched} page(s); the listing was longer than this.`
+        : `Refreshed ${outcome.fetched_rows} entry/entries (${outcome.refused_rows} refused, ${outcome.removed_rows} dropped).`,
+      source: 'market',
+    })
   })
 }
 

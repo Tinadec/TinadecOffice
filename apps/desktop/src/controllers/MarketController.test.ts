@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { McpInventoryDto } from '@/api'
 
 const h = vi.hoisted(() => ({
-  listExtensionSources: vi.fn(async () => [] as unknown[]),
+  listExtensionSources: vi.fn(async () => ({ sources: [], supported_kinds: ['mcp_registry'] })),
   listInstalledExtensions: vi.fn(async () => [] as unknown[]),
   listAcpAdapters: vi.fn(async () => [] as unknown[]),
-  listMarketCatalog: vi.fn(async () => [] as unknown[]),
+  listMarketCatalog: vi.fn(async () => ({ items: [], total_available: 0, has_more: false })),
   createExtensionSource: vi.fn(async () => ({})),
   listMcpServers: vi.fn(async () => ({ source: 'tool_provider', servers: [] }) as unknown),
 }))
@@ -56,7 +56,7 @@ const UNREADABLE: McpInventoryDto = {
 describe('marketController MCP inventory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    h.listMarketCatalog.mockResolvedValue([])
+    h.listMarketCatalog.mockResolvedValue({ items: [], total_available: 0, has_more: false })
   })
 
   it('keeps an unreachable server on the list, with the provider said about it', async () => {
