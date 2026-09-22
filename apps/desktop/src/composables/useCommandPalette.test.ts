@@ -77,11 +77,46 @@ describe('useCommandPalette', () => {
       if (path.endsWith('.test.ts')) continue
       if (path.includes('useCommandPalette')) continue
       if (source.includes('installPaletteKeybinding(')) installers.push(path)
-      if (source.includes('<CommandPalette')) renderers.push(path)
+      // The tag must end at the component name: `<CommandPaletteButton />` is the entry
+      // that opens the surface, not a second rendering of it, and a plain substring
+      // search would report every page that mounts the entry as a new dialog owner.
+      if (/<CommandPalette(?![A-Za-z])/.test(source)) renderers.push(path)
     }
     // Two installs would throw at runtime on the duplicate combo; two renders would show
     // two dialogs. Both are worth a red rather than a comment.
     expect(installers).toEqual(['../App.vue'])
     expect(renderers).toEqual(['../App.vue'])
+  })
+
+  it('leaves no working surface keyboard-only', async () => {
+    const pages = import.meta.glob(['../pages/*.vue'], {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+    // An entry reaches the palette three ways, and all three are legitimate: the shared
+    // button itself, `AppHeader` (which renders it), or `UieShell` (which renders
+    // AppHeader) — Home and Chatroom, the two surfaces people actually live on, come
+    // through the shell, so a scan for the button alone would call them bare.
+    const missing = Object.entries(pages)
+      .filter(([, source]) =>
+        !source.includes('CommandPaletteButton')
+        && !source.includes('AppHeader')
+        && !source.includes('UieShell'))
+      .map(([path]) => path.replace('../pages/', ''))
+      .sort()
+    // Exact match, so both directions are caught: a new page that ships without an
+    // entry, and one of these four gaining an entry while still being listed here.
+    // Pet: a desktop pet has no commands to run. Panel: a detached right-rail window
+    // whose whole chrome is one reattach button. Debug Studio: a developer window.
+    // Recovery check: a decision page with no action row, so an icon would be the
+    // first button on a page that is asking a yes/no question — mouse entry pending
+    // that layout, keyboard works there like everywhere else.
+    expect(missing).toEqual([
+      'DebugStudioPage.vue',
+      'DesktopPetPage.vue',
+      'DetachedPanelPage.vue',
+      'RecoveryCheckPage.vue',
+    ])
   })
 })

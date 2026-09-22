@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-09-21
-**Last Updated By:** 阶段 2d 第三段：把 TinadecTools 当真实靶子量（行分隔 JSON + 进程 CWD 当工作区根），据此修好 Code 页打开文件（`code_editor` 不存在 → `read_file` + `stat`）、路径方言（绝对反斜杠 → 工作区相对）与保存期 `file_hash` 的并发写漏洞；前两段是 Code 页工具调用/响应两侧纠偏与输入框 `@` 逐段路径补全
-**Last Verified Commit:** `ed4766d`（阶段 2d 第二段）之后的工作树
+**Last Updated:** 2026-09-22
+**Last Updated By:** 阶段 9 第二项：命令面板的鼠标入口抽成 `components/CommandPaletteButton.vue` 一份 owner，补上 Workbench / Settings / Governance / Snapshots 四个自有顶栏的页面（覆盖面由 `useCommandPalette.test.ts` 新增的扫页断言钉住）；同日上一项是入口落进 `AppHeader.vue`，再往前是命令注册表收敛与流订阅收敛
+**Last Verified Commit:** `091d4bf`（Core 切片 D：工作区指令文件入场）之后的工作树
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -88,9 +88,15 @@ TinaChat（2026-09-19，2026-09-20 收口为纯观察）：定位是**智能体�
 
 - **命令面板的鼠标入口落在 `AppHeader.vue`（2026-09-22，阶段 9 第一项）**：上一段那条"没有可挂搜索按钮的现成活表面"的结论**是错的**，错在只查了 `AppSidebar`。真正的活 chrome 是 `src/components/AppHeader.vue`：`apps/TinadecUI/src/components/UieShell.vue:3` 以 `@/components/AppHeader.vue` 引入它并在 `.shell` 里渲染（HomePage/ChatroomPage 经 `<UieShell/>` 得到它），CodePage/LibraryPage/MarketPage 又各自直接挂载——两处 `@` 都指 `apps/desktop/src`（`vite.config.ts:12`），所以改一个组件就能覆盖所有带顶栏的页面，**不需要跨包改布局**（覆盖面到底有多大见下一条：不是全部页面）。
   - 按钮只 `openPalette()`，不装第二个键位、不渲第二个面板：`aria-label` 取 `palette.title`，`aria-keyshortcuts`/`title` 取 `useCommandPalette().comboLabel`（即 `formatCombo(PALETTE_COMBO)`），因此**提示的键位与真实绑定同源**，不会在 mac 上写 Ctrl。`aria-haspopup="dialog"` + `:aria-expanded="open"`；面板是 `showModal()` 模态，打开期间按钮本就点不到，所以入口用 open 而不是 toggle（写成 toggle 是死代码）。
-  - **覆盖范围是量出来的，不是推断的**：有顶栏的 5 页得到入口（Home/Chatroom 经 `UieShell`，Code/Library/Market 直接挂 `AppHeader`）；`WorkbenchPage.vue` 与 `SettingsPage.vue` 模板里既没有 `AppHeader` 也没有 `UieShell`（逐文件 grep，2026-09-22），所以这两页**仍然只有键盘入口**——面板本身照旧能用（owner 仍是 `App.vue`）。补齐这两页的鼠标入口是阶段 9 的下一项，别把它算作已完成。
+  - **覆盖范围是量出来的，不是推断的**：有顶栏的 5 页得到入口（Home/Chatroom 经 `UieShell`，Code/Library/Market 直接挂 `AppHeader`）；`WorkbenchPage.vue` 与 `SettingsPage.vue` 模板里既没有 `AppHeader` 也没有 `UieShell`（逐文件 grep，2026-09-22），所以这两页当时**只有键盘入口**（同日下一段把它们连同 Governance / Snapshots 一起补上了）——面板本身照旧能用（owner 仍是 `App.vue`）。补齐这两页的鼠标入口是阶段 9 的下一项，别把它算作已完成。
   - `AppHeader.test.ts` 两例：一条比对 `formatCombo(PALETTE_COMBO)` 的**返回值**而不是字面量（写死 `Ctrl+K` 在这台机器上会绿、在 mac 上撒谎），一条点击后断言 `paletteIsOpen()` 与 `aria-expanded`，并断言头里 `findAll('dialog')` 为 0（面板仍只有一个 owner）。
   - **顺带修的门禁债**：`vite.config.ts` 的 vitest 段显式 `testTimeout: 20_000`。此前一直用 5s 默认值，而这条套件里有真做全树扫描与 happy-dom 挂载的用例，代价随机器负载变化——同一轮里 `toolPresentation`（源码扫描）与 `ChatroomPanel`（面板挂载）在 dotnet 解决方案门禁并行时双双超时，而这两例在空闲机上一直是绿的；被扫掉的第三、四个受害者是 `SettingsPage.agentPack` 与 `AppearanceSection`。**未验证**：真 Electron 下这个按钮的观感与 -webkit-app-region 拖拽区共存时的可点性仍未实测（`.topbar button` 已有 `no-drag`，是断言级证据之外的推断）。
+
+- **入口抽成一份组件，四个面各自挂上（2026-09-22，阶段 9 第二项）**：上一段留下的"Workbench/Settings 只有键盘入口"补上了，并且把入口做成了可复用的单一 owner：`components/CommandPaletteButton.vue`。
+  - **为什么抽组件而不是复制四遍**：Workbench（`.workbench-controls`）、Settings（`.settings-window-controls`）、Governance（`.approval-board__header-actions`）、Snapshots（标题行 `gap-2`）各有顶栏且都没有 `AppHeader`。四处各写一份 `<UiButton>`，属性就会各自漂移，其中 `aria-keyshortcuts` 漂移最贵——它向读屏软件承诺一个平台并不存在的键位。组件内部仍只是 `openPalette()`：键位归 `lib/keybindings.ts`，面板元素归 `App.vue`，这两条结构断言本轮一例没削。`AppHeader.vue` 改为引用它，其自带测试也随之改成"头里确实渲染了共享组件、且只有一份"，属性与点击的断言搬到 `CommandPaletteButton.test.ts`（owner 自己守自己的契约）。
+  - **覆盖面是量出来的**：`useCommandPalette.test.ts` 新增一例扫 `src/pages/*.vue`，把"既无 `CommandPaletteButton`、也无 `AppHeader`、也无 `UieShell`"的页面**精确等值**比对：`DebugStudioPage`（开发者窗口）、`DesktopPetPage`（桌宠没有命令可跑）、`DetachedPanelPage`（整条标题栏只有一个"归位"按钮）、`RecoveryCheckPage`（**刻意留空**：那是一页是/否裁决，为一个图标去新开动作行属于改版式，没有真机走查不做）。变异验证：从 `SnapshotsPage.vue` 摘掉挂载与 import → 该例报 `+ "SnapshotsPage.vue"`，不是空红。
+  - **修掉一条我自己写的假阳性**：那条既有扫描用 `source.includes('<CommandPalette')` 找"谁渲染了面板"，而 `<CommandPaletteButton />` 恰好带这个前缀——新组件一挂，五个文件立刻被判成第二个面板 owner。改成 `/<CommandPalette(?![A-Za-z])/`，把匹配钉在标签名结束处。**给组件改名来绕开子串测试是更坏的选择**：那等于让这条断言从此说不出话。
+  - **门禁**：desktop `npm run test` EXIT=0（75 文件通过 / 1 跳过，较上一轮 +1 文件），`npm run typecheck -w @tinadec/desktop` EXIT=0。**未验证**：真 Electron 下这四个新位置的观感——按钮沿用 `.window-btn`（40×32）与 `no-drag`，但它落在按钮组里（Workbench 的三个动作按钮、Snapshots 的下拉框旁）会不会偏大/错位，happy-dom 只证明属性与点击，不证明像素。
 
 - **命令只有一份表，斜杠菜单与命令面板都从它读（2026-09-21，阶段 3c 第一段：命令注册表收敛）**：动手做面板前先量了一遍现状——斜杠命令的**定义**在 `lib/composerCommands.ts`，**处理**却在 `ComposerBar.vue` 的 `switch` 里。面板如果自带第二份 switch，就是"铅笔按钮接了个桩"那类缺陷的第二次发生：多一个 surface，就多一批只被显示、从未被实现的按钮。
   - **`src/lib/appCommands.ts` 是唯一 owner**：条目 = 数据（`id`/`group`/`labelKey`/`slash`/`needsArgument`/`keywordKeys`/`route`）+ `isAvailable(host)` + `run(host, argument)`。`composerCommands.ts` 整个删除，它 7 条用例原样搬进 `appCommands.test.ts`（解析/前缀过滤的行为一个字没改）。这张表**不 import 控制器、不 import router、不 import i18n**：副作用一律经过 `CommandHost`，标签只给 key——这正是它能被纯逻辑测 22 例、以及 `src/lib` 不再长出第二份应用状态 owner 的原因。

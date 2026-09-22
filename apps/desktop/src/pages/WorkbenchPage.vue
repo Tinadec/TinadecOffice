@@ -8,6 +8,7 @@ import { UiCard, UiButton, UiBadge } from '@/components/ui'
 import TaskGraphPanel from '@/components/TaskGraphPanel.vue'
 import RunLaneCanvas from '@/components/canvas/RunLaneCanvas.vue'
 import RunStatusBadge from '@/components/governance/RunStatusBadge.vue'
+import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 
 const wb = useWorkbenchStore()
 const runStore = useRunStore()
@@ -82,6 +83,7 @@ async function control(action: 'cancel'|'pause'|'resume') {
         <span v-if="runId" class="workbench-run">run {{ runId.slice(0, 8) }}</span>
       </div>
       <div class="workbench-controls">
+        <CommandPaletteButton />
         <UiButton size="sm" variant="outline" :disabled="!runId || isTerminal" @click="control('pause')">Pause</UiButton>
         <UiButton size="sm" variant="outline" :disabled="!runId || status !== 'paused'" @click="control('resume')">Resume</UiButton>
         <UiButton size="sm" variant="destructive" :disabled="!runId || isTerminal" @click="control('cancel')">Cancel</UiButton>

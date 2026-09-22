@@ -1,49 +1,22 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AppHeader from './AppHeader.vue'
-import { closePalette, paletteIsOpen } from '@/composables/useCommandPalette'
-import { PALETTE_COMBO, formatCombo } from '@/lib/keybindings'
+import CommandPaletteButton from './CommandPaletteButton.vue'
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string, named?: unknown) =>
-      named && typeof named === 'object' && 'combo' in named
-        ? `${key}:${(named as { combo: string }).combo}`
-        : key,
-  }),
+  useI18n: () => ({ t: (key: string) => key }),
 }))
 
-function commandsButton() {
-  const wrapper = mount(AppHeader)
-  return { wrapper, button: wrapper.get('[data-testid="app-header-commands"]') }
-}
-
 describe('AppHeader command palette entry', () => {
-  afterEach(() => closePalette())
+  // What the entry says and does is the shared button's own contract
+  // (`CommandPaletteButton.test.ts`); this file only proves the live window chrome
+  // actually renders it — the defect being guarded against is a header that quietly
+  // drops the button, or re-inlines a second copy of its markup.
+  it('renders the shared palette entry, not a private copy of it', () => {
+    const wrapper = mount(AppHeader)
 
-  it('names itself after the palette and announces the real binding', () => {
-    const { button } = commandsButton()
-
-    expect(button.attributes('aria-label')).toBe('palette.title')
-    expect(button.attributes('aria-haspopup')).toBe('dialog')
-    expect(button.attributes('aria-expanded')).toBe('false')
-    // The shortcut comes from the binding owner, so a tooltip can never advertise a combo
-    // this platform does not use, and the palette cannot be renamed away from its button.
-    expect(button.attributes('aria-keyshortcuts')).toBe(formatCombo(PALETTE_COMBO))
-    expect(button.attributes('title')).toBe(`palette.openWithShortcut:${formatCombo(PALETTE_COMBO)}`)
-  })
-
-  it('opens the window palette without owning a second one', async () => {
-    const { wrapper, button } = commandsButton()
-    expect(paletteIsOpen()).toBe(false)
-
-    await button.trigger('click')
-
-    expect(paletteIsOpen()).toBe(true)
-    expect(wrapper.get('[data-testid="app-header-commands"]').attributes('aria-expanded')).toBe('true')
-    // The palette element and its keybinding installation stay single-owners of their
-    // surface (a structure test across src/** enforces it); the header must only ask.
-    expect(wrapper.findAll('dialog')).toHaveLength(0)
+    expect(wrapper.findComponent(CommandPaletteButton).exists()).toBe(true)
+    expect(wrapper.findAllComponents(CommandPaletteButton)).toHaveLength(1)
   })
 })

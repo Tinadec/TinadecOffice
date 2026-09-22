@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import { Minus, Search, Square, X } from '@lucide/vue'
+import { Minus, Square, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton } from '@/components/ui'
-import { useCommandPalette } from '@/composables/useCommandPalette'
+import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 
 const { t } = useI18n()
-// The palette itself stays mounted once, in App.vue. This header only asks it to open:
-// `openPalette` is the state, `comboLabel` is the same string the binding was registered
-// with, so the tooltip can never advertise a shortcut the platform does not use.
-const { open, comboLabel, openPalette } = useCommandPalette()
 
 function minimizeWindow() {
   window.tinadec?.minimizeWindow?.()
@@ -27,25 +23,12 @@ function closeWindow() {
   <header class="topbar">
     <div class="window-controls">
       <!--
-        The palette's mouse entry. This header is the live window chrome: Home and
-        Chatroom render it through TinadecUI's `UieShell`, and Code/Library/Market render it
-        directly — so the entry belongs here rather than on a page-specific bar, and not on
-        `AppSidebar.vue`, which only the debug preview mounts.
+        The palette itself stays mounted once, in App.vue; this row only asks it to open.
+        This header is the live window chrome: Home and Chatroom render it through TinadecUI's
+        `UieShell`, and Code/Library/Market render it directly. Workbench, Settings, Governance and
+        Snapshots have their own bars and mount `CommandPaletteButton` themselves.
       -->
-      <UiButton
-        variant="ghost"
-        size="icon"
-        class="window-btn commands"
-        data-testid="app-header-commands"
-        aria-haspopup="dialog"
-        :aria-expanded="open"
-        :aria-label="t('palette.title')"
-        :aria-keyshortcuts="comboLabel"
-        :title="t('palette.openWithShortcut', { combo: comboLabel })"
-        @click="openPalette()"
-      >
-        <Search :size="14" />
-      </UiButton>
+      <CommandPaletteButton />
       <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" @click="minimizeWindow">
         <Minus :size="14" />
       </UiButton>

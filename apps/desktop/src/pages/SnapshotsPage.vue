@@ -7,6 +7,7 @@ import {
   type SnapshotDto,
 } from '@/api'
 import { useProjectStore } from '@/stores/project'
+import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 
 /**
  * Workspace snapshot list + restore (docs/app-core-ui.md §4.6).
@@ -85,6 +86,7 @@ onMounted(async () => {
     <header class="snapshot-page__header">
       <h1><Camera class="size-4" /> {{ t('governance.snapshotsTitle', 'Workspace snapshots') }}</h1>
       <div class="flex items-center gap-2">
+        <CommandPaletteButton />
         <select
           class="snapshot-page__select"
           :value="selectedProjectId"

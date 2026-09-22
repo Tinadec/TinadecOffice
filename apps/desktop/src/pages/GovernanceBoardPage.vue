@@ -6,6 +6,7 @@ import { api, type ApprovalDto, type PermissionRequestDto, type SupervisionFindi
 import { useUserActionStore } from '@/stores/userAction'
 import UserActionStatusBadge from '@/components/governance/UserActionStatusBadge.vue'
 import PreAuthorizationDialog from '@/components/governance/PreAuthorizationDialog.vue'
+import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 
 /**
  * Three independent state machines, three columns (docs/app-core-ui.md §6):
@@ -127,6 +128,7 @@ onUnmounted(() => {
     <header class="approval-board__header">
       <h1>{{ t('governance.boardTitle', 'Governance decisions') }}</h1>
       <div class="approval-board__header-actions">
+        <CommandPaletteButton />
         <button type="button" class="detail-dialog__btn" data-testid="open-pre-auth" @click="preAuthOpen = true">
           {{ t('governance.preAuthorize', 'Pre-authorize') }}
         </button>

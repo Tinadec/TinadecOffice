@@ -127,6 +127,7 @@ import {
   type ProjectTemplateSummary
 } from '../toolCatalog'
 import PetPreview from '@/components/PetPreview.vue'
+import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 import { UiButton, UiInput, UiCard, UiBadge, UiLabel, UiSkeleton, UiSwitch, UiDropdownMenu } from '@/components/ui'
 import AgentTopologyCanvas from '@/components/AgentTopologyCanvas.vue'
 import AgentEvolutionPanel from '@/components/AgentEvolutionPanel.vue'
@@ -1962,6 +1963,7 @@ import '../settings/settings.css'
 <!-- Full-width draggable bar for window dragging -->
 <div class="top-drag-bar" />
 <div class="settings-window-controls">
+      <CommandPaletteButton />
       <UiButton variant="ghost" size="icon" class="window-btn minimize" :title="t('app.minimize')" @click="minimizeWindow">
         <Minus :size="14" />
       </UiButton>
