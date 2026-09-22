@@ -1187,6 +1187,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             evidence_count = context.Evidence.Count,
             estimated_tokens = context.EstimatedTokens,
             token_budget = context.TokenBudget,
+            // The names, in pack order: what the run was actually told. The count alone cannot answer
+            // the question anyone asks when the model misbehaves, which is "did it get the project
+            // rules at all" — a budget that crowded out an item leaves no other trace.
+            sources = context.Evidence.Select(item => item.Source).ToArray(),
             context_revision = checkpoint.ContextRevision
         }, cancellationToken).ConfigureAwait(false);
 

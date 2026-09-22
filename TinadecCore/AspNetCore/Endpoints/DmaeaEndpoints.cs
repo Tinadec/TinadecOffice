@@ -523,6 +523,7 @@ public static class DmaeaEndpoints
                 {
                     id = e.EventId,
                     run_id = runGuid.ToString(),
+                    lane_key = PayloadString(e.Payload, "lane_key"),
                     evidence_count = PayloadInt(e.Payload, "evidence_count") ?? 0,
                     estimated_tokens = PayloadInt(e.Payload, "estimated_tokens") ?? 0,
                     token_budget = PayloadInt(e.Payload, "token_budget") ?? 0,

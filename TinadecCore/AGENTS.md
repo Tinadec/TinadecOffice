@@ -332,6 +332,16 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - **正文谁来取**：不新开 `load_skill` 工具。索引给的是根内相对路径，模型用现成文件工具打开——与 MAF 少一个工具面，也不动冻结工具清单；代价是本仓没有技能内资源/脚本的发现与执行（`resources/`、`scripts/` 未实现），且**无项目会话**（工具清单只有 `create_workspace`）本就无根可读，自然也没有技能。
 - 验证：`Api.Tests/WorkspaceSkillApiTests.cs` 11 例（走真 `IContextProvider` + 真文件系统）+ `WorkspaceSkillPolicyTests.cs` 21 例（纯规则，逐条报出拒绝理由），合计 32 例全绿。
 
+## RUN EVIDENCE TRACE (2026-09-22)
+定位：让"这一轮到底把什么交给了模型"成为事后可查的事实。WORKSPACE SKILLS 一段登记的缺口（"没有任何地方说明哪些技能被提供过"）就是这段补的。
+
+- `context.packed` 的两个铸造点（`DmaEA/FullDuplexRunEngine.cs` 主 planner、`FullDuplexRunEngine.Lanes.cs` 每条 lane）现在都写 `sources = context.Evidence.Select(item => item.Source)`——按包内顺序的来源名。`evidence_count` 单独存在回答不了任何实际问题：预算把某条挤掉时，除这个名字之外不留痕迹，而"智能体无视项目规矩"和"智能体根本没被告知规矩"是两件事，只有一件能事后查证。
+- `/api/v1/runs/{id}/orchestration` 的 `context_packs` 投影此前**读了一个从来没人写的键**：`sources = PayloadArray(...)` 对旧事件恒返回 `[]`。补的是铸造侧，不是投影侧——这类"读方早已就位、写方从未发生"的裂缝只看端点代码是查不出来的。
+- **`EventEnvelope` 没有 summary/message 字段**：`AppendEventAsync(runId, type, summary, payload)` 那句人话只进 durable 行的 `Summary`，不进这个投影读的信封。所以 `context_packs` 的响应里没有、也**不该有** `summary`——桌面端曾经声明过 `summary` 和 `compression_ratio`，后者从未被生产，渲染成 `Math.round(undefined * 100)` 就是每一行显示 "NaN%"、标题行为空。行标签因此由 `lane_key` 推导（见桌面 `OrchestrationTab.test.ts`）。
+- `lane_key` 在主 planner 包上是**显式 null**（投影序列化匿名对象的 null），而 durable payload 里同一个缺失是"键不存在"——同一件事的两种线形，读方必须都扛住；测试两头都钉了。
+- 验证：`FullDuplexEndpointTests.InvokeStream_SendsTheSkillIndexAndKeepsEverySkillBodyOnDisk` 一次 run 同时断言三件事——索引进消息正文、正文标记在所有 prompt 里都不出现、投影回来的 `sources` 含 `workspace_instructions`/`workspace_skills` 且长度等于 `evidence_count`。
+- 已知缺口（诚实）：只有 planner/lane 的两个铸造点写了来源清单，别的包没有；每条来源各自的 token 花费没有暴露（看得出"少了哪条"，看不出"谁把它挤掉的"）；历史 run 的事件永久保持 `sources: []`，桌面据此显示"未记录"而不是"空"。
+
 ## PER-FILE SNAPSHOT REVIEW (2026-09-22)
 定位：让"智能体改了哪些文件、这一条能不能单独撤回"成为可回答的问题。此前工作区快照只有**整棵目录树**这一个粒度：`/api/v1/projects/{id}/snapshots` 建快照、`/api/v1/workspace-snapshots/{id}/restore` 整体还原（`expected_workspace_hash` 不匹配就整批冲突），而逐文件的清单其实一直都在——`WorkspaceSnapshotProviderSupport.CaptureFilesAsync` 每个文件写 `Path/Length/Sha256`，小文件还带 `ContentBase64`（上限 `MaxSingleFileBytes = 8MiB` + 总量预算），只是从没有任何端点把它交出去过。本段是"读已有数据"，**没有新增存储、没有迁移**。
 

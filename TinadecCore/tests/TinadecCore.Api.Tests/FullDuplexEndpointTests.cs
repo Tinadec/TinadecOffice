@@ -705,6 +705,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var root = Path.GetFullPath(Path.Combine(_root, "workspace"));
         var skillDirectory = Path.Combine(root, "skills", "changelog");
         Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(Path.Combine(root, "AGENTS.md"), "Cite the changelog skill.\n");
         File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"),
             "---\nname: changelog\ndescription: Group the commits since the last tag into one note.\n---\n\nBODY-MUST-STAY-ON-DISK-7c41\n");
 
@@ -725,6 +726,26 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             && prompt.Contains("Group the commits since the last tag into one note.", StringComparison.Ordinal));
         Assert.All(script.Prompts, prompt =>
             Assert.DoesNotContain("BODY-MUST-STAY-ON-DISK-7c41", prompt, StringComparison.Ordinal));
+
+        // The same fact, readable without a model in the loop: the orchestration projection already
+        // asked for a `sources` array that nothing ever wrote, so the panel could only show a count.
+        // A run's evidence list is the difference between "the agent ignored the project rules" and
+        // "the agent was never told them", and only one of those is answerable after the fact.
+        var runId = RunIdOf(chunks.First(chunk => chunk.TryGetProperty("run_id", out _)));
+        var packs = (await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/runs/{runId}/orchestration")).GetProperty("context_packs");
+        var plannerPack = packs.EnumerateArray().First();
+
+        var sources = plannerPack.GetProperty("sources").EnumerateArray()
+            .Select(value => value.GetString()).ToArray();
+        Assert.Contains("workspace_instructions", sources);
+        Assert.Contains("workspace_skills", sources);
+        Assert.Equal(plannerPack.GetProperty("evidence_count").GetInt32(), sources.Length);
+        // A main-planner pack belongs to no lane. The projection serialises that as an explicit null,
+        // while the durable payload drops it, so a reader has to survive both shapes — which is what
+        // the desktop's `string | null | undefined` is for, and why it is pinned here rather than assumed.
+        Assert.True(plannerPack.TryGetProperty("lane_key", out var plannerLane));
+        Assert.Equal(JsonValueKind.Null, plannerLane.ValueKind);
     }
 
     [Fact]
