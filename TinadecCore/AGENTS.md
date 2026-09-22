@@ -141,6 +141,11 @@ Api (AspNetCore, Web SDK)
 - `Microsoft.OpenApi` resolves transitively to `2.7.5`, removing the `2.0.0` exposure tracked as `GHSA-v5pm-xwqc-g5wc`.
 - Verify with `dotnet list TinadecCore/TinadecCore.slnx package --vulnerable --include-transitive` after package changes.
 
+## ERROR ENVELOPE
+- 每个 4xx/5xx 响应都带 `code`，**包括框架自己写出的那一类**：必填路由/查询参数缺失或不可解析、无匹配端点的 404/405、请求体过大等，走的是 `AddProblemDetails` 的状态码写出路径，不经过 `UseExceptionHandler`。两条路径共用同一形状：`type=https://tinadec.dev/errors/<code>` + `title=<code>` + `detail` + `extensions.code` + `extensions.trace_id`。钉测在 `tests/TinadecCore.Api.Tests/TinaChatTests.cs`（`Http_MissingRequiredActor_*` / `Http_UnmatchedPath_*`）。
+- 新增 code 必须同步 `TinadecGateway/src/mappers/errorMapper.ts` 的 `ALLOWED_CODES`：白名单外的 code 会被网关改写成 `conflict`，等于把「你传错了」说成「稍后重试」。
+- **不要**用「把参数改成可空再自己校验」来修一个 400。`actor_id` 在 `tests/__snapshots__/openapi.core.json` 和 `TinadecGateway/src/contracts/tina-chat.openapi.json` 里钉成 `required: true / format: uuid`，放宽签名会让两份已提交契约说谎（2026-09-22 试过，因此被否）。框架在这条路径上不告诉我们是哪个参数，所以 `detail` 说明的是被拒的要求类别，不是字段名。
+
 ## MODULE REGISTRATION
 - Each module implements `IModuleRegistrar` with an explicit `Register(ITinadecCoreBuilder)` method.
 - `Runtime/TinadecCoreServiceCollectionExtensions.cs` provides:

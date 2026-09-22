@@ -679,18 +679,41 @@ public sealed class TinaChatTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// A missing required query parameter is the caller's mistake, not the host's. Minimal APIs throw
-    /// BadHttpRequestException before the handler runs, so the catch-all must not turn "you forgot
-    /// actor_id" into an opaque 500 that no client can act on.
+    /// A missing required query parameter is the caller's mistake, not the host's. Minimal APIs
+    /// reject it before the handler runs, and the RFC 9110 body the status-code writer produces
+    /// carries only title "Bad Request" — which no client can branch on, since every other error
+    /// here is read through its `code`. The ProblemDetails customization is what makes that
+    /// family machine-readable without weakening the published required-parameter contract.
     /// </summary>
     [Fact]
     public async Task Http_MissingRequiredActor_ReturnsActionableBadRequest_NotInternalError()
     {
         var response = await _http.GetAsync("/api/v1/tina-chat/conversations");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync();
+        var problem = JsonDocument.Parse(text);
+        // The body is in the failure message on purpose: this contract is about what the wire
+        // actually says, and "Expected: invalid_request, Actual: <nothing>" cannot show that.
+        Assert.True(problem.RootElement.TryGetProperty("code", out var code), text);
+        Assert.Equal("invalid_request", code.GetString());
+        Assert.Equal("invalid_request", problem.RootElement.GetProperty("title").GetString());
+        Assert.Equal("https://tinadec.dev/errors/invalid_request", problem.RootElement.GetProperty("type").GetString());
+        Assert.Contains("parameter", problem.RootElement.GetProperty("detail").GetString());
+        Assert.True(problem.RootElement.TryGetProperty("trace_id", out var traceId), text);
+        Assert.False(string.IsNullOrWhiteSpace(traceId.GetString()));
+    }
+
+    /// <summary>
+    /// A rejected request with no handler is the same family as a rejected request with a
+    /// missing parameter: both are the framework speaking, so both must speak in codes.
+    /// </summary>
+    [Fact]
+    public async Task Http_UnmatchedPath_ReturnsCodedNotFound_NotBareStatus()
+    {
+        var response = await _http.GetAsync("/api/v1/tina-chat/no-such-endpoint");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("invalid_request", problem.RootElement.GetProperty("code").GetString());
-        Assert.Contains("actor_id", problem.RootElement.GetProperty("detail").GetString());
+        Assert.Equal("not_found", problem.RootElement.GetProperty("code").GetString());
     }
 
     /// <summary>

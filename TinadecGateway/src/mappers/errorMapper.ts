@@ -33,6 +33,14 @@ const CODE_MAP: Record<string, string> = {
 
 const ALLOWED_CODES = new Set([
   'invalid_request',
+  'unauthorized',
+  'forbidden',
+  'method_not_allowed',
+  'payload_too_large',
+  'unsupported_media_type',
+  'rate_limited',
+  'internal_error',
+  'request_failed',
   'context_conflict',
   'model_not_configured',
   'not_found',

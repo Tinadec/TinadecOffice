@@ -48,7 +48,44 @@ public static class TinadecCoreHttpExtensions
         {
             options.CustomizeProblemDetails = context =>
             {
-                context.ProblemDetails.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
+                var problem = context.ProblemDetails;
+                // A request the framework rejects before any handler runs — a missing or
+                // unparseable required route/query value, a 404/405 with no matching endpoint —
+                // reaches this service as a bare RFC 9110 problem. Every other error body here
+                // carries `code` and clients branch on it, so these must not be the one family
+                // that says "no" without saying which rule refused.
+                if (!problem.Extensions.ContainsKey("code"))
+                {
+                    var code = problem.Status switch
+                    {
+                        StatusCodes.Status400BadRequest or StatusCodes.Status422UnprocessableEntity => "invalid_request",
+                        StatusCodes.Status401Unauthorized => "unauthorized",
+                        StatusCodes.Status403Forbidden => "forbidden",
+                        StatusCodes.Status404NotFound => "not_found",
+                        StatusCodes.Status405MethodNotAllowed => "method_not_allowed",
+                        StatusCodes.Status409Conflict => "conflict",
+                        StatusCodes.Status413PayloadTooLarge => "payload_too_large",
+                        StatusCodes.Status415UnsupportedMediaType => "unsupported_media_type",
+                        StatusCodes.Status429TooManyRequests => "rate_limited",
+                        >= StatusCodes.Status500InternalServerError => "internal_error",
+                        _ => "request_failed",
+                    };
+                    problem.Extensions["code"] = code;
+                    problem.Type = $"https://tinadec.dev/errors/{code}";
+                    problem.Title = code;
+                    problem.Detail ??= code switch
+                    {
+                        "invalid_request" => "A required route or query parameter is missing or cannot be parsed.",
+                        "not_found" => "No endpoint matches this request.",
+                        "method_not_allowed" => "This endpoint does not accept that HTTP method.",
+                        "payload_too_large" => "The request body exceeds the configured limit.",
+                        "unsupported_media_type" => "Send the body as application/json.",
+                        "rate_limited" => "Too many requests; retry later.",
+                        "internal_error" => "An unexpected error occurred.",
+                        _ => "The request was rejected.",
+                    };
+                }
+                problem.Extensions["trace_id"] = context.HttpContext.TraceIdentifier;
             };
         });
 
