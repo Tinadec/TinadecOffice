@@ -110,10 +110,17 @@ describe('SettingsPage smoke (D7 safety net)', () => {
       'AppearanceSection',
       'PetsSection',
       'ToolCenterSection',
+      // The Agent Center panels were extracted rather than written here, so they
+      // are exactly as easy to orphan as a section.
+      'AgentModesPanel',
+      'PromptEngineeringMerged',
+      'RuntimeInstancesPanel',
+      'AgentPacksPanel',
     ]
     for (const name of sections) {
       expect(settingsPageSource).toContain(`import ${name} from '@/settings/sections/${name}.vue'`)
-      expect(settingsPageSource).toContain(`<${name} />`)
+      // `<Name` rather than `<Name />`: a panel that declares props never closes its tag.
+      expect(settingsPageSource).toContain(`<${name}`)
     }
   })
 

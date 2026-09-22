@@ -35,6 +35,7 @@ const panelSources = import.meta.glob(
     './../settings/sections/AgentModesPanel.vue',
     './../settings/sections/PromptEngineeringMerged.vue',
     './../settings/sections/RuntimeInstancesPanel.vue',
+    './../settings/sections/AgentPacksPanel.vue',
     './../components/agentCenter/GovernanceRolesPanel.vue',
     './../components/AgentEvolutionPanel.vue',
     './../components/AgentActivityPanel.vue',
