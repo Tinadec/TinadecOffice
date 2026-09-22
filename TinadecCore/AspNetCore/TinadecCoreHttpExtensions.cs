@@ -25,6 +25,7 @@ public static class TinadecCoreHttpExtensions
             options.SerializerOptions.DefaultIgnoreCondition =
                 System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         });
+        services.AddSingleton<ServerFailureJournal>();
         services.Configure<ApiBehaviorOptions>(options =>
         {
             options.InvalidModelStateResponseFactory = context =>
@@ -133,6 +134,12 @@ public static class TinadecCoreHttpExtensions
                     Status = status,
                     Instance = context.Request.Path
                 };
+                // A 5xx means the handler had nothing true to say about the cause, so keep the cause
+                // somewhere. Resolved optionally on purpose: this middleware is composable without
+                // AddTinadecCoreHttp, and a diagnostic must never be the second failure.
+                if (status >= StatusCodes.Status500InternalServerError)
+                    context.RequestServices.GetService<ServerFailureJournal>()?
+                        .Record(context, exception, status, code);
                 problem.Extensions["code"] = code;
                 problem.Extensions["trace_id"] = context.TraceIdentifier;
                 context.Response.StatusCode = status;

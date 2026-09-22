@@ -2204,16 +2204,19 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
         });
     }
 
-    private static async Task<Guid> WaitForPendingApprovalAsync(HttpClient client, Guid sessionId, Guid runId, TimeSpan timeout)
+    private async Task<Guid> WaitForPendingApprovalAsync(HttpClient client, Guid sessionId, Guid runId, TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
             using var response = await client.GetAsync("/api/v1/approvals?status=pending");
             // The handler itself cannot throw (filters plus a pure mapping), so a 500 here is the
-            // database refusing a read while the engine commits. The body is the only evidence.
+            // database refusing a read while the engine commits. The response body used to be the only
+            // evidence — which for this family of reds meant a status code and nothing else, because the
+            // handler maps an unmapped exception to a fixed "An unexpected error occurred."; the journal
+            // is the cause it could not print.
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"Approvals poll failed with {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+                throw new InvalidOperationException($"Approvals poll failed with {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()} | server cause: {_factory!.LastFailure()}");
             var approvals = await response.Content.ReadFromJsonAsync<JsonElement[]>() ?? [];
             var match = approvals.FirstOrDefault(item =>
                 item.GetProperty("run_id").ValueKind == JsonValueKind.String
@@ -2232,7 +2235,7 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
 
     private sealed record ActiveInvoke(Task<JsonElement> Acknowledgement, Task<List<JsonElement>> Completion);
 
-    private static ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
+    private ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
     {
         var acknowledgement = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = Task.Run(async () =>
@@ -2245,23 +2248,14 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
                 using var admissionResponse = await client.SendAsync(admissionRequest, HttpCompletionOption.ResponseHeadersRead);
-                if (admissionResponse.StatusCode != HttpStatusCode.Created)
-                {
-                    var admissionBody = await admissionResponse.Content.ReadAsStringAsync();
-                    throw new InvalidDataException($"Interaction admission rejected with {(int)admissionResponse.StatusCode}: {admissionBody}");
-                }
+                await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
                 var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
                 var runId = receipt.GetProperty("run_id").GetString();
                 var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
                 var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                if (response.StatusCode != HttpStatusCode.OK)
-                {
-                    var body = await response.Content.ReadAsStringAsync();
-                    throw new InvalidDataException($"Run stream rejected with {(int)response.StatusCode}: {body}");
-                }
-                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 var builder = new StringBuilder();

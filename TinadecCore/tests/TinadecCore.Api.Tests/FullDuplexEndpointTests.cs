@@ -255,12 +255,12 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         }
     }
 
-    private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
+    private async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
     {
         // Durable admission (plan §4.3-4) followed by the run stream replay.
         using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/interactions") { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
         using var admissionResponse = await client.SendAsync(admissionRequest);
-        Assert.Equal(HttpStatusCode.Created, admissionResponse.StatusCode);
+        await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
         var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
         var runId = receipt.GetProperty("run_id").GetString();
         var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
@@ -269,7 +269,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var chunks = new List<JsonElement>();
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
         using var stream = await response.Content.ReadAsStreamAsync();
         using var reader = new StreamReader(stream);
         var builder = new StringBuilder();
@@ -296,7 +296,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
     /// interaction test send a meeting turn while the durable target run is blocked
     /// inside the scripted worker.
     /// </summary>
-    private static ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
+    private ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
     {
         var acknowledgement = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = Task.Run(async () =>
@@ -309,22 +309,14 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
                     Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
                 };
                 using var admissionResponse = await client.SendAsync(admissionRequest);
-                if (admissionResponse.StatusCode != HttpStatusCode.Created)
-                {
-                    var errorBody = await admissionResponse.Content.ReadAsStringAsync();
-                    Assert.Fail($"Interaction admission returned {(int)admissionResponse.StatusCode} {admissionResponse.StatusCode}: {errorBody}");
-                }
+                await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
                 var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
                 var runId = receipt.GetProperty("run_id").GetString();
                 var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
                 var turnId = receipt.TryGetProperty("turn_id", out var tid) ? tid.GetString() : null;
                 using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/runs/{runId}/stream?after_seq=0&turn_id={turnId}");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-                if (response.StatusCode != HttpStatusCode.OK)
-                {
-                    var errorBody = await response.Content.ReadAsStringAsync();
-                    Assert.Fail($"Run stream returned {(int)response.StatusCode} {response.StatusCode}: {errorBody}");
-                }
+                await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 var builder = new StringBuilder();
@@ -358,11 +350,11 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         return new ActiveInvoke(acknowledgement.Task, completion);
     }
 
-    private static async Task<List<JsonElement>> StreamRunAsync(HttpClient client, Guid runId, Guid turnId)
+    private async Task<List<JsonElement>> StreamRunAsync(HttpClient client, Guid runId, Guid turnId)
     {
         var chunks = new List<JsonElement>();
         using var response = await client.GetAsync($"/api/v1/runs/{runId}/stream?turn_id={turnId}", HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream replay");
         using var stream = await response.Content.ReadAsStreamAsync();
         using var reader = new StreamReader(stream);
         var builder = new StringBuilder();
@@ -914,6 +906,9 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("context_conflict", body.GetProperty("code").GetString());
+        // The read-back door itself, not just the journal: a WebApplicationFactory resolves the same
+        // singleton the handler writes to, so a clean host reports "no 5xx" instead of throwing.
+        Assert.Contains("recorded no 5xx", factory.LastFailure());
     }
 
     [Fact]

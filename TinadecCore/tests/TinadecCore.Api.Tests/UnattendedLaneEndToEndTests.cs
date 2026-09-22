@@ -363,7 +363,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
 
     private sealed record ActiveInvoke(Task<JsonElement> Acknowledgement, Task<List<JsonElement>> Completion);
 
-    private static ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
+    private ActiveInvoke StartStreamingInvoke(HttpClient client, Guid sessionId, object body)
     {
         var acknowledgement = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = Task.Run(async () =>
@@ -374,7 +374,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
         };
         using var admissionResponse = await client.SendAsync(admissionRequest, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.Created, admissionResponse.StatusCode);
+        await _factory!.AssertStatusAsync(admissionResponse, HttpStatusCode.Created, "Interaction admission");
         var receipt = await admissionResponse.Content.ReadFromJsonAsync<JsonElement>();
         var runId = receipt.GetProperty("run_id").GetString();
         var cursor = receipt.TryGetProperty("stream_cursor", out var sc) ? sc.GetInt64() : 0;
@@ -384,7 +384,7 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             Content = new StringContent(string.Empty, Encoding.UTF8, "application/json")
         };
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, "Run stream");
             using var stream = await response.Content.ReadAsStreamAsync();
             using var reader = new StreamReader(stream);
             var builder = new StringBuilder();
@@ -411,12 +411,6 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             return chunks;
         });
         return new ActiveInvoke(acknowledgement.Task, completion);
-    }
-
-    private static async Task<List<JsonElement>> StreamInvokeAsync(HttpClient client, Guid sessionId, object body)
-    {
-        var active = StartStreamingInvoke(client, sessionId, body);
-        return await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
     }
 
     // ── host ──────────────────────────────────────────────────────────────────
