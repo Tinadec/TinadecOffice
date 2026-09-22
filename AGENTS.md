@@ -254,11 +254,12 @@ The legacy `src/` directory is intentionally absent.
 | Current harness integration view | `docs/agent-harness-product-model.zh-CN.md`, `docs/agent-harness-product-model.en.md` | Current integrated Core / Tool layer / Desktop responsibilities; subordinate to the normative product definition. |
 | Sibling project references | `docs/tinadec-core-reference-decisions.zh-CN.md`, `docs/reference-project-map.md` | Source-backed Core decisions first; the older workbench map remains supporting context. |
 | 四产品路线图与架构决定 | `docs/tinadec-four-product-roadmap.zh-CN.md` | 前后端分离/Core 独立运行判断、Desktop 不直连 Core 决定、A（独立交付）/B（契约即代码）/C（Tool Provider）三主线与阶段规划。 |
+| 工作台能力差距（已完成/已验证 vs 缺口） | `docs/agent-workbench-capability-gap-report.zh-CN.md` | 按 A（有自动化测试穿过）/B（实现落地但有一半边没人看）/C（缺口）三级分栏，逐条给证据锚点；最重一条是真实模型从未进入任何测试。 |
 | Rebuild status | `CURRENT REBUILD STATE` in this file, `TinadecOffice.slnx`, `package.json` | Root full-stack commands restore/build/test Core via `TinadecCore/Api`. |
 | OfficeAgentPack 阶段收尾与后续待办 | `docs/office-agent-pack-shipment-status-and-backlog.md` | `3d92404` 落地对照 + 后续待办（签名/卸载回滚/市场分发、Cloud 多租户调度等；四运营角色触发链已于 2026-08-29 落地）。 |
 | Core rebuild target | `TinadecCore/` | MAF modular monolith; Persistence is the shared DB abstraction. |
 | Dual-layer runtime baseline | `TinadecCore/DmaEA/Configuration/default-agent-runtime.toml`, `AgentRuntimeConfiguration.cs` | Read the canonical operation/execution contract and current configuration status before changing modes, profiles, spawn budgets, or layer values. |
-| Legacy Core contracts | `tests/Tinadec.Contracts.Tests`, `apps/desktop/src/api.ts`, `TinadecGateway/src/` (note: `tests/TinadecCore.Tests` no longer exists) | Use as requirements evidence; reconcile contradictions explicitly. |
+| Legacy Core contracts | `apps/desktop/src/api.ts`, `TinadecGateway/src/` (note: `tests/TinadecCore.Tests` no longer exists) | Use as requirements evidence; reconcile contradictions explicitly. `tests/Tinadec.Contracts.Tests` **不在其中**：它引用了不存在的 `src/TinadecCore/TinadecCore.csproj`、编译不过，且两个 `.slnx` 都不含它（实测 `grep -c` 均为 0），所以它不红只是因为没人跑它——当作需求史料读，别当作门禁。 |
 | Deleted implementation | Git object paths under commit `57fb696` | Inspect narrowly with `git show`; do not bulk-restore by default. |
 | API proxy/BFF | `TinadecGateway/src/index.ts`, `coreClient.ts`, `modelAgentCenter.ts` | Thin Core proxy plus stateless, secret-stripping center views and Tool-layer code-tool endpoints. |
 | Desktop UI | `apps/desktop/src/pages`, `src/components`, `src/api.ts` | Renderer talks to Gateway. |
