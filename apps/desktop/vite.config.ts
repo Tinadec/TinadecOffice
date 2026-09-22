@@ -48,5 +48,12 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     setupFiles: ['./src/testSetup.ts'],
+    // The 5s default is vitest's guess, not a measurement of this suite: it has claimed a
+    // different victim almost every run (SettingsPage.agentPack, AppearanceSection, and on
+    // 2026-09-22 the source-tree scan in toolPresentation plus a ChatroomPanel mount, both
+    // while a dotnet solution gate shared the machine). Those tests do real filesystem walks
+    // and happy-dom mounts, so their cost tracks machine load, and a red that depends on what
+    // else is running is noise that trains people to rerun the gate.
+    testTimeout: 20_000,
   }
 });
