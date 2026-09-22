@@ -1548,6 +1548,7 @@ retry: 'Retry',
     hintRun: 'Enter to run',
     placeholder: 'Type a command…',
     title: 'Command palette',
+    openWithShortcut: 'Command palette ({combo})',
   },
   common: {
     loading: 'Loading…',

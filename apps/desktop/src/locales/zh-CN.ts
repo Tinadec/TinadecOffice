@@ -1547,6 +1547,7 @@ retry: '重试',
     hintRun: 'Enter 执行',
     placeholder: '输入命令…',
     title: '命令面板',
+    openWithShortcut: '命令面板（{combo}）',
   },
   common: {
     loading: '加载中…',
