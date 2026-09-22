@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-09-22
-**Last Updated By:** 阶段 9 第二项：命令面板的鼠标入口抽成 `components/CommandPaletteButton.vue` 一份 owner，补上 Workbench / Settings / Governance / Snapshots 四个自有顶栏的页面（覆盖面由 `useCommandPalette.test.ts` 新增的扫页断言钉住）；同日上一项是入口落进 `AppHeader.vue`，再往前是命令注册表收敛与流订阅收敛
-**Last Verified Commit:** `091d4bf`（Core 切片 D：工作区指令文件入场）之后的工作树
+**Last Updated By:** 阶段 4：快照的逐文件评审与单文件撤销落进 `pages/SnapshotsPage.vue`（Core 新三条口 + 现成 Monaco `DiffViewer`，不另写 diff 引擎）；同日上一项是阶段 9 第二项：命令面板的鼠标入口抽成 `components/CommandPaletteButton.vue` 一份 owner，补上 Workbench / Settings / Governance / Snapshots 四个自有顶栏的页面（覆盖面由 `useCommandPalette.test.ts` 新增的扫页断言钉住）
+**Last Verified Commit:** `957d061`（Core/Gateway：快照逐文件评审与单文件撤销的三条口）之后的工作树
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -97,6 +97,8 @@ TinaChat（2026-09-19，2026-09-20 收口为纯观察）：定位是**智能体�
   - **覆盖面是量出来的**：`useCommandPalette.test.ts` 新增一例扫 `src/pages/*.vue`，把"既无 `CommandPaletteButton`、也无 `AppHeader`、也无 `UieShell`"的页面**精确等值**比对：`DebugStudioPage`（开发者窗口）、`DesktopPetPage`（桌宠没有命令可跑）、`DetachedPanelPage`（整条标题栏只有一个"归位"按钮）、`RecoveryCheckPage`（**刻意留空**：那是一页是/否裁决，为一个图标去新开动作行属于改版式，没有真机走查不做）。变异验证：从 `SnapshotsPage.vue` 摘掉挂载与 import → 该例报 `+ "SnapshotsPage.vue"`，不是空红。
   - **修掉一条我自己写的假阳性**：那条既有扫描用 `source.includes('<CommandPalette')` 找"谁渲染了面板"，而 `<CommandPaletteButton />` 恰好带这个前缀——新组件一挂，五个文件立刻被判成第二个面板 owner。改成 `/<CommandPalette(?![A-Za-z])/`，把匹配钉在标签名结束处。**给组件改名来绕开子串测试是更坏的选择**：那等于让这条断言从此说不出话。
   - **门禁**：desktop `npm run test` EXIT=0（75 文件通过 / 1 跳过，较上一轮 +1 文件），`npm run typecheck -w @tinadec/desktop` EXIT=0。**未验证**：真 Electron 下这四个新位置的观感——按钮沿用 `.window-btn`（40×32）与 `no-drag`，但它落在按钮组里（Workbench 的三个动作按钮、Snapshots 的下拉框旁）会不会偏大/错位，happy-dom 只证明属性与点击，不证明像素。
+
+- **快照的逐文件评审与单文件撤销（2026-09-22，阶段 4）**：Core 侧把一直存在、却从没交出去的工作区快照逐文件清单开了三条口（`GET /api/v1/workspace-snapshots/{id}/files`、`GET .../files/diff?path=`、`POST .../files/restore`，细则见 `TinadecCore/AGENTS.md` 的 PER-FILE SNAPSHOT REVIEW 段），面落在 `pages/SnapshotsPage.vue`：每张快照卡多一个 Review files 开关，行内 Compare 把两侧正文交给**现成的** Monaco `components/git/DiffViewer.vue`（不另写 diff 引擎），Undo 只撤这一条。**四条不能让位给方便**：① `unchanged` 行一律不列——一张四十行的评审卡最后的下场就是没人读；② `restorable:false`（快照只记了哈希没记正文）只显示原因、**不画按钮**，客户端自己按大小猜会造出一个点了什么也不会发生的控件；③ 撤销必须带回**该行显示的那个工作者刚看到的哈希**，`expected_sha256` 缺失会被 Core 判成"没人评审过"（400），把字段"优化"成可空就等于开了盲覆盖的口子；④ 被删掉的行没有当前哈希，"当时这里没有文件"用**空串**表达，不是省略字段。状态色（`--accent-danger`/`--accent-warning`）只强化 `data-status` 已经写出来的词，含义不单靠颜色。**验证**：`SnapshotsPage.test.ts` 4 例（滤掉 unchanged、撤销参数逐条比对、不可撤行没有按钮而有原因、Compare 请求带路径且把两侧正文交到 DiffViewer 手上）——测试里 DiffViewer 是 stub，这既是绕开 happy-dom 加载不了 Monaco，也正是为了断言**传给它的那五个 prop**。**未验证**：这一页没在真 Electron 里对着真工作区走过一遍，卡片本已密集，塞进评审区后的观感没有像素级结论。**契约覆盖是半边**：外部 OpenAPI 一变，`npm run check:drift` 就要求重新生成 `src/generated/schema.d.ts`（本轮它确实红了，三条路径/请求体因此进了契约，+73 行随本批一起提交）；但这三条路由在快照里**没有响应体 schema**（`responses.200.content: never`），响应字段漂移看不见，`api.ts` 里这三个响应类型仍是手写的——Core 测试与本页调用参数断言是夹住字段的两头。
 
 - **命令只有一份表，斜杠菜单与命令面板都从它读（2026-09-21，阶段 3c 第一段：命令注册表收敛）**：动手做面板前先量了一遍现状——斜杠命令的**定义**在 `lib/composerCommands.ts`，**处理**却在 `ComposerBar.vue` 的 `switch` 里。面板如果自带第二份 switch，就是"铅笔按钮接了个桩"那类缺陷的第二次发生：多一个 surface，就多一批只被显示、从未被实现的按钮。
   - **`src/lib/appCommands.ts` 是唯一 owner**：条目 = 数据（`id`/`group`/`labelKey`/`slash`/`needsArgument`/`keywordKeys`/`route`）+ `isAvailable(host)` + `run(host, argument)`。`composerCommands.ts` 整个删除，它 7 条用例原样搬进 `appCommands.test.ts`（解析/前缀过滤的行为一个字没改）。这张表**不 import 控制器、不 import router、不 import i18n**：副作用一律经过 `CommandHost`，标签只给 key——这正是它能被纯逻辑测 22 例、以及 `src/lib` 不再长出第二份应用状态 owner 的原因。

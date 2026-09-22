@@ -839,6 +839,18 @@ export interface paths {
     /** Get workspace snapshot */
     get: operations["getApiV1Workspace-snapshotsBySnapshotId"];
   };
+  "/api/v1/workspace-snapshots/{snapshotId}/files": {
+    /** List per-file changes of a workspace snapshot */
+    get: operations["getApiV1Workspace-snapshotsBySnapshotIdFiles"];
+  };
+  "/api/v1/workspace-snapshots/{snapshotId}/files/diff": {
+    /** Read the two bodies behind one file change */
+    get: operations["getApiV1Workspace-snapshotsBySnapshotIdFilesDiff"];
+  };
+  "/api/v1/workspace-snapshots/{snapshotId}/files/restore": {
+    /** Restore one file from a workspace snapshot */
+    post: operations["postApiV1Workspace-snapshotsBySnapshotIdFilesRestore"];
+  };
   "/api/v1/workspace-snapshots/{snapshotId}/restore": {
     /** Restore workspace snapshot */
     post: operations["postApiV1Workspace-snapshotsBySnapshotIdRestore"];
@@ -4739,6 +4751,67 @@ export interface operations {
     parameters: {
       path: {
         snapshotId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** List per-file changes of a workspace snapshot */
+  "getApiV1Workspace-snapshotsBySnapshotIdFiles": {
+    parameters: {
+      path: {
+        snapshotId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Read the two bodies behind one file change */
+  "getApiV1Workspace-snapshotsBySnapshotIdFilesDiff": {
+    parameters: {
+      query: {
+        path: string;
+      };
+      path: {
+        snapshotId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Restore one file from a workspace snapshot */
+  "postApiV1Workspace-snapshotsBySnapshotIdFilesRestore": {
+    parameters: {
+      path: {
+        snapshotId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          expected_sha256: (string | null) | null;
+          path: string;
+          [key: string]: unknown;
+        };
+        "multipart/form-data": {
+          expected_sha256: (string | null) | null;
+          path: string;
+          [key: string]: unknown;
+        };
+        "text/plain": {
+          expected_sha256: (string | null) | null;
+          path: string;
+          [key: string]: unknown;
+        };
       };
     };
     responses: {

@@ -1738,6 +1738,38 @@ export interface SnapshotDto {
   created_at: string;
 }
 
+/**
+ * One row of a snapshot's per-file review. `restorable` is Core's answer to "can this row be
+ * undone": a file over the snapshot's content ceiling is reportable but not reversible, so the
+ * page must not draw a button for it.
+ */
+export interface WorkspaceFileChangeDto {
+  path: string;
+  status: 'added' | 'deleted' | 'modified' | 'unchanged' | string;
+  before_sha256?: string | null;
+  after_sha256?: string | null;
+  before_length?: number | null;
+  after_length?: number | null;
+  restorable: boolean;
+}
+
+export interface WorkspaceFileSideDto {
+  present: boolean;
+  length?: number | null;
+  sha256?: string | null;
+  binary: boolean;
+  truncated: boolean;
+  text?: string | null;
+}
+
+export interface WorkspaceFileDiffDto {
+  path: string;
+  status: string;
+  restorable: boolean;
+  before: WorkspaceFileSideDto;
+  after: WorkspaceFileSideDto;
+}
+
 export interface AgentLineageEntryDto {
   id: string;
   run_id: string;
@@ -2213,6 +2245,23 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  /**
+   * Per-file review of one snapshot: what moved, what each path held before, and
+   * undoing a single row. Absent keys mean null — this host drops nulls on write —
+   * which is why the optional fields below are `| null` *and* optional.
+   */
+  listWorkspaceSnapshotFiles: (snapshotId: string) => request<WorkspaceFileChangeDto[]>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files`),
+  getWorkspaceSnapshotFileDiff: (snapshotId: string, path: string) =>
+    request<WorkspaceFileDiffDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files/diff?path=${encodeURIComponent(path)}`),
+  /**
+   * `expectedSha256` is required and must be the value the reviewer was just shown; pass the empty
+   * string to assert "this file was absent", which is a different fact from not knowing.
+   */
+  restoreWorkspaceSnapshotFile: (snapshotId: string, path: string, expectedSha256: string) =>
+    request<WorkspaceFileChangeDto>(`/api/v1/workspace-snapshots/${encodeURIComponent(snapshotId)}/files/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ path, expected_sha256: expectedSha256 }),
+    }),
   /**
    * Decide a pending approval. `scope: 'run'` is "always allow this tool for this
    * session": Core mints a run-scoped pre-authorization plus a run-scoped capability

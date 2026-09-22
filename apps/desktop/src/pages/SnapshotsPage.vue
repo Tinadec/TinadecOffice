@@ -5,9 +5,12 @@ import { Camera, RotateCcw } from '@lucide/vue'
 import {
   api,
   type SnapshotDto,
+  type WorkspaceFileChangeDto,
+  type WorkspaceFileDiffDto,
 } from '@/api'
 import { useProjectStore } from '@/stores/project'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
+import DiffViewer from '@/components/git/DiffViewer.vue'
 
 /**
  * Workspace snapshot list + restore (docs/app-core-ui.md §4.6).
@@ -79,6 +82,85 @@ onMounted(async () => {
   if (!projects.value.length) await projectStore.fetchAll().catch(() => undefined)
   if (!selectedProjectId.value && projects.value.length) selectProject(projects.value[0]!.id)
 })
+
+// ---- per-file review -------------------------------------------------------------
+// Core compares the snapshot's manifest with the workspace as it stands now, so this list answers
+// "what did this write leave behind, and can I take just that piece back". The whole-workspace
+// restore above stays for the all-or-nothing case; the two must not be conflated — undoing one
+// file has to not silently revert the four the user has not looked at yet.
+const reviewSnapshotId = ref<string | null>(null)
+const changes = ref<WorkspaceFileChangeDto[]>([])
+const changesLoading = ref(false)
+const reviewError = ref<string | null>(null)
+const openDiffPaths = ref<string[]>([])
+const diffs = ref<Record<string, WorkspaceFileDiffDto>>({})
+const undoingPath = ref<string | null>(null)
+
+const reviewedChanges = computed(() => changes.value.filter(change => change.status !== 'unchanged'))
+
+function describeError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+async function loadChanges(): Promise<void> {
+  if (!reviewSnapshotId.value) return
+  changes.value = await api.listWorkspaceSnapshotFiles(reviewSnapshotId.value)
+}
+
+async function toggleReview(snapshot: SnapshotDto): Promise<void> {
+  if (reviewSnapshotId.value === snapshot.id) {
+    reviewSnapshotId.value = null
+    changes.value = []
+    diffs.value = {}
+    openDiffPaths.value = []
+    return
+  }
+  reviewSnapshotId.value = snapshot.id
+  changes.value = []
+  diffs.value = {}
+  openDiffPaths.value = []
+  reviewError.value = null
+  changesLoading.value = true
+  try {
+    await loadChanges()
+  } catch (e) {
+    reviewError.value = describeError(e)
+  } finally {
+    changesLoading.value = false
+  }
+}
+
+async function toggleDiff(change: WorkspaceFileChangeDto): Promise<void> {
+  if (openDiffPaths.value.includes(change.path)) {
+    openDiffPaths.value = openDiffPaths.value.filter(path => path !== change.path)
+    return
+  }
+  openDiffPaths.value = [...openDiffPaths.value, change.path]
+  if (diffs.value[change.path] || !reviewSnapshotId.value) return
+  try {
+    const diff = await api.getWorkspaceSnapshotFileDiff(reviewSnapshotId.value, change.path)
+    diffs.value = { ...diffs.value, [change.path]: diff }
+  } catch (e) {
+    reviewError.value = describeError(e)
+  }
+}
+
+async function undoFile(change: WorkspaceFileChangeDto): Promise<void> {
+  if (!reviewSnapshotId.value) return
+  undoingPath.value = change.path
+  reviewError.value = null
+  try {
+    // The hash is the one the reviewer was just shown. A deleted row has none, and "there was no
+    // file here" is sent as the empty string rather than by omitting the field — omitting it is
+    // refused by Core, because nobody reviewed anything then.
+    await api.restoreWorkspaceSnapshotFile(reviewSnapshotId.value, change.path, change.after_sha256 ?? '')
+    await loadChanges()
+  } catch (e) {
+    reviewError.value = describeError(e)
+  } finally {
+    undoingPath.value = null
+  }
+}
 </script>
 
 <template>
@@ -146,6 +228,54 @@ onMounted(async () => {
           <RotateCcw class="size-3.5" />
           {{ restoring === s.id ? t('common.working', 'Working…') : t('governance.restore', 'Restore') }}
         </button>
+        <button
+          type="button"
+          class="detail-dialog__btn"
+          data-testid="snapshot-review-btn"
+          @click="toggleReview(s)"
+        >
+          {{ reviewSnapshotId === s.id ? t('governance.hideFiles', 'Hide files') : t('governance.reviewFiles', 'Review files') }}
+        </button>
+
+        <section v-if="reviewSnapshotId === s.id" class="snapshot-review" data-testid="snapshot-review">
+          <p v-if="changesLoading" class="snapshot-page__empty">{{ t('common.loading', 'Loading…') }}</p>
+          <p v-else-if="!reviewedChanges.length" class="snapshot-page__empty" data-testid="snapshot-review-clean">
+            {{ t('governance.noFileChanges', 'No file differs from this snapshot.') }}
+          </p>
+          <ul v-else class="snapshot-review__list">
+            <li v-for="change in reviewedChanges" :key="change.path" class="snapshot-review__row" data-testid="snapshot-review-row">
+              <span class="snapshot-card__badge" :data-status="change.status">{{ change.status }}</span>
+              <code class="font-mono text-xs">{{ change.path }}</code>
+              <button type="button" class="detail-dialog__btn" data-testid="snapshot-diff-btn" @click="toggleDiff(change)">
+                {{ t('governance.compare', 'Compare') }}
+              </button>
+              <button
+                v-if="change.restorable"
+                type="button"
+                class="detail-dialog__btn"
+                :disabled="undoingPath === change.path"
+                data-testid="snapshot-undo-btn"
+                @click="undoFile(change)"
+              >
+                <RotateCcw class="size-3.5" />
+                {{ undoingPath === change.path ? t('common.working', 'Working…') : t('governance.undoFile', 'Undo this file') }}
+              </button>
+              <span v-else class="snapshot-review__irreversible" data-testid="snapshot-not-restorable">
+                {{ t('governance.fileNotCaptured', 'Its content was not captured, so this file cannot be undone from this snapshot.') }}
+              </span>
+              <DiffViewer
+                v-if="diffs[change.path]"
+                class="snapshot-review__diff"
+                :original-content="diffs[change.path]!.before.text ?? ''"
+                :modified-content="diffs[change.path]!.after.text ?? ''"
+                :file-path="change.path"
+                :binary="diffs[change.path]!.before.binary || diffs[change.path]!.after.binary"
+                :truncated="diffs[change.path]!.before.truncated || diffs[change.path]!.after.truncated"
+              />
+            </li>
+          </ul>
+          <p v-if="reviewError" class="snapshot-page__error" data-testid="snapshot-review-error">{{ reviewError }}</p>
+        </section>
       </li>
     </ul>
   </div>
@@ -159,6 +289,55 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.snapshot-review {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-muted);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.snapshot-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.snapshot-review__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface-section);
+}
+
+/* The status word is the fact; colour only reinforces it, so it never carries meaning alone. */
+.snapshot-review__row .snapshot-card__badge[data-status='deleted'] {
+  color: var(--accent-danger);
+}
+
+.snapshot-review__row .snapshot-card__badge[data-status='added'],
+.snapshot-review__row .snapshot-card__badge[data-status='modified'] {
+  color: var(--accent-warning);
+}
+
+.snapshot-review__irreversible {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.snapshot-review__diff {
+  flex-basis: 100%;
+  min-height: 220px;
 }
 
 .snapshot-page__header {

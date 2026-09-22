@@ -327,7 +327,7 @@ All JSON output uses `snake_case` via `JsonNamingPolicy.SnakeCaseLower`.
 - `expected_sha256` 是**必填**：字段缺失 → 400 `invalid_request`。空串是另一个事实——"我当时看这里没有文件"，删掉的行只有靠它才能撤销；把两者混为一谈就等于允许盲目覆盖。**`restorable: false` 不是冲突**：正文因超出预算未被捕获时走专门的 `WorkspaceSnapshotFileNotCapturedException` → 409 `file_content_not_captured`，因为"没人改过，但这条本来就撤不回"和"有竞争"是两句话。
 - 越界拒绝：`ResolveRelativeInsideRoot` 只接受解析后仍落在根内的相对路径（`..`、绝对路径、盘符/UNC 全部拒绝），抛出专门的 `WorkspaceSnapshotPathException` → 两条路由同为 400 `path_outside_workspace`；缺 `expected_sha256` 才是 400 `invalid_request`。**同一个失败只能有一个机器码**，否则客户端只能靠 message 文本判断边界。符号链接不在其列——这里读的是快照正文与根内文件，不做链接跟随。
 - 验证：`Api.Tests/WorkspaceFileReviewApiTests.cs` 16 例（四种 status、预算外文件不可撤且明说原因、二进制/截断两侧正文、撤销一个不影响兄弟、审阅后被改走 → 409、五种越界路径形状、未知快照带码 404）。哈希一律从列表响应里读回再喂回去，断言的是**铸造方自己写出的值**。
-- 已知缺口（诚实）：`Gateway` 只做无状态转发，白名单加了 5 个码——其中 `workspace_conflict` 是**既有整体还原早已在发、过去只到网关就被压成 `conflict` 的码**，这条顺带修掉了；桌面 `api.ts` 里这三个响应的类型是**手写**的——`/api/v1/workspace-snapshots/*` 在 OpenAPI 快照里没有响应体 schema，`check:drift` 抓不到字段漂移，字段回归目前靠 Core 测试 + `SnapshotsPage.test.ts` 的调用参数断言两头夹住，没有跨语言自动契约。逐文件还原**不走** `UserToolAction` 审批环（与整体还原同为显式用户命令），子目录嵌套快照、按 run 聚合的变更清单尚未做。
+- 已知缺口（诚实）：`Gateway` 只做无状态转发，白名单加了 5 个码——其中 `workspace_conflict` 是**既有整体还原早已在发、过去只到网关就被压成 `conflict` 的码**，这条顺带修掉了；桌面契约的**半边有保护**：网关外部 OpenAPI 变了就必须重新生成 `apps/desktop/src/generated/schema.d.ts`（`npm run check:drift` 抓到过本批三条路径，请求体与路径参数因此在契约里），但 `/api/v1/workspace-snapshots/*` 在快照里**没有响应体 schema**（`responses.200.content: never`），所以响应字段漂移看不见——桌面 `api.ts` 里这三个响应的类型是手写的，字段回归靠 Core 测试 + `SnapshotsPage.test.ts` 的调用参数断言两头夹住。给代理路由加响应 schema 需要 Elysia 真的校验/序列化转发体，本仓所有代理路由都没有，不该在这里单开一例。逐文件还原**不走** `UserToolAction` 审批环（与整体还原同为显式用户命令），子目录嵌套快照、按 run 聚合的变更清单尚未做。
 
 ## CHAIN CLOSURE — 缝合「模型 → 工具 → 结果回模型」接缝（2026-09-17）
 
