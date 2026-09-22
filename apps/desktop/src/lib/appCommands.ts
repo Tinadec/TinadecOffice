@@ -148,6 +148,7 @@ export const appCommands: readonly AppCommand[] = [
   go('view.goLibrary', 'palette.goLibrary', 'library'),
   go('view.goSnapshots', 'palette.goSnapshots', 'snapshots'),
   go('view.goGovernance', 'palette.goGovernance', 'governance-board'),
+  go('view.goMemory', 'palette.goMemory', 'memory', ['palette.keywordMemory']),
   go('view.goMarket', 'palette.goMarket', 'market'),
   go('view.goSettings', 'palette.goSettings', 'settings', ['palette.keywordPreferences']),
 ]

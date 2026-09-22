@@ -132,7 +132,7 @@ describe('CommandPalette', () => {
     const wrapper = await mountOpen()
     const list = wrapper.find('[data-testid="palette-list"]')
     const rows = () => list.findAll('li[role="option"]')
-    expect(rows()).toHaveLength(9)
+    expect(rows()).toHaveLength(10)
     expect(rows()[0].classes()).toContain('is-active')
 
     await wrapper.find('[data-testid="palette-input"]').trigger('keydown', { key: 'ArrowDown' })

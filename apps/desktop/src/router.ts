@@ -54,6 +54,11 @@ const router = createRouter({
       component: () => import('./pages/GovernanceBoardPage.vue'),
     },
     {
+      path: '/memory',
+      name: 'memory',
+      component: () => import('./pages/MemoryPage.vue'),
+    },
+    {
       path: '/snapshots',
       name: 'snapshots',
       component: () => import('./pages/SnapshotsPage.vue'),

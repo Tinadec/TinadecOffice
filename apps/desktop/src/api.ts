@@ -1569,6 +1569,82 @@ export interface ContextPackDto {
   created_at: string;
 }
 
+/**
+ * One entry of the memory review queue, as Core's `ToMemoryCandidate` projects it.
+ *
+ * `evidence`, `applicability` and `expiry_condition` are what make the card reviewable: the
+ * curator recorded why it believes the sentence and when the sentence stops being true, and a
+ * queue that showed only the sentence asks the reviewer to rule on a claim with no grounds.
+ * Absent for candidates proposed before those fields travelled.
+ */
+export interface MemoryCandidateDto {
+  id: string;
+  source_run_id: string;
+  generated_by_instance_id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  confidence: number;
+  content: string;
+  evidence?: string | null;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  decision_reason?: string | null;
+  promoted_memory_item_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Promoted (or revoked) long-term memory as Core's item listing projects it. */
+export interface MemoryItemDto {
+  id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  version: number;
+  content: string;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  created_at: string;
+  updated_at: string;
+  revoked_at?: string | null;
+}
+
+/**
+ * The revoke response is a narrower projection than the listing: it answers with the
+ * revocation, not the row. Declaring the listing's fields here would let a caller read a
+ * `content` the endpoint never sent.
+ */
+export interface MemoryRevocationDto {
+  id: string;
+  scope: string;
+  kind: string;
+  status: string;
+  version: number;
+  applicability?: string | null;
+  expiry_condition?: string | null;
+  revoked_at?: string | null;
+}
+
+/** Queue narrowing. Unknown status or scope values are refused by Core, not answered with nothing. */
+export interface MemoryQueueQuery {
+  status?: string;
+  scope?: string;
+  kind?: string;
+  run_id?: string;
+  project_id?: string;
+  limit?: number;
+}
+
+function memoryQueryString(query: MemoryQueueQuery, honoured: string[]): string {
+  const search = new URLSearchParams();
+  for (const key of honoured) {
+    const value = (query as Record<string, unknown>)[key];
+    if (value !== undefined && value !== '') search.set(key, String(value));
+  }
+  return search.toString() ? `?${search.toString()}` : '';
+}
+
 export interface SupervisionFindingDto {
   id: string;
   run_id: string;
@@ -2572,6 +2648,19 @@ export const api = {
   gitLog: (cwd: string, limit?: number, ref?: string) =>
     api.executeCodeTool('git_worktree_manager', { cwd, arguments: { action: 'log', limit, ref } }),
   listAgentCandidates: () => request<AgentCandidateDto[]>('/api/v1/agent-candidates'),
+
+  // --- Memory review (candidates are never retrieval-visible; only promoted items are) ---
+  listMemoryCandidates: (query: MemoryQueueQuery = {}) =>
+    request<MemoryCandidateDto[]>(`/api/v1/memory-candidates${memoryQueryString(query, ['status', 'scope', 'kind', 'run_id', 'project_id', 'limit'])}`),
+  promoteMemoryCandidate: (candidateId: string, reason?: string) =>
+    request<MemoryCandidateDto>(`/api/v1/memory-candidates/${encodeURIComponent(candidateId)}/promote`, { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) }),
+  rejectMemoryCandidate: (candidateId: string, reason?: string) =>
+    request<MemoryCandidateDto>(`/api/v1/memory-candidates/${encodeURIComponent(candidateId)}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) }),
+  listMemoryItems: (query: MemoryQueueQuery = {}) =>
+    request<MemoryItemDto[]>(`/api/v1/memory-items${memoryQueryString(query, ['status', 'scope', 'kind', 'project_id', 'limit'])}`),
+  // A revocation has nowhere to record a reason, so this sends none.
+  revokeMemoryItem: (itemId: string) =>
+    request<MemoryRevocationDto>(`/api/v1/memory-items/${encodeURIComponent(itemId)}/revoke`, { method: 'POST', body: JSON.stringify({}) }),
 
   // --- Agent Evolution ---
   listEvolutionProposals: () => request<AgentEvolutionProposalDto[]>('/api/v1/agent-evolution/proposals'),
