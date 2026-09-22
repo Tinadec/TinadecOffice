@@ -1546,15 +1546,26 @@ export interface ToolExecutionTimelineItemDto {
   checkpoint_summary: string;
 }
 
+/**
+ * One `context.packed` event of a run: what that run was actually told.
+ *
+ * The field list is the projection in Core's `DmaeaEndpoints` (`context_packs`), which reads the
+ * payload the planner and lane assembly steps write — and nothing more. There is no summary text on
+ * the wire: the sentence the engine passes to `AppendEventAsync` never reaches `EventEnvelope`, so a
+ * `summary` field here would be a promise Core cannot keep. `lane_key` is the one optional member:
+ * the orchestration projection serialises a main-planner pack as an explicit null, while the durable
+ * event payload this host writes drops null keys entirely, so a reader must survive absent and null
+ * as the same fact.
+ */
 export interface ContextPackDto {
   id: string;
   run_id: string;
-  session_id: string;
-  created_by_agent_id: string;
-  summary: string;
+  lane_key?: string | null;
+  evidence_count: number;
+  estimated_tokens: number;
   token_budget: number;
-  compression_ratio: number;
-  evidence_map: string[];
+  /** Evidence sources that survived the budget, in pack order. Empty for events written before this field existed. */
+  sources: string[];
   created_at: string;
 }
 

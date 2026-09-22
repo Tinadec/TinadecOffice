@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
-import type { OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
+import type { ContextPackDto, OrchestrationSnapshotDto, ToolExecutionTimelineItemDto, ToolDescriptorDto } from '../api'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
 import ToolExecutionTimeline from './tools/ToolExecutionTimeline.vue'
 import ToolCatalogBrowser from './tools/ToolCatalogBrowser.vue'
@@ -24,6 +24,15 @@ type TabKey = 'timeline' | 'catalog' | 'stats'
 const activeTab = ref<TabKey>('timeline')
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
+
+/**
+ * A context pack has no summary on the wire — the sentence the engine hands `AppendEventAsync` never
+ * reaches the event envelope — so the row is labelled from the one field that distinguishes packs:
+ * which lane it was assembled for, or none for the main planner.
+ */
+function packLabel(pack: ContextPackDto): string {
+  return pack.lane_key ? `Lane '${pack.lane_key}' pack` : 'Planner pack'
+}
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof ListTree }> = [
   { key: 'timeline', label: 'Timeline', icon: ListTree },
@@ -133,12 +142,19 @@ function onExecuteTool(tool: ToolDescriptorDto) {
         <div v-if="snapshot.context_packs.length === 0" class="quiet">
           No context packs.
         </div>
-        <div v-for="pack in snapshot.context_packs" :key="pack.id" class="context-pack-row">
-          <p>{{ pack.summary }}</p>
+        <div v-for="pack in snapshot.context_packs" :key="pack.id" class="context-pack-row" data-testid="context-pack-row">
+          <p>{{ packLabel(pack) }}</p>
           <div class="orchestration-tags">
-            <span>{{ pack.token_budget }} tokens</span>
-            <span>{{ Math.round(pack.compression_ratio * 100) }}%</span>
+            <span>{{ pack.evidence_count }} evidence</span>
+            <span>{{ pack.estimated_tokens }} / {{ pack.token_budget }} tokens</span>
           </div>
+          <div v-if="pack.sources.length" class="orchestration-tags" data-testid="context-pack-sources">
+            <span v-for="source in pack.sources" :key="source">{{ source }}</span>
+          </div>
+          <p v-else class="quiet">
+            No evidence list was recorded for this pack — it was written before the pack started
+            naming its sources, so its contents are unknown here rather than empty.
+          </p>
         </div>
       </article>
 

@@ -374,8 +374,8 @@ const MOCK_ATTACHMENT_SUMMARY = {
 export function mockMessages(sessionId: string): MessageDto[] {
   return [
     {
-      id: id('msg', 1),
-      run_id: null,
+      id: id('msg', 1),
+      run_id: null,
       attachments: [MOCK_ATTACHMENT_SUMMARY],
       session_id: sessionId,
       role: 'user',
@@ -383,8 +383,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * 4),
     },
     {
-      id: id('msg', 2),
-      run_id: null,
+      id: id('msg', 2),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'assistant',
@@ -392,8 +392,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * 4 + 2),
     },
     {
-      id: id('msg', 3),
-      run_id: null,
+      id: id('msg', 3),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'user',
@@ -401,8 +401,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * 3),
     },
     {
-      id: id('msg', 4),
-      run_id: null,
+      id: id('msg', 4),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'assistant',
@@ -410,8 +410,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * 3 + 1),
     },
     {
-      id: id('msg', 5),
-      run_id: null,
+      id: id('msg', 5),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'user',
@@ -419,8 +419,8 @@ export function mockMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * 2),
     },
     {
-      id: id('msg', 6),
-      run_id: null,
+      id: id('msg', 6),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'assistant',
@@ -435,8 +435,8 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
   const extra: MessageDto[] = []
   for (let i = 0; i < 8; i++) {
     extra.push({
-      id: id('msg', 100 + i * 2),
-      run_id: null,
+      id: id('msg', 100 + i * 2),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'user',
@@ -444,8 +444,8 @@ export function mockManyMessages(sessionId: string): MessageDto[] {
       created_at: iso(-60 * (10 - i)),
     })
     extra.push({
-      id: id('msg', 101 + i * 2),
-      run_id: null,
+      id: id('msg', 101 + i * 2),
+      run_id: null,
       attachments: [],
       session_id: sessionId,
       role: 'assistant',
@@ -779,23 +779,32 @@ export function mockOrchestrationSnapshot(sessionId: string): OrchestrationSnaps
       {
         id: 'ctx-001',
         run_id: runId,
-        session_id: sessionId,
-        created_by_agent_id: 'agent-context-compressor',
-        summary: '编排引擎核心模块上下文（含 3 个关键文件）',
+        evidence_count: 6,
+        estimated_tokens: 3120,
         token_budget: 8192,
-        compression_ratio: 2.4,
-        evidence_map: ['src/orchestrator.ts', 'src/graph.ts', 'src/types.ts'],
+        sources: [
+          'structured_session_state',
+          'task_context',
+          'workspace_instructions',
+          'workspace_skills',
+          'session_history',
+          'reviewed_memory',
+        ],
         created_at: iso(-60 * 3),
       },
       {
         id: 'ctx-002',
         run_id: runId,
-        session_id: sessionId,
-        created_by_agent_id: 'agent-context-compressor',
-        summary: '测试用例与 fixture 上下文',
-        token_budget: 4096,
-        compression_ratio: 1.8,
-        evidence_map: ['src/__tests__/orch.test.ts', 'src/__tests__/fixtures/'],
+        lane_key: 'implementation',
+        evidence_count: 4,
+        estimated_tokens: 1480,
+        token_budget: 8192,
+        sources: [
+          'structured_session_state',
+          'task_context',
+          'accepted_intent',
+          'session_history',
+        ],
         created_at: iso(-60 * 2),
       },
     ],
