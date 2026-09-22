@@ -182,14 +182,7 @@ public sealed class FileSystemToolsTests : IDisposable
         var link = Path.Combine(_workspace.Path, "external-link");
         try
         {
-            try
-            {
-                Directory.CreateSymbolicLink(link, externalDirectory);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return;
-            }
+            if (!LinkPrerequisite.TryCreateDirectoryLink(link, externalDirectory)) return;
 
             var stat = await FileSystemTools.StatAsync(new StatPathParams { Path = link }, CancellationToken.None);
             var list = await FileSystemTools.ListAsync(new ListDirectoryParams { Path = _workspace.RelativePath }, CancellationToken.None);

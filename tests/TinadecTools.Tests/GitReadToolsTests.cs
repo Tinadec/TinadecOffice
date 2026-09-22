@@ -38,7 +38,7 @@ public sealed class GitReadToolsTests
         try
         {
             File.WriteAllText(System.IO.Path.Combine(external, "outside.txt"), "outside");
-            Directory.CreateSymbolicLink(System.IO.Path.Combine(repo.Path, "outside"), external);
+            if (!LinkPrerequisite.TryCreateDirectoryLink(System.IO.Path.Combine(repo.Path, "outside"), external)) return;
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo.Path, Path = "outside/outside.txt" }, CancellationToken.None).AsTask());
             await Assert.ThrowsAsync<InvalidOperationException>(() => GitReadTools.FileAtRevisionAsync(new GitFileAtRevisionArgs { RepositoryPath = repo.Path, Path = "note.txt", Rev = "--output" }, CancellationToken.None).AsTask());
         }
