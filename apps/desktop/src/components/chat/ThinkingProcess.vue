@@ -12,6 +12,9 @@ import {
   Clock,
 } from '@lucide/vue'
 import type { ThinkingStep } from '@/composables/useAgentActivity'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   steps: ThinkingStep[]
@@ -42,7 +45,9 @@ const stepConfig = computed(() => {
 
 function formatTime(ts: string): string {
   try {
-    return new Date(ts).toLocaleTimeString('zh-CN', {
+    // No locale argument: the label above is translated, and a timestamp pinned to `zh-CN`
+    // rendered Chinese AM/PM conventions for every other locale too.
+    return new Date(ts).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -103,7 +108,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
   <section v-if="hasSteps" class="thinking-process">
     <button class="thinking-row" type="button" @click="expanded = !expanded">
       <Brain :size="14" class="thinking-icon" />
-      <span class="thinking-title">已思考 · {{ stepCount }} 步</span>
+      <span class="thinking-title">{{ t('agent.thoughtSteps', { count: stepCount }) }}</span>
       <span v-if="lastPreview" class="thinking-sep" aria-hidden="true" />
       <!-- Rise plays on the keyed outer span; shimmer lives on an inner span so
            the two `animation` declarations never fight for the property. -->

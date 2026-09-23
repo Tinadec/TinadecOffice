@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { Bot, Boxes, PlugZap, Terminal } from '@lucide/vue'
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MarketCatalogItemDto } from '@/api'
 import { UiBadge } from '@/components/ui'
-import { marketController } from '@/controllers/MarketController'
+import { catalogKindLabel, marketController } from '@/controllers/MarketController'
 
 const { t } = useI18n()
 
 const {
-  catalog: _catalog, selectedCatalogId: _selectedId, installationFor, awaitingDecision, actionFinished, start,
+  catalog: _catalog, selectedCatalogId: _selectedId, installationFor, awaitingDecision, actionFinished,
 } = marketController
 // ponytail: vapor template does not auto-unwrap Ref when destructured from controller — expose plain-typed computed so vue-tsc sees correct brands (single reactivity identity via tsconfig paths)
 const catalog = computed(() => _catalog.value) as unknown as MarketCatalogItemDto[]
@@ -17,13 +17,6 @@ const selectedCatalogId = computed({
   get: () => _selectedId.value,
   set: (v: string) => { _selectedId.value = v },
 }) as unknown as string
-
-function kindLabel(kind: string) {
-  if (kind === 'skill') return 'Skill'
-  if (kind === 'mcp-server') return 'MCP'
-  if (kind === 'acp-adapter') return 'ACP'
-  return kind
-}
 
 function kindIcon(kind: string) {
   if (kind === 'skill') return Bot
@@ -53,10 +46,6 @@ function statusVariant(item: MarketCatalogItemDto) {
   if (row.action_status === 'completed') return 'default'
   return actionFinished(row) ? 'destructive' : 'outline'
 }
-
-onMounted(() => {
-  start()
-})
 </script>
 
 <template vapor>
@@ -86,7 +75,7 @@ onMounted(() => {
         </div>
         <p>{{ item.description }}</p>
         <div class="market-chip-row">
-          <span>{{ kindLabel(item.kind) }}</span>
+          <span>{{ catalogKindLabel(item.kind) }}</span>
           <span>{{ item.source_name }}</span>
           <span>{{ item.version }}</span>
         </div>

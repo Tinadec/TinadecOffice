@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from '@lucide/vue'
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { UiButton } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'
@@ -23,7 +23,7 @@ const {
   busy, activeProposal: proposal, proposalBusy, targetProject,
   selectedItem, selectedInstallation, awaitingDecision,
   mcpServers, mcpReadSucceeded, mcpReason, mcpConfigPath,
-  start, previewInstall, previewRemoval, applyProposal, discardProposal,
+  previewInstall, previewRemoval, applyProposal, discardProposal,
 } = marketController
 
 function kindIcon(kind: string) {
@@ -59,10 +59,6 @@ function statusLine() {
   if (row.action_status === 'completed') return t('market.installedHint')
   return `${t('market.installingHint')} · ${row.action_status}`
 }
-
-onMounted(() => {
-  start()
-})
 </script>
 
 <template vapor>
@@ -156,7 +152,7 @@ onMounted(() => {
                would never reach the file. -->
           <div class="market-chip-row wrap">
             <span v-for="entry in proposal.environment" :key="entry.name">
-              {{ entry.name }}<template v-if="entry.required"> · {{ t('market.required') }}</template><template v-if="entry.secret"> · {{ t('market.secret') }}</template>
+              {{ entry.name }}<template v-if="entry.required"> · {{ t('market.envRequired') }}</template><template v-if="entry.secret"> · {{ t('market.envSecret') }}</template>
             </span>
           </div>
           <p class="quiet">{{ t('market.environmentNote') }}</p>

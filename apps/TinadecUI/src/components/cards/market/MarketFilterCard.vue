@@ -13,18 +13,20 @@ import {
   ToggleRight,
   Trash2,
 } from '@lucide/vue'
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
-import { marketController, kindOptions as _kindOptions } from '@/controllers/MarketController'
+import {
+  catalogKindLabel, kindOptions as _kindOptions, marketController, sourceKindLabel,
+} from '@/controllers/MarketController'
 
 const { t } = useI18n()
 const router = useRouter()
 
 const {
   sources, supportedKinds, kindFilter, sourceFilter, query, busy,
-  sourceForm, start, loadCatalog, addSource, refreshSource, toggleSource, removeSource,
+  sourceForm, loadCatalog, addSource, refreshSource, toggleSource, removeSource,
 } = marketController
 
 const kindOptions = _kindOptions.map((o) => ({ ...o, icon: o.key === 'skill' ? Bot : o.key === 'mcp-server' ? PlugZap : o.key === 'acp-adapter' ? Terminal : Boxes }))
@@ -32,9 +34,9 @@ const kindOptions = _kindOptions.map((o) => ({ ...o, icon: o.key === 'skill' ? B
 // so every add either created a row that could not refresh or failed outright.
 const sourceKindOptions = computed(() => supportedKinds.value)
 
-onMounted(() => {
-  start()
-})
+function filterLabel(key: string) {
+  return key === 'all' ? t('market.filterAll') : catalogKindLabel(key)
+}
 </script>
 
 <template vapor>
@@ -68,7 +70,7 @@ onMounted(() => {
         @click="kindFilter = option.key"
       >
         <component :is="option.icon" :size="15" />
-        <span>{{ option.label }}</span>
+        <span>{{ filterLabel(option.key) }}</span>
       </UiButton>
     </div>
 
@@ -111,7 +113,7 @@ onMounted(() => {
     <div class="market-source-form">
       <UiLabel>{{ t('market.addSource') }}</UiLabel>
       <select v-model="sourceForm.kind" class="market-select">
-        <option v-for="kind in sourceKindOptions" :key="kind" :value="kind">{{ kind }}</option>
+        <option v-for="kind in sourceKindOptions" :key="kind" :value="kind">{{ sourceKindLabel(kind) }}</option>
       </select>
       <UiInput v-model="sourceForm.name" :placeholder="t('market.sourceName')" />
       <UiInput v-model="sourceForm.location" :placeholder="t('market.sourceLocation')" />

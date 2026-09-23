@@ -309,23 +309,51 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         scenario.value,
       ),
     deleteExtensionSource: () => delay(undefined as void, scenario.value),
-    refreshExtensionSource: (sourceId: string) =>
-      delay(
+    refreshExtensionSource: (sourceId: string) => {
+      // A source whose fixture row carries a `last_error` must not answer "fetched": that is the
+      // one case where the panel's failure branch — a refresh that left the catalog standing —
+      // was unreachable in the preview no matter what was clicked.
+      const source = data().extensionSources.sources.find((s) => s.id === sourceId)
+      const empty = {
+        source_id: sourceId,
+        fetched_rows: 0,
+        refused_rows: 0,
+        removed_rows: 0,
+        retained_rows: 0,
+        pages_fetched: 0,
+        truncated_pages: false,
+        refreshed_at: new Date().toISOString(),
+      }
+      if (source?.last_error) {
+        return delay(
+          { ...empty, outcome: 'blocked', reason: source.last_error } as MarketRefreshDto,
+          scenario.value,
+        )
+      }
+      return delay(
         {
-          source_id: sourceId,
+          ...empty,
           outcome: 'fetched',
           fetched_rows: data().marketCatalog.items.length,
-          refused_rows: 0,
-          removed_rows: 0,
-          retained_rows: 0,
           pages_fetched: 1,
-          truncated_pages: false,
-          refreshed_at: new Date().toISOString(),
         } as MarketRefreshDto,
         scenario.value,
-      ),
-    listMarketCatalog: (_params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) =>
-      delay(data().marketCatalog, scenario.value),
+      )
+    },
+    // Core filters server-side, so the preview has to or the search box and the kind rail look
+    // finished here and broken there.
+    listMarketCatalog: (params: { kind?: string; q?: string; source_id?: string; limit?: number; offset?: number } = {}) => {
+      const page = data().marketCatalog
+      const needle = params.q?.trim().toLowerCase() ?? ''
+      const items = page.items.filter((item) => {
+        if (params.kind && params.kind !== 'all' && item.kind !== params.kind) return false
+        if (params.source_id && item.source_id !== params.source_id) return false
+        if (!needle) return true
+        return [item.display_name, item.extension_id, item.description ?? '']
+          .some((field) => field.toLowerCase().includes(needle))
+      })
+      return delay({ ...page, items, total_available: items.length }, scenario.value)
+    },
     getMarketCatalogItem: (catalogId: string) =>
       delay(
         (data().marketCatalog.items.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog.items[0]) as MarketCatalogItemDto,

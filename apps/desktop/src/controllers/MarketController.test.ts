@@ -77,7 +77,7 @@ const notifications = vi.hoisted(() => ({
 
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => notifications }))
 
-import { marketController } from './MarketController'
+import { marketController, catalogKindLabel, sourceKindLabel } from './MarketController'
 
 const CONNECTED: McpInventoryDto = {
   source: 'tool_provider',
@@ -348,5 +348,114 @@ describe('marketController install proposals', () => {
 
     expect(h.previewMarketUninstall).toHaveBeenCalledWith('ins-1')
     expect(marketController.activeProposal.value?.action).toBe('uninstall')
+  })
+})
+
+describe('marketController re-entry and ledger freshness', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    marketController.stop()
+    h.listMarketCatalog.mockResolvedValue({ items: [], total_available: 0, has_more: false })
+    h.listMarketInstallations.mockResolvedValue({ installations: [] })
+    h.listExtensionSources.mockResolvedValue({ sources: [], supported_kinds: ['mcp_registry'] })
+    h.listMcpServers.mockResolvedValue(CONNECTED)
+    marketController.proposal.value = null
+  })
+
+  async function visible(state: 'visible' | 'hidden') {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+  }
+
+  it('re-reads when the page is entered again instead of keeping the first answer', async () => {
+    // The old module-level latch made the second visit to /market render whatever the first one
+    // read — including a row that a human had approved in the Governance page in between.
+    marketController.start()
+    await vi.waitFor(() => expect(h.listMarketInstallations).toHaveBeenCalledTimes(1))
+
+    marketController.start()
+    await vi.waitFor(() => expect(h.listMarketInstallations).toHaveBeenCalledTimes(2))
+    marketController.stop()
+  })
+
+  it('follows a queued write to its terminal status without being asked again', async () => {
+    vi.useFakeTimers()
+    try {
+      await visible('visible')
+      h.listMarketInstallations.mockResolvedValue({
+        installations: [installationOf({ action_status: 'awaiting_approval' })],
+      })
+      await marketController.loadAll()
+      expect(marketController.awaitingDecision(marketController.installations.value[0])).toBe(true)
+
+      // The approval lands elsewhere, and Core appends no event for it — a read is the only signal.
+      h.listMarketInstallations.mockResolvedValue({
+        installations: [installationOf({ action_status: 'completed' })],
+      })
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(h.listMarketInstallations).toHaveBeenCalledTimes(2)
+      expect(marketController.awaitingDecision(marketController.installations.value[0])).toBe(false)
+
+      // Settled: the timer is gone, so a panel left open costs no requests.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(h.listMarketInstallations).toHaveBeenCalledTimes(2)
+      marketController.stop()
+    } finally {
+      marketController.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('never arms a poll for a ledger that is already settled', async () => {
+    vi.useFakeTimers()
+    try {
+      await visible('visible')
+      h.listMarketInstallations.mockResolvedValue({
+        installations: [installationOf({ action_status: 'completed' })],
+      })
+      await marketController.loadAll()
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(h.listMarketInstallations).toHaveBeenCalledTimes(1)
+    } finally {
+      marketController.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('holds the poll back while the page is hidden, then resumes on its own tick', async () => {
+    vi.useFakeTimers()
+    try {
+      await visible('hidden')
+      h.listMarketInstallations.mockResolvedValue({
+        installations: [installationOf({ action_status: 'running' })],
+      })
+      await marketController.loadAll()
+      await vi.advanceTimersByTimeAsync(36_000)
+      expect(h.listMarketInstallations).toHaveBeenCalledTimes(1)
+
+      await visible('visible')
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(h.listMarketInstallations).toHaveBeenCalledTimes(2)
+    } finally {
+      marketController.stop()
+      await visible('visible')
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('marketController kind labels', () => {
+  // Asserted against the raw wire word rather than a bundle string on purpose: the default locale
+  // in tests is zh-CN, and a hand-written translation here would go stale the next time the
+  // wording changes. What has to hold in every locale is "not the identifier, and not a key".
+  it('names a source kind in the UI language instead of printing the adapter id', () => {
+    const label = sourceKindLabel('mcp_registry')
+    expect(label).not.toBe('mcp_registry')
+    expect(label).not.toContain('market.')
+  })
+
+  it('names a catalog kind, and falls through to the raw word for one this build has never seen', () => {
+    expect(catalogKindLabel('acp-adapter')).not.toBe('acp-adapter')
+    // A future kind Core adds must still show something; a blank badge would read as "no kind".
+    expect(catalogKindLabel('cli-runtime')).toBe('cli-runtime')
   })
 })

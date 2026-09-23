@@ -58,11 +58,29 @@ const sourceForm = reactive({
 })
 
 export const kindOptions = [
-  { key: 'all', label: 'All', icon: null },
-  { key: 'skill', label: 'Skill', icon: null },
-  { key: 'mcp-server', label: 'MCP', icon: null },
-  { key: 'acp-adapter', label: 'ACP', icon: null },
+  { key: 'all' },
+  { key: 'skill' },
+  { key: 'mcp-server' },
+  { key: 'acp-adapter' },
 ]
+
+/**
+ * A catalog row's kind, in the current locale. An unknown kind falls through as the raw word on
+ * purpose: a blank badge would read as "this entry has no kind", not as "this file has no label".
+ */
+export function catalogKindLabel(kind: string): string {
+  if (kind === 'skill') return t('market.kindSkill')
+  if (kind === 'mcp-server') return t('market.kindMcpServer')
+  if (kind === 'acp-adapter') return t('market.kindAcpAdapter')
+  return kind
+}
+
+/** A registered source's kind — the adapter Core can read, not the kind of row it yields. */
+export function sourceKindLabel(kind: string): string {
+  if (kind === 'mcp_registry') return t('market.kindMcpRegistry')
+  if (kind === 'skill_repository') return t('market.kindSkillRepository')
+  return kind
+}
 
 const selectedItem = computed(() =>
   catalog.value.find((item) => item.catalog_id === selectedCatalogId.value) ?? catalog.value[0] ?? null
@@ -160,6 +178,7 @@ async function loadAll() {
     supportedKinds.value = sourceListResult.supported_kinds
     if (!sourceForm.kind) sourceForm.kind = sourceListResult.supported_kinds[0] ?? ''
     installations.value = installationList.installations
+    syncLedgerPoll()
     mcpInventory.value = inventory
     acpAdapters.value = adapters
     if (!sourceFilter.value) {
@@ -208,6 +227,62 @@ async function loadCatalog() {
 async function loadInstallations() {
   const list = await api.listMarketInstallations()
   installations.value = list.installations
+  syncLedgerPoll()
+}
+
+/**
+ * Is a governed write for some row still in flight? An absent `action_status` is Core saying
+ * "nothing is running", so it does not qualify — only a status that has not reached a terminal one
+ * does, including the `awaiting_*` states the human still has to decide.
+ */
+function ledgerHasPendingRow(): boolean {
+  return installations.value.some((row) => {
+    const status = row.action_status
+    return !!status && !isUserToolActionTerminal(status)
+  })
+}
+
+/**
+ * Re-read the ledger while it is unsettled, and not one tick longer.
+ *
+ * A decision made on the approval surface changes nothing here: Core appends no event for a
+ * governed user tool action (the `user_tool` branch of the audit writer returns before any
+ * append), so a read is the only signal that exists — subscribing to the bus would be subscribing
+ * to silence. Same shape as `stores/userAction.ts`: the timer is armed by the data, retires
+ * itself when the data no longer needs it, and gives up after an age so a Core that stopped
+ * answering cannot keep a panel polling. Hidden tabs skip the tick rather than queue one.
+ */
+function syncLedgerPoll(): void {
+  if (!ledgerHasPendingRow()) {
+    stopLedgerPoll()
+    return
+  }
+  if (ledgerTimer !== null) return
+  ledgerPollStartedAt = Date.now()
+  ledgerTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    if (Date.now() - ledgerPollStartedAt > LEDGER_POLL_MAX_AGE_MS) {
+      stopLedgerPoll()
+      return
+    }
+    void refreshLedger()
+  }, LEDGER_POLL_INTERVAL_MS)
+}
+
+/** A background tick: a failed read leaves the last statuses standing and the next tick retries. */
+async function refreshLedger() {
+  try {
+    await loadInstallations()
+  } catch {
+    // Deliberately silent — `loadAll` reports a failed read because the user asked for it; this
+    // one was not asked for, and an error toast every 12s would be worse than a stale row.
+  }
+}
+
+function stopLedgerPoll(): void {
+  if (ledgerTimer === null) return
+  clearInterval(ledgerTimer)
+  ledgerTimer = null
 }
 
 function discardProposal() {
@@ -331,11 +406,22 @@ async function refreshSource(sourceId: string) {
 
 watch([kindFilter, sourceFilter], () => { void loadCatalog() })
 
-let started = false
+// 12s is the governance board's cadence, and this read is the same kind of question ("has a human
+// decided yet?"); 10 min is the age at which the action store gives up on an action that never
+// settles. Both are ceilings, not schedules: with a settled ledger no timer exists at all.
+const LEDGER_POLL_INTERVAL_MS = 12_000
+const LEDGER_POLL_MAX_AGE_MS = 10 * 60 * 1000
+let ledgerTimer: ReturnType<typeof setInterval> | null = null
+let ledgerPollStartedAt = 0
+
+/** Called by the page, not by the cards: three cards mounting meant three reads, and a latch that
+ *  swallowed them all meant a second visit to /market re-read nothing. */
 function start() {
-  if (started) return
-  started = true
   void loadAll()
+}
+
+function stop() {
+  stopLedgerPoll()
 }
 
 export const marketController = {
@@ -345,7 +431,7 @@ export const marketController = {
   proposal, activeProposal, proposalBusy, sourceForm,
   selectedItem, selectedInstallation, installationFor, awaitingDecision, actionFinished,
   targetProjectId, targetProject,
-  start,
+  start, stop,
   loadAll, loadCatalog, loadInstallations,
   addSource, refreshSource, toggleSource, removeSource, discardProposal,
   previewInstall, previewRemoval, applyProposal,

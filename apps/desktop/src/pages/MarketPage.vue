@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { UieCanvas, useUie } from '@tinadec/ui'
 import AppHeader from '@/components/AppHeader.vue'
 import { marketController } from '@/controllers/MarketController'
@@ -7,10 +7,16 @@ import { marketController } from '@/controllers/MarketController'
 const wb = useUie()
 const { busy, loading } = marketController
 
+// The page owns the read and its lifecycle; the cards it mounts only render the state.
 onMounted(() => {
   if (wb.pageId.value !== 'market') {
     wb.applyPreset('market')
   }
+  marketController.start()
+})
+
+onUnmounted(() => {
+  marketController.stop()
 })
 </script>
 
