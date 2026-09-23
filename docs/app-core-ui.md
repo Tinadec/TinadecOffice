@@ -423,6 +423,16 @@ PromptPipeline 是 DmaEA 正式提示词配置。旧 `prompt-fragments` 页面�
   `awaiting_user` 的权限请求，批准后才进 `awaiting_approval` 的审批信封），桌面**从不代替用户裁决**；
   安装目标工作区只有一个 owner（首页当前选中的项目），市场面板不得自带第二份选择；换行或换工作区之后旧提案不得再被提供。
   `/api/v1/extensions/*` 七条仍 501，桌面曾经打它们的那七个包装已全部删除。
+- Market 的**可读源类型自 2026-09-23（#38 / M3）起是两种**：`mcp_registry` 与 `skill_repository`，
+  `supported_kinds` 由 Core 报、桌面选择器照它渲染（不得在客户端写死一份清单）。技能源的口径：
+  索引正文只贡献 `name`/`description`/`version`/`homepage` 四个字段，**它的 `url` 只是给人看的链接，Core 永远不拨它**——
+  要取的技能文档地址由 Core 用源的 https location 所在目录 ＋ 已过技能命名规则（`^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$`）
+  的名字拼成 `<index dir>/<name>/SKILL.md>`；名字不合规则的行**不落库**，只进 `refused_rows`。
+  安装目标因此不来自 provider 的 `config_path` 而是 Core 自己拼的 `skills/<name>/SKILL.md`（工作区技能加载器读的就是这一层），
+  文档正文**只在预览时取一次**并冻结进 `content`，apply 不再出网；正文还要过 `WorkspaceSkillPolicy`（名字必须等于目录名、
+  描述长度合规、不能被自己的 `disabled:` 关掉），否则 409 `market_install_not_expressible` —— 一次"装上了但工作区永远不播"的安装在市场里最难被发现。
+  `uninstall-preview` 对 `kind=skill` 一律 409：工具层没有 delete/rename，能用的开关是文档自己的 `disabled: true`，
+  拒绝语必须把这条说出来。目录行没有安装描述时的 `install_blocker` 与 `installable` 同 M2 口径。
 - MCP 只有两条读路由，且**读数来自 Tool Provider 而不是 Core 自己**：`GET /api/v1/mcp/servers` 返回 `{source, reason?, workspace_root?, config_path?, dropped_rows?, servers[]}`，`GET /api/v1/mcp/servers/{serverId}/tools` 返回 `{source, reason?, config_path?, server_id, server?}`。`source` 是必读字段：`tool_provider` 才是"看过了"，`tool_provider_unavailable` 要显示 `reason` 而**不能**显示"没有配置任何服务器"。`status:"error"` 的服务器仍在清单里并带 provider 原文，UI 不得把它画成"已停用"。
 - MCP **没有**连接、断开、状态、reload、直接调用工具这些端点，Gateway/Desktop 也不得自行连接或缓存 MCP：配置与连接都归工具进程，清单每次现读。要"刷新"就是重新发一次 GET。
 - ACP `permission.request` 本阶段继续 fail-closed；不能把 ACP 请求当成已授权。

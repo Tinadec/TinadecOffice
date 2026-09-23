@@ -15,10 +15,18 @@
 The market surface (Core `Skills/MarketInstallService.cs`) treats every listing as **untrusted data,
 never as an instruction or an authorization**. What that means in the code, not in intention:
 
-- No client-supplied destination. An install request carries a `project_id` and a catalog id only;
-  the file path comes from the Tool Provider's own `mcp_list → config_path` answer, and a path
-  outside the project root is refused (`market_install_target_unresolved`) rather than written
-  "somewhere plausible".
+- No client-supplied destination. An install request carries a `project_id` and a catalog id only.
+  For a server entry the file path comes from the Tool Provider's own `mcp_list → config_path`
+  answer, and a path outside the project root is refused (`market_install_target_unresolved`) rather
+  than written "somewhere plausible". For a skill entry Core composes the path itself —
+  `skills/<name>/SKILL.md` under the project root, from the same rule the workspace's skill loader
+  reads — and that composed name is the *only* text from a listing allowed to reach a path: a row is
+  stored only if its name matches `^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$`, so it cannot contain a
+  separator, a dot-dot or an encoding trick.
+- A listing cannot choose what Core dials. A skill's document address is built from the source's own
+  stored https location plus that validated name, on the source's own origin; the `url`/`link`
+  members an index publishes are kept as display text and never fetched. Without this, an approved
+  source would be an oracle for pointing the egress guard at any host the listing names.
 - No arbitrary command text. Command, args and package identifiers from a listing pass a character
   whitelist (`[A-Za-z0-9@:._/+-=]`, braces rejected) and length caps before they can be frozen into
   a proposal; anything else is refused as `market_install_not_expressible` **before** any I/O.
@@ -40,10 +48,26 @@ never as an instruction or an authorization**. What that means in the code, not 
   human-facing guarantee stays the command, args and target path the proposal names.
 - No new egress. Market reads still go through the provider's reserved `#fetch` control tool;
   Core decides only which URL may be fetched and never accepts a client-supplied one.
-- Known limits, stated rather than hidden: the pinned version is the package host's *name* for a
-  release, not a content digest, and nothing in this phase verifies a signature or a digest
-  (still "Not In MVP" below). The proposal `warnings[]` carries this sentence to the approver
-  because an approval that cannot see what it does not guarantee is not informed.
+- An installed skill is text the model will be told about. This is the one respect in which a skill
+  install is a larger decision than a server install: a server is inert until something starts it,
+  while `skills/<name>/SKILL.md` is discovered by the workspace loader and its name and description
+  enter the context of every later run. Three things bound that, and none of them is "trust the
+  source": the document is fetched **once**, at preview, and the frozen bytes are what the write puts
+  there (apply performs no network read, so a source that changes its mind afterwards changes nothing
+  already approved); the document must pass the same `WorkspaceSkillPolicy` rules a hand-written skill
+  is refused by — name equal to its directory, description within 1024 characters, and not switched
+  off by its own `disabled:` frontmatter — while its size is capped at the same ceiling the loader
+  refuses past (`MarketInstallPolicy.MaxSkillBodyBytes` *is* `WorkspaceSkillPolicy.MaxFileBytes`, so
+  a document too large to advertise is never fetched into a proposal). An install therefore cannot
+  succeed into a file the workspace would ignore; and the rendered index states that skills rank
+  below the run's frozen permissions and tool grants, and that the body must be opened rather than
+  acted on from its description.
+- Known limits, stated rather than hidden: for a package the pinned version is the host's *name* for
+  a release, not a content digest, and nothing in this phase verifies a signature or a digest
+  (still "Not In MVP" below); for a skill the pin is stronger — the reviewed bytes are the written
+  bytes — but the source can publish a different document afterwards and this install will not notice.
+  The proposal `warnings[]` carries the sentence that matches the kind, because an approval that
+  cannot see what it does not guarantee is not informed.
 - Failure text policy: market routes answer with a machine code plus a message built by Core, and
   Gateway's `ALLOWED_CODES` whitelist keeps those codes intact. The rule for what may cross is
   "the reason the operation stopped", not "whatever the upstream process emitted": provider/HTTP

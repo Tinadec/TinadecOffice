@@ -47,6 +47,57 @@ public sealed class WorkspaceSkillPolicyTests
         }
     }
 
+    /// <summary>
+    /// The off switch is a line in the file, so it has to be read the way a person writes one: writing
+    /// the key at all is the intent, and only an explicit negative re-enables. This matters because the
+    /// alternative reading — "the value must say true" — makes a typo like `disabled: tru` silently
+    /// advertise a skill its author turned off.
+    /// </summary>
+    [Theory]
+    [InlineData("disabled: true", false)]
+    [InlineData("disabled:", false)]
+    [InlineData("DISABLED: True", false)]
+    [InlineData("disabled: 1", false)]
+    [InlineData("disabled: tru", false)]
+    [InlineData("disabled: the changelog format changed under it", false)]
+    [InlineData("disabled: false", true)]
+    [InlineData("disabled: no", true)]
+    [InlineData("disabled: OFF", true)]
+    [InlineData("disabled: 0", true)]
+    public void TheDisabledKeyIsWhatTurnsAWellFormedSkillOff(string frontmatterLine, bool expectedAdvertised)
+    {
+        var content = $"---\nname: probe\ndescription: Summarise the changelog.\n{frontmatterLine}\n---\n\nBody.";
+
+        var ok = WorkspaceSkillPolicy.TryRead(content, "probe", Path_, out var skill, out var reason);
+
+        Assert.Equal(expectedAdvertised, ok);
+        if (expectedAdvertised)
+        {
+            Assert.Equal("probe", skill!.Name);
+            Assert.Equal(string.Empty, reason);
+        }
+        else
+        {
+            Assert.Null(skill);
+            Assert.Contains("'disabled:'", reason, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ASwitchedOffSkillSaysItIsOffRatherThanLookingBrokenOrAbsent()
+    {
+        var content = "---\nname: probe\ndescription: Summarise the changelog.\ndisabled: true\n---\n\nBody.";
+        Assert.False(WorkspaceSkillPolicy.TryRead(content, "probe", Path_, out _, out var reason));
+
+        var index = WorkspaceSkillPolicy.Frame([], [new WorkspaceSkillPolicy.Refusal(Path_, reason)], 4_000, 0);
+
+        // Two different facts the author must not have to guess between: the file is fine and switched
+        // off, versus the file is wrong. The wording carries it, and the path is named either way.
+        Assert.Contains(Path_, index);
+        Assert.Contains("marked off by its own 'disabled:' frontmatter", index);
+        Assert.DoesNotContain("no YAML frontmatter", index);
+    }
+
     [Fact]
     public void DescriptionLongerThanTheFormatAllowsIsRefusedRatherThanCut()
     {
@@ -140,6 +191,28 @@ public sealed class WorkspaceSkillPolicyTests
         Assert.Contains("skills/s0/SKILL.md", index);
         Assert.Contains("and 3 more with the same problem.", index);
         Assert.DoesNotContain("skills/s7/SKILL.md", index);
+    }
+
+    [Fact]
+    public void ThePathANameProducesIsThePathTheLoaderWouldReadItFrom()
+    {
+        // The market composes a skill's remote address and its local target from this one rule, so
+        // the pair has to agree with what TryRead accepts: if it ever drifted, an install would
+        // "succeed" into a directory the workspace never advertises, and the reviewer would have
+        // approved a file that does nothing.
+        var relative = WorkspaceSkillPolicy.RelativePathFor("pdf-forms");
+        Assert.Equal("skills/pdf-forms/SKILL.md", relative);
+
+        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "tinadec-skill-path"));
+        Assert.Equal(Path.Combine(root, "skills", "pdf-forms", "SKILL.md"),
+            WorkspaceSkillPolicy.AbsolutePathFor(root, "pdf-forms"));
+
+        var readable = WorkspaceSkillPolicy.TryRead(
+            "---\nname: pdf-forms\ndescription: Fills forms.\n---\n", "pdf-forms", relative,
+            out var skill, out var reason);
+
+        Assert.True(readable, reason);
+        Assert.Equal("pdf-forms", skill!.Name);
     }
 
     [Theory]

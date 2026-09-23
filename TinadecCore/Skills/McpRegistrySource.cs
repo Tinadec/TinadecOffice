@@ -2,36 +2,23 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TinadecCore.Abstractions.Ports;
-using TinadecCore.Contracts.Dtos;
 
 namespace TinadecCore.Skills;
 
 /// <summary>
-/// Reads the official MCP Registry (<c>registry.modelcontextprotocol.io</c>) through the Tool
-/// Provider's reserved <c>#fetch</c> control tool.
+/// Reads the official MCP Registry (<c>registry.modelcontextprotocol.io</c>) into catalog rows.
+/// The fetch itself goes through <see cref="MarketFetch"/>, like every other source adapter.
 ///
-/// Why the read goes out through the tool process rather than an <see cref="HttpClient"/> in
-/// Core: the provider owns the server-side request forgery guard, and it is the one that can
-/// apply it where it matters — inside the connect callback, against the address it is about to
-/// dial. A second HTTP stack in Core would be a second policy to keep in sync and to audit, and
-/// the first thing wrong with it would be that it disagreed with the tool layer.
-///
-/// What comes back is untrusted external text. It is stored as a claim about a thing and
-/// nothing more: no command, no package, no path is derived from it here, and it never reaches a
-/// model. <see cref="Entry.Version"/> is mandatory because "install this" without a pinned
+/// What comes back is untrusted external text. A row is stored as a claim about a thing and
+/// nothing more: it never reaches a model, and nothing here runs, downloads, or writes anything.
+/// <see cref="ProjectInstall"/> turns one row into a <em>described</em> command line, which only
+/// becomes an action after a human approves a governed <c>write_file</c>. Its
+/// <see cref="MarketEntry.Version"/> is mandatory because "install this" without a pinned
 /// version is not an actionable claim.
 /// </summary>
 internal static class McpRegistrySource
 {
-    /// <summary>Reserved control tool; never offered to a model in a manifest.</summary>
-    internal const string FetchToolId = "#fetch";
-
     private const int PageSize = 100;
-
-    /// <summary>Ask for the provider's own ceiling: a truncated JSON body is an unusable body.</summary>
-    private const int MaxBytes = 8 * 1024 * 1024;
-
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
 
     private const int MaxDescriptionChars = 2000;
     private const int MaxDetailChars = 12_000;
@@ -47,41 +34,13 @@ internal static class McpRegistrySource
     private const int MaxEnvironmentNameChars = 128;
     private const int MaxEnvironmentDescriptionChars = 240;
 
-    /// <summary>
-    /// One completed pass or one named failure. A refresh that did not complete is never
-    /// expressed as an empty entry list, because the caller has to be able to tell "the market
-    /// is empty" from "we could not read it" — and must not delete rows on the strength of the
-    /// second one.
-    /// </summary>
-    internal sealed record Result(
-        bool Completed,
-        string? Reason,
-        bool Blocked,
-        List<Entry> Entries,
-        int RefusedRows,
-        int PagesFetched,
-        bool TruncatedPages)
-    {
-        internal static Result Failed(string reason, bool blocked = false) =>
-            new(false, reason, blocked, [], 0, 0, false);
-    }
-
-    internal sealed record Entry(
-        string ExtensionId,
-        string Version,
-        string Kind,
-        string DisplayName,
-        string? Description,
-        string DetailJson,
-        string ManifestHash);
-
-    internal static async Task<Result> FetchAsync(
+    internal static async Task<MarketListing> FetchAsync(
         IToolProvider provider,
         string workspaceRoot,
         string location,
         CancellationToken cancellationToken)
     {
-        var entries = new List<Entry>();
+        var entries = new List<MarketEntry>();
         var cursor = string.Empty;
         var refused = 0;
         var pages = 0;
@@ -90,18 +49,18 @@ internal static class McpRegistrySource
         {
             var request = BuildPageUrl(location, cursor);
             if (request is null)
-                return Result.Failed($"'{location}' is not a usable https registry endpoint.");
+                return MarketListing.Failed($"'{location}' is not a usable https registry endpoint.");
 
-            var fetch = await FetchPageAsync(provider, workspaceRoot, request, cancellationToken)
+            var fetch = await MarketFetch.FetchPageAsync(provider, workspaceRoot, request, cancellationToken)
                 .ConfigureAwait(false);
 
             if (fetch.Error is not null)
-                return Result.Failed(fetch.Error, fetch.Blocked);
+                return MarketListing.Failed(fetch.Error, fetch.Blocked);
 
             pages++;
 
             if (!TryReadListing(fetch.Body!, out var rows, out var nextCursor, out var parseError))
-                return Result.Failed(parseError ?? "The registry response is not a server listing.");
+                return MarketListing.Failed(parseError ?? "The registry response is not a server listing.");
 
             foreach (var row in rows)
             {
@@ -119,12 +78,12 @@ internal static class McpRegistrySource
 
             cursor = nextCursor ?? string.Empty;
             if (string.IsNullOrEmpty(cursor))
-                return new Result(true, null, false, entries, refused, pages, false);
+                return MarketListing.Complete(entries, refused, pages, false);
         }
 
         // A cursor was still pending when the ceiling was reached: this catalog is a prefix of
         // the market, and says so.
-        return new Result(true, null, false, entries, refused, pages, true);
+        return MarketListing.Complete(entries, refused, pages, true);
     }
 
     /// <summary>
@@ -147,67 +106,6 @@ internal static class McpRegistrySource
             builder.Append("&cursor=").Append(Uri.EscapeDataString(cursor));
 
         return builder.ToString();
-    }
-
-    private sealed record Page(string? Body, string? Error, bool Blocked = false);
-
-    private static async Task<Page> FetchPageAsync(
-        IToolProvider provider,
-        string workspaceRoot,
-        string url,
-        CancellationToken cancellationToken)
-    {
-        JsonElement result;
-        try
-        {
-            var response = await provider.CallAsync(
-                workspaceRoot,
-                new ToolWireRequestDto
-                {
-                    ToolId = FetchToolId,
-                    // No run owns a market refresh; the provider only echoes this on wire events.
-                    SessionId = "market-refresh",
-                    Approved = false,
-                    Params = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
-                    {
-                        ["url"] = url,
-                        ["max_bytes"] = MaxBytes,
-                        ["timeout_ms"] = (int)RequestTimeout.TotalMilliseconds,
-                    })
-                },
-                RequestTimeout + TimeSpan.FromSeconds(10),
-                cancellationToken).ConfigureAwait(false);
-
-            if (!response.IsSuccess)
-                return new Page(null, response.Error ?? "The tool provider rejected the fetch.");
-
-            if (response.Result is not { } payload || payload.ValueKind != JsonValueKind.Object)
-                return new Page(null, $"{FetchToolId} returned no object payload.");
-
-            result = payload;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return new Page(null, ex.Message);
-        }
-
-        // The guard's refusal is a different fact from a network failure: one means Core asked
-        // for something it should not have, the other means the market was unreachable.
-        if (result.TryGetProperty("blocked", out var blocked) && blocked.ValueKind == JsonValueKind.True)
-            return new Page(null, ReadText(result, "error") ?? "The egress guard refused this target.", true);
-
-        if (!result.TryGetProperty("success", out var success) || success.ValueKind != JsonValueKind.True)
-            return new Page(null, ReadText(result, "error") ?? $"Fetching {url} did not succeed.");
-
-        var body = ReadText(result, "body");
-        if (string.IsNullOrEmpty(body))
-            return new Page(null, $"Fetching {url} returned no readable body.");
-
-        return new Page(body, null, false);
     }
 
     private static bool TryReadListing(
@@ -260,19 +158,19 @@ internal static class McpRegistrySource
         return true;
     }
 
-    private static Entry? Project(JsonElement server)
+    private static MarketEntry? Project(JsonElement server)
     {
-        var extensionId = ReadText(server, "name");
-        var version = ReadText(server, "version");
+        var extensionId = MarketFetch.Text(server, "name");
+        var version = MarketFetch.Text(server, "version");
         if (string.IsNullOrWhiteSpace(extensionId) || string.IsNullOrWhiteSpace(version))
             return null;
 
-        var title = ReadText(server, "title");
-        var description = Bound(ReadText(server, "description"), MaxDescriptionChars);
+        var title = MarketFetch.Text(server, "title");
+        var description = MarketFetch.Bound(MarketFetch.Text(server, "description"), MaxDescriptionChars);
 
         // repository is an object ({url, source}), not a string; the registry's own shape.
         var repository = server.TryGetProperty("repository", out var repo) && repo.ValueKind == JsonValueKind.Object
-            ? ReadText(repo, "url")
+            ? MarketFetch.Text(repo, "url")
             : null;
         var homepage = repository is not null
             && Uri.TryCreate(repository, UriKind.Absolute, out var repositoryUri)
@@ -313,11 +211,11 @@ internal static class McpRegistrySource
             detailJson = JsonSerializer.Serialize(detail);
         }
 
-        return new Entry(
+        return new MarketEntry(
             extensionId.Trim(),
             version.Trim(),
             MarketEntryKinds.McpServer,
-            Bound(string.IsNullOrWhiteSpace(title) ? extensionId : title!.Trim(), 512) ?? extensionId,
+            MarketFetch.Bound(string.IsNullOrWhiteSpace(title) ? extensionId : title!.Trim(), 512) ?? extensionId,
             description,
             detailJson,
             CanonicalJson.Sha256Hex(server));
@@ -338,8 +236,8 @@ internal static class McpRegistrySource
                 var value = element.ValueKind != JsonValueKind.Object
                     ? null
                     : element.TryGetProperty("transport", out var nested) && nested.ValueKind == JsonValueKind.Object
-                        ? ReadText(nested, "type")
-                        : ReadText(element, "type", "transport_type");
+                        ? MarketFetch.Text(nested, "type")
+                        : MarketFetch.Text(element, "type", "transport_type");
 
                 if (!string.IsNullOrWhiteSpace(value) && !found.Contains(value, StringComparer.OrdinalIgnoreCase))
                     found.Add(value.Trim());
@@ -356,7 +254,7 @@ internal static class McpRegistrySource
 
         foreach (var element in elements.EnumerateArray())
         {
-            var value = ReadText(element, keys);
+            var value = MarketFetch.Text(element, keys);
             if (!string.IsNullOrWhiteSpace(value))
                 return value.Trim();
         }
@@ -384,7 +282,7 @@ internal static class McpRegistrySource
             return (null, "This entry publishes no package record, so there is no command to install.");
         }
 
-        var registryType = (ReadText(package, "registryType", "registry_type") ?? string.Empty).Trim().ToLowerInvariant();
+        var registryType = (MarketFetch.Text(package, "registryType", "registry_type") ?? string.Empty).Trim().ToLowerInvariant();
         if (!IsIdentifierShape(registryType))
             return (null, "This entry's registry type is missing or is not a plain name.");
 
@@ -392,22 +290,22 @@ internal static class McpRegistrySource
         // it as {"type": "stdio"}. The tool layer only knows how to spawn a command, so anything
         // that announces itself as non-stdio is refused rather than quietly reinterpreted.
         var transport = package.TryGetProperty("transport", out var nested) && nested.ValueKind == JsonValueKind.Object
-            ? ReadText(nested, "type")
-            : ReadText(package, "transport_type");
+            ? MarketFetch.Text(nested, "type")
+            : MarketFetch.Text(package, "transport_type");
         if (transport is not null && !string.Equals(transport.Trim(), "stdio", StringComparison.OrdinalIgnoreCase))
             return (null, $"This entry publishes a {transport.Trim()} package; the tool layer starts servers by command.");
 
-        var version = Token(ReadText(package, "version") ?? ReadText(server, "version"), MaxVersionChars);
+        var version = Token(MarketFetch.Text(package, "version") ?? MarketFetch.Text(server, "version"), MaxVersionChars);
         if (version is null || version is "latest" or "next" or "*" or "0.0.0")
             return (null, "This entry has no exact version to pin, so installing it would mean trusting whatever "
                 + "the package host serves at run time.");
 
-        var identifier = Token(ReadText(package, "identifier", "name"), MaxIdentifierChars);
+        var identifier = Token(MarketFetch.Text(package, "identifier", "name"), MaxIdentifierChars);
         if (identifier is null)
             return (null, "This entry's package identifier is missing or carries characters a command line cannot "
                 + "carry safely.");
 
-        var command = Token(ReadText(package, "runtimeHint") ?? LauncherFor(registryType), MaxCommandChars);
+        var command = Token(MarketFetch.Text(package, "runtimeHint") ?? LauncherFor(registryType), MaxCommandChars);
         if (command is null)
             return (null, $"Core has no launcher rule for registry type '{registryType}', so it cannot name a command to run.");
 
@@ -470,11 +368,11 @@ internal static class McpRegistrySource
                 if (item.ValueKind != JsonValueKind.Object)
                     continue;
 
-                var type = ReadText(item, "type");
+                var type = MarketFetch.Text(item, "type");
                 if (type is not null && !type.Equals("positional", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var value = ReadText(item, "value");
+                var value = MarketFetch.Text(item, "value");
                 if (!string.IsNullOrWhiteSpace(value))
                     yield return value.Trim();
             }
@@ -518,7 +416,7 @@ internal static class McpRegistrySource
             if (item.ValueKind != JsonValueKind.Object || result.Count >= MaxEnvironmentRequests)
                 continue;
 
-            var name = Token(ReadText(item, "name"), MaxEnvironmentNameChars);
+            var name = Token(MarketFetch.Text(item, "name"), MaxEnvironmentNameChars);
             if (name is null)
                 continue;
 
@@ -527,7 +425,7 @@ internal static class McpRegistrySource
                 ["name"] = name,
                 ["required"] = item.TryGetProperty("isRequired", out var required) && required.ValueKind == JsonValueKind.True,
                 ["secret"] = item.TryGetProperty("isSecret", out var secret) && secret.ValueKind == JsonValueKind.True,
-                ["description"] = Bound(ReadText(item, "description"), MaxEnvironmentDescriptionChars),
+                ["description"] = MarketFetch.Bound(MarketFetch.Text(item, "description"), MaxEnvironmentDescriptionChars),
             });
         }
 
@@ -567,36 +465,6 @@ internal static class McpRegistrySource
     private static string Substitute(string value, string version) =>
         value.Replace("{version}", version, StringComparison.OrdinalIgnoreCase);
 
-    private static string? ReadText(JsonElement element, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
-                return value.GetString();
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Length-bound without cutting mid-surrogate-pair, and null for empty rather than a string
-    /// of nothing — an absent description and a blank one should not be two wire shapes.
-    /// </summary>
-    private static string? Bound(string? value, int max)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var trimmed = value.Trim();
-        if (trimmed.Length <= max)
-            return trimmed;
-
-        var cut = trimmed[..max];
-        if (char.IsHighSurrogate(cut[^1]))
-            cut = cut[..^1];
-
-        return cut;
-    }
 }
 
 /// <summary>

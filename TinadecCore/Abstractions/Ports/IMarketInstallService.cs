@@ -79,4 +79,23 @@ public static class MarketInstallPolicy
     public const string VersionPinNote =
         "The pinned version is the package host's name for a release, not a content digest: a host "
         + "can serve different bytes for the same version. Nothing here has downloaded or run the package.";
+
+    /// <summary>
+    /// Ceiling on a fetched <c>SKILL.md</c> a proposal may carry. <see
+    /// cref="WorkspaceSkillPolicy.MaxFileBytes"/> is the size at which the loader refuses to parse a
+    /// skill at all, so a proposal above this line freezes bytes that the workspace would never
+    /// advertise — the install would succeed and do nothing.
+    /// </summary>
+    public const long MaxSkillBodyBytes = WorkspaceSkillPolicy.MaxFileBytes;
+
+    /// <summary>
+    /// Stated instead of <see cref="VersionPinNote"/> for a kind whose content Core reads itself.
+    /// The difference is real, not rhetorical: a package host serves whatever it means by a version
+    /// string at run time, while a skill install writes the exact bytes that were fetched, hashed,
+    /// and shown — and never fetches again at apply.
+    /// </summary>
+    public const string ContentPinNote =
+        "These bytes were fetched once, when the proposal was previewed, and are what the write will "
+        + "put on disk; Core does not re-read the source when the approval is granted. The source can "
+        + "publish a different file afterwards, and this proposal will still write these.";
 }

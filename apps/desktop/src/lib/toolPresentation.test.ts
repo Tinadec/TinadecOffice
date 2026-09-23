@@ -19,11 +19,13 @@ import {
  * design document — the last time this layer's id list was written from imagination it
  * shipped four components that branched on tools which do not exist. If the provider
  * gains or renames a tool, update PROVIDER_TOOL_IDS from a fresh probe, do not extend it
- * by guesswork.
+ * by guesswork. The hash covers every `Description` too, so a tool whose wording changed
+ * moves `manifest_hash` without moving `tool_count` (2026-09-23: `write_file` began
+ * creating missing parent directories inside the workspace — 50 ids before and after).
  */
 const MEASURED_MANIFEST = {
   protocol_version: 2,
-  manifest_hash: 'd578f134e326f0f4d229e60a7409fd9c73e73d168650bcafe8e8d20dd0ecba06',
+  manifest_hash: 'f8efeb8d6298283d7d69be2e1912b4f7f403bf69ebb1adcd31262775f8f14a8d',
   tool_count: 50
 } as const
 

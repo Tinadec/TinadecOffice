@@ -116,24 +116,66 @@ public sealed class FileSystemToolsTests : IDisposable
     }
 
     [Fact]
-    public async Task WriteAsync_RejectsUnsafeOverwriteAndMissingParent()
+    public async Task WriteAsync_RejectsAnUnsafeOverwriteOfAnExistingFile()
     {
         var path = _workspace.CreateFile("existing.txt", "original");
 
         var noHash = await FileSystemTools.WriteAsync(new WriteFileParams { FilePath = path, Content = "replacement" }, CancellationToken.None);
         var wrongHash = await FileSystemTools.WriteAsync(new WriteFileParams { FilePath = path, Content = "replacement", FileHash = "bad" }, CancellationToken.None);
-        var missingParent = await FileSystemTools.WriteAsync(new WriteFileParams
-        {
-            FilePath = Path.Combine(_workspace.Path, "missing", "new.txt"),
-            Content = "new"
-        }, CancellationToken.None);
 
         Assert.False(noHash.Success);
         Assert.Contains("file_hash is required", noHash.Error, StringComparison.OrdinalIgnoreCase);
         Assert.False(wrongHash.Success);
         Assert.Contains("file_hash mismatch", wrongHash.Error, StringComparison.OrdinalIgnoreCase);
-        Assert.False(missingParent.Success);
         Assert.Equal("original", ReadSharedText(path));
+    }
+
+    /// <summary>
+    /// An install is one file in a directory that does not exist yet — a workspace that never held a
+    /// skill has no `skills/` either — so `write_file` creates the missing parents rather than the
+    /// caller needing a second approval for a directory. This test is the boundary of that: inside the
+    /// workspace it may build a tree, and nowhere else may it.
+    /// </summary>
+    [Fact]
+    public async Task WriteAsync_CreatesMissingParentsInsideTheWorkspace_AndRefusesEveryWhereElse()
+    {
+        var skill = Path.Combine(_workspace.Path, "skills", "release-notes", "SKILL.md");
+        var created = await FileSystemTools.WriteAsync(new WriteFileParams
+        {
+            FilePath = skill,
+            Content = "---\nname: release-notes\ndescription: Group commits into a note.\n---\n",
+        }, CancellationToken.None);
+
+        Assert.True(created.Success, created.Error);
+        Assert.True(File.Exists(skill));
+        Assert.Equal(
+            "---\nname: release-notes\ndescription: Group commits into a note.\n---\n",
+            ReadSharedText(skill));
+
+        // A path element that is already a file is not a directory, and creating "under" it would
+        // have to replace it — which is the overwrite case, and that one needs a file_hash.
+        var blocker = _workspace.CreateFile("blocker.txt", "not a directory");
+        var throughFile = await FileSystemTools.WriteAsync(new WriteFileParams
+        {
+            FilePath = Path.Combine(blocker, "child.md"),
+            Content = "child",
+        }, CancellationToken.None);
+
+        Assert.False(throughFile.Success);
+        Assert.Equal("not a directory", ReadSharedText(blocker));
+
+        // The interesting refusal: a nonexistent path outside the workspace used to fail because its
+        // parent was missing. Now that the tool can build parents, it must still fail because the
+        // path is not in the workspace at all.
+        var outside = Path.Combine(Path.GetTempPath(), $"tinadec-mkdir-{Guid.NewGuid():N}", "deep", "new.txt");
+        var escaped = await FileSystemTools.WriteAsync(new WriteFileParams
+        {
+            FilePath = outside,
+            Content = "escaped",
+        }, CancellationToken.None);
+
+        Assert.False(escaped.Success);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(outside)!));
     }
 
     [Fact]

@@ -66,7 +66,9 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
 
         Assert.Equal(JsonValueKind.Array, body.GetProperty("sources").ValueKind);
         Assert.Empty(body.GetProperty("sources").EnumerateArray());
-        Assert.Equal("mcp_registry", Assert.Single(body.GetProperty("supported_kinds").EnumerateArray()).GetString());
+        var kinds = body.GetProperty("supported_kinds").EnumerateArray()
+            .Select(x => x.GetString()!).ToArray();
+        Assert.Equal(["mcp_registry", "skill_repository"], kinds);
     }
 
     [Theory]
@@ -95,17 +97,20 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
     [Fact]
     public async Task CreatingASource_RefusesAKindWithNoAdapter_AndListsWhatWorks()
     {
+        // M4 is the kind with no adapter yet. The point of the answer is that a picker is told
+        // which kinds exist *now*, so the example has to be one this build genuinely cannot read.
         var response = await Client.PostAsJsonAsync("/api/v1/market/sources", new
         {
-            name = "skills",
-            kind = "skill_repository",
-            location = "https://example.com/skills",
+            name = "clis",
+            kind = "cli_runtime",
+            location = "https://example.com/runtimes",
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal("unsupported_market_source_kind", body.GetProperty("code").GetString());
         Assert.Contains("mcp_registry", body.GetProperty("message").GetString());
+        Assert.Contains("skill_repository", body.GetProperty("message").GetString());
     }
 
     [Fact]
@@ -928,6 +933,299 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         Assert.DoesNotContain(@"""value""", proposal.GetProperty("content").GetString()!);
         Assert.Contains("API_KEY", string.Join(',', (proposal.GetProperty("warnings").EnumerateArray()
             .Select(w => w.GetString()).ToArray())));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Skill repositories: an index of names, one document each, and a write that lands
+    // where the workspace's own skill loader looks.
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private const string SkillIndexLocation = "https://skills.example.com/catalog/index.json";
+    private const string SkillSource = "https://skills.example.com/catalog/pdf-forms/SKILL.md";
+
+    [Fact]
+    public async Task ASkillIndexListsItsRows_AndReadsNoDocumentToDone()
+    {
+        Provider.Replies.Enqueue(Wire.Ok(SkillIndex(
+            new SkillRow("pdf-forms", "1.2.0", Description: "Fill PDF forms"),
+            new SkillRow("git-triage"))));
+
+        var source = await CreateSkillSourceAsync();
+        var result = await RefreshAsync(source);
+
+        Assert.Equal(2, result.GetProperty("fetched_rows").GetInt32());
+        Assert.Equal(0, result.GetProperty("refused_rows").GetInt32());
+
+        // One request for the whole market. A 400-skill repository must not cost 401 fetches to
+        // answer a list call, and the document is not needed to decide what is worth reading.
+        Assert.Single(Provider.Urls);
+        Assert.Equal(SkillIndexLocation, Provider.Urls[0]);
+
+        var page = await CatalogAsync();
+        var row = page.GetProperty("items").EnumerateArray()
+            .First(x => x.GetProperty("extension_id").GetString() == "pdf-forms");
+
+        Assert.Equal("skill", row.GetProperty("kind").GetString());
+        Assert.Equal("1.2.0", row.GetProperty("version").GetString());
+        Assert.True(row.GetProperty("installable").GetBoolean());
+
+        // A row with no version is still a row: for a skill the pin is the document's bytes, not a
+        // string in the index, so the listing has nothing to refuse.
+        var bare = page.GetProperty("items").EnumerateArray()
+            .First(x => x.GetProperty("extension_id").GetString() == "git-triage");
+        Assert.Equal("unversioned", bare.GetProperty("version").GetString());
+    }
+
+    [Fact]
+    public async Task ARowWhoseNameIsNotASkillNameIsCounted_AndNeverStored()
+    {
+        Provider.Replies.Enqueue(Wire.Ok(SkillIndex(
+            new SkillRow("ok-skill"),
+            new SkillRow("Bad_Name"),
+            new SkillRow("has space"),
+            new SkillRow("nested/dir"),
+            new SkillRow(null))));
+
+        var source = await CreateSkillSourceAsync();
+        var result = await RefreshAsync(source);
+
+        // Stored only if it could be a directory name, because that single rule is what makes the
+        // identifier safe to put into a path and a URL. The rest is a count, not a silence.
+        Assert.Equal(1, result.GetProperty("fetched_rows").GetInt32());
+        Assert.Equal(4, result.GetProperty("refused_rows").GetInt32());
+
+        var page = await CatalogAsync();
+        Assert.Equal("ok-skill", page.GetProperty("items")[0].GetProperty("extension_id").GetString());
+    }
+
+    [Fact]
+    public async Task AnIndexThatIsNotASkillIndexNamesTheShapeItExpected()
+    {
+        var source = await CreateSkillSourceAsync();
+
+        // A registry answer handed to the skill adapter is a misconfigured source, and the reader
+        // has to be able to tell that from a repository that genuinely holds nothing.
+        Provider.Replies.Enqueue(Wire.Ok(Listing(S("io.github.a/ok", "1.0.0"))));
+        var result = await RefreshAsync(source);
+
+        Assert.Equal("unavailable", result.GetProperty("outcome").GetString());
+        Assert.Contains("'skills'", result.GetProperty("reason").GetString());
+        Assert.Empty((await CatalogAsync()).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task PreviewingASkillFetchesTheDocumentOnce_AndWritesWhereTheLoaderLooks()
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms", "1.2.0",
+            // An address the listing offers. Core reads it as display text and dials nothing but
+            // the path it composes itself, so a hostile index cannot point a market read at a host
+            // the operator never approved.
+            DeclaredUrl: "https://evil.example.com/pdf-forms.md"));
+
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("skill") });
+
+        Assert.Equal(2, Provider.Urls.Count);
+        Assert.Equal(SkillSource, Provider.Urls[1]);
+        Assert.DoesNotContain(Provider.Urls, u => u.Contains("evil.example.com", StringComparison.Ordinal));
+
+        // The provider is not asked where its config lives: a skill's target is decided by this
+        // process, because the loader that advertises skills is in here.
+        Assert.DoesNotContain(Provider.Requests, r => r.ToolId == "mcp_list");
+
+        var target = proposal.GetProperty("target_path").GetString()!;
+        Assert.Equal(
+            Path.Combine(_root, "workspace", "skills", "pdf-forms", "SKILL.md"),
+            Path.GetFullPath(target));
+        Assert.Equal("skill", proposal.GetProperty("kind").GetString());
+        Assert.Contains("name: pdf-forms", proposal.GetProperty("content").GetString());
+
+        // A skill has no package host to mistrust, so the package warning would be a lie here.
+        var warnings = string.Join(',', proposal.GetProperty("warnings").EnumerateArray()
+            .Select(w => w.GetString()).ToArray());
+        Assert.Contains("fetched once", warnings, StringComparison.Ordinal);
+        Assert.DoesNotContain("package host", warnings, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApplyingASkillProposalQueuesTheFrozenBytes_AndGoesBackToTheNetworkNever()
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("freeze") });
+        var target = Path.GetFullPath(proposal.GetProperty("target_path").GetString()!);
+
+        Provider.Urls.Clear();
+        var applied = await PostAsync(
+            $"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+
+        // What was reviewed is what will be written — the source could have republished the file by
+        // now, and this install does not care, because the bytes are already in the proposal.
+        Assert.Empty(Provider.Urls);
+
+        var action = await GetJsonAsync(
+            "/api/v1/user/tool-actions/" + applied.GetProperty("install_action_id").GetString());
+        Assert.Equal("write_file", action.GetProperty("tool_id").GetString());
+        Assert.False(File.Exists(target), "an approval has to happen before anything is on disk.");
+    }
+
+    [Theory]
+    // Each of these is a document that would sit in the workspace and be refused by the loader on
+    // every turn — an install that "succeeds" and advertises nothing is the failure this can least
+    // afford, so the check runs at preview, against the rule the workspace itself applies.
+    [InlineData("---\nname: other-skill\ndescription: d\n---\n", "does not match its directory")]
+    [InlineData("---\nname: pdf-forms\ndescription: d\ndisabled: true\n---\n", "marked off by its own")]
+    [InlineData("# no frontmatter here\n", "no YAML frontmatter")]
+    [InlineData("---\nname: pdf-forms\n---\n", "no 'description'")]
+    public async Task ASkillDocumentThatWouldNotAdvertiseItselfIsRefused(string body, string because)
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+        Provider.Replies.Enqueue(Wire.Ok(body));
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("refused") });
+
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Conflict, "preview of an unusable skill");
+        var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("market_install_not_expressible", problem.GetProperty("code").GetString());
+        Assert.Contains(because, problem.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task ASkillAlreadyInTheWayIsReplacedOnItsOwnTerms_NotByGuess()
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+
+        // Somebody hand-wrote a skill at the same path. The bytes on disk are shown to the reviewer
+        // as what is being replaced, and the write is conditioned on them, so a change underneath
+        // makes the tool refuse rather than win.
+        Provider.QueueConfig("# my own notes about pdf\n", "sha256:mine");
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("replace") });
+
+        Assert.Equal("sha256:mine", proposal.GetProperty("expected_file_hash").GetString());
+        Assert.Contains("name: pdf-forms", proposal.GetProperty("content").GetString());
+        Assert.Contains("already exists", string.Join(',', proposal.GetProperty("warnings").EnumerateArray()
+            .Select(w => w.GetString()).ToArray()));
+    }
+
+    [Fact]
+    public async Task ADocumentsLargerThanAWorkspaceWouldReadIsRefusedWhole()
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")
+            + new string('x', (int)MarketInstallPolicy.MaxSkillBodyBytes)));
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("huge") });
+
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Conflict, "preview of an oversized skill");
+        var message = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("message").GetString();
+        Assert.Contains("more than the", message);
+        // Both ceilings are named because a document past one is unreadable to the loader and a
+        // document past the other cannot be frozen into a proposal; a source author can only fix
+        // what the answer tells them which of the two broke.
+        Assert.Contains(MarketInstallPolicy.MaxSkillBodyBytes.ToString(), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RemovingASkillIsRefusedWithTheSwitchThatActuallyExists()
+    {
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("remove") });
+        await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+
+        var installation = Assert.Single((await GetJsonAsync("/api/v1/market/installations"))
+            .GetProperty("installations").EnumerateArray());
+        Assert.Equal("skill", installation.GetProperty("kind").GetString());
+
+        var response = await Client.PostAsync(
+            $"/api/v1/market/installations/{installation.GetProperty("id").GetString()}/uninstall-preview",
+            new StringContent(string.Empty, Encoding.UTF8, "application/json"));
+
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Conflict, "uninstall of a skill");
+        var message = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("message").GetString();
+        Assert.Contains("no delete", message);
+        Assert.Contains("disabled: true", message, StringComparison.Ordinal);
+        Assert.Contains("skills/pdf-forms/SKILL.md", message, StringComparison.Ordinal);
+    }
+
+    private static string SkillDocument(string name) =>
+        $"---\nname: {name}\ndescription: Reads a PDF form and fills it.\n---\n\n"
+        + $"# {name}\n\nOpen the referenced script before answering.\n";
+
+    private async Task<string> CreateSkillSourceAsync(string name = "skills")
+    {
+        var response = await Client.PostAsJsonAsync("/api/v1/market/sources", new
+        {
+            name,
+            kind = "skill_repository",
+            location = SkillIndexLocation,
+            enabled = true,
+        });
+
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, $"POST skill source ({name})");
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("id").GetString()!;
+    }
+
+    /// <summary>
+    /// Refreshes an index and returns the catalog id of its first row. The refresh is part of the
+    /// helper rather than the caller because a row that never got stored is otherwise discovered
+    /// three assertions later, as an empty collection with no reason attached to it.
+    /// </summary>
+    private async Task<string> RefreshedSkillEntryAsync(string sourceId, params SkillRow[] rows)
+    {
+        Provider.Replies.Enqueue(Wire.Ok(SkillIndex(rows)));
+        var result = await RefreshAsync(sourceId);
+        Assert.Equal(rows.Length, result.GetProperty("fetched_rows").GetInt32());
+
+        var page = await CatalogAsync($"q={Uri.EscapeDataString(rows[0].Name!)}");
+        var item = Assert.Single(page.GetProperty("items").EnumerateArray());
+        return item.GetProperty("catalog_id").GetString()!;
+    }
+
+    /// <summary>
+    /// One row of a skill index, built as a document rather than a string so the escaping is the
+    /// JSON writer's. <paramref name="declaredUrl"/> is the address the listing offers and Core
+    /// ignores when it decides what to fetch.
+    /// </summary>
+    private sealed record SkillRow(
+        string? Name,
+        string? Version = null,
+        string? Title = null,
+        string? Description = null,
+        string? DeclaredUrl = null);
+
+    private static string SkillIndex(params SkillRow[] rows)
+    {
+        var items = new JsonArray();
+        foreach (var row in rows)
+        {
+            var item = new JsonObject();
+            if (row.Name is not null) item["name"] = row.Name;
+            if (row.Version is not null) item["version"] = row.Version;
+            if (row.Title is not null) item["title"] = row.Title;
+            if (row.Description is not null) item["description"] = row.Description;
+            if (row.DeclaredUrl is not null) item["url"] = row.DeclaredUrl;
+            items.Add(item);
+        }
+
+        return new JsonObject { ["skills"] = items }.ToJsonString();
     }
 
     /// <summary>Refreshes one listing and returns the catalog id of its first stored row.</summary>

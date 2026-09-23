@@ -108,13 +108,13 @@ test('enable, disable, and delete are forwarded rather than answered locally', a
 
 test('a market refusal keeps its own code instead of becoming conflict', async () => {
   globalThis.fetch = (async () => new Response(
-    JSON.stringify({ code: 'unsupported_market_source_kind', message: 'No market adapter reads kind ' + "'skill_repository'." }),
+    JSON.stringify({ code: 'unsupported_market_source_kind', message: 'No market adapter reads kind ' + "'cli_runtime'." }),
     { status: 400, headers: { 'content-type': 'application/json' } },
   )) as typeof fetch;
 
   const response = await app.handle(new Request('http://gateway.local/api/v1/market/sources', {
     method: 'POST',
-    body: JSON.stringify({ name: 'x', kind: 'skill_repository', location: 'https://example.com' }),
+    body: JSON.stringify({ name: 'x', kind: 'cli_runtime', location: 'https://example.com' }),
     headers: { 'content-type': 'application/json' },
   }));
   assert.equal(response.status, 400);

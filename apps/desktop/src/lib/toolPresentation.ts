@@ -24,7 +24,7 @@ import {
  *
  * The id sets below are not transcribed from a document. They are the output of a live
  * stdio session against the built provider (`tool_id: "#manifest"`, protocol v2,
- * manifest_hash `d578f134e326f0f4d229e60a7409fd9c73e73d168650bcafe8e8d20dd0ecba06`,
+ * manifest_hash `f8efeb8d6298283d7d69be2e1912b4f7f403bf69ebb1adcd31262775f8f14a8d`,
  * 50 tools) plus Core's own declarations, cited per constant. `toolPresentation.test.ts`
  * pins both directions: every id this module branches on must be in a measured set, and
  * the six invented ids must never reappear as quoted tool ids anywhere in `src/`.

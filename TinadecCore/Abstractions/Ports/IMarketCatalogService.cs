@@ -104,6 +104,12 @@ public static class MarketEntryKinds
     public static readonly IReadOnlyList<string> All = ["mcp-server", "skill", "acp-adapter", "tool-pack"];
 
     public const string McpServer = "mcp-server";
+
+    /// <summary>
+    /// One Agent Skills document: a <c>SKILL.md</c> whose frontmatter names itself. The only kind
+    /// whose install is a file the workspace itself reads, rather than a server the provider starts.
+    /// </summary>
+    public const string Skill = "skill";
 }
 
 /// <summary>

@@ -9,8 +9,8 @@ using TinadecCore.Contracts.Dtos;
 namespace TinadecCore.Skills;
 
 /// <summary>
-/// Installs a market entry by writing one line into the Tool Provider's server config — and
-/// nothing else.
+/// Installs a market entry by writing one file, and exactly one file: the Tool Provider's server
+/// config for an MCP server, or <c>skills/&lt;name&gt;/SKILL.md</c> for a skill.
 ///
 /// The surface is built so that no call in it can touch a filesystem or start a process:
 /// <list type="bullet">
@@ -115,18 +115,66 @@ public sealed class MarketInstallService : IMarketInstallService
             action == MarketInstallActions.Install ? projectId : subject.ProjectId,
             scope,
             cancellationToken).ConfigureAwait(false);
-        // An entry that cannot become a command is refused before anything is read: "this row is a
-        // remote endpoint, not a server we can start" is a fact about the entry, not about the
-        // project's config, and the two get different codes because a client branches on them
-        // differently — one is "pick another row", the other is "fix the workspace".
-        if (action == MarketInstallActions.Install
-            && (string.IsNullOrWhiteSpace(subject.Command) || subject.Args.Count == 0))
-        {
-            throw new MarketCatalogException(
-                MarketErrorCodes.NotExpressible,
-                subject.Blocker ?? "This catalog entry carries no pinned command.");
-        }
+        // An entry that cannot become an action is refused before anything is read: "this row is a
+        // remote endpoint, not a server we can start" and "this skill is already installed, and Core
+        // has no delete" are facts about the entry, not about the project's config, and the two get
+        // different codes because a client branches on them differently — one is "pick another
+        // row", the other is "fix the workspace".
+        AssertExpressible(action, subject);
 
+        var plan = string.Equals(subject.Kind, MarketEntryKinds.Skill, StringComparison.OrdinalIgnoreCase)
+            ? await PlanSkillInstallAsync(project, subject, cancellationToken).ConfigureAwait(false)
+            : await PlanConfigWriteAsync(project, subject, action, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var record = new MarketInstallProposalRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = scope.TenantId,
+            WorkspaceId = scope.WorkspaceId,
+            ProjectId = project.ProjectId,
+            PrincipalId = scope.PrincipalId,
+            Action = action,
+            CatalogId = action == MarketInstallActions.Install ? subjectId : subject.CatalogId,
+            SourceId = subject.SourceId,
+            InstallationId = action == MarketInstallActions.Uninstall ? subjectId : null,
+            ExtensionId = subject.ExtensionId,
+            Version = subject.Version,
+            Kind = subject.Kind,
+            ServerId = subject.ServerId,
+            Command = subject.Command,
+            ArgsJson = JsonSerializer.Serialize(subject.Args),
+            EnvironmentJson = JsonSerializer.Serialize(subject.Environment),
+            ReplacesCommand = plan.ReplacesCommand,
+            TargetPath = plan.TargetPath,
+            Content = plan.Content,
+            // Null when the file could not be read as well as when it is absent: either way the
+            // write is conditioned on creating, never on overwriting.
+            ExpectedFileHash = plan.ExpectedFileHash,
+            ManifestHash = subject.ManifestHash,
+            Status = "pending",
+            CreatedAt = now,
+            ExpiresAt = now.Add(MarketInstallPolicy.ProposalTtl),
+        };
+        record.Digest = ComputeDigest(record);
+
+        db.InstallProposals.Add(record);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return ToProposalDto(record, subject, plan);
+    }
+
+    /// <summary>
+    /// The proposal for one server entry: the provider's own config path, and that path's content
+    /// with the entry added or taken back out. Read through the tool layer, so the bytes Core
+    /// freezes are the bytes the write will be conditioned on.
+    /// </summary>
+    private async Task<Plan> PlanConfigWriteAsync(
+        ProjectReference project,
+        ProposalSubject subject,
+        string action,
+        CancellationToken cancellationToken)
+    {
         var configPath = await ConfigPathAsync(project.RootPath, cancellationToken).ConfigureAwait(false);
         if (!IsInsideWorkspace(configPath, project.RootPath))
         {
@@ -160,42 +208,109 @@ public sealed class MarketInstallService : IMarketInstallService
                 + "characters Core will freeze into a proposal.");
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var record = new MarketInstallProposalRecord
+        return new Plan(configPath, merge.Content, unreadable ? null : currentHash, merge.ReplacesCommand, null);
+    }
+
+    /// <summary>
+    /// The proposal for one skill: the document itself, fetched here and only here, written to the
+    /// path <see cref="WorkspaceSkillPolicy"/> reads skills from.
+    ///
+    /// Three things follow from that being a file rather than a config entry. The fetch happens at
+    /// preview and never again, so the bytes a person approves are the bytes that land — a skill has
+    /// no version string to be betrayed by. The target is composed by Core, not reported by the
+    /// provider, because the workspace's own layout decides where a skill is. And an existing file
+    /// is conditioned on its current hash rather than skipped: replacing a hand-written skill is a
+    /// decision a person is entitled to make with the old bytes and the new ones on one screen.
+    /// </summary>
+    private async Task<Plan> PlanSkillInstallAsync(
+        ProjectReference project,
+        ProposalSubject subject,
+        CancellationToken cancellationToken)
+    {
+        var (body, error) = await SkillRepositorySource.ReadDocumentAsync(
+            _provider, project.RootPath, subject.SourceLocation, subject.ExtensionId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (body is null)
         {
-            Id = Guid.NewGuid(),
-            TenantId = scope.TenantId,
-            WorkspaceId = scope.WorkspaceId,
-            ProjectId = project.ProjectId,
-            PrincipalId = scope.PrincipalId,
-            Action = action,
-            CatalogId = action == MarketInstallActions.Install ? subjectId : subject.CatalogId,
-            SourceId = subject.SourceId,
-            InstallationId = action == MarketInstallActions.Uninstall ? subjectId : null,
-            ExtensionId = subject.ExtensionId,
-            Version = subject.Version,
-            Kind = subject.Kind,
-            ServerId = subject.ServerId,
-            Command = subject.Command,
-            ArgsJson = JsonSerializer.Serialize(subject.Args),
-            EnvironmentJson = JsonSerializer.Serialize(subject.Environment),
-            ReplacesCommand = merge.ReplacesCommand,
-            TargetPath = configPath,
-            Content = merge.Content,
-            // Null when the file could not be read as well as when it is absent: either way the
-            // write is conditioned on creating, never on overwriting.
-            ExpectedFileHash = unreadable ? null : currentHash,
-            ManifestHash = subject.ManifestHash,
-            Status = "pending",
-            CreatedAt = now,
-            ExpiresAt = now.Add(MarketInstallPolicy.ProposalTtl),
-        };
-        record.Digest = ComputeDigest(record);
+            throw new MarketCatalogException(
+                MarketErrorCodes.NotExpressible,
+                error ?? "The skill document could not be read, so there is nothing to review.");
+        }
 
-        db.InstallProposals.Add(record);
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        // The document is checked against the rule the workspace will apply to it later. A skill
+        // whose frontmatter names a different directory, or carries its own off switch, is refused
+        // here rather than written into the project to be silently dropped by the loader — an
+        // install that "succeeds" and changes nothing is the failure this surface can least afford.
+        var relative = WorkspaceSkillPolicy.RelativePathFor(subject.ExtensionId);
+        if (!WorkspaceSkillPolicy.TryRead(body, subject.ExtensionId, relative, out _, out var reason))
+        {
+            throw new MarketCatalogException(
+                MarketErrorCodes.NotExpressible,
+                $"The document at {relative} is not an installable skill: {reason}.");
+        }
 
-        return ToProposalDto(record, subject);
+        var target = WorkspaceSkillPolicy.AbsolutePathFor(project.RootPath, subject.ExtensionId);
+        if (!IsInsideWorkspace(target, project.RootPath))
+        {
+            // Unreachable for a name that passed the format rule, and kept because this is the
+            // last gate before a path reaches a write.
+            throw new MarketCatalogException(
+                MarketErrorCodes.TargetUnresolved,
+                $"'{target}' is not inside the project root '{project.RootPath}'.");
+        }
+
+        var (existing, existingHash, unreadable) = await CurrentConfigAsync(
+            project.RootPath, target, cancellationToken).ConfigureAwait(false);
+
+        var warning = existing is null
+            ? null
+            : $"'{relative}' already exists in this project"
+              + (unreadable ? " and Core could not read it" : $" ({existing.Length} characters)")
+              + ". Approving this replaces it; the bytes being overwritten are recoverable from the "
+              + "write's own snapshot.";
+
+        return new Plan(target, body, existingHash, null, warning);
+    }
+
+    /// <summary>
+    /// The two kinds this build can put on disk, and the one thing each needs in order to be a
+    /// proposal at all. Nothing here decides where a file goes — that is the plan's job — this only
+    /// refuses the entries that have no shape Core knows how to write.
+    /// </summary>
+    private static void AssertExpressible(string action, ProposalSubject subject)
+    {
+        var isSkill = string.Equals(subject.Kind, MarketEntryKinds.Skill, StringComparison.OrdinalIgnoreCase);
+
+        if (action == MarketInstallActions.Install)
+        {
+            if (isSkill)
+                return;
+
+            if (string.IsNullOrWhiteSpace(subject.Command) || subject.Args.Count == 0)
+            {
+                throw new MarketCatalogException(
+                    MarketErrorCodes.NotExpressible,
+                    subject.Blocker ?? "This catalog entry carries no pinned command.");
+            }
+
+            return;
+        }
+
+        if (!isSkill)
+            return;
+
+        // A skill is one file, and taking it back means removing that file. The tool layer writes,
+        // reads, and lists — it has no delete and no rename — so a "removal" proposal here would
+        // have to be some other action wearing its name. The switch that does exist is inside the
+        // document, and saying so is the useful answer.
+        throw new MarketCatalogException(
+            MarketErrorCodes.NotExpressible,
+            $"This build cannot remove a skill: '{subject.ExtensionId}' is the file "
+            + $"{WorkspaceSkillPolicy.RelativePathFor(subject.ExtensionId)}, and the tool layer offers "
+            + "no delete. Turn it off by adding "
+            + $"'{WorkspaceSkillPolicy.DisabledKey}: true' to its own frontmatter, or remove the file "
+            + "yourself; either way it stops being advertised to the model without being uninstalled.");
     }
 
     public async Task<MarketInstallationDto> ApplyAsync(
@@ -865,17 +980,25 @@ public sealed class MarketInstallService : IMarketInstallService
             ?? throw new MarketCatalogException(
                 MarketErrorCodes.SourceNotFound, "The source that listed this entry no longer exists.");
 
-        // Only an MCP server row has a meaning here. A skill or adapter row would need a different
-        // file and a different review, and is refused by name rather than attempted as a server.
-        if (!string.Equals(row.Kind, MarketEntryKinds.McpServer, StringComparison.OrdinalIgnoreCase))
+        // Two kinds have a meaning here. A row of any other kind is refused by name: an ACP adapter
+        // or a tool pack would need a different file, a different target, and a different review, and
+        // guessing at one from the shape of another is how a config entry nobody reads gets written.
+        var isSkill = string.Equals(row.Kind, MarketEntryKinds.Skill, StringComparison.OrdinalIgnoreCase);
+        if (!isSkill && !string.Equals(row.Kind, MarketEntryKinds.McpServer, StringComparison.OrdinalIgnoreCase))
         {
             throw new MarketCatalogException(
                 MarketErrorCodes.NotExpressible,
-                $"This build installs kind '{MarketEntryKinds.McpServer}' only; this entry is "
-                + $"'{row.Kind}'.");
+                $"This build installs '{MarketEntryKinds.McpServer}' and '{MarketEntryKinds.Skill}' entries; "
+                + $"this entry is '{row.Kind}'.");
         }
 
-        var (command, args, environment, blocker) = ReadInstall(row);
+        string? command = null;
+        IReadOnlyList<string> args = [];
+        IReadOnlyList<MarketEnvironmentRequestDto> environment = [];
+        string? blocker = null;
+        if (!isSkill)
+            (command, args, environment, blocker) = ReadInstall(row);
+
         return new ProposalSubject(
             default,
             row.SourceId,
@@ -892,7 +1015,8 @@ public sealed class MarketInstallService : IMarketInstallService
             environment,
             blocker ?? (source.Enabled
                 ? null
-                : $"'{source.Name}' is disabled, so a refresh could not confirm this entry is still published."));
+                : $"'{source.Name}' is disabled, so a refresh could not confirm this entry is still published."),
+            source.Location);
     }
 
     /// <summary>
@@ -992,9 +1116,20 @@ public sealed class MarketInstallService : IMarketInstallService
         return name ?? UnknownSource;
     }
 
-    private static MarketInstallProposalDto ToProposalDto(MarketInstallProposalRecord proposal, ProposalSubject subject)
+    private static MarketInstallProposalDto ToProposalDto(
+        MarketInstallProposalRecord proposal,
+        ProposalSubject subject,
+        Plan plan)
     {
-        var warnings = new List<string> { MarketInstallPolicy.VersionPinNote };
+        var isSkill = string.Equals(proposal.Kind, MarketEntryKinds.Skill, StringComparison.OrdinalIgnoreCase);
+
+        // One note per proposal, chosen by what the pin actually is. Printing the package warning on
+        // a skill would tell a reviewer their approved bytes might change, when the bytes they are
+        // looking at are exactly the bytes that will be written.
+        var warnings = new List<string>
+        {
+            isSkill ? MarketInstallPolicy.ContentPinNote : MarketInstallPolicy.VersionPinNote,
+        };
 
         if (subject.Environment.Count > 0)
         {
@@ -1004,10 +1139,13 @@ public sealed class MarketInstallService : IMarketInstallService
                 + "start until they are configured.");
         }
 
+        if (plan.Warning is { } replacing)
+            warnings.Add(replacing);
+
         if (proposal.ExpectedFileHash is null)
         {
-            warnings.Add("Core found no readable config file to condition the write on, so this is a "
-                + "create: if the file does exist, the write will be refused rather than overwrite it.");
+            warnings.Add("Core found no readable file at the target, so this is a create: if something "
+                + "is there after all, the write will be refused rather than overwrite it.");
         }
 
         return new MarketInstallProposalDto
@@ -1076,5 +1214,21 @@ public sealed class MarketInstallService : IMarketInstallService
         string? Command,
         IReadOnlyList<string> Args,
         IReadOnlyList<MarketEnvironmentRequestDto> Environment,
-        string? Blocker);
+        string? Blocker,
+        // Where the source that listed this entry is read from. Only a skill install uses it, and
+        // only to compose the document address; a removal carries an empty string because it writes
+        // a file Core has already been told about and never goes back to the market.
+        string SourceLocation = "");
+
+    /// <summary>
+    /// One file a proposal would write: where, with what bytes, conditioned on which current hash,
+    /// and the two sentences a reviewer needs that the record itself cannot carry. Computed by
+    /// whichever plan fits the entry's kind, and the only shape a preview hands to the store.
+    /// </summary>
+    private sealed record Plan(
+        string TargetPath,
+        string Content,
+        string? ExpectedFileHash,
+        string? ReplacesCommand,
+        string? Warning);
 }

@@ -23,13 +23,19 @@ namespace TinadecCore.Skills;
 ///
 /// Scope is the tenant, not the workspace: a market source describes where software comes from,
 /// which is an organisation-level fact, and <c>extension_sources</c> carries no workspace column.
+///
+/// One adapter per source <c>kind</c>, and the kind is the only thing that selects it. Both
+/// adapters speak through <see cref="MarketFetch"/> and return a <see cref="MarketListing"/>, so a
+/// refresh reports the same outcome vocabulary — fetched, blocked, unavailable — whatever format the
+/// source publishes, and adding a third format cannot change what a caller has to handle.
 /// </summary>
 public sealed class MarketCatalogService : IMarketCatalogService
 {
     /// <summary>Source kinds with an adapter in this build. Creating any other is refused.</summary>
-    public static readonly IReadOnlyList<string> AdapterKinds = [McpRegistryKind];
+    public static readonly IReadOnlyList<string> AdapterKinds = [McpRegistryKind, SkillRepositoryKind];
 
     private const string McpRegistryKind = "mcp_registry";
+    private const string SkillRepositoryKind = "skill_repository";
     private const int MaxNameChars = 128;
     private const int MaxLocationChars = 2048;
 
@@ -201,36 +207,27 @@ public sealed class MarketCatalogService : IMarketCatalogService
                 MarketErrorCodes.SourceDisabled,
                 $"'{source.Name}' is disabled, so refreshing it would change nothing. Enable it first.");
 
-        if (!string.Equals(source.Kind, McpRegistryKind, StringComparison.OrdinalIgnoreCase))
-        {
-            // Reachable only for a row created before an adapter was removed. Reported rather
-            // than thrown: the caller asked what happened to this source, and "nothing, because"
-            // is the answer.
-            return Unavailable(source, $"This build has no adapter for kind '{source.Kind}'.");
-        }
+        var listing = await ReadAsync(source, workspaceRoot, cancellationToken).ConfigureAwait(false);
 
-        var result = await McpRegistrySource.FetchAsync(_provider, workspaceRoot, source.Location, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!result.Completed)
+        if (!listing.Completed)
         {
             // The previous catalog stands. The reason is stored on the source row so the next
             // reader of /sources sees it without having to have been present for the failure.
-            source.LastError = result.Reason;
+            source.LastError = listing.Reason;
             source.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
             return new MarketRefreshDto
             {
                 SourceId = source.Id.ToString("N"),
-                Outcome = result.Blocked ? MarketRefreshOutcome.Blocked : MarketRefreshOutcome.Unavailable,
-                Reason = result.Reason,
-                PagesFetched = result.PagesFetched,
+                Outcome = listing.Blocked ? MarketRefreshOutcome.Blocked : MarketRefreshOutcome.Unavailable,
+                Reason = listing.Reason,
+                PagesFetched = listing.PagesFetched,
             };
         }
 
         var stored = await ReplaceEntriesAsync(
-            db, scope.TenantId, source.Id, result.Entries, result.TruncatedPages, cancellationToken)
+            db, scope.TenantId, source.Id, listing.Entries, listing.TruncatedPages, cancellationToken)
             .ConfigureAwait(false);
 
         var now = DateTimeOffset.UtcNow;
@@ -244,19 +241,43 @@ public sealed class MarketCatalogService : IMarketCatalogService
             SourceId = source.Id.ToString("N"),
             Outcome = MarketRefreshOutcome.Fetched,
             FetchedRows = stored.Stored,
-            RefusedRows = result.RefusedRows,
+            RefusedRows = listing.RefusedRows,
             // Only a full pass is entitled to call a vanished row a deletion. When the page
             // ceiling cut the listing short, everything past it is still expected to exist, so
             // nothing was removed even though the listing did not mention it.
-            RemovedRows = result.TruncatedPages ? 0 : stored.Removed,
+            RemovedRows = listing.TruncatedPages ? 0 : stored.Removed,
             // Listed rows that a live installation still references. Without this the arithmetic
             // of a refresh would not close: rows the source stopped listing neither vanished nor
             // stayed silently.
-            RetainedRows = result.TruncatedPages ? 0 : stored.Retained,
-            PagesFetched = result.PagesFetched,
-            TruncatedPages = result.TruncatedPages,
+            RetainedRows = listing.TruncatedPages ? 0 : stored.Retained,
+            PagesFetched = listing.PagesFetched,
+            TruncatedPages = listing.TruncatedPages,
             RefreshedAt = now,
         };
+    }
+
+    /// <summary>
+    /// The one place a source kind turns into an adapter. A row whose kind has no adapter here is
+    /// reported, not guessed at: the alternative is reading a skill index as if it were a server
+    /// listing and storing an empty catalog that looks like a market with nothing in it.
+    /// </summary>
+    private async Task<MarketListing> ReadAsync(
+        ExtensionSourceRecord source,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(source.Kind, McpRegistryKind, StringComparison.OrdinalIgnoreCase))
+            return await McpRegistrySource
+                .FetchAsync(_provider, workspaceRoot, source.Location, cancellationToken).ConfigureAwait(false);
+
+        if (string.Equals(source.Kind, SkillRepositoryKind, StringComparison.OrdinalIgnoreCase))
+            return await SkillRepositorySource
+                .FetchAsync(_provider, workspaceRoot, source.Location, cancellationToken).ConfigureAwait(false);
+
+        // Reachable only for a row created before an adapter was removed. Reported rather
+        // than thrown: the caller asked what happened to this source, and "nothing, because"
+        // is the answer.
+        return MarketListing.Failed($"This build has no adapter for kind '{source.Kind}'.");
     }
 
     /// <summary>
@@ -272,7 +293,7 @@ public sealed class MarketCatalogService : IMarketCatalogService
         IntegrationDbContext db,
         Guid tenant,
         Guid sourceId,
-        IReadOnlyList<McpRegistrySource.Entry> incoming,
+        IReadOnlyList<MarketEntry> incoming,
         bool partial,
         CancellationToken cancellationToken)
     {
@@ -516,13 +537,6 @@ public sealed class MarketCatalogService : IMarketCatalogService
         LastRefreshedAt = source.LastRefreshedAt,
         LastError = string.IsNullOrEmpty(source.LastError) ? null : source.LastError,
         EntryCount = entryCount,
-    };
-
-    private static MarketRefreshDto Unavailable(ExtensionSourceRecord source, string reason) => new()
-    {
-        SourceId = source.Id.ToString("N"),
-        Outcome = MarketRefreshOutcome.Unavailable,
-        Reason = reason,
     };
 
     /// <summary>

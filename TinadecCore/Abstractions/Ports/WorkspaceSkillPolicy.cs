@@ -24,12 +24,23 @@ namespace TinadecCore.Abstractions.Ports;
 /// author who writes a SKILL.md and sees nothing happen is entitled to know which of the two failed
 /// — the reference logs a warning for exactly this, and a workspace whose agent ignores its skills
 /// has no log window to look in.</item>
+/// <item>A well-formed skill can still be switched off by its own <see cref="DisabledKey"/>
+/// frontmatter. Off is not the same as broken: it is refused with its own sentence rather than
+/// reported as a validation failure, and it is the file — not a renamed directory or a row in a
+/// database the model never sees — that carries the state.</item>
 /// </list>
 /// </summary>
 public static class WorkspaceSkillPolicy
 {
     /// <summary>The only file name that makes a directory a skill.</summary>
     public const string SkillFileName = "SKILL.md";
+
+    /// <summary>
+    /// Frontmatter key that keeps a well-formed skill out of the index while leaving it on disk. A
+    /// skill that is off is still a skill somebody wrote, so it is named in the refusal list rather
+    /// than made invisible.
+    /// </summary>
+    public const string DisabledKey = "disabled";
 
     /// <summary>Directory names searched for skills, relative to the workspace root, in order.</summary>
     public static readonly IReadOnlyList<string> SkillRoots = ["skills"];
@@ -109,15 +120,35 @@ public static class WorkspaceSkillPolicy
 
         string? name = null;
         string? description = null;
+        var disabled = false;
         foreach (var line in match.Groups[1].Value.Split('\n'))
         {
             var separator = line.IndexOf(':');
             if (separator <= 0) continue;
             var key = line[..separator].Trim();
             var value = line[(separator + 1)..].Trim().Trim('"', '\'');
+
+            if (string.Equals(key, DisabledKey, StringComparison.OrdinalIgnoreCase))
+            {
+                // The switch is the key's presence, not its spelling: writing `disabled` at all is the
+                // author's intent, so only an explicit negative re-enables. A typo like `disabled: tru`
+                // must not silently leave the skill advertised, and a bare `disabled:` — what a person
+                // types, which YAML reads as null — must not be ignored either.
+                disabled = !IsExplicitNegation(value);
+                continue;
+            }
+
             if (value.Length == 0) continue;
             if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase)) name ??= value;
             else if (string.Equals(key, "description", StringComparison.OrdinalIgnoreCase)) description ??= value;
+        }
+
+        if (disabled)
+        {
+            // Reported rather than skipped: a workspace whose skill went quiet with no explanation is
+            // the same debugging wall this policy already refuses to build for a malformed file.
+            reason = $"marked off by its own '{DisabledKey}:' frontmatter";
+            return false;
         }
 
         if (!ValidateName(name, out var nameReason))
@@ -169,6 +200,33 @@ public static class WorkspaceSkillPolicy
 
         reason = string.Empty;
         return true;
+    }
+
+    /// <summary>The handful of values that mean "no, this skill is on".</summary>
+    private static bool IsExplicitNegation(string value) =>
+        value.Equals("false", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("no", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("off", StringComparison.OrdinalIgnoreCase)
+        || value == "0";
+
+    /// <summary>
+    /// Where a skill of this name lives, relative to the workspace root. Composed rather than
+    /// stored: the caller has already run <see cref="ValidateName"/>, so a name that could not be
+    /// advertised is also a name that cannot produce a path — which is what keeps an installed
+    /// skill's identifier, the directory holding it, and the line the index shows to the model from
+    /// ever drifting apart.
+    /// </summary>
+    public static string RelativePathFor(string name) => $"{SkillRoots[0]}/{name}/{SkillFileName}";
+
+    /// <summary>The same path, rooted at a workspace. Forward and back slashes both resolve.</summary>
+    public static string AbsolutePathFor(string workspaceRoot, string name)
+    {
+        var segments = RelativePathFor(name).Split('/');
+        var path = workspaceRoot;
+        foreach (var segment in segments)
+            path = Path.Combine(path, segment);
+
+        return Path.GetFullPath(path);
     }
 
     /// <summary>

@@ -26,7 +26,7 @@
 | 斜杠命令与命令面板共用一张表 | `lib/appCommands.ts` 唯一 owner | `4292851`/`63cafac`/`b474263`，`appCommands.test.ts` 22 例 + 路由名存在性断言 |
 | 一个窗口一条会话事件流 | 桌面流读取收敛 | `a2be1e5`/`499d7a8`（并删掉死 WebSocket 组合式与规则文件仍在推荐的传输接缝 `2eb4bbd`） |
 | 项目指令文件进入上下文（优先级/截断/越界拒绝） | Core `Context` | `091d4bf`，`WorkspaceInstructionApiTests.cs` 走真 provider + 真文件系统 |
-| 工作区技能渐进披露（索引上屏、正文留在磁盘） | Core `Skills` + `Context` | `9870854`，`WorkspaceSkillApiTests.cs` + `WorkspaceSkillPolicyTests.cs` 32 例 |
+| 工作区技能渐进披露（索引上屏、正文留在磁盘）＋ 技能可以被市场装、可以被自己的文件关掉 | Core `Skills` + `Context` | `9870854`，跨层 #38（M3）补 `disabled:` 停用权威与路径组合规则：两个文件合计 **44 例**（`--filter ~WorkspaceSkill` `SKILL_EXIT=0`，静态核过 11 + 33 = 44；本批 +12＝停用键 11 例 ＋ 相对/绝对路径 1 例） |
 | run 被告知了什么：来源清单、逐条 token 价格、被预算裁掉的条目及原价 | `context.packed` → orchestration 投影 → 桌面 | `c4b1ac9`/`c0402e8` + 本批（`WorkspaceInstructionApiTests` 新增 2 例含负对照；`FullDuplexEndpointTests` 按索引断言行数/同序/求和） |
 | 快照逐文件评审与单文件撤销（带 `expected_sha256`） | Core 三端点 + `SnapshotsPage.vue` | `957d061`/`3558181`，`WorkspaceFileReviewApiTests.cs` 16 例 |
 | 记忆评审面：候选→裁决→晋升→检索→撤销，可筛且带依据/适用条件/失效条件 | Core 读写口 + 网关 2 条代理 + `MemoryPage.vue` | `6b80210`/`ea013bd`/`4f2f0aa`，`MemoryReviewApiTests.cs` + 网关 `runtimeProxy.test.ts` |
@@ -36,6 +36,7 @@
 | 一次 run 花了多少：按 `model × provider` 分组的 token 与调用数，读不到就明说读不到 | Core `model-invocations` 分页 → 网关透传 → `OrchestrationTab.vue` + `lib/modelUsage.ts` | 本批。Core `ModelInvocationQueryTests.cs` 7 例——其中 2 例**先在未修复的构建上跑红**（`from`/`to` 窗口、并列时间戳的游标），另有 1 例钉住 OpenAPI 里 token 三字段并禁止 `prompt_tokens`/`completion_tokens` 回来；桌面 `modelUsage.test.ts` 7 例 + `OrchestrationTab.test.ts` 14 例（新 7），断"分组求和 == 每行 `total_tokens` 之和""缺字段渲染成'未报告'而不是 0""翻页被截断时必须自称是下限"。**注意这一行的 A 级只覆盖"读得到、算得对、说得出边界"**：没有任何单价，所以它不是成本面板（见 §4 第 11 条） |
 | 一次 5xx 会自己留下原因（进程内有界环，不上外线；测试主机读回） | Core `AspNetCore/ServerFailureJournal.cs` | `ServerFailureJournalTests.cs` 6 例：同一次响应**同时**断 body 不含异常类型名 + journal 含最内层消息；4xx 不进环；裸宿主（未 `AddTinadecCoreHttp`）仍能回 500；环形淘汰；`Describe()` 把"给修的人看的那一行"格式钉死（含外层/最内层两段）。消费面：`ServerFailureReports.AssertStatusAsync` 是这句话唯一的构造点，9 个断言站（FullDuplex/ToolChain/Unattended 三个 stream helper 的 admission·run-stream·replay）经它读回；另有一条经真 Core host 的读回断言（`Interactions_StaleContextRevision_Returns409` 断 `LastFailure()` 报"没有 5xx"）。**并且它已在真实红例上兑现过一次**：本批整解门禁的一条 `POST /interactions` 500 第一次带出 `server cause: … SQLite Error 5: 'unable to delete/modify collation sequence due to active statements'`（详见 §4.5 第 5 条）。自 host 走 `CliRuntimeTestServers` 既有做法 |
 | MCP 人类侧读面：清单带出处、连不上的服务器仍在场、逐服务器给 schema | Core `AspNetCore/Endpoints/McpEndpoints.cs` + 网关两条内联代理 + `MarketDetailCard.vue` | 三侧各钉一遍：`McpInventoryApiTests.cs` 10 例（承重那条是 `Tools_AreNeverReportedMissing_WhileTheProviderCannotAnswer`——provider 起不来时**必须** 200 + `source:"tool_provider_unavailable"`，不能 404 让人以为服务器被删了）、网关 `mcpProxy.test.ts` 5 例（含"外部契约里只剩这两条 MCP 路由"与"`mcp_server_not_found` 不被压成 `conflict`"）、桌面 `MarketController.test.ts` 3 例（变异 `mcpReadSucceeded → true` 恰红 1 例） |
+| 技能市场源与技能安装：listing 只给名字，地址与字节由 Core 决定（预览取一次、审批后落盘、无卸载只有停用开关） | Core `Skills/SkillRepositorySource.cs` + `MarketFetch.cs`/`MarketListing.cs` + `MarketInstallService` 的 plan 分叉 | 本批。`MarketCatalogApiTests` 50 → **62 例**（新增 12 个方法 / 12 例，含 4 例"装了也不会播"的 Theory；定向跑 `TEST_EXIT=0`、62/62）。承重四条：`PreviewingASkillFetchesTheDocumentOnce_AndWritesWhereTheLoaderLooks` 断被拨的第二个 URL **恰是 Core 拼出来的** `…/catalog/pdf-forms/SKILL.md`、listing 自带的 `evil.example.com` 一次都没被拨、且 `mcp_list` 从未被调用（技能目标不来自 provider）；`ApplyingASkillProposalQueuesTheFrozenBytes_AndGoesBackToTheNetworkNever` 在 apply 前清空 URL 台账，断**零次出网**；`ASkillDocumentThatWouldNotAdvertiseItselfIsRefused` 四例（目录名不符 / 缺 description / 无 frontmatter / 自我 `disabled:`）都在任何写面之前 409；`RemovingASkillIsRefusedWithTheSwitchThatActuallyExists` 断拒绝语里同时有"没有 delete"、`disabled: true` 和那个文件路径。工具层前置改动（`write_file` 创建工作区内缺失父目录）有 3 条腿的独立回归，承重那条是"工作区外那个目录至今不存在"。技能路径组合另有 `WorkspaceSkillPolicyTests` 一条直测（相对/绝对两条拼法必须等于加载器会读的那一层）。**这一行只覆盖"提案与校验语义"**：见 §5h 缺口①——索引格式是本仓自定契约，从未对真实仓库拨过一次 |
 | 市场安装：一条提案把"装一个 MCP 服务器"变成一次可审的写盘（冻结字节 + 摘要绑定 + 人工审批 + 版本固定） | Core `Skills/MarketInstallService.cs` + 网关四条纯代理 + `MarketDetailCard.vue` | 本批。Core `MarketCatalogApiTests` 里 15 个新增方法 / **21 例**（含 7 例"包名不能安全出现在命令行"的 Theory；类内总数 29→50，全解 486→507 与此同数。承重三条：`ApplyingAProposalQueuesOneGovernedWrite_AndWritesNothingItself` 断 apply 之后目标文件**仍不存在**且动作停在 `requires_approval`；`AProviderWhoseConfigLivesOutsideTheProjectIsRefused_NotWrittenSomewherePlausible` 断路径来自 provider 而非猜测；`AProposalWhoseFrozenBytesMovedIsRefused_NotAppliedOnTheReviewersBehalf` 篡改存储字节后断 412 + `write_file` 从未到达 provider）。变异对照：把 digest 守卫改成常量假 → **恰红 1 例**且红例名就是这一条，其余 49 例仍绿。网关 `marketProxy.test.ts` 9 例（含"外部契约里的 market 路径集合与 Core 实现的**恰好**一致"的 deep-equal，和"412 过期提案不被压成 conflict"）。桌面 `MarketController.test.ts` 8 例装/卸用例（含断 `decideApproval` **从未被调用**——页面不再替用户做决定）。**这一行的 A 级只覆盖"提案语义与治理路径"**：真实 registry 的一次端到端安装从未跑过（CI 不出网，全部用例由进程内 fake provider 驱动），且固定的是包宿主的版本**名字**、不是内容摘要也没有签名校验（见 §4 与 `docs/security.md`） |
 | 工具层：`mcp_list include_schema=false` / `mcp_search` 默认参数不再整次失败 | `TinadecTools/Tools/Mcp/{McpModels,McpClientPool}.cs` | `tests/TinadecTools.Tests/McpPassThroughTests.cs` 2 例，断的是**序列化之后**的线上形状（解析断 `input_schema` 为 JSON null）。修前修后各用本地 provider 靶子实测一次：修前 `{call_id:1,success:false,error:"Operation is not valid due to the current state of the object."}` |
 
@@ -75,11 +76,46 @@
 11. **几类工作台常见能力本仓完全没有**，此前散在各阶段里没有汇总：生命周期 hooks/自定义命令、编辑器级诊断（LSP）接线、行内 tab 补全、跨会话全局搜索。这一条我**没有逐条核对参考项目的实现细节**，只断言"本仓没有"，不借用别人的功能清单当自己的需求。**其中的成本/用量面本批已经交付了一半**（见 §2 与 §3）：`model-invocations` 现在有一个"这一轮花了多少 token"的读面，但**仍然没有金额**——本仓没有任何单价表，也没有能放它的配置面，所以这块面板刻意只说 tokens，并写明了为什么。剩下的部分照旧是缺口：跨 run/跨会话的汇总、按 provider 的配额与上限、"这次改动值不值这么多"的比较。
 12. **异常按消息字符串分类，会把基础设施故障伪装成产品错误**（本批现场撞到的）。`AspNetCore/TinadecCoreHttpExtensions.cs` 有一条 `InvalidOperationException when Message.Contains("model"|"Provider") => 400 model_not_configured`，而 EF 的"这条 LINQ 翻译不了"消息里天然带着实体类名——`DbSet<ModelInvocationRecord>` 里的 "Model" 就足够让一次**查询翻译失败**以"模型没配好"的身份返回 400。后果不是难看：调用方看到的是"去配一下模型"，真因是"这个过滤器在本仓的 SQLite 上从来不能用"，而 400 也**不会进上一批刚上线的 5xx journal**（`server cause: the handler recorded no 5xx`），于是新诊断面在这条路上恰好帮不上。本批只修了那一条路由，**没有动全局分类规则**（它服务所有路由，改法的影响面我看不到全）。要收的是：给"未映射的基础设施异常"一个不会被字符串劫持的落点，并让 4xx 的机器码能反查到自己那句 detail。另外同源的、已被本仓三处注释写明但**没有任何一条测试守着**的规则也一并登记在这里：SQLite 翻译不了 `DateTimeOffset` 列与参数的比较，任何新读路由直接写 `Where(x => x.SomethingAt >= value)` 都会变成上面这种 400。
 
-13. **市场的写那一半仍然全是占位**（本轮把 MCP 的**读**那一半转成 A，读以外没动）：Core 的 `market/sources`（POST）、`market/sources/{id}/refresh`、`market/catalog/{id}`、`extensions/*` 依旧 501/占位，桌面 `MarketController.ensureBuiltInSources()` 开局仍 POST 两个 `tinadec://marketplace/*` 源并被拒——区别只剩"不再被 `catch {}` 咽掉"。要接的源已按实测形状定下：官方 MCP Registry `GET https://registry.modelcontextprotocol.io/v0/servers`（**免密钥可读**，顶层 `{servers, metadata:{nextCursor,count}}`，条目 `{server:{name,title,description,version,remotes[{type,url}],repository,packages}, _meta}`）、SKILL.md 仓库、本机 CLI 目录（复用已实现的 `model-providers/cli/discover` + `connect`）。用户已拍板安装边界＝**可拉包，但必须审批 + 固定版本**，落盘复用 `UserToolAction` + 受治理 `write_file`（自动带快照与逐文件撤销）。分阶段登记在任务 #36（只读耐久面）/#37（提案+审批安装）/#38（技能源）/#39（CLI 目录 + 页面重写）。
+13. **市场还没接的源与没跑过的外网**（本条原写于 M1 之前，那时"写那一半全是占位"；#37 与 #38 已经把读、提案、审批、落盘两条 kind 都做完，所以这里改成登记**真正剩下的**）：
+    ① `cli_runtime` 仍无 adapter（M4）——创建即 400 `unsupported_market_source_kind`，本机 CLI 目录要复用的 `model-providers/cli/discover` + `connect` 已存在但没接进市场；
+    ② 两种源都**从未对真实外网跑过一次**：CI 不出网，官方 MCP Registry 与任何技能仓库的读取全部由进程内 fake provider 驱动；`mcp_registry` 的形状是照真实 `/v0/servers` 答案抄的，而 `skill_repository` 的索引格式 `{skills:[{name,description,version,url}]}` 是 **Core 自己定的契约**，没有公开生态在发布它，桌面选择器会把它显示成裸字符串 `skill_repository`——三者都必须写清楚而不是含糊过去；
+    ③ 只支持**单文件技能**（只有 `SKILL.md`，没有 `references/` 之类随附资产），且布局必须是 `<索引目录>/<name>/SKILL.md`——布局不同的仓库本 adapter 读不到，这是"Core 只拨源自己那一个 origin"换来的代价；
+    ④ 技能没有卸载面（工具层无 delete/rename），能用的开关是文档自己的 `disabled: true`；
+    ⑤ 市场页面接线与游标分页属 M4：`src/pages/MarketPage.vue` 仍是一层 `UieCanvas` 壳，出货面在 `apps/TinadecUI/src/components/cards/market/*`。
+    安装边界由用户拍板且未放宽：**可拉包，但必须审批 + 固定版本**，落盘只走 `UserToolAction` + 受治理 `write_file`（自带快照与逐文件撤销）。分阶段登记在任务 #36（只读耐久面）/#37（提案+审批安装）/#38（技能源）/#39（CLI 目录 + 页面重写）。
 14. **MCP 服务器归属看不出来**（本轮新登记，挡住 #37 的一部分）：provider 读的 `mcp_servers.json` 里没有任何"这一条是哪次安装写的"信息，所以"这个扩展装了哪些服务器"无法回答。桌面此前按 `server.extension_id` 过滤，而该字段 Core 从不发 ⇒ 那个区块**在真机上永远不渲染**，只在预览画廊的假数据里"工作"过——本轮已把假数据改成真形状并删掉该区块。要恢复这个问法，得先给安装记录持久化归属。
 15. **连不上的 MCP 服务器，给人看的是乱码**：清单里 `error` 字段带子进程 stderr 尾部，zh-CN 机器上非 ASCII 部分全成 `\ufffd`（实测：`'definitely-not-a-real-binary' \ufffd\ufffd\ufffd\ufffd…`）。解码发生在 ModelContextProtocol SDK 的 stderr 读取侧，不在本仓；结果是"为什么连不上"这句话对中文环境的使用者基本不可读。本轮只在界面如实显示原文，未伪造翻译。
 
 ## 5. 阶段末门禁实测（按批次记账，全部读日志里自己写的 `GATE_EXIT`/`EXIT`，不看管道退出码）
+
+### 5h. 2026-09-23 第八批：市场第二种源——一份技能文档，地址由 Core 拼，字节只取一次（#38 / M3）
+
+- **这一批的新风险不是"写盘"，是"写了盘之后模型会读它"**。M2 装的服务器在被启动之前是惰性的；`skills/<name>/SKILL.md` 一落地就进入上下文：名字与描述每轮都上屏，正文被模型自己打开。所以本批的测试重心从"路径与命令行能不能被污染"挪到"装进去的东西会不会真的被播发、以及人审的是不是就是落盘的那一份"。
+- **两种源，一套刷新词汇**。`MarketListing`/`MarketEntry`（一次刷新的结果）与 `MarketFetch`（`#fetch` 传输）从 registry adapter 里抽出来共用，`MarketCatalogService.ReadAsync` 成为唯一按 `source.Kind` 选 adapter 的位置；`AdapterKinds` 从一种变两种，`supported_kinds` 由 Core 报出、桌面选择器照它渲染（不在客户端写死清单）。顺带改掉一处旧口径：没有 adapter 的 kind 以前只回一句不落库，现在同样写进源行 `last_error`——"这个源读不了"必须对下一个读者仍然可见。
+- **listing 拿不到"拨哪儿"的权利**。索引只贡献 `name`/`description`/`version`/`homepage`；技能正文地址是 `<索引所在目录>/<name>/SKILL.md`，其中 `<name>` 必须先过 `WorkspaceSkillPolicy.ValidateName`，行才允许落库。于是市场每一次出网的 origin 仍然是注册源时人写下的那一个，路径段里不可能出现分隔符、`..` 或编码把戏；`url` 字段作为展示文本存下、永不拨号（回归直接断言被拨的两个 URL 里没有 `evil.example.com`）。
+- **正文只在预览时取一次，装之前先按加载器的规则复检**。`PlanSkillInstallAsync`：`#fetch` → 大小闸（`MaxSkillBodyBytes` 就是 `MaxFileBytes`，太大就根本不会被冻结）→ `WorkspaceSkillPolicy.TryRead`（名字必须等于目录名、描述长度、不能已被自己的 `disabled:` 关掉）→ 目标绝对路径 + 现存字节 hash 一起冻进提案。apply 不再出网，回归把这一点钉成 `Provider.Urls` 在 apply 之后为空。四种"装了也不会播"的形状（目录名不符 / 缺描述 / 无 frontmatter / 自我停用）各一条 Theory。
+- **替换要看着旧字节被替换**。目标已存在时提案带上它当前的 `expected_file_hash`，`warnings[]` 点名"这个文件已经在了"，写盘条件因此只能是"覆盖我刚看过的那一份"；读不到就退化成"只创建"，与 M2 同一条 fail-safe。
+- **卸载对技能不存在**。工具层没有 delete/rename，能用的开关是文档自己的 `disabled: true`（本批前置改动把这条权威做进了 `WorkspaceSkillPolicy`，fail-closed：出现键即视为关，只有 `false/no/off/0` 算开）。`uninstall-preview` 对 `kind=skill` 一律 409，拒绝语同时说出文件路径与那个开关——把"做不到"和"做错了"分成两句话。
+- **另一处前置改动在工具层**：`write_file` 现在创建工作区内的缺失父目录（不曾有技能的工作区也没有 `skills/`），工具清单摘要随之改变，桌面三处登记面（`toolPresentation.ts` 头注、其测试里的 `MEASURED_MANIFEST`、`apps/desktop/AGENTS.md`）同批改到实测值。工作区外、符号链接、父目录是文件这三条仍拒绝，回归断"工作区外那个目录至今仍然存在"。
+- **`warnings[]` 第一行按 kind 分叉**：包给 `VersionPinNote`（版本名不是内容摘要），技能给 `ContentPinNote`（审的就是写的，源之后改了也不影响这一次）。把包的警告印在技能提案上是一句假话——技能的字节不会变。
+- 已知缺口（诚实）：① 索引格式 `{skills:[{name,description,version,url}]}` 是 **Core 自己定的契约**，没有公开生态在发布它，也**从未对任何真实仓库拨过一次**（CI 不出网，全部由进程内 fake provider 驱动）；② 只支持**单文件技能**，带 `references/` 资产的目录装不了，且仓库布局必须是 `<索引目录>/<name>/SKILL.md`；③ 目录分页仍是 `offset`，技能源没有游标，M4 一并处理；④ 桌面没有"添加技能源"的入口级验证——`MarketPage.vue` 仍是一层 `UieCanvas` 壳，源类型选项渲染裸字符串 `skill_repository`；⑤ 台账身份是 `(project_id, server_id)`，跨 kind 同名会互相顶掉记录（今天两种源的命名规则不可能相等，已登记为任务 #43，M4 接第三种 kind 时做掉）；⑥ 审批通过到真正落盘之间市场侧仍不确认（治理层是唯一写者），"已安装"的可观察性仍取决于 `action_status` 的刷新时机。
+
+
+
+- **阶段末门禁实测（全部顺序跑，逐个读日志里自己写的退出码）**：Core 整解 `GATE_EXIT=0`、`BUILD_EXIT=0`——
+  `Api.Tests` **531/531**（17m25s）、`Governance` **44/44**、`Architecture` **17/17**、`AgentFramework` **329/329**；
+  定向两条分别是 `MarketCatalogApiTests` **62/62**（`TEST_EXIT=0`，本批 50→62）与 `--filter ~WorkspaceSkill` **44/44**
+  （`SKILL_EXIT=0`；两个文件静态相加正好 11 + 33 = 44，算式闭合）。
+  `TinadecTools.Tests` `TOOLS_EXIT=0`、**293/293**（38s，父目录那条新回归在列）。
+  Gateway `bun test src` `BUN_EXIT=0`、**72 pass / 0 fail**（11 文件；本批只把"无 adapter 的 kind"那条示例换成仍然无 adapter 的 `cli_runtime`，测试条数不变）。
+  Desktop `npm test` `TEST_EXIT=0`（**80 文件通过 / 1 跳过，746 例通过 / 14 跳过** ＋ electron `pass 24 / fail 0`）、
+  `npm run typecheck` `TSC_EXIT=0`、`npm run build` `BUILD_EXIT=0`、`npm run check:drift` `DRIFT_EXIT=0`。
+  **本批三份契约产物 0 行改动**（`openapi.core.json`/`openapi.external.json`/`schema.d.ts` 逐条 `git diff --numstat` 为空）：
+  技能安装走的是 M2 已有的 `install-preview`/`apply` 两条路由，多出来的只有 `kind` 的取值、`supported_kinds` 的第二项和几句新拒绝语——
+  这正是"没有新契约面"的证据，而不是"契约忘了更新"。
+- **§5g 的缺口②（"只有 `mcp-server` 一种 kind 可装"）与 §5f 的"只有一个 adapter"本批已兑现**，那两段作为批次账原文保留，以本条为准。
+
+
 
 ### 5g. 2026-09-23 第七批：市场第一次能"装"东西，装的却是一份提案（#37 / M2，含 #41 #42 前置守卫）
 
