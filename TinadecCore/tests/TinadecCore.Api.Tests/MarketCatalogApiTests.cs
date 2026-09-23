@@ -43,12 +43,26 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         _factory?.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_root)) Directory.Delete(_root, true);
-        return Task.CompletedTask;
+        // Two of the tests below hand the workspace to a real tool process, and a child keeps its
+        // working directory held for a moment after the host stops. Same retry the other
+        // real-process tests use (ToolChainEndpointTests) — a leftover temp directory is not worth
+        // a failure that names neither the market nor the behaviour under test.
+        for (var attempt = 0; attempt < 5 && Directory.Exists(_root); attempt++)
+        {
+            try
+            {
+                Directory.Delete(_root, recursive: true);
+                break;
+            }
+            catch (IOException)
+            {
+                await Task.Delay(500);
+            }
+        }
     }
 
     private MarketProvider Provider => ((Factory)_factory!).Provider;
@@ -1164,6 +1178,158 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         Assert.Contains("skills/pdf-forms/SKILL.md", message, StringComparison.Ordinal);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Against the real tool process
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The two gates a human has to pass an approved write through, in the order the durable state
+    /// puts them in: the permission envelope first, then the action's own approval. The only other
+    /// place this sequence is walked is <c>ApprovalFlowTests</c>.
+    /// </summary>
+    private async Task<string> ApproveAsync(string actionId)
+    {
+        var queued = await GetJsonAsync("/api/v1/user/tool-actions/" + actionId);
+        Assert.Equal("awaiting_user", queued.GetProperty("status").GetString());
+
+        var permission = await Client.PostAsJsonAsync(
+            $"/api/v1/governance/permission-requests/{queued.GetProperty("permission_request_id")}/decision",
+            new { approve = true, reason = "Reviewer confirmed the market install." });
+        await _factory!.AssertStatusAsync(permission, HttpStatusCode.Accepted, "permission decision");
+
+        var gated = await GetJsonAsync("/api/v1/user/tool-actions/" + actionId);
+        Assert.Equal("awaiting_approval", gated.GetProperty("status").GetString());
+
+        var decided = await Client.PostAsJsonAsync(
+            $"/api/v1/approvals/{gated.GetProperty("action_approval_id")}/decision",
+            new { decision = "approved", reason = "Reviewer approved the write." });
+        await _factory!.AssertStatusAsync(decided, HttpStatusCode.OK, "approval decision");
+
+        return (await GetJsonAsync("/api/v1/user/tool-actions/" + actionId)).GetProperty("status").GetString()!;
+    }
+
+    [RequiresTinadecToolsFact]
+    public async Task AnApprovedServerInstallLandsInTheFileTheProviderItselfReads()
+    {
+        Provider.Real = _factory!.Services.GetRequiredService<IToolProcessManager>();
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/live", "2.3.4", "@ac/live-server"));
+        var project = await CreateProjectAsync("live");
+        var root = Path.Combine(_root, "workspace");
+        var target = Path.Combine(root, "mcp_servers.json");
+
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+
+        // The path came out of the child process's own mcp_list, not out of a constant in here, so
+        // "the same path" is the strongest thing a test can say about it before anything is written.
+        Assert.Equal(Path.GetFullPath(target), Path.GetFullPath(proposal.GetProperty("target_path").GetString()!));
+        Assert.False(File.Exists(target), "Nothing is written before a human decides.");
+        Assert.True(!proposal.TryGetProperty("expected_file_hash", out var firstHash)
+            || string.IsNullOrEmpty(firstHash.GetString()), "There was no file for the first write to be conditioned on.");
+
+        var applied = await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+        Assert.Equal("completed", await ApproveAsync(applied.GetProperty("install_action_id").GetString()!));
+
+        var written = JsonDocument.Parse(await File.ReadAllTextAsync(target)).RootElement;
+        var server = Assert.Single(written.GetProperty("servers").EnumerateArray());
+        Assert.Equal(proposal.GetProperty("server_id").GetString(), server.GetProperty("id").GetString());
+        Assert.Equal("npx", server.GetProperty("command").GetString());
+        Assert.Contains("@ac/live-server@2.3.4", server.GetProperty("args").EnumerateArray()
+            .Select(arg => arg.GetString()).ToArray());
+
+        // The closed loop, and the reason this test exists: a second preview has to describe the
+        // entry that is now in the file, and it can only do that by reading it back through the same
+        // process that wrote it. The `-y` is the tell — that argument is in the proposal only as one
+        // element of a list, so a joined command line can only have come out of the bytes on disk.
+        var again = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+        Assert.Equal("npx -y @ac/live-server@2.3.4", again.GetProperty("replaces_command").GetString());
+        Assert.Equal(
+            await ProviderFileHashAsync(root, target),
+            again.GetProperty("expected_file_hash").GetString());
+
+        var row = Assert.Single((await GetJsonAsync("/api/v1/market/installations"))
+            .GetProperty("installations").EnumerateArray());
+        Assert.Equal("completed", row.GetProperty("action_status").GetString());
+
+        // The way out has to be a real edit of the same file rather than a rewrite of it: this
+        // server disappears and the document around it survives. Then the ledger stops carrying a
+        // row for something that is no longer installed, which is the only reason "installed" is an
+        // observable rather than a claim.
+        var removal = await PostAsync($"/api/v1/market/installations/{row.GetProperty("id").GetString()}/uninstall-preview");
+        await PostAsync($"/api/v1/market/install-proposals/{removal.GetProperty("id").GetString()}/apply");
+
+        var removing = Assert.Single((await GetJsonAsync("/api/v1/market/installations"))
+            .GetProperty("installations").EnumerateArray());
+        Assert.Equal("removing", removing.GetProperty("state").GetString());
+        Assert.Equal("completed", await ApproveAsync(removing.GetProperty("uninstall_action_id").GetString()!));
+
+        Assert.Empty(JsonDocument.Parse(await File.ReadAllTextAsync(target)).RootElement
+            .GetProperty("servers").EnumerateArray());
+        Assert.Empty((await GetJsonAsync("/api/v1/market/installations"))
+            .GetProperty("installations").EnumerateArray());
+    }
+
+    [RequiresTinadecToolsFact]
+    public async Task AnApprovedSkillInstallCreatesTheFolderTheLoaderLooksIn()
+    {
+        Provider.Real = _factory!.Services.GetRequiredService<IToolProcessManager>();
+        var source = await CreateSkillSourceAsync();
+        var entry = await RefreshedSkillEntryAsync(source, new SkillRow("pdf-forms"));
+        var project = await CreateProjectAsync("live-skill");
+        var root = Path.Combine(_root, "workspace");
+        var target = Path.Combine(root, "skills", "pdf-forms", "SKILL.md");
+
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+        Assert.Equal(Path.GetFullPath(target), Path.GetFullPath(proposal.GetProperty("target_path").GetString()!));
+
+        // The workspace has never held a skill, so `skills/` does not exist and the approved write
+        // has to create it. This is the step a fake provider cannot vouch for: the tool used to
+        // answer "the parent directory must already exist", and an install needing two approvals
+        // for one change is not an install.
+        Assert.False(Directory.Exists(Path.GetDirectoryName(target)!));
+
+        var applied = await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+        Assert.Equal("completed", await ApproveAsync(applied.GetProperty("install_action_id").GetString()!));
+
+        var body = await File.ReadAllTextAsync(target);
+        Assert.Contains("name: pdf-forms", body, StringComparison.Ordinal);
+        Assert.Contains("description: Reads a PDF form and fills it.", body, StringComparison.Ordinal);
+
+        Provider.Replies.Enqueue(Wire.Ok(SkillDocument("pdf-forms")));
+        var again = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+        // Both halves of this answer are read back out of the file the child process just created:
+        // the warning names a path Core only knows because read_file succeeded, and the hash is the
+        // tool's own value for those bytes — the shape of it is the tool's business, not Core's.
+        Assert.Contains("already exists", string.Join(',', again.GetProperty("warnings").EnumerateArray()
+            .Select(warning => warning.GetString()).ToArray()));
+        Assert.Equal(
+            await ProviderFileHashAsync(root, target),
+            again.GetProperty("expected_file_hash").GetString());
+    }
+
+    /// <summary>
+    /// Reads one file through the real tool process from the test side, so a proposal's conditional
+    /// hash can be compared against the number the tool itself reports rather than against a guess
+    /// at how it renders one.
+    /// </summary>
+    private async Task<string> ProviderFileHashAsync(string workspaceRoot, string path)
+    {
+        var response = await Provider.Real!.CallAsync(workspaceRoot, new ToolWireRequestDto
+        {
+            ToolId = "read_file",
+            Approved = true,
+            Params = JsonDocument.Parse(new JsonObject { ["filepath"] = path }.ToJsonString()).RootElement,
+        });
+
+        Assert.True(response.IsSuccess, $"The tool process could not read {path}: {response.Error}");
+        return response.Result?.GetProperty("file_hash").GetString() ?? string.Empty;
+    }
+
     private static string SkillDocument(string name) =>
         $"---\nname: {name}\ndescription: Reads a PDF form and fills it.\n---\n\n"
         + $"# {name}\n\nOpen the referenced script before answering.\n";
@@ -1569,8 +1735,23 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         internal List<string> ConfigPathsSeen { get; } = [];
         internal List<string?> FileHashesSeen { get; } = [];
 
+        /// <summary>
+        /// The real tool process, for the tests that ask what happened on disk rather than what came
+        /// back over the wire. Only <c>#fetch</c> stays simulated: it is the one call that would need
+        /// the network, and the provider blocks loopback addresses on purpose, so no local stand-in
+        /// server is reachable by design. Every other call — <c>mcp_list</c>, <c>read_file</c>,
+        /// <c>write_file</c> — goes to the child process, which means a test holding this has a real
+        /// file written by the same binary that will later read it back.
+        /// <para>
+        /// Forwarding happens before the bounding assertions below, because the executor that runs an
+        /// approved action calls with no timeout of its own and the test would fail on the harness
+        /// rather than on the behaviour it is checking.
+        /// </para>
+        /// </summary>
+        internal IToolProvider? Real { get; set; }
+
         public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Manifest();
+            Real is { } backend ? backend.EnsureStartedAsync(workspaceRoot, cancellationToken) : Manifest();
 
         /// <summary>
         /// A manifest that advertises <c>write_file</c> and hashes to itself: a user tool action
@@ -1578,7 +1759,7 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         /// to be as careful as the real process.
         /// </summary>
         public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Manifest();
+            Real is { } backend ? backend.GetManifestAsync(workspaceRoot, cancellationToken) : Manifest();
 
         private static Task<ToolManifestDto> Manifest()
         {
@@ -1614,6 +1795,9 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         {
             Requests.Add(request);
             if (Throw is { } failure) throw failure;
+
+            if (request.ToolId != "#fetch" && Real is { } backend)
+                return backend.CallAsync(workspaceRoot, request, timeout, cancellationToken);
 
             Assert.NotNull(timeout);
             Assert.True(timeout > TimeSpan.Zero, "Every market call reaches a network or a disk; it must be bounded.");
