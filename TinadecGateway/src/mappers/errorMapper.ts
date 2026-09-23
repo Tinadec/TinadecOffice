@@ -69,6 +69,15 @@ const ALLOWED_CODES = new Set([
   'market_source_disabled',
   'unsupported_market_source_kind',
   'invalid_market_source',
+  // The install surface's own refusals. Without these a 412 "your preview is stale" arrives at the
+  // client as `conflict`, which tells it to retry later rather than to preview again.
+  'market_install_not_expressible',
+  'market_install_target_unresolved',
+  'market_install_proposal_not_found',
+  'market_install_proposal_stale',
+  'market_installation_not_found',
+  'market_install_project_not_found',
+  'market_source_in_use',
   'forbidden',
   'conflict',
   'invalid_agent_pack_manifest',

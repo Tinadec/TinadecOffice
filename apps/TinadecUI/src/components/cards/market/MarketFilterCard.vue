@@ -9,24 +9,28 @@ import {
   Search,
   Store,
   Terminal,
-  Zap,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
 } from '@lucide/vue'
 import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { UiBadge, UiButton, UiInput, UiLabel } from '@/components/ui'
-import { marketController, kindOptions as _kindOptions, sourceKindOptions as _sourceKindOptions } from '@/controllers/MarketController'
+import { marketController, kindOptions as _kindOptions } from '@/controllers/MarketController'
 
 const { t } = useI18n()
 const router = useRouter()
 
 const {
-  sources, kindFilter, sourceFilter, query, busy,
-  sourceForm, start, loadCatalog, addSource, refreshSource,
+  sources, supportedKinds, kindFilter, sourceFilter, query, busy,
+  sourceForm, start, loadCatalog, addSource, refreshSource, toggleSource, removeSource,
 } = marketController
 
 const kindOptions = _kindOptions.map((o) => ({ ...o, icon: o.key === 'skill' ? Bot : o.key === 'mcp-server' ? PlugZap : o.key === 'acp-adapter' ? Terminal : Boxes }))
-const sourceKindOptions = [..._sourceKindOptions]
+// Core answers the kinds it has an adapter for; the picker used to list eight it could never read,
+// so every add either created a row that could not refresh or failed outright.
+const sourceKindOptions = computed(() => supportedKinds.value)
 
 onMounted(() => {
   start()
@@ -73,20 +77,35 @@ onMounted(() => {
         <span>{{ t('market.sources') }}</span>
         <UiBadge variant="secondary">{{ sources.length }}</UiBadge>
       </div>
-      <button
+      <div
         v-for="source in sources"
         :key="source.id"
         class="market-source-item"
-        :class="{ active: sourceFilter === source.id, 'is-builtin': source.location.includes('tinadec://') }"
-        @click="sourceFilter = source.id"
+        :class="{ active: sourceFilter === source.id }"
       >
-        <Zap v-if="source.location.includes('tinadec://')" :size="14" class="builtin-icon" />
-        <Store v-else :size="14" />
-        <span>{{ source.name }}</span>
-        <UiButton variant="ghost" size="icon" :title="t('settings.refresh')" @click.stop="refreshSource(source.id)">
+        <button class="market-source-pick" :title="t('market.filterBySource')" @click="sourceFilter = source.id">
+          <Store :size="14" />
+          <span>{{ source.name }}</span>
+          <span class="market-source-count">{{ source.entry_count }}</span>
+        </button>
+        <!-- A source that failed its last refresh keeps its rows; the marker says the catalog below
+             is standing on stale data rather than on nothing. -->
+        <span v-if="source.last_error" class="market-source-stale" :title="source.last_error">!</span>
+        <UiButton
+          variant="ghost"
+          size="icon"
+          :title="source.enabled ? t('market.disableSource') : t('market.enableSource')"
+          @click="toggleSource(source.id, !source.enabled)"
+        >
+          <component :is="source.enabled ? ToggleRight : ToggleLeft" :size="13" />
+        </UiButton>
+        <UiButton variant="ghost" size="icon" :title="t('settings.refresh')" @click="refreshSource(source.id)">
           <RefreshCw :size="13" />
         </UiButton>
-      </button>
+        <UiButton variant="ghost" size="icon" :title="t('market.deleteSource')" @click="removeSource(source.id)">
+          <Trash2 :size="13" />
+        </UiButton>
+      </div>
     </div>
 
     <div class="market-source-form">

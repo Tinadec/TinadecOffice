@@ -1,15 +1,22 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { McpInventoryDto } from '@/api'
+import type { MarketCatalogItemDto, MarketInstallationDto, MarketInstallProposalDto, McpInventoryDto } from '@/api'
 
 const h = vi.hoisted(() => ({
   listExtensionSources: vi.fn(async () => ({ sources: [], supported_kinds: ['mcp_registry'] })),
-  listInstalledExtensions: vi.fn(async () => [] as unknown[]),
+  listMarketInstallations: vi.fn(async () => ({ installations: [] as MarketInstallationDto[] })),
   listAcpAdapters: vi.fn(async () => [] as unknown[]),
-  listMarketCatalog: vi.fn(async () => ({ items: [], total_available: 0, has_more: false })),
+  listMarketCatalog: vi.fn(async () => ({ items: [] as MarketCatalogItemDto[], total_available: 0, has_more: false })),
   createExtensionSource: vi.fn(async () => ({})),
+  setExtensionSourceEnabled: vi.fn(async () => ({})),
+  deleteExtensionSource: vi.fn(async () => undefined),
+  refreshExtensionSource: vi.fn(async () => ({})),
   listMcpServers: vi.fn(async () => ({ source: 'tool_provider', servers: [] }) as unknown),
+  previewMarketInstall: vi.fn(),
+  previewMarketUninstall: vi.fn(),
+  applyMarketInstallProposal: vi.fn(),
+  decideApproval: vi.fn(async () => { throw new Error('the market panel must never decide an approval') }),
 }))
 
 vi.mock('@/api', () => ({
@@ -17,24 +24,58 @@ vi.mock('@/api', () => ({
   // the whole file fail to load.
   MCP_SOURCE_PROVIDER: 'tool_provider',
   MCP_SOURCE_UNAVAILABLE: 'tool_provider_unavailable',
+  MARKET_INSTALL_ACTION_UNINSTALL: 'uninstall',
   api: {
     listExtensionSources: h.listExtensionSources,
-    listInstalledExtensions: h.listInstalledExtensions,
+    listMarketInstallations: h.listMarketInstallations,
     listAcpAdapters: h.listAcpAdapters,
     listMarketCatalog: h.listMarketCatalog,
     createExtensionSource: h.createExtensionSource,
+    setExtensionSourceEnabled: h.setExtensionSourceEnabled,
+    deleteExtensionSource: h.deleteExtensionSource,
+    refreshExtensionSource: h.refreshExtensionSource,
     listMcpServers: h.listMcpServers,
+    previewMarketInstall: h.previewMarketInstall,
+    previewMarketUninstall: h.previewMarketUninstall,
+    applyMarketInstallProposal: h.applyMarketInstallProposal,
+    // The panel's failure mode would be deciding on the user's behalf: a test that lets this exist
+    // unmocked could pass by silently approving.
+    decideApproval: h.decideApproval,
   },
 }))
 
-vi.mock('@/composables/useNotifications', () => ({
-  useNotifications: () => ({
-    notify: { success: vi.fn(), error: vi.fn() },
-    status: { error: vi.fn(), info: vi.fn(), success: vi.fn(), clear: vi.fn() },
-    confirm: vi.fn(async () => true),
-    dismissByKey: vi.fn(),
-  }),
+// Home owns "which workspace am I in"; the market page reads that owner instead of keeping a second
+// answer, so the seam is stubbed rather than importing the whole controller. The refs are built
+// inside the factory because `vi.hoisted` runs before imports, where `ref` does not exist yet.
+vi.mock('@/controllers/HomeController', async () => {
+  const { ref } = await import('vue')
+  return {
+    homeController: {
+      projects: ref([{ id: 'proj-1', name: 'Alpha' }, { id: 'proj-2', name: 'Beta' }]),
+      selectedProjectId: ref<string | null>('proj-1'),
+    },
+  }
+})
+
+type ProjectSeam = {
+  projects: { value: { id: string; name: string }[] }
+  selectedProjectId: { value: string | null }
+}
+
+async function projectSeam(): Promise<ProjectSeam> {
+  const { homeController } = await import('@/controllers/HomeController')
+  return homeController as unknown as ProjectSeam
+}
+
+let seam: ProjectSeam
+
+const notifications = vi.hoisted(() => ({
+  notify: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+  status: { error: vi.fn(), info: vi.fn(), success: vi.fn(), clear: vi.fn() },
+  dismissByKey: vi.fn(),
 }))
+
+vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => notifications }))
 
 import { marketController } from './MarketController'
 
@@ -53,10 +94,86 @@ const UNREADABLE: McpInventoryDto = {
   servers: [],
 }
 
+function catalogItem(over: Partial<MarketCatalogItemDto> = {}): MarketCatalogItemDto {
+  return {
+    catalog_id: 'cat-1',
+    source_id: 'src-1',
+    source_name: 'Official MCP Registry',
+    extension_id: 'io.example/filesense',
+    kind: 'mcp-server',
+    version: '2.0.4',
+    display_name: 'FileSense',
+    transports: ['stdio'],
+    manifest_hash: 'sha256:aa',
+    refreshed_at: '2026-09-23T00:00:00Z',
+    expires_at: '2026-09-30T00:00:00Z',
+    installable: true,
+    ...over,
+  }
+}
+
+function proposalOf(over: Partial<MarketInstallProposalDto> = {}): MarketInstallProposalDto {
+  return {
+    id: 'prop-1',
+    action: 'install',
+    project_id: 'proj-1',
+    catalog_id: 'cat-1',
+    source_name: 'Official MCP Registry',
+    extension_id: 'io.example/filesense',
+    kind: 'mcp-server',
+    version: '2.0.4',
+    server_id: 'io-example-filesense',
+    command: 'npx',
+    args: ['-y', 'filesense-mcp@2.0.4'],
+    environment: [{ name: 'FILESENSE_INDEX_PATH', required: false, secret: true }],
+    target_path: 'C:\\work\\demo\\mcp_servers.json',
+    content: '{"servers":[]}',
+    expected_file_hash: 'sha256:7c1d',
+    digest: 'sha256:9b2e',
+    expires_at: '2026-09-23T00:15:00Z',
+    warnings: ['The pinned version is the package host name for a release, not a content digest.'],
+    ...over,
+  }
+}
+
+function installationOf(over: Partial<MarketInstallationDto> = {}): MarketInstallationDto {
+  return {
+    id: 'ins-1',
+    project_id: 'proj-1',
+    catalog_id: 'cat-1',
+    source_name: 'Official MCP Registry',
+    extension_id: 'io.example/filesense',
+    kind: 'mcp-server',
+    version: '2.0.4',
+    server_id: 'io-example-filesense',
+    config_path: 'C:\\work\\demo\\mcp_servers.json',
+    state: 'installing',
+    install_action_id: 'act-1',
+    action_status: 'awaiting_user',
+    created_at: '2026-09-23T00:00:00Z',
+    updated_at: '2026-09-23T00:00:00Z',
+    ...over,
+  }
+}
+
+async function showItem(item: MarketCatalogItemDto, installations: MarketInstallationDto[] = []) {
+  h.listMarketCatalog.mockResolvedValue({ items: [item], total_available: 1, has_more: false })
+  h.listMarketInstallations.mockResolvedValue({ installations })
+  await marketController.loadAll()
+  marketController.selectedCatalogId.value = item.catalog_id
+}
+
 describe('marketController MCP inventory', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     h.listMarketCatalog.mockResolvedValue({ items: [], total_available: 0, has_more: false })
+    h.listMarketInstallations.mockResolvedValue({ installations: [] })
+    h.listExtensionSources.mockResolvedValue({ sources: [], supported_kinds: ['mcp_registry'] })
+    h.listMcpServers.mockResolvedValue(CONNECTED)
+    seam = await projectSeam()
+    seam.projects.value = [{ id: 'proj-1', name: 'Alpha' }, { id: 'proj-2', name: 'Beta' }]
+    seam.selectedProjectId.value = 'proj-1'
+    marketController.proposal.value = null
   })
 
   it('keeps an unreachable server on the list, with the provider said about it', async () => {
@@ -100,5 +217,136 @@ describe('marketController MCP inventory', () => {
     // actually said. That is only honest because the failure is surfaced too — see useNotifications.
     expect(marketController.mcpServers.value).toHaveLength(2)
     expect(marketController.mcpReadSucceeded.value).toBe(true)
+  })
+})
+
+describe('marketController install proposals', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    h.listMarketCatalog.mockResolvedValue({ items: [], total_available: 0, has_more: false })
+    h.listMarketInstallations.mockResolvedValue({ installations: [] })
+    h.listExtensionSources.mockResolvedValue({ sources: [], supported_kinds: ['mcp_registry'] })
+    h.listMcpServers.mockResolvedValue(CONNECTED)
+    seam = await projectSeam()
+    seam.projects.value = [{ id: 'proj-1', name: 'Alpha' }, { id: 'proj-2', name: 'Beta' }]
+    seam.selectedProjectId.value = 'proj-1'
+    marketController.proposal.value = null
+  })
+
+  it('previews against the workspace the user is working in, and keeps what Core proposed', async () => {
+    await showItem(catalogItem())
+    h.previewMarketInstall.mockResolvedValue(proposalOf())
+
+    await marketController.previewInstall()
+
+    expect(h.previewMarketInstall).toHaveBeenCalledWith('cat-1', 'proj-1')
+    // The panel reviews a frozen proposal, so the fields it shows must be the ones Core minted.
+    expect(marketController.activeProposal.value?.version).toBe('2.0.4')
+    expect(marketController.activeProposal.value?.digest).toBe('sha256:9b2e')
+    expect(marketController.activeProposal.value?.args).toEqual(['-y', 'filesense-mcp@2.0.4'])
+  })
+
+  it('asks for no project at all when the user has not selected one', async () => {
+    seam.selectedProjectId.value = null
+    await showItem(catalogItem())
+
+    await marketController.previewInstall()
+
+    expect(h.previewMarketInstall).not.toHaveBeenCalled()
+    expect(notifications.notify.warning).toHaveBeenCalled()
+    expect(marketController.activeProposal.value).toBeNull()
+  })
+
+  it('refuses locally when Core already said the entry cannot be installed', async () => {
+    // `installable: false` is a fact about the row, so the click must not turn into a request that
+    // is certain to come back 409 — and the reason has to be Core's sentence, not a generic one.
+    await showItem(catalogItem({ installable: false, install_blocker: 'This entry publishes no package record.' }))
+    h.previewMarketInstall.mockResolvedValue(proposalOf())
+
+    await marketController.previewInstall()
+
+    expect(h.previewMarketInstall).not.toHaveBeenCalled()
+    expect(notifications.notify.warning).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This entry publishes no package record.' }))
+  })
+
+  it('queues the governed write and reports it as waiting, never as installed', async () => {
+    await showItem(catalogItem())
+    h.previewMarketInstall.mockResolvedValue(proposalOf())
+    await marketController.previewInstall()
+
+    const queued = installationOf({ action_status: 'awaiting_user' })
+    h.applyMarketInstallProposal.mockResolvedValue(queued)
+    h.listMarketInstallations.mockResolvedValue({ installations: [queued] })
+
+    await marketController.applyProposal()
+
+    expect(h.applyMarketInstallProposal).toHaveBeenCalledWith('prop-1')
+    expect(marketController.activeProposal.value).toBeNull()
+    const row = marketController.installationFor(catalogItem())
+    expect(row?.id).toBe('ins-1')
+    // Queuing is not installing: the entry reads as waiting until its own action completes.
+    expect(marketController.awaitingDecision(row)).toBe(true)
+    expect(marketController.actionFinished(row)).toBe(false)
+    // The decisive part: the panel never decides an approval on the user's behalf.
+    expect(h.decideApproval).not.toHaveBeenCalled()
+  })
+
+  it('drops a proposal Core refused as stale instead of leaving a button that can only fail', async () => {
+    await showItem(catalogItem())
+    h.previewMarketInstall.mockResolvedValue(proposalOf())
+    await marketController.previewInstall()
+    expect(marketController.activeProposal.value).not.toBeNull()
+
+    h.applyMarketInstallProposal.mockRejectedValue(
+      Object.assign(new Error('The market changed under this proposal.'), { code: 'market_install_proposal_stale' }))
+
+    await marketController.applyProposal()
+
+    expect(marketController.activeProposal.value).toBeNull()
+    expect(notifications.notify.error).toHaveBeenCalled()
+  })
+
+  it('will not offer a proposal that describes another workspace or another row', async () => {
+    await showItem(catalogItem())
+    h.previewMarketInstall.mockResolvedValue(proposalOf())
+    await marketController.previewInstall()
+    expect(marketController.activeProposal.value).not.toBeNull()
+
+    // A proposal freezes the config file of the workspace it was previewed against, so switching
+    // workspaces must not leave it applyable. The raw store still holds it — which is exactly why
+    // the assertion is on the derived value: a panel bound to the raw one would keep the button.
+    seam.selectedProjectId.value = 'proj-2'
+    expect(marketController.activeProposal.value).toBeNull()
+    expect(marketController.proposal.value).not.toBeNull()
+
+    seam.selectedProjectId.value = 'proj-1'
+    h.listMarketCatalog.mockResolvedValue({
+      items: [catalogItem({ catalog_id: 'cat-other', extension_id: 'io.other/thing' })],
+      total_available: 1,
+      has_more: false,
+    })
+    await marketController.loadCatalog()
+    expect(marketController.activeProposal.value).toBeNull()
+  })
+
+  it('matches an installation to its own project, not to any project that mentions the entry', async () => {
+    await showItem(catalogItem(), [installationOf({ project_id: 'proj-2' })])
+
+    expect(marketController.installationFor(catalogItem())).toBeNull()
+
+    seam.selectedProjectId.value = 'proj-2'
+    expect(marketController.installationFor(catalogItem())?.id).toBe('ins-1')
+  })
+
+  it('previews a removal from the ledger row rather than the catalog row', async () => {
+    const installed = installationOf({ action_status: 'completed' })
+    await showItem(catalogItem(), [installed])
+    h.previewMarketUninstall.mockResolvedValue(proposalOf({ action: 'uninstall', installation_id: 'ins-1', catalog_id: null }))
+
+    await marketController.previewRemoval()
+
+    expect(h.previewMarketUninstall).toHaveBeenCalledWith('ins-1')
+    expect(marketController.activeProposal.value?.action).toBe('uninstall')
   })
 })

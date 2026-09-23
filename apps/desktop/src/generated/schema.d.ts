@@ -333,6 +333,22 @@ export interface paths {
     /** Get catalog item */
     get: operations["getApiV1MarketCatalogByCatalogId"];
   };
+  "/api/v1/market/catalog/{catalogId}/install-preview": {
+    /** Preview a market install */
+    post: operations["postApiV1MarketCatalogByCatalogIdInstall-preview"];
+  };
+  "/api/v1/market/install-proposals/{proposalId}/apply": {
+    /** Queue an approved market write */
+    post: operations["postApiV1MarketInstall-proposalsByProposalIdApply"];
+  };
+  "/api/v1/market/installations": {
+    /** List installed market entries */
+    get: operations["getApiV1MarketInstallations"];
+  };
+  "/api/v1/market/installations/{installationId}/uninstall-preview": {
+    /** Preview removing an installed market entry */
+    post: operations["postApiV1MarketInstallationsByInstallationIdUninstall-preview"];
+  };
   "/api/v1/market/sources": {
     /** List market sources */
     get: operations["getApiV1MarketSources"];
@@ -1122,6 +1138,8 @@ export interface components {
       expires_at: string;
       extension_id: string;
       homepage?: string;
+      install_blocker?: string;
+      installable: boolean;
       kind: string;
       manifest_hash: string;
       refreshed_at: string;
@@ -1139,6 +1157,56 @@ export interface components {
       total_available: number;
       [key: string]: unknown;
     };
+    MarketInstallProposal: {
+      action: string;
+      args: string[];
+      catalog_id?: string;
+      command?: string;
+      content: string;
+      digest: string;
+      environment: {
+          description?: string;
+          name: string;
+          required: boolean;
+          secret: boolean;
+        }[];
+      expected_file_hash?: string;
+      expires_at: string;
+      extension_id: string;
+      id: string;
+      installation_id?: string;
+      kind: string;
+      project_id: string;
+      replaces_command?: string;
+      server_id: string;
+      source_name: string;
+      target_path: string;
+      version: string;
+      warnings: string[];
+      [key: string]: unknown;
+    };
+    MarketInstallation: {
+      action_status?: string;
+      catalog_id: string;
+      config_path: string;
+      created_at: string;
+      extension_id: string;
+      id: string;
+      install_action_id: string;
+      kind: string;
+      project_id: string;
+      server_id: string;
+      source_name: string;
+      state: string;
+      uninstall_action_id?: string;
+      updated_at: string;
+      version: string;
+      [key: string]: unknown;
+    };
+    MarketInstallationList: {
+      installations: components["schemas"]["MarketInstallation"][];
+      [key: string]: unknown;
+    };
     MarketRefresh: {
       fetched_rows: number;
       outcome: string;
@@ -1147,6 +1215,7 @@ export interface components {
       refreshed_at?: string;
       refused_rows: number;
       removed_rows: number;
+      retained_rows: number;
       source_id: string;
       truncated_pages: boolean;
       [key: string]: unknown;
@@ -2878,6 +2947,65 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["MarketCatalogEntry"];
+        };
+      };
+    };
+  };
+  /** Preview a market install */
+  "postApiV1MarketCatalogByCatalogIdInstall-preview": {
+    parameters: {
+      path: {
+        catalogId: string;
+      };
+    };
+    responses: {
+      /** @description The frozen proposal: pinned command, exact file, exact bytes, and the moment it stops being applyable. Nothing was written by asking. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketInstallProposal"];
+        };
+      };
+    };
+  };
+  /** Queue an approved market write */
+  "postApiV1MarketInstall-proposalsByProposalIdApply": {
+    parameters: {
+      path: {
+        proposalId: string;
+      };
+    };
+    responses: {
+      /** @description The installation and the user tool action awaiting a human. The write happens when that action is approved, never here. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketInstallation"];
+        };
+      };
+    };
+  };
+  /** List installed market entries */
+  getApiV1MarketInstallations: {
+    responses: {
+      /** @description What this workspace approved, with the live status of the action that writes it. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketInstallationList"];
+        };
+      };
+    };
+  };
+  /** Preview removing an installed market entry */
+  "postApiV1MarketInstallationsByInstallationIdUninstall-preview": {
+    parameters: {
+      path: {
+        installationId: string;
+      };
+    };
+    responses: {
+      /** @description The same config file with this one entry taken back out; downloaded package bytes are not touched. */
+      200: {
+        content: {
+          "application/json": components["schemas"]["MarketInstallProposal"];
         };
       };
     };

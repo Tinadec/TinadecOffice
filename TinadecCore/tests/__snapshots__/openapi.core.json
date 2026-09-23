@@ -1377,6 +1377,15 @@
               "string"
             ]
           },
+          "install_blocker": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "installable": {
+            "type": "boolean"
+          },
           "kind": {
             "type": "string"
           },
@@ -1440,6 +1449,196 @@
         },
         "type": "object"
       },
+      "MarketEnvironmentRequestDto": {
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallProposalDto": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "catalog_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "environment": {
+            "items": {
+              "$ref": "#/components/schemas/MarketEnvironmentRequestDto"
+            },
+            "type": "array"
+          },
+          "expected_file_hash": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "installation_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "replaces_command": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "target_path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallRequestDto": {
+        "properties": {
+          "project_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallationDto": {
+        "properties": {
+          "action_status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "catalog_id": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "install_action_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "uninstall_action_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MarketInstallationListDto": {
+        "properties": {
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketInstallationDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "MarketRefreshDto": {
         "properties": {
           "fetched_rows": {
@@ -1483,6 +1682,14 @@
             ]
           },
           "removed_rows": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "retained_rows": {
             "format": "int32",
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
@@ -6064,6 +6271,215 @@
               }
             },
             "description": "Not Found"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/catalog/{catalogId}/install-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketInstallRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposalDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/install-proposals/{proposalId}/apply": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallationDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "description": "Precondition Failed"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/installations": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallationListDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Market"
+        ]
+      }
+    },
+    "/api/v1/market/installations/{installationId}/uninstall-preview": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposalDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         },
         "tags": [

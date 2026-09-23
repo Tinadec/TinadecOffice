@@ -406,8 +406,23 @@ PromptPipeline 是 DmaEA 正式提示词配置。旧 `prompt-fragments` 页面�
   `homepage?`/`registry_type?`/`transports[]`/`manifest_hash`/`refreshed_at`/`expires_at`。
   **没有** `publisher`/`capabilities`/`permissions`/`status`/`installed_extension_id`：registry 不发布这些，
   卡片曾按它们渲染，于是真机上永远空白而预览画廊里是满的。清单正文是外部主张，不是指令，也不是授权。
-- Market **install 仍是占位端点**（`/api/v1/extensions/*` 七条 501）：显示“未启用”，不创建本地安装记录，
-  也不得在客户端记安装状态。
+- Market **install 自 2026-09-23（#37 / M2）起是四条真路由**，且安装永远是"一份被冻结的提案 ＋ 一次人工裁决"，不是一次下载：
+  `POST /api/v1/market/catalog/{id}/install-preview`（body 只有 `project_id`）与
+  `POST /api/v1/market/installations/{id}/uninstall-preview` 返回同一份提案 DTO
+  `{id, action, project_id, catalog_id?, installation_id?, source_name, extension_id, kind, version, server_id, replaces_command?, command?, args[], environment[], target_path, content, expected_file_hash?, digest, expires_at, warnings[]}`；
+  `POST /api/v1/market/install-proposals/{id}/apply` 返回台账行
+  `{id, project_id, catalog_id, source_name, extension_id, kind, version, server_id, config_path, state, install_action_id, uninstall_action_id?, action_status?, created_at, updated_at}`；
+  `GET /api/v1/market/installations` 返回 `{installations[]}`。
+  口径：**提案里的 `environment[]` 只有名字与 `required`/`secret` 标记，永远没有值**（值属 `ISecretStore`）；
+  `content` 是将要写入的确切字节，UI 要能展开给人看，不得只给一个 hash；`warnings[]` 是本构建不能保证的部分，
+  必须原样上屏而不是折叠成"有风险"。
+  错误口径：`market_install_not_expressible` 与 `market_install_target_unresolved` 是 **409**（世界状态不允许，不是请求写错），
+`market_install_proposal_stale` 是 **412 → 唯一正确的后续动作是重新预览**，`market_install_proposal_not_found`/`market_installation_not_found`/`market_install_project_not_found` 是 404，
+  `market_source_in_use` 是 409（来源还撑着安装行，删了就没有溯源）。
+  渲染纪律：排队 ≠ 已安装——徽章只能由 `state` 与该行动作自己的 `action_status` 推导（受治理的写先停在
+  `awaiting_user` 的权限请求，批准后才进 `awaiting_approval` 的审批信封），桌面**从不代替用户裁决**；
+  安装目标工作区只有一个 owner（首页当前选中的项目），市场面板不得自带第二份选择；换行或换工作区之后旧提案不得再被提供。
+  `/api/v1/extensions/*` 七条仍 501，桌面曾经打它们的那七个包装已全部删除。
 - MCP 只有两条读路由，且**读数来自 Tool Provider 而不是 Core 自己**：`GET /api/v1/mcp/servers` 返回 `{source, reason?, workspace_root?, config_path?, dropped_rows?, servers[]}`，`GET /api/v1/mcp/servers/{serverId}/tools` 返回 `{source, reason?, config_path?, server_id, server?}`。`source` 是必读字段：`tool_provider` 才是"看过了"，`tool_provider_unavailable` 要显示 `reason` 而**不能**显示"没有配置任何服务器"。`status:"error"` 的服务器仍在清单里并带 provider 原文，UI 不得把它画成"已停用"。
 - MCP **没有**连接、断开、状态、reload、直接调用工具这些端点，Gateway/Desktop 也不得自行连接或缓存 MCP：配置与连接都归工具进程，清单每次现读。要"刷新"就是重新发一次 GET。
 - ACP `permission.request` 本阶段继续 fail-closed；不能把 ACP 请求当成已授权。

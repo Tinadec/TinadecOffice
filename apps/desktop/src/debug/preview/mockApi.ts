@@ -26,7 +26,9 @@ import type {
   ExtensionSourceDto,
   MarketCatalogItemDto,
   MarketRefreshDto,
-  InstalledExtensionDto,
+  MarketInstallationDto,
+  MarketInstallProposalDto,
+  MarketInstallationListDto,
   McpInventoryDto,
   McpServerToolsDto,
   AcpAdapterDto,
@@ -46,8 +48,6 @@ import type {
   TaskNodeDto,
   ContextPackDto,
   SupervisionFindingDto,
-  ExtensionInstallPreviewDto,
-  ExtensionInstallResultDto,
   ModelProviderTemplateDto,
   ProjectDto as _ProjectDto,
 } from '@/api'
@@ -317,6 +317,7 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
           fetched_rows: data().marketCatalog.items.length,
           refused_rows: 0,
           removed_rows: 0,
+          retained_rows: 0,
           pages_fetched: 1,
           truncated_pages: false,
           refreshed_at: new Date().toISOString(),
@@ -330,57 +331,45 @@ export function createMockApi(scenario: Ref<ScenarioId>) {
         (data().marketCatalog.items.find((c) => c.catalog_id === catalogId) ?? data().marketCatalog.items[0]) as MarketCatalogItemDto,
         scenario.value,
       ),
-    previewExtensionInstall: (_input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) =>
+    previewMarketInstall: (catalogId: string, projectId: string) =>
       delay(
         {
-          extension_id: 'preview-ext',
-          kind: 'tool-pack',
-          version: '1.0.0',
-          publisher: 'Preview',
-          display_name: '预览扩展',
-          description: '安装预览',
-          source_kind: 'marketplace-url',
-          source_location: 'https://example.com',
-          capabilities: ['preview.cap'],
-          permissions: ['fs:read'],
-          risks: ['预览风险'],
-          requires_approval: true,
-          approval_summary: '需要审批',
-        } as ExtensionInstallPreviewDto,
+          ...data().installProposal,
+          id: `prop-${catalogId}`,
+          project_id: projectId,
+          catalog_id: catalogId,
+        } as MarketInstallProposalDto,
         scenario.value,
       ),
-    installExtension: (_input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null; approval_id?: string | null }) =>
-      delay(
+    previewMarketUninstall: (installationId: string) => {
+      const row = data().installations.find((item) => item.id === installationId) ?? data().installations[0]
+      return delay(
         {
-          approval_required: false,
-          approval: null,
-          extension: data().installedExtensions[0],
-          preview: {
-            extension_id: 'preview-ext',
-            kind: 'tool-pack',
-            version: '1.0.0',
-            publisher: 'Preview',
-            display_name: '预览扩展',
-            description: '安装预览',
-            source_kind: 'marketplace-url',
-            source_location: 'https://example.com',
-            capabilities: ['preview.cap'],
-            permissions: ['fs:read'],
-            risks: [],
-            requires_approval: false,
-            approval_summary: '',
-          },
-        } as ExtensionInstallResultDto,
+          ...data().installProposal,
+          id: `prop-${installationId}`,
+          action: 'uninstall',
+          installation_id: installationId,
+          catalog_id: null,
+          project_id: row.project_id,
+          extension_id: row.extension_id,
+          server_id: row.server_id,
+          version: row.version,
+          args: [],
+          command: null,
+          environment: [],
+        } as MarketInstallProposalDto,
         scenario.value,
-      ),
-    listInstalledExtensions: () => delay(data().installedExtensions as InstalledExtensionDto[], scenario.value),
-    enableExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId, enabled: true } as InstalledExtensionDto, scenario.value),
-    disableExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId, enabled: false } as InstalledExtensionDto, scenario.value),
-    updateExtension: (extensionId: string) =>
-      delay({ ...data().installedExtensions[0], id: extensionId } as InstalledExtensionDto, scenario.value),
-    deleteExtension: (_extensionId: string) => emptyDelay(undefined as unknown as void, scenario.value),
+      )
+    },
+    // Apply mirrors Core: it hands back the ledger row and the action a human still has to decide,
+    // and it never reports the file as written.
+    applyMarketInstallProposal: (proposalId: string) => {
+      const row = data().installations.find((item) => item.install_action_id === proposalId.replace(/^prop-/, 'act-'))
+        ?? data().installations[0]
+      return delay({ ...row, action_status: 'awaiting_user' } as MarketInstallationDto, scenario.value)
+    },
+    listMarketInstallations: () =>
+      delay({ installations: data().installations } as MarketInstallationListDto, scenario.value),
 
     listMcpServers: () => delay(data().mcpInventory as McpInventoryDto, scenario.value),
     listMcpServerTools: (serverId: string) => {

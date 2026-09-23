@@ -1034,6 +1034,12 @@
           "homepage": {
             "type": "string"
           },
+          "install_blocker": {
+            "type": "string"
+          },
+          "installable": {
+            "type": "boolean"
+          },
           "kind": {
             "type": "string"
           },
@@ -1073,7 +1079,8 @@
           "transports",
           "manifest_hash",
           "refreshed_at",
-          "expires_at"
+          "expires_at",
+          "installable"
         ],
         "type": "object"
       },
@@ -1101,6 +1108,199 @@
         ],
         "type": "object"
       },
+      "MarketInstallProposal": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "catalog_id": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "environment": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "secret": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "required",
+                "secret"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "expected_file_hash": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "installation_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "replaces_command": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "target_path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "project_id",
+          "source_name",
+          "extension_id",
+          "kind",
+          "version",
+          "server_id",
+          "args",
+          "environment",
+          "target_path",
+          "content",
+          "digest",
+          "expires_at",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "MarketInstallation": {
+        "additionalProperties": true,
+        "properties": {
+          "action_status": {
+            "type": "string"
+          },
+          "catalog_id": {
+            "type": "string"
+          },
+          "config_path": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "extension_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "install_action_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "uninstall_action_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "catalog_id",
+          "source_name",
+          "extension_id",
+          "kind",
+          "version",
+          "server_id",
+          "config_path",
+          "state",
+          "install_action_id",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "MarketInstallationList": {
+        "additionalProperties": true,
+        "properties": {
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketInstallation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "installations"
+        ],
+        "type": "object"
+      },
       "MarketRefresh": {
         "additionalProperties": true,
         "properties": {
@@ -1125,6 +1325,9 @@
           "removed_rows": {
             "type": "number"
           },
+          "retained_rows": {
+            "type": "number"
+          },
           "source_id": {
             "type": "string"
           },
@@ -1138,6 +1341,7 @@
           "fetched_rows",
           "refused_rows",
           "removed_rows",
+          "retained_rows",
           "pages_fetched",
           "truncated_pages"
         ],
@@ -5314,6 +5518,120 @@
           }
         },
         "summary": "Get catalog item",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/catalog/{catalogId}/install-preview": {
+      "post": {
+        "operationId": "postApiV1MarketCatalogByCatalogIdInstall-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalogId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposal"
+                }
+              }
+            },
+            "description": "The frozen proposal: pinned command, exact file, exact bytes, and the moment it stops being applyable. Nothing was written by asking."
+          }
+        },
+        "summary": "Preview a market install",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/install-proposals/{proposalId}/apply": {
+      "post": {
+        "operationId": "postApiV1MarketInstall-proposalsByProposalIdApply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallation"
+                }
+              }
+            },
+            "description": "The installation and the user tool action awaiting a human. The write happens when that action is approved, never here."
+          }
+        },
+        "summary": "Queue an approved market write",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/installations": {
+      "get": {
+        "operationId": "getApiV1MarketInstallations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallationList"
+                }
+              }
+            },
+            "description": "What this workspace approved, with the live status of the action that writes it."
+          }
+        },
+        "summary": "List installed market entries",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/market/installations/{installationId}/uninstall-preview": {
+      "post": {
+        "operationId": "postApiV1MarketInstallationsByInstallationIdUninstall-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "installationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketInstallProposal"
+                }
+              }
+            },
+            "description": "The same config file with this one entry taken back out; downloaded package bytes are not touched."
+          }
+        },
+        "summary": "Preview removing an installed market entry",
         "tags": [
           "System"
         ]

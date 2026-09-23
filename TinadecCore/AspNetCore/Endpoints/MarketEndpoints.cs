@@ -14,9 +14,10 @@ namespace TinadecCore.AspNetCore.Endpoints;
 /// underlying facts genuinely existed nowhere, so the fix is a store and an adapter, not a
 /// projection of something already computed.
 ///
-/// What is deliberately absent: installation. A catalog row here is an external party's claim
-/// about a thing, and nothing on this surface can turn it into a file, a config entry, or a tool
-/// a model can call. That boundary is the point of keeping the read half shippable on its own.
+/// The install routes below are where that boundary is crossed, and they are shaped so that
+/// crossing it takes two calls and a human: a preview freezes a proposal, and an apply hands the
+/// frozen bytes to the governed user-tool-action path. Nothing in this file writes a file or
+/// starts a process itself.
 /// </summary>
 public static class MarketEndpoints
 {
@@ -90,9 +91,19 @@ public static class MarketEndpoints
             if (!TryId(sourceId, out var id))
                 return InvalidId("sourceId", sourceId);
 
-            return await market.DeleteSourceAsync(id, ct).ConfigureAwait(false)
-                ? Results.NoContent()
-                : NotFound(MarketErrorCodes.SourceNotFound, "No market source has that id.");
+            try
+            {
+                return await market.DeleteSourceAsync(id, ct).ConfigureAwait(false)
+                    ? Results.NoContent()
+                    : NotFound(MarketErrorCodes.SourceNotFound, "No market source has that id.");
+            }
+            catch (MarketCatalogException ex)
+            {
+                // Deleting a source that still backs an installation refuses with its own code.
+                // Without this catch the guard surfaces as a 500 and the caller has no idea the
+                // row they tried to forget is what an installed server is traceable to.
+                return Problem(ex);
+            }
         })
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -184,6 +195,86 @@ public static class MarketEndpoints
             .Produces<MarketCatalogPageDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest);
 
+        group.MapPost("/catalog/{catalogId}/install-preview", async (
+            string catalogId,
+            MarketInstallRequestDto request,
+            IMarketInstallService install,
+            CancellationToken ct) =>
+        {
+            if (!TryId(catalogId, out var id))
+                return InvalidId("catalogId", catalogId);
+
+            if (!TryGuidId(request.ProjectId, out var projectId))
+                return InvalidId("project_id", request.ProjectId);
+
+            try
+            {
+                return Results.Ok(await install.PreviewInstallAsync(id, projectId, ct).ConfigureAwait(false));
+            }
+            catch (MarketCatalogException ex)
+            {
+                return Problem(ex);
+            }
+        })
+            .Produces<MarketInstallProposalDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost("/installations/{installationId}/uninstall-preview", async (
+            string installationId,
+            IMarketInstallService install,
+            CancellationToken ct) =>
+        {
+            if (!TryId(installationId, out var id))
+                return InvalidId("installationId", installationId);
+
+            try
+            {
+                return Results.Ok(await install.PreviewUninstallAsync(id, ct).ConfigureAwait(false));
+            }
+            catch (MarketCatalogException ex)
+            {
+                return Problem(ex);
+            }
+        })
+            .Produces<MarketInstallProposalDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost("/install-proposals/{proposalId}/apply", async (
+            string proposalId,
+            IMarketInstallService install,
+            CancellationToken ct) =>
+        {
+            if (!TryId(proposalId, out var id))
+                return InvalidId("proposalId", proposalId);
+
+            try
+            {
+                // 200, not 201: this answers "what did you queue", and the queued thing is an
+                // approval awaiting a human rather than a file that now exists.
+                return Results.Ok(await install.ApplyAsync(id, ct).ConfigureAwait(false));
+            }
+            catch (MarketCatalogException ex)
+            {
+                return Problem(ex);
+            }
+        })
+            .Produces<MarketInstallationDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status412PreconditionFailed);
+
+        group.MapGet("/installations", async (IMarketInstallService install, CancellationToken ct) =>
+        {
+            var installations = await install.ListInstallationsAsync(ct).ConfigureAwait(false);
+            return Results.Ok(new MarketInstallationListDto { Installations = installations });
+        })
+            .Produces<MarketInstallationListDto>(StatusCodes.Status200OK);
+
         group.MapGet("/catalog/{catalogId}", async (
             string catalogId,
             IMarketCatalogService market,
@@ -213,6 +304,9 @@ public static class MarketEndpoints
     private static bool TryId(string? value, out Guid id) =>
         Guid.TryParse(value, out id) && id != Guid.Empty;
 
+    /// <summary>Same rule for an id that arrives in a body rather than the route.</summary>
+    private static bool TryGuidId(string? value, out Guid id) => TryId(value, out id);
+
     private static IResult InvalidId(string field, string? value) => Results.Json(
         new { code = "invalid_request", message = $"{field} is not a guid: '{value}'" },
         statusCode: StatusCodes.Status400BadRequest);
@@ -232,8 +326,22 @@ public static class MarketEndpoints
     private static IResult Problem(MarketCatalogException ex) => ex.Code switch
     {
         MarketErrorCodes.SourceNotFound or MarketErrorCodes.EntryNotFound => NotFound(ex.Code, ex.Message),
-        MarketErrorCodes.SourceDisabled or MarketErrorCodes.DuplicateSource => Results.Json(
+        // Both of these are properties of the world, not of the request: the entry publishes no
+        // command this layer could start, or the provider keeps its config where Core may not
+        // write. Retrying with the same body answers the same way, so this is a conflict (409)
+        // rather than a malformed request (400).
+        MarketErrorCodes.SourceDisabled or MarketErrorCodes.DuplicateSource
+            or MarketErrorCodes.SourceInUse or MarketErrorCodes.TargetUnresolved
+            or MarketErrorCodes.NotExpressible => Results.Json(
             new { code = ex.Code, message = ex.Message }, statusCode: StatusCodes.Status409Conflict),
+        // A proposal that no longer describes the market is not a malformed request and not a
+        // missing thing: the precondition it was built on stopped holding, which is 412 and is
+        // what tells a client to re-preview rather than to fix its input or give up.
+        MarketErrorCodes.ProposalStale => Results.Json(
+            new { code = ex.Code, message = ex.Message }, statusCode: StatusCodes.Status412PreconditionFailed),
+        MarketErrorCodes.ProposalNotFound or MarketErrorCodes.InstallationNotFound
+            or MarketErrorCodes.ProjectNotFound => Results.Json(
+            new { code = ex.Code, message = ex.Message }, statusCode: StatusCodes.Status404NotFound),
         _ => Results.Json(new { code = ex.Code, message = ex.Message },
             statusCode: StatusCodes.Status400BadRequest),
     };

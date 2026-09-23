@@ -1,7 +1,20 @@
 import { computed, reactive, ref, watch } from 'vue'
 import i18n from '@/i18n'
-import { api, MCP_SOURCE_PROVIDER, type AcpAdapterDto, type ExtensionInstallPreviewDto, type ExtensionSourceDto, type InstalledExtensionDto, type MarketCatalogItemDto, type McpInventoryDto, type McpServerDto } from '@/api'
+import {
+  api,
+  MARKET_INSTALL_ACTION_UNINSTALL,
+  MCP_SOURCE_PROVIDER,
+  type AcpAdapterDto,
+  type ExtensionSourceDto,
+  type MarketCatalogItemDto,
+  type MarketInstallationDto,
+  type MarketInstallProposalDto,
+  type McpInventoryDto,
+  type McpServerDto,
+} from '@/api'
+import { homeController } from '@/controllers/HomeController'
 import { useNotifications } from '@/composables/useNotifications'
+import { isUserToolActionTerminal, userToolActionNeedsDecision } from '@/userToolAction'
 
 // ---------------------------------------------------------------------------
 // MarketController — the single domain controller for the Market page.
@@ -13,11 +26,13 @@ import { useNotifications } from '@/composables/useNotifications'
 // Module-level composables are safe (they share module refs); `useI18n` is NOT
 // callable outside setup(), so translate via the global instance instead.
 const t = i18n.global.t
-const { notify, status, confirm, dismissByKey } = useNotifications()
+const { notify, status, dismissByKey } = useNotifications()
 
 const sources = ref<ExtensionSourceDto[]>([])
+/** The kinds this build has an adapter for, straight from Core. A picker that guesses offers a kind that 400s. */
+const supportedKinds = ref<string[]>([])
 const catalog = ref<MarketCatalogItemDto[]>([])
-const installed = ref<InstalledExtensionDto[]>([])
+const installations = ref<MarketInstallationDto[]>([])
 const mcpInventory = ref<McpInventoryDto | null>(null)
 const acpAdapters = ref<AcpAdapterDto[]>([])
 const selectedCatalogId = ref('')
@@ -27,19 +42,19 @@ const query = ref('')
 const busy = ref(false)
 const loading = ref(false)
 
-const preview = ref<ExtensionInstallPreviewDto | null>(null)
-const directPreview = ref<ExtensionInstallPreviewDto | null>(null)
+/**
+ * The frozen install or removal a human is being asked to decide on, or null. A proposal is the
+ * only thing that can queue a write, it names the project it writes into, and it stops being
+ * applyable when it expires or when the market moves under it — so it is held here and dropped on
+ * any of those events rather than kept as a button that will fail.
+ */
+const proposal = ref<MarketInstallProposalDto | null>(null)
+const proposalBusy = ref(false)
 
 const sourceForm = reactive({
-  name: 'Custom Marketplace',
-  kind: 'marketplace-url',
+  name: 'MCP Registry',
+  kind: '',
   location: '',
-})
-
-const directForm = reactive({
-  source_kind: 'local-directory',
-  source_location: '',
-  manifest_json: '',
 })
 
 export const kindOptions = [
@@ -49,31 +64,63 @@ export const kindOptions = [
   { key: 'acp-adapter', label: 'ACP', icon: null },
 ]
 
-export const sourceKindOptions = [
-  'local-directory',
-  'local-archive',
-  'github',
-  'git',
-  'https-archive',
-  'marketplace-url',
-  'mcpb',
-  'dxt',
-]
-
 const selectedItem = computed(() =>
   catalog.value.find((item) => item.catalog_id === selectedCatalogId.value) ?? catalog.value[0] ?? null
 )
 
-const installedByExtensionId = computed(() => {
-  const map = new Map<string, InstalledExtensionDto>()
-  for (const item of installed.value) map.set(item.extension_id, item)
+/**
+ * The workspace a preview would write into. There is deliberately one owner of "which project am I
+ * working in" — the composer's selector on Home — because a second project picker would be a
+ * second answer to that question, and installs are per project.
+ */
+const targetProjectId = computed(() => homeController.selectedProjectId.value)
+const targetProject = computed(() =>
+  homeController.projects.value.find((project) => project.id === targetProjectId.value) ?? null
+)
+
+// Keyed by project plus the extension id the source published, because that pair is what an
+// installation row and a catalog row both carry. The config key Core writes is a slug of the
+// extension id — deriving it here would copy Core's algorithm into the renderer.
+const installationKeys = computed(() => {
+  const map = new Map<string, MarketInstallationDto>()
+  for (const row of installations.value) map.set(`${row.project_id}\u0000${row.extension_id}`, row)
   return map
 })
 
-const selectedInstalled = computed(() => {
-  const item = selectedItem.value
-  return item ? installedByExtensionId.value.get(item.extension_id) ?? null : null
+function installationFor(item: MarketCatalogItemDto): MarketInstallationDto | null {
+  const project = targetProjectId.value
+  if (!project) return null
+  return installationKeys.value.get(`${project}\u0000${item.extension_id}`) ?? null
+}
+
+const selectedInstallation = computed(() =>
+  selectedItem.value ? installationFor(selectedItem.value) : null
+)
+
+/**
+ * The proposal is bound to the row and the workspace it was previewed against, because those are the
+ * two things whose state froze into it. Rather than watching another controller's state (a module
+ * that reaches across for a watcher is a load order waiting to break), a proposal is simply not
+ * offered once it describes something else.
+ */
+const activeProposal = computed(() => {
+  const pending = proposal.value
+  if (!pending) return null
+  if (pending.project_id !== targetProjectId.value) return null
+  if (pending.action === MARKET_INSTALL_ACTION_UNINSTALL) {
+    return pending.installation_id && selectedInstallation.value?.id === pending.installation_id ? pending : null
+  }
+  return pending.catalog_id && selectedItem.value?.catalog_id === pending.catalog_id ? pending : null
 })
+
+/** Whether the row's own write is parked in front of a human, on the approval surface. */
+function awaitingDecision(row: MarketInstallationDto | null): boolean {
+  return !!row?.action_status && userToolActionNeedsDecision(row.action_status)
+}
+
+function actionFinished(row: MarketInstallationDto | null): boolean {
+  return !!row?.action_status && isUserToolActionTerminal(row.action_status)
+}
 
 /**
  * The MCP servers Core could actually see, plus the answer to "why is this list empty".
@@ -89,8 +136,6 @@ const mcpReadSucceeded = computed(() => mcpSource.value === MCP_SOURCE_PROVIDER)
 const mcpReason = computed(() => mcpInventory.value?.reason ?? '')
 const mcpConfigPath = computed(() => mcpInventory.value?.config_path ?? '')
 
-const builtinSource = computed(() => sources.value.find((s) => s.location.includes('tinadec://')))
-
 async function run(label: string, action: () => Promise<void>) {
   busy.value = true
   try {
@@ -105,22 +150,20 @@ async function run(label: string, action: () => Promise<void>) {
 async function loadAll() {
   loading.value = true
   try {
-    const [sourceListResult, installedList, inventory, adapters] = await Promise.all([
+    const [sourceListResult, installationList, inventory, adapters] = await Promise.all([
       api.listExtensionSources(),
-      api.listInstalledExtensions(),
+      api.listMarketInstallations(),
       api.listMcpServers(),
       api.listAcpAdapters(),
     ])
-    // The envelope also carries supported_kinds, which the add-source form needs before it can
-    // offer a kind this build can read; it is still hardcoded there, and that is registered as a
-    // gap rather than papered over by dropping the field on the floor here.
-    const sourceList = sourceListResult.sources
-    sources.value = sourceList
-    installed.value = installedList
+    sources.value = sourceListResult.sources
+    supportedKinds.value = sourceListResult.supported_kinds
+    if (!sourceForm.kind) sourceForm.kind = sourceListResult.supported_kinds[0] ?? ''
+    installations.value = installationList.installations
     mcpInventory.value = inventory
     acpAdapters.value = adapters
     if (!sourceFilter.value) {
-      sourceFilter.value = sourceList[0]?.id ?? ''
+      sourceFilter.value = sourceListResult.sources[0]?.id ?? ''
     }
     await loadCatalog()
     dismissByKey('market-load')
@@ -162,16 +205,81 @@ async function loadCatalog() {
   }
 }
 
-async function loadPreview() {
-  if (!selectedItem.value) {
-    preview.value = null
+async function loadInstallations() {
+  const list = await api.listMarketInstallations()
+  installations.value = list.installations
+}
+
+function discardProposal() {
+  proposal.value = null
+}
+
+/**
+ * Asks Core what it would write, and shows that answer. Reading the Tool Provider's current config
+ * is part of a preview, so this is a button rather than something that fires whenever a row is
+ * clicked.
+ */
+async function previewInstall() {
+  const item = selectedItem.value
+  if (!item) return
+  if (!targetProjectId.value) {
+    notify.warning({ message: t('market.installNeedsProject'), source: 'market' })
     return
   }
-  try {
-    preview.value = await api.previewExtensionInstall({ catalog_id: selectedItem.value.catalog_id })
-  } catch (err) {
-    notify.error(err, { title: t('market.loadFailed'), source: 'market' })
+  if (item.installable === false) {
+    notify.warning({ message: item.install_blocker || t('market.notInstallable'), source: 'market' })
+    return
   }
+  proposalBusy.value = true
+  try {
+    await run('install preview', async () => {
+      proposal.value = await api.previewMarketInstall(item.catalog_id, targetProjectId.value!)
+    })
+  } finally {
+    proposalBusy.value = false
+  }
+}
+
+async function previewRemoval() {
+  const row = selectedInstallation.value
+  if (!row) return
+  proposalBusy.value = true
+  try {
+    await run('uninstall preview', async () => {
+      proposal.value = await api.previewMarketUninstall(row.id)
+    })
+  } finally {
+    proposalBusy.value = false
+  }
+}
+
+/**
+ * Queues the one governed write this proposal describes. Nothing lands here: the file changes when
+ * a human approves the user tool action on the approval surface, and Core refuses a second action
+ * for the same proposal, so pressing twice is safe.
+ */
+async function applyProposal() {
+  const pending = activeProposal.value
+  if (!pending) return
+  await run('queue install', async () => {
+    try {
+      const row = await api.applyMarketInstallProposal(pending.id)
+      proposal.value = null
+      await loadInstallations()
+      notify.info({
+        message: t('market.queuedForApproval', {
+          server: row.server_id,
+          action: row.install_action_id || row.uninstall_action_id || '',
+        }),
+        source: 'market',
+      })
+    } catch (err) {
+      // Expired, used, or the market moved: the reviewed bytes no longer describe anything, and a
+      // panel that kept offering them would be a button that can only fail.
+      proposal.value = null
+      throw err
+    }
+  })
 }
 
 async function addSource() {
@@ -180,6 +288,26 @@ async function addSource() {
     sourceForm.location = ''
     await loadAll()
     notify.success({ message: 'Source added.', source: 'market' })
+  })
+}
+
+async function toggleSource(sourceId: string, enabled: boolean) {
+  await run('enable source', async () => {
+    await api.setExtensionSourceEnabled(sourceId, enabled)
+    await loadAll()
+  })
+}
+
+async function removeSource(sourceId: string) {
+  await run('delete source', async () => {
+    try {
+      await api.deleteExtensionSource(sourceId)
+      await loadAll()
+    } catch (err) {
+      // A source whose entries are still installed is kept on purpose: its rows are what an
+      // installed server is traceable to.
+      notify.error(err, { title: t('market.deleteSourceFailed'), source: 'market' })
+    }
   })
 }
 
@@ -195,84 +323,13 @@ async function refreshSource(sourceId: string) {
     notify.success({
       message: outcome.truncated_pages
         ? `Refreshed ${outcome.fetched_rows} entry/entries from ${outcome.pages_fetched} page(s); the listing was longer than this.`
-        : `Refreshed ${outcome.fetched_rows} entry/entries (${outcome.refused_rows} refused, ${outcome.removed_rows} dropped).`,
+        : `Refreshed ${outcome.fetched_rows} entry/entries (${outcome.refused_rows} refused, ${outcome.removed_rows} dropped, ${outcome.retained_rows} kept because they are installed).`,
       source: 'market',
     })
   })
 }
 
-async function approveAndInstallCatalog() {
-  const item = selectedItem.value
-  if (!item) return
-  await run('install extension', async () => {
-    const first = await api.installExtension({ catalog_id: item.catalog_id })
-    let installedExtension = first.extension
-    if (first.approval_required && first.approval) {
-      await api.decideApproval(first.approval.id, 'approved')
-      const second = await api.installExtension({ catalog_id: item.catalog_id, approval_id: first.approval.id })
-      installedExtension = second.extension ?? installedExtension
-    }
-    await loadAll()
-    await loadPreview()
-    if (!installedExtension || ['failed', 'error', 'blocked'].includes(installedExtension.status)) {
-      throw new Error(installedExtension?.status_message || `${item.display_name} was not installed.`)
-    }
-    notify.success({ message: installedExtension.status_message || `${item.display_name} installed.`, source: 'market' })
-  })
-}
-
-async function previewDirectInstall() {
-  await run('preview direct install', async () => {
-    directPreview.value = await api.previewExtensionInstall({
-      source_kind: directForm.source_kind,
-      source_location: directForm.source_location,
-      manifest_json: directForm.manifest_json || null,
-    })
-  })
-}
-
-async function approveAndInstallDirect() {
-  await run('install direct extension', async () => {
-    const payload = { source_kind: directForm.source_kind, source_location: directForm.source_location, manifest_json: directForm.manifest_json || null }
-    const first = await api.installExtension(payload)
-    let installedExtension = first.extension
-    if (first.approval_required && first.approval) {
-      await api.decideApproval(first.approval.id, 'approved')
-      const second = await api.installExtension({ ...payload, approval_id: first.approval.id })
-      installedExtension = second.extension ?? installedExtension
-    }
-    if (!installedExtension || ['failed', 'error', 'blocked'].includes(installedExtension.status)) {
-      throw new Error(installedExtension?.status_message || `${first.preview.display_name} was not installed.`)
-    }
-    directPreview.value = null
-    await loadAll()
-    notify.success({ message: installedExtension.status_message || `${first.preview.display_name} installed.`, source: 'market' })
-  })
-}
-
-async function toggleExtension(extension: InstalledExtensionDto) {
-  await run('toggle extension', async () => {
-    const updated = extension.enabled
-      ? await api.disableExtension(extension.id)
-      : await api.enableExtension(extension.id)
-    await loadAll()
-    await loadPreview()
-    notify.success({ message: updated.status_message, source: 'market' })
-  })
-}
-
-async function removeExtension(extension: InstalledExtensionDto) {
-  if (!await confirm({ title: t('market.uninstall'), message: extension.display_name, confirmLabel: t('market.uninstall'), destructive: true })) return
-  await run('remove extension', async () => {
-    await api.deleteExtension(extension.id)
-    await loadAll()
-    await loadPreview()
-    notify.success({ message: `${extension.display_name} removed.`, source: 'market' })
-  })
-}
-
 watch([kindFilter, sourceFilter], () => { void loadCatalog() })
-watch(selectedCatalogId, () => { void loadPreview() })
 
 let started = false
 function start() {
@@ -282,14 +339,14 @@ function start() {
 }
 
 export const marketController = {
-  sources, catalog, installed, acpAdapters,
+  sources, supportedKinds, catalog, installations, acpAdapters,
   mcpInventory, mcpServers, mcpSource, mcpReadSucceeded, mcpReason, mcpConfigPath,
   selectedCatalogId, kindFilter, sourceFilter, query, busy, loading,
-  preview, directPreview, sourceForm, directForm,
-  selectedItem, installedByExtensionId, selectedInstalled, builtinSource,
+  proposal, activeProposal, proposalBusy, sourceForm,
+  selectedItem, selectedInstallation, installationFor, awaitingDecision, actionFinished,
+  targetProjectId, targetProject,
   start,
-  loadAll, loadCatalog, loadPreview,
-  addSource, refreshSource,
-  approveAndInstallCatalog, previewDirectInstall, approveAndInstallDirect,
-  toggleExtension, removeExtension,
+  loadAll, loadCatalog, loadInstallations,
+  addSource, refreshSource, toggleSource, removeSource, discardProposal,
+  previewInstall, previewRemoval, applyProposal,
 }

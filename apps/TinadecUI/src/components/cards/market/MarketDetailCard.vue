@@ -5,26 +5,25 @@ import {
   CheckCircle2,
   Download,
   Globe2,
+  Hourglass,
   PlugZap,
   ShieldCheck,
   Terminal,
-  ToggleLeft,
-  ToggleRight,
   Trash2,
+  X,
 } from '@lucide/vue'
 import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { UiButton, UiInput } from '@/components/ui'
+import { UiButton } from '@/components/ui'
 import { marketController } from '@/controllers/MarketController'
 
 const { t } = useI18n()
 
 const {
-  busy, preview, directPreview, directForm,
-  selectedItem, selectedInstalled,
+  busy, activeProposal: proposal, proposalBusy, targetProject,
+  selectedItem, selectedInstallation, awaitingDecision,
   mcpServers, mcpReadSucceeded, mcpReason, mcpConfigPath,
-  start, approveAndInstallCatalog, previewDirectInstall, approveAndInstallDirect,
-  toggleExtension, removeExtension,
+  start, previewInstall, previewRemoval, applyProposal, discardProposal,
 } = marketController
 
 function kindIcon(kind: string) {
@@ -32,6 +31,33 @@ function kindIcon(kind: string) {
   if (kind === 'mcp-server') return PlugZap
   if (kind === 'acp-adapter') return Terminal
   return Boxes
+}
+
+/** A proposal is reviewed, then queued, then a human decides elsewhere; this line says which. */
+const removal = computed(() => proposal.value?.action === 'uninstall')
+
+/** The command exactly as it will be written, so the reviewer reads one line not two lists. */
+const commandLine = computed(() => {
+  const pending = proposal.value
+  if (!pending?.command) return ''
+  return [pending.command, ...pending.args].join(' ')
+})
+
+/** Core's `expires_at` is a deadline, not a duration; show the clock time the reviewer can check. */
+const expiresAtLabel = computed(() => {
+  const raw = proposal.value?.expires_at
+  if (!raw) return ''
+  const moment = new Date(raw)
+  return Number.isNaN(moment.getTime()) ? raw : moment.toLocaleTimeString()
+})
+
+function statusLine() {
+  const row = selectedInstallation.value
+  if (!row) return t('market.notInstalled')
+  if (awaitingDecision(row)) return t('market.awaitingDecisionHint')
+  if (row.state === 'removing') return t('market.removingHint')
+  if (row.action_status === 'completed') return t('market.installedHint')
+  return `${t('market.installingHint')} · ${row.action_status}`
 }
 
 onMounted(() => {
@@ -54,10 +80,10 @@ onMounted(() => {
 
       <p class="market-detail-copy">{{ selectedItem.description }}</p>
 
-      <div class="market-status-strip" :class="{ enabled: selectedInstalled?.enabled }">
-        <CheckCircle2 v-if="selectedInstalled?.enabled" :size="16" />
+      <div class="market-status-strip" :class="{ enabled: !!selectedInstallation }">
+        <CheckCircle2 v-if="selectedInstallation" :size="16" />
         <ShieldCheck v-else :size="16" />
-        <span>{{ selectedInstalled?.status_message ?? t('market.notInstalled') }}</span>
+        <span>{{ statusLine() }}</span>
       </div>
 
       <div class="market-detail-grid">
@@ -83,11 +109,81 @@ onMounted(() => {
         <p class="market-detail-copy">{{ selectedItem.homepage }}</p>
       </div>
 
-      <div v-if="preview" class="market-risk-panel">
-        <h3>{{ t('market.riskPreview') }}</h3>
-        <ul>
-          <li v-for="risk in preview.risks" :key="risk">{{ risk }}</li>
-        </ul>
+      <!-- A listing can be true and still not be something this tool layer can start. Say which
+           case it is instead of offering a button that would only fail. -->
+      <p v-if="selectedItem.installable === false" class="market-blocker" data-testid="market-blocker">
+        {{ selectedItem.install_blocker || t('market.notInstallable') }}
+      </p>
+
+      <div v-if="proposal" class="market-proposal" data-testid="market-proposal">
+        <div class="market-proposal-head">
+          <h3>{{ removal ? t('market.removalTitle') : t('market.installTitle') }}</h3>
+          <UiButton variant="ghost" size="icon" :title="t('market.discard')" @click="discardProposal">
+            <X :size="14" />
+          </UiButton>
+        </div>
+
+        <dl class="market-proposal-grid">
+          <div>
+            <dt>{{ t('market.pinnedVersion') }}</dt>
+            <dd>{{ proposal.version }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('market.targetProject') }}</dt>
+            <dd>{{ targetProject?.name ?? proposal.project_id }}</dd>
+          </div>
+          <div v-if="commandLine">
+            <dt>{{ t('market.command') }}</dt>
+            <dd class="mono">{{ commandLine }}</dd>
+          </div>
+          <div v-if="proposal.replaces_command">
+            <dt>{{ t('market.replaces') }}</dt>
+            <dd class="mono strike">{{ proposal.replaces_command }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('market.configFile') }}</dt>
+            <dd class="mono">{{ proposal.target_path }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('market.expiresAt') }}</dt>
+            <dd>{{ expiresAtLabel }}</dd>
+          </div>
+        </dl>
+
+        <div v-if="proposal.environment.length" class="market-section">
+          <h3>{{ t('market.environment') }}</h3>
+          <!-- Names and flags only: Core's proposal cannot carry a value, and one entered here
+               would never reach the file. -->
+          <div class="market-chip-row wrap">
+            <span v-for="entry in proposal.environment" :key="entry.name">
+              {{ entry.name }}<template v-if="entry.required"> · {{ t('market.required') }}</template><template v-if="entry.secret"> · {{ t('market.secret') }}</template>
+            </span>
+          </div>
+          <p class="quiet">{{ t('market.environmentNote') }}</p>
+        </div>
+
+        <div v-if="proposal.warnings.length" class="market-section">
+          <h3>{{ t('market.warnings') }}</h3>
+          <ul class="market-warning-list">
+            <li v-for="warning in proposal.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <details class="market-proposal-bytes">
+          <summary>{{ t('market.showBytes') }}</summary>
+          <!-- The reviewed bytes, not a summary of them: what is approved here is what lands. -->
+          <pre>{{ proposal.content }}</pre>
+        </details>
+
+        <div class="market-action-row">
+          <UiButton :disabled="busy || proposalBusy" @click="applyProposal">
+            <Hourglass :size="15" />
+            {{ t('market.queueForApproval') }}
+          </UiButton>
+          <UiButton variant="ghost" size="sm" :disabled="busy" @click="discardProposal">
+            {{ t('common.cancel') }}
+          </UiButton>
+        </div>
       </div>
 
       <div class="market-section" data-testid="market-mcp">
@@ -117,41 +213,24 @@ onMounted(() => {
       </div>
 
       <div class="market-action-row">
-        <UiButton v-if="!selectedInstalled" :disabled="busy" @click="approveAndInstallCatalog">
+        <UiButton
+          v-if="!proposal"
+          :disabled="busy || proposalBusy || selectedItem.installable === false"
+          :title="selectedItem.installable === false ? (selectedItem.install_blocker ?? t('market.notInstallable')) : undefined"
+          @click="previewInstall"
+        >
           <Download :size="15" />
-          {{ t('market.approveInstall') }}
+          {{ t('market.previewInstall') }}
         </UiButton>
-        <UiButton v-else variant="secondary" :disabled="busy" @click="toggleExtension(selectedInstalled)">
-          <component :is="selectedInstalled.enabled ? ToggleLeft : ToggleRight" :size="15" />
-          {{ selectedInstalled.enabled ? t('market.disable') : t('market.enable') }}
-        </UiButton>
-        <UiButton v-if="selectedInstalled" variant="ghost" size="icon" :title="t('market.uninstall')" @click="removeExtension(selectedInstalled)">
+        <UiButton v-if="!proposal && selectedInstallation && selectedInstallation.state !== 'removing'" variant="secondary" :disabled="busy || proposalBusy" @click="previewRemoval">
           <Trash2 :size="15" />
+          {{ t('market.previewRemoval') }}
         </UiButton>
       </div>
+      <p class="quiet">{{ t('market.approvalWhere') }}</p>
     </template>
 
-    <div class="market-direct">
-      <h3>{{ t('market.directInstall') }}</h3>
-      <UiInput v-model="directForm.source_location" :placeholder="t('market.sourceLocation')" />
-      <textarea v-model="directForm.manifest_json" class="market-textarea" :placeholder="t('market.manifestPlaceholder')" />
-      <div class="market-action-row">
-        <UiButton variant="secondary" size="sm" :disabled="busy || !directForm.source_location" @click="previewDirectInstall">
-          <ShieldCheck :size="14" />
-          {{ t('market.preview') }}
-        </UiButton>
-        <UiButton size="sm" :disabled="busy || !directPreview" @click="approveAndInstallDirect">
-          <Download :size="14" />
-          {{ t('market.approveInstall') }}
-        </UiButton>
-      </div>
-      <div v-if="directPreview" class="market-risk-panel compact">
-        <strong>{{ directPreview.display_name }}</strong>
-        <ul>
-          <li v-for="risk in directPreview.risks" :key="risk">{{ risk }}</li>
-        </ul>
-      </div>
-    </div>
+    <p v-else class="market-detail-copy quiet">{{ t('market.empty') }}</p>
   </aside>
 </template>
 
@@ -208,28 +287,92 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
-.market-action-row {
-  display: flex;
-  gap: 8px;
+.market-blocker {
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-section);
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin: 0;
+  padding: 8px 12px;
 }
 
-.market-direct {
+.market-proposal {
+  border-radius: 8px;
+  border: 1px solid var(--border-muted);
+  background: var(--surface-raised);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-muted);
+  padding: 12px;
 }
 
-.market-textarea {
-  min-height: 80px;
-  padding: 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-muted);
-  background: var(--surface-input);
-  color: var(--text-primary);
+.market-proposal-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.market-proposal-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.market-proposal-grid {
+  display: grid;
+  gap: 8px 12px;
   font-size: 12px;
+  grid-template-columns: 1fr;
+  margin: 0;
+}
+
+.market-proposal-grid dt {
+  color: var(--text-secondary);
+}
+
+.market-proposal-grid dd {
+  margin: 0;
+  /* The line a human is approving must be readable whole; an ellipsis would hide the argument
+     that decides it. */
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.market-proposal-grid .mono {
   font-family: monospace;
+}
+
+.market-proposal-grid .strike {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.market-warning-list {
+  font-size: 12px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.market-proposal-bytes summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.market-proposal-bytes pre {
+  background: var(--surface-input);
+  border-radius: 6px;
+  font-size: 11px;
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.market-action-row {
+  display: flex;
+  gap: 8px;
 }
 </style>

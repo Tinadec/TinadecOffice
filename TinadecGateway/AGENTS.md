@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
 **Last Updated:** 2026-09-23
-**Last Updated By:** 市场读面从"代理到 Core 桩"变成代理到真实现（六条 + 五个类型化 200），并顺手修掉网关自己一条静默缺陷：catalog 代理曾发 `query`/`sourceId`，Core 读的是 `q`/`source_id`，两个名字都不报错都只是没人读，于是搜索与按源筛选穿过网关时静默失效。上一批是 TinaChat 契约投影实际为 17 路径/24 操作，代理测试改为精确计数钉住；其余记录保留
-**Last Verified Commit:** `e0c0e08` 之后的工作树：`bun test src` `BUN_EXIT=0`、**70 pass / 0 fail**（63 + 7 例新增 `src/marketProxy.test.ts`）。`tests/__snapshots__/openapi.external.json` 随本批再生成（+293/−5：market 五条路径 + 五个组件），外部快照后须再跑 `npm run generate:client -w @tinadec/desktop`。上一批是 TinaChat 唤醒闭环（`a82ed34`）。
+**Last Updated By:** 市场安装面从"Core 只有读"变成"Core 有写口而网关仍然只是代理"：新增四条同名纯代理（`POST /market/catalog/{id}/install-preview`、`POST /market/installations/{id}/uninstall-preview`、`POST /market/install-proposals/{id}/apply`、`GET /market/installations`）、七个错误码进 `ALLOWED_CODES`白名单、四个 externalJsonResponse 类型化 200。关键仍是**语义而不是转发**：`market_install_proposal_stale` 必须是 412 而不是被压成 `conflict`——412 告诉客户端"重新预览"，`conflict` 告诉它"过一会儿重试同一件事"，而一件永远不会成功的重试是网关能造成的最安静的错误。外部契约的 market 路径集合现在用 deep-equal 钉死（M1 的教训是五条幻影路由活在 Core 从未实现的契约里，">= N 条"的断言抓不住第 N+1 条）。上一批是市场读面从"代理到 Core 桩"变成代理到真实现（六条 + 五个类型化 200），并修掉网关自己一条静默缺陷：catalog 代理曾发 `query`/`sourceId`，Core 读的是 `q`/`source_id`，两个名字都不报错都只是没人读，于是搜索与按源筛选穿过网关时静默失效。再上一批是 TinaChat 契约投影实际为 17 路径/24 操作，代理测试改为精确计数钉住
+**Last Verified Commit:** `e0c0e08` 之后的工作树：`bun test src` `BUN_EXIT=0`、**72 pass / 0 fail**（11 文件；`src/marketProxy.test.ts` 9 例，含"412 过期提案保住自己的码"与"market 路径集合与 Core 实现的恰好一致"两例）。`tests/__snapshots__/openapi.external.json` 随本批再生成（+319/−1），外部快照后须再跑 `npm run generate:client -w @tinadec/desktop`（本批 `schema.d.ts` +128/0，`GEN_EXIT=0`）。Core 同批整解 `GATE_EXIT=0`、`Api.Tests` 507/507。上一批是 M1 市场读面（70/70）。
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -99,7 +99,17 @@ Gateway 是北向无状态门面。用户在 Desktop 触发的工具请求可以
   漏在白名单外会被压成 `conflict`，把"这个 kind 没有 adapter"说成"稍后重试"。
   `DELETE /market/sources/{id}` 成功回 204 无体，因此它是六条里唯一没有响应 schema 的一条。
   契约：`tests/__snapshots__/openapi.external.json` 已再生成；`apps/desktop/src/generated/schema.d.ts` 同一提交内重生成。
-  仍**没有**代理的路由：`/api/v1/extensions/*` 七条（Core 仍 501，属 M2/M3）。
+- **市场安装面（2026-09-23，#37 / M2）**：同一批里 `/api/v1/market/*` 长出四条**写**路由——
+  `POST catalog/{catalogId}/install-preview`、`POST installations/{installationId}/uninstall-preview`、
+  `POST install-proposals/{proposalId}/apply`、`GET installations`。网关仍然只做透传：改路径参数名、贴类型、保留状态码与机器码，
+  **不在网关侧生成或修改提案**（提案的字节由 Core 冻结，任何在这里重写 payload 的写法都会让"批准的就是落盘的"这句话失效）。
+  `ALLOWED_CODES` 同批补上安装族的码（`market_install_not_expressible`/`market_install_target_unresolved`/
+  `market_install_proposal_stale`/`market_install_proposal_not_found`/`market_installation_not_found`/
+  `market_install_project_not_found`/`market_source_in_use`）——白名单外会被压成 `conflict`，
+  而 **412 `..._proposal_stale` 被压成就错了**：客户端唯一的正确后续动作是"重新预览"，说成"稍后重试同一请求"是把用户引回同一次失败。
+  新增两例断言这件事（`marketProxy.test.ts`：412 保码、409 带原因原文穿过），并把"契约里 market 路径集合"从五条深比较扩成九条——
+  该用例刻意用深等于而不是下限，因为 M1 之前的教训正是契约里活着五条 Core 从不实现的幽灵路由。
+  仍**没有**代理的路由：`/api/v1/extensions/*` 七条（Core 那侧一直回 501，M2 之后桌面也不再打它们；技能安装属 M3）。
 - **终端会话路由 (2026-08-31)**：`GET /api/v1/terminals`、`POST /api/v1/terminals/:terminalSessionId/stdin`、`POST /api/v1/terminals/:terminalSessionId/kill` 是 Core 的纯透传（Tags: Terminal）。终端实时输出走既有 `GET /api/v1/runs/:runId/stream` SSE 代理，不需要单独的 WS 通道；`/ws/terminal` 无效桩仍未启用。openapi.external.json 快照已随新路由再生成（快照测试已修复为「先写后断言」，漂移会重新生成文件并由 `git diff --exit-code` 把关）。
 - `POST /api/v1/sessions/{sessionId}/invoke-stream` **已退役**（`src/index.ts:540` 起不再注册，返回 404）；当前入口是 `POST /api/v1/sessions/{sessionId}/interactions`（`interactionsMapper` 只做薄枚举校验），运行输出经 `GET /api/v1/runs/{runId}/stream` 读取。
 - `POST /api/v1/sessions/{sessionId}/interactions` 同样原样透传；`interactionsMapper` 只做薄枚举校验（`dispatch_mode`、可选 `agent_mode` = plan|spec|ask|vibe|auto|agent），解析与持久化属于 Core。`sessionMapper` 必须保留 Core 拥有的会话绑定字段：`mode_version_id`、`meeting_model_override`（结构化 `{provider_instance_id, model}`，Desktop 依赖它们感知当前模式；旧自由文本模型字段与分散 provider 字段已于 2026-08-27 重构删除）。

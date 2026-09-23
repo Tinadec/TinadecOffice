@@ -9,7 +9,7 @@ import { marketController } from '@/controllers/MarketController'
 const { t } = useI18n()
 
 const {
-  catalog: _catalog, selectedCatalogId: _selectedId, installedByExtensionId, start,
+  catalog: _catalog, selectedCatalogId: _selectedId, installationFor, awaitingDecision, actionFinished, start,
 } = marketController
 // ponytail: vapor template does not auto-unwrap Ref when destructured from controller — expose plain-typed computed so vue-tsc sees correct brands (single reactivity identity via tsconfig paths)
 const catalog = computed(() => _catalog.value) as unknown as MarketCatalogItemDto[]
@@ -32,18 +32,26 @@ function kindIcon(kind: string) {
   return Boxes
 }
 
+/**
+ * A row is a claim from a source, and separately a decision this workspace may have queued for it.
+ * "Installed" only ever comes from the ledger's own action status, never from the row being
+ * present — refreshing a market puts entries back on the list whether or not anything was written.
+ */
 function statusLabel(item: MarketCatalogItemDto) {
-  const extension = installedByExtensionId.value.get(item.extension_id)
-  if (!extension) return t('market.available')
-  if (extension.enabled) return t('market.enabled')
-  return t('market.installedDisabled')
+  const row = installationFor(item)
+  if (!row) return item.installable ? t('market.available') : t('market.notInstallable')
+  if (awaitingDecision(row)) return t('market.awaitingDecision')
+  if (row.state === 'removing') return t('market.removing')
+  if (row.action_status === 'completed') return t('market.installed')
+  return actionFinished(row) ? t('market.installFailed') : t('market.installing')
 }
 
 function statusVariant(item: MarketCatalogItemDto) {
-  const extension = installedByExtensionId.value.get(item.extension_id)
-  if (!extension) return 'secondary'
-  if (extension.enabled) return 'default'
-  return 'outline'
+  const row = installationFor(item)
+  if (!row) return item.installable ? 'secondary' : 'outline'
+  if (awaitingDecision(row)) return 'default'
+  if (row.action_status === 'completed') return 'default'
+  return actionFinished(row) ? 'destructive' : 'outline'
 }
 
 onMounted(() => {

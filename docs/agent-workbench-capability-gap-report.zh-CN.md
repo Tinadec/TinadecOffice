@@ -36,6 +36,7 @@
 | 一次 run 花了多少：按 `model × provider` 分组的 token 与调用数，读不到就明说读不到 | Core `model-invocations` 分页 → 网关透传 → `OrchestrationTab.vue` + `lib/modelUsage.ts` | 本批。Core `ModelInvocationQueryTests.cs` 7 例——其中 2 例**先在未修复的构建上跑红**（`from`/`to` 窗口、并列时间戳的游标），另有 1 例钉住 OpenAPI 里 token 三字段并禁止 `prompt_tokens`/`completion_tokens` 回来；桌面 `modelUsage.test.ts` 7 例 + `OrchestrationTab.test.ts` 14 例（新 7），断"分组求和 == 每行 `total_tokens` 之和""缺字段渲染成'未报告'而不是 0""翻页被截断时必须自称是下限"。**注意这一行的 A 级只覆盖"读得到、算得对、说得出边界"**：没有任何单价，所以它不是成本面板（见 §4 第 11 条） |
 | 一次 5xx 会自己留下原因（进程内有界环，不上外线；测试主机读回） | Core `AspNetCore/ServerFailureJournal.cs` | `ServerFailureJournalTests.cs` 6 例：同一次响应**同时**断 body 不含异常类型名 + journal 含最内层消息；4xx 不进环；裸宿主（未 `AddTinadecCoreHttp`）仍能回 500；环形淘汰；`Describe()` 把"给修的人看的那一行"格式钉死（含外层/最内层两段）。消费面：`ServerFailureReports.AssertStatusAsync` 是这句话唯一的构造点，9 个断言站（FullDuplex/ToolChain/Unattended 三个 stream helper 的 admission·run-stream·replay）经它读回；另有一条经真 Core host 的读回断言（`Interactions_StaleContextRevision_Returns409` 断 `LastFailure()` 报"没有 5xx"）。**并且它已在真实红例上兑现过一次**：本批整解门禁的一条 `POST /interactions` 500 第一次带出 `server cause: … SQLite Error 5: 'unable to delete/modify collation sequence due to active statements'`（详见 §4.5 第 5 条）。自 host 走 `CliRuntimeTestServers` 既有做法 |
 | MCP 人类侧读面：清单带出处、连不上的服务器仍在场、逐服务器给 schema | Core `AspNetCore/Endpoints/McpEndpoints.cs` + 网关两条内联代理 + `MarketDetailCard.vue` | 三侧各钉一遍：`McpInventoryApiTests.cs` 10 例（承重那条是 `Tools_AreNeverReportedMissing_WhileTheProviderCannotAnswer`——provider 起不来时**必须** 200 + `source:"tool_provider_unavailable"`，不能 404 让人以为服务器被删了）、网关 `mcpProxy.test.ts` 5 例（含"外部契约里只剩这两条 MCP 路由"与"`mcp_server_not_found` 不被压成 `conflict`"）、桌面 `MarketController.test.ts` 3 例（变异 `mcpReadSucceeded → true` 恰红 1 例） |
+| 市场安装：一条提案把"装一个 MCP 服务器"变成一次可审的写盘（冻结字节 + 摘要绑定 + 人工审批 + 版本固定） | Core `Skills/MarketInstallService.cs` + 网关四条纯代理 + `MarketDetailCard.vue` | 本批。Core `MarketCatalogApiTests` 里 15 个新增方法 / **21 例**（含 7 例"包名不能安全出现在命令行"的 Theory；类内总数 29→50，全解 486→507 与此同数。承重三条：`ApplyingAProposalQueuesOneGovernedWrite_AndWritesNothingItself` 断 apply 之后目标文件**仍不存在**且动作停在 `requires_approval`；`AProviderWhoseConfigLivesOutsideTheProjectIsRefused_NotWrittenSomewherePlausible` 断路径来自 provider 而非猜测；`AProposalWhoseFrozenBytesMovedIsRefused_NotAppliedOnTheReviewersBehalf` 篡改存储字节后断 412 + `write_file` 从未到达 provider）。变异对照：把 digest 守卫改成常量假 → **恰红 1 例**且红例名就是这一条，其余 49 例仍绿。网关 `marketProxy.test.ts` 9 例（含"外部契约里的 market 路径集合与 Core 实现的**恰好**一致"的 deep-equal，和"412 过期提案不被压成 conflict"）。桌面 `MarketController.test.ts` 8 例装/卸用例（含断 `decideApproval` **从未被调用**——页面不再替用户做决定）。**这一行的 A 级只覆盖"提案语义与治理路径"**：真实 registry 的一次端到端安装从未跑过（CI 不出网，全部用例由进程内 fake provider 驱动），且固定的是包宿主的版本**名字**、不是内容摘要也没有签名校验（见 §4 与 `docs/security.md`） |
 | 工具层：`mcp_list include_schema=false` / `mcp_search` 默认参数不再整次失败 | `TinadecTools/Tools/Mcp/{McpModels,McpClientPool}.cs` | `tests/TinadecTools.Tests/McpPassThroughTests.cs` 2 例，断的是**序列化之后**的线上形状（解析断 `input_schema` 为 JSON null）。修前修后各用本地 provider 靶子实测一次：修前 `{call_id:1,success:false,error:"Operation is not valid due to the current state of the object."}` |
 
 ## 3. B 级：实现落地，但有一半边没人看
@@ -79,6 +80,62 @@
 15. **连不上的 MCP 服务器，给人看的是乱码**：清单里 `error` 字段带子进程 stderr 尾部，zh-CN 机器上非 ASCII 部分全成 `\ufffd`（实测：`'definitely-not-a-real-binary' \ufffd\ufffd\ufffd\ufffd…`）。解码发生在 ModelContextProtocol SDK 的 stderr 读取侧，不在本仓；结果是"为什么连不上"这句话对中文环境的使用者基本不可读。本轮只在界面如实显示原文，未伪造翻译。
 
 ## 5. 阶段末门禁实测（按批次记账，全部读日志里自己写的 `GATE_EXIT`/`EXIT`，不看管道退出码）
+
+### 5g. 2026-09-23 第七批：市场第一次能"装"东西，装的却是一份提案（#37 / M2，含 #41 #42 前置守卫）
+
+- **这一批的不变量是"没有任何一次市场调用能碰磁盘或起进程"**。可达的唯一变更是一条被审批门住的
+  `write_file` 用户动作：Core 把预览算出的字节冻结入库（含 digest 与到期时间），apply 只把**已冻结的
+  那一份**交给 `IUserToolActionService`，之后落不落盘由治理层决定。`ApplyingAProposal…_WritesNothingItself`
+  直接断 apply 返回之后目标文件**仍不存在**、且动作停在 `requires_approval`。
+- **两个门的顺序是量出来的，不是我推的**。一条全新的写请求先停在 `awaiting_user`（权限请求），
+  人在权限那一步放行之后才出现带冻结字节的 `awaiting_approval` 信封——这条是我第一版的断言写错
+  （断 `awaiting_approval` 结果查不到行）之后读 `UserToolActionService` 与 `ApprovalFlowTests` 才改对的，
+  DTO 文档现在两个门都点名。
+- **目标路径来自 provider，不来自猜测**：`mcp_list → config_path` 落在项目根之外就
+  `market_install_target_unresolved` 拒绝——"写到一个像样的地方"会产生一条没有任何服务器会读的配置，
+  而这条错误正是本面最容易藏起来的失败。配置读不到时退化成 **create，绝不 overwrite**
+  （`file_hash` 缺省即"只在文件不存在时创建"），所以一个 Core 没读到的文件不会被一份基于猜测的提案抹掉。
+- **提案字节不可后改**：apply 在读取状态、也在走"重复点击回放"分支**之前**先复核 digest，不匹配即
+  412 `market_install_proposal_stale` 并把行写成 `stale`（重试仍然 refused，不会变成可应用）。
+  变异对照：守卫改成常量假 → **恰红 1 例**，红例名 `AProposalWhoseFrozenBytesMovedIsRefused_NotAppliedOnTheReviewersBehalf`，
+  其余 49 例仍绿；恢复后定向 50/50。这条测试直接改存储里的字节，因为**没有任何公开路由能构造出这个条件**——
+  这本身就是"提案一经发出即不可变"的证据。
+- **一次仪器错误，记下来**：为跑上面这个对照写的 `mute/restore` 双向脚本把两个方向的替换对写反了，
+  于是"变异跑"其实又是一次原树跑（50/50 绿 = 无效读数），而末尾那步 `restore` 反过来把守卫**改成禁用状态
+  留在了树里**。是下一步为别的目的写的 grep 撞见的。教训与 §5d 那条同源：**推翻/建立一条读数需要与立论
+  同等强度的证据**；A/B 脚本必须把"文件此刻处于哪个条件"的探针写进日志并在不符时中止，不能指望
+  `restore` 那步会发现反向。
+- **#41 / #42 的前置守卫随本批落地**：被安装引用的目录行不再被刷新/删除销毁（`retained_rows` +
+  `market_source_in_use`，出处得以留存）；registry 包字段拼写按 `IMarketCatalogService` 校正；
+  `reason` 的外泄口径写进 `docs/security.md`（"操作为何停下"可以外发，上游进程吐出的原文不可以）。
+  offset 分页竞态按计划留给 M4（#39），本批不换游标：没有消费者在翻页。
+- **桌面这一侧主要是"删决定"**：控制器不再代替用户调用 `decideApproval`（测试断它**从未被调用**）；
+  "当前工作区"收回 `homeController.selectedProjectId` 唯一 owner，删掉跨模块 `watch`（那正是
+  `ChatPanel.test.ts` 被打断的原因），改成派生的 `activeProposal`；`tinadec://` 幻影源与 Core 从不发的
+  字段区块一并删。
+- **诚实缺口（这一批留下的，不是上一批的旧账）**：
+  ① 真实 registry 的一次端到端安装**从未跑过**（CI 不出网，全部用例由进程内 fake provider 驱动）；
+  ② 只有 `mcp-server` 一种 kind 可装，`skill_repository`/`cli_runtime` 仍 400（M3/M4）；
+  ③ 固定的是包宿主给某版本的**名字**，不是内容摘要、不校验签名——这句已进提案 `warnings[]`，
+  因为看不见"保证的边界"的审批不算知情审批；
+  ④ env 描述只带变量名，值仍在 `ISecretStore`，所以"需要密钥的服务器"装完可能起不来——以警告告知，
+  但**没有引导配置的界面**；
+  ⑤ 审批通过到真正落盘之间市场侧不再确认（治理层是唯一写者，这是设计），代价是"已安装"的可观察性
+  完全取决于 `GET /market/installations` 的 `action_status` 刷新时机，M4 接分页时一并处理；
+  ⑥ 台账只在 `Removing` 且动作 `completed` 时把行摘掉，写盘**失败**的补偿面（重试/回滚）没有，
+  失败只以状态呈现。
+
+- **阶段末门禁实测（全部顺序跑，逐个读日志里自己写的退出码）**：Core 整解 `GATE_EXIT=0`——
+  `Api.Tests` **507/507**（23m27s）、`Governance` **44/44**、`Architecture` **17/17**、
+  `AgentFramework` **329/329**，其中 `CoreOpenApiSnapshotTests` 在快照再生**之后**的整解里转绿（第一次单独跑按该测试的既有设计必红 1 例：先抄基线→再刷文件→断漂移）；
+  `TinadecTools.Tests` `TOOLS_EXIT=0`、**292/292**（1m45s，本批未改工具层，跑它是为了钉住"提案要写的目标仍在原位"）；
+  Gateway `bun test src` `BUN_EXIT=0`、**72 pass / 0 fail**（11 文件）；
+  Desktop `npx vitest run` `VITEST_EXIT=0`（**80 文件通过 / 1 跳过，746 例通过 / 14 跳过**）、
+  `vue-tsc --noEmit` `TSC_EXIT=0`、`npx vite build` `BUILD_EXIT=0`、electron `node --test` `ELECTRON_EXIT=0` **24/24**、
+  `generate:client` `GEN_EXIT=0`。
+  三份契约同批再生并核对只含本批内容：`openapi.core.json` **+416/−0**（四条 install 路由 + 五个组件，逐条 grep 核过）、
+  `openapi.external.json` +319/−1、`schema.d.ts` +128/0。
+  `check:drift` 按机制仍 `exit=1`（该门以 `git diff --exit-code` 收尾，未提交的有意契约变更必然让它红），提交后转绿由该门自身负责。
 
 ### 5f. 2026-09-23 第六批：市场面从"表存在但没人写"变成一条能读的路（#36 / M1）
 

@@ -577,12 +577,38 @@ button {
   cursor: pointer;
 }
 
-.market-source-item.is-builtin {
-  background: var(--bg-tertiary);
+/* The row itself is a container now: picking the source, refreshing it, enabling it and deleting it
+   are four different actions, and a row cannot hold four nested buttons inside one button. */
+.market-source-pick {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
 }
 
-.market-source-item.is-builtin .builtin-icon {
-  color: var(--accent-brand);
+.market-source-item .market-source-count,
+.market-source-item .market-source-stale {
+  flex: 0 0 auto;
+}
+
+.market-source-count {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* A source whose last refresh failed still shows its rows; this marks that the catalog below is
+   standing on stale data rather than on nothing. */
+.market-source-stale {
+  color: var(--accent-warning);
+  font-weight: 700;
 }
 
 .market-source-item span {

@@ -160,6 +160,19 @@ public sealed class MarketCatalogService : IMarketCatalogService
         if (source is null)
             return false;
 
+        // An installed entry is traceable to this source's row, and the row is what says which
+        // version a human approved. Hard-forgetting it would leave a running server with no
+        // recorded provenance, so the removal is refused rather than completed halfway.
+        var inUse = await db.Installations.CountAsync(
+            x => x.TenantId == tenant && x.SourceId == sourceId, cancellationToken).ConfigureAwait(false);
+        if (inUse > 0)
+        {
+            throw new MarketCatalogException(
+                MarketErrorCodes.SourceInUse,
+                $"'{source.Name}' still backs {inUse} installation{(inUse == 1 ? "" : "s")}. "
+                + "Remove them first.");
+        }
+
         // Both sides go together. Rows kept behind a deleted source would keep answering the
         // catalog with an entry whose source no longer exists and can never be refreshed again.
         await db.CatalogEntries
@@ -236,6 +249,10 @@ public sealed class MarketCatalogService : IMarketCatalogService
             // ceiling cut the listing short, everything past it is still expected to exist, so
             // nothing was removed even though the listing did not mention it.
             RemovedRows = result.TruncatedPages ? 0 : stored.Removed,
+            // Listed rows that a live installation still references. Without this the arithmetic
+            // of a refresh would not close: rows the source stopped listing neither vanished nor
+            // stayed silently.
+            RetainedRows = result.TruncatedPages ? 0 : stored.Retained,
             PagesFetched = result.PagesFetched,
             TruncatedPages = result.TruncatedPages,
             RefreshedAt = now,
@@ -245,11 +262,13 @@ public sealed class MarketCatalogService : IMarketCatalogService
     /// <summary>
     /// Makes this source's rows match one completed listing. Surviving keys keep their row id, so
     /// a later reference to an entry outlives a refresh; only rows the source genuinely stopped
-    /// listing disappear. <paramref name="partial"/> — the page ceiling cut the listing short —
-    /// suspends that deletion entirely: everything past the prefix is still expected to exist, and
-    /// an incomplete read must not be allowed to look like a market that shrank.
+    /// listing disappear — with one exception: a row an installation still references is kept and
+    /// aged out instead, because erasing it would delete the record of what was approved.
+    /// <paramref name="partial"/> — the page ceiling cut the listing short — suspends deletion
+    /// entirely: everything past the prefix is still expected to exist, and an incomplete read
+    /// must not be allowed to look like a market that shrank.
     /// </summary>
-    private static async Task<(int Stored, int Removed)> ReplaceEntriesAsync(
+    private static async Task<(int Stored, int Removed, int Retained)> ReplaceEntriesAsync(
         IntegrationDbContext db,
         Guid tenant,
         Guid sourceId,
@@ -305,11 +324,34 @@ public sealed class MarketCatalogService : IMarketCatalogService
             });
         }
 
-        var vanished = partial
+        var dropped = partial
             ? []
             : current.Where(x => !seen.Contains(Key(x.ExtensionId, x.Version))).ToList();
-        db.CatalogEntries.RemoveRange(vanished);
-        return (seen.Count, vanished.Count);
+
+        var referenced = dropped.Count == 0
+            ? []
+            : (await db.Installations.AsNoTracking()
+                .Where(x => x.TenantId == tenant && x.SourceId == sourceId)
+                .Select(x => x.CatalogId)
+                .ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
+
+        var retained = 0;
+        foreach (var row in dropped)
+        {
+            if (!referenced.Contains(row.Id))
+            {
+                db.CatalogEntries.Remove(row);
+                continue;
+            }
+
+            // The source stopped listing this one, but something installed still names it. The
+            // row stays and stops claiming to be current: an install that outlived its listing is
+            // a fact the catalog should show, not a row to erase out from under it.
+            row.ExpiresAt = now;
+            retained++;
+        }
+
+        return (seen.Count, dropped.Count - retained, retained);
     }
 
     public async Task<MarketCatalogPageDto> ListCatalogAsync(
@@ -407,6 +449,8 @@ public sealed class MarketCatalogService : IMarketCatalogService
             ManifestHash = entry.ManifestHash,
             RefreshedAt = entry.RefreshedAt,
             ExpiresAt = entry.ExpiresAt,
+            Installable = detail.Installable,
+            InstallBlocker = detail.InstallBlocker,
         };
     }
 
@@ -415,17 +459,18 @@ public sealed class MarketCatalogService : IMarketCatalogService
     /// a row whose blob cannot be read still lists, with the display fields missing, rather than
     /// turning one unreadable row into a 500 for the whole page.
     /// </summary>
-    private static (string? Homepage, string? RegistryType, IReadOnlyList<string> Transports) ReadDetail(string? json)
+    private static (string? Homepage, string? RegistryType, IReadOnlyList<string> Transports,
+        bool Installable, string? InstallBlocker) ReadDetail(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
-            return (null, null, []);
+            return (null, null, [], false, "This entry stores no detail.");
 
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
-                return (null, null, []);
+                return (null, null, [], false, "This entry's stored detail could not be read back.");
 
             var transports = new List<string>();
             if (root.TryGetProperty("transports", out var listed) && listed.ValueKind == JsonValueKind.Array)
@@ -437,11 +482,21 @@ public sealed class MarketCatalogService : IMarketCatalogService
                 }
             }
 
-            return (Text(root, "homepage"), Text(root, "registry_type"), transports);
+            // Presence, not re-validation: the install block was vetted by the adapter before it
+            // was stored, and MarketInstallService checks it again at preview. What a reader gets
+            // here is whether an install could ever be offered, so a row that will not produce a
+            // proposal is not shown an install button.
+            var installable = root.TryGetProperty("install", out var install)
+                && install.ValueKind == JsonValueKind.Object;
+            var blocker = installable
+                ? null
+                : Text(root, "install_blocker") ?? "This entry cannot be installed by this build.";
+
+            return (Text(root, "homepage"), Text(root, "registry_type"), transports, installable, blocker);
         }
         catch (JsonException)
         {
-            return (null, null, []);
+            return (null, null, [], false, "This entry's stored detail could not be read back.");
         }
     }
 

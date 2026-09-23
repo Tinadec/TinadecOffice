@@ -138,6 +138,39 @@ test('a disabled source answers 409, not an empty refresh', async () => {
   assert.equal((await response.json() as { code: string }).code, 'market_source_disabled');
 });
 
+test('an expired install proposal stays a 412 with its own code', async () => {
+  // The desktop branches on this one: 412 means "preview again", anything narrower-sounding means
+  // "give up". Collapsing it into conflict would tell a user to retry bytes that no longer exist.
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({ code: 'market_install_proposal_stale', message: 'This proposal is no longer available.' }),
+    { status: 412, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
+
+  const response = await app.handle(new Request(
+    'http://gateway.local/api/v1/market/install-proposals/p1/apply',
+    { method: 'POST' },
+  ));
+  assert.equal(response.status, 412);
+  assert.equal((await response.json() as { code: string }).code, 'market_install_proposal_stale');
+});
+
+test('an install refusal that names its reason keeps it through the proxy', async () => {
+  const message = 'The tool provider reads its server config from outside the project root.';
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({ code: 'market_install_target_unresolved', message }),
+    { status: 409, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
+
+  const response = await app.handle(new Request(
+    'http://gateway.local/api/v1/market/catalog/c1/install-preview',
+    { method: 'POST', body: JSON.stringify({ project_id: 'p1' }), headers: { 'content-type': 'application/json' } },
+  ));
+  assert.equal(response.status, 409);
+  const body = await response.json() as { code: string, message?: string, detail?: string };
+  assert.equal(body.code, 'market_install_target_unresolved');
+  assert.equal(body.message ?? body.detail, message);
+});
+
 test('the external contract carries exactly the market surface Core implements', async () => {
   const response = await app.handle(new Request('http://gateway.local/docs/json'));
   const doc = (await response.json()) as {
@@ -149,6 +182,10 @@ test('the external contract carries exactly the market surface Core implements',
   assert.deepEqual(Object.keys(doc.paths).filter((path) => path.startsWith('/api/v1/market/')).sort(), [
     '/api/v1/market/catalog',
     '/api/v1/market/catalog/{catalogId}',
+    '/api/v1/market/catalog/{catalogId}/install-preview',
+    '/api/v1/market/install-proposals/{proposalId}/apply',
+    '/api/v1/market/installations',
+    '/api/v1/market/installations/{installationId}/uninstall-preview',
     '/api/v1/market/sources',
     '/api/v1/market/sources/{sourceId}',
     '/api/v1/market/sources/{sourceId}/refresh',
@@ -161,6 +198,10 @@ test('the external contract carries exactly the market surface Core implements',
     ['/api/v1/market/sources/{sourceId}/refresh', 'post'],
     ['/api/v1/market/catalog', 'get'],
     ['/api/v1/market/catalog/{catalogId}', 'get'],
+    ['/api/v1/market/catalog/{catalogId}/install-preview', 'post'],
+    ['/api/v1/market/installations/{installationId}/uninstall-preview', 'post'],
+    ['/api/v1/market/install-proposals/{proposalId}/apply', 'post'],
+    ['/api/v1/market/installations', 'get'],
   ] as const) {
     const op = doc.paths[path]![method]!;
     assert.ok(op.responses?.['200']?.content, `${method.toUpperCase()} ${path} must keep a typed 200`);

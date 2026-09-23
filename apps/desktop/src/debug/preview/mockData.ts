@@ -26,7 +26,8 @@ import type {
   MarketCatalogItemDto,
   MarketCatalogPageDto,
   MarketSourceListDto,
-  InstalledExtensionDto,
+  MarketInstallationDto,
+  MarketInstallProposalDto,
   McpInventoryDto,
   AcpAdapterDto,
   CodeToolExecuteResultDto,
@@ -1564,6 +1565,7 @@ export function mockMarketCatalog(): MarketCatalogPageDto {
       manifest_hash: 'a3f1c0d2e4b5a6978899aabbccddeeff00112233445566778899aabbccddeeff',
       refreshed_at: iso(-60 * 6),
       expires_at: iso(60 * 24 * 6),
+      installable: true,
     },
     {
       catalog_id: 'cat-002',
@@ -1579,6 +1581,7 @@ export function mockMarketCatalog(): MarketCatalogPageDto {
       manifest_hash: 'b4e2d1c3f5a6970889a0b1c2d3e4f5061728394a5b6c7d8e9f00112233445566',
       refreshed_at: iso(-60 * 6),
       expires_at: iso(60 * 24 * 6),
+      installable: true,
     },
     {
       catalog_id: 'cat-003',
@@ -1592,18 +1595,71 @@ export function mockMarketCatalog(): MarketCatalogPageDto {
       manifest_hash: 'c5f3e2d4a6b70819a0b1c2d3e4f506172839405a6b7c8d9e0f11223344556677',
       refreshed_at: iso(-60 * 6),
       expires_at: iso(60 * 24 * 6),
+      installable: false,
+      install_blocker: 'This entry publishes no package record, so there is no command to install.',
     },
   ]
 
   return { items: rows, total_available: rows.length, has_more: false, as_of: iso(-60 * 6) }
 }
 
-export function mockInstalledExtensions(): InstalledExtensionDto[] {
+/**
+ * What the installation ledger answers: an entry this workspace approved, plus the live status of
+ * the tool action that writes it. Two rows so the preview shows both a write still waiting for a
+ * human and one that landed.
+ */
+export function mockMarketInstallations(): MarketInstallationDto[] {
   return [
-    { id: 'ext-001', catalog_id: 'cat-001', extension_id: 'web-search-pro', kind: 'tool-pack', version: '1.2.0', publisher: 'Tinadec', display_name: 'Web Search Pro', description: '增强的网页搜索工具包', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/packs/web-search-pro', capabilities: ['web.search', 'web.aggregate'], permissions: ['network:read'], enabled: true, status: 'active', status_message: '运行正常', installed_at: iso(-60 * 24 * 5), updated_at: iso(-60 * 24 * 5) },
-    { id: 'ext-002', catalog_id: 'cat-002', extension_id: 'github-mcp', kind: 'mcp-server', version: '0.3.1', publisher: 'Tinadec', display_name: 'GitHub MCP Server', description: '通过 MCP 协议接入 GitHub', source_kind: 'marketplace-url', source_location: 'tinadec://marketplace/servers/github-mcp', capabilities: ['github.repo', 'github.issue', 'github.pr'], permissions: ['network:read', 'network:write'], enabled: true, status: 'active', status_message: 'MCP 服务已连接', installed_at: iso(-60 * 24 * 3), updated_at: iso(-60 * 24 * 3) },
-    { id: 'ext-003', catalog_id: null, extension_id: 'legacy-tool', kind: 'tool-pack', version: '0.1.0', publisher: 'Local', display_name: 'Legacy Tool', description: '已弃用的旧工具', source_kind: 'directory', source_location: 'D:/workspace/extensions/legacy', capabilities: ['legacy.op'], permissions: ['fs:read'], enabled: false, status: 'disabled', status_message: '已手动禁用', installed_at: iso(-60 * 24 * 40), updated_at: iso(-60 * 24 * 10) },
+    { id: 'ins-001', project_id: 'proj-001', catalog_id: 'cat-002', source_name: 'Official MCP Registry', extension_id: 'io.github.filesense/filesense', kind: 'mcp-server', version: '2.0.4', server_id: 'io-github-filesense-filesense', config_path: 'C:\work\demo\mcp_servers.json', state: 'installing', install_action_id: 'act-001', action_status: 'awaiting_user', created_at: iso(-30), updated_at: iso(-30) },
+    { id: 'ins-002', project_id: 'proj-001', catalog_id: 'cat-001', source_name: 'Official MCP Registry', extension_id: 'io.github.github/github-mcp-server', kind: 'mcp-server', version: '2025.10.1', server_id: 'io-github-github-mcp-server', config_path: 'C:\work\demo\mcp_servers.json', state: 'installing', install_action_id: 'act-002', action_status: 'completed', created_at: iso(-60 * 24 * 3), updated_at: iso(-60 * 24 * 3) },
   ]
+}
+
+/**
+ * The frozen proposal the detail card reviews. Shaped field for field after
+ * `MarketInstallProposalDto`, because the panel's whole job is to show what will be written before
+ * anything is written; a mock with invented fields teaches it a contract Core never answers.
+ */
+export function mockMarketInstallProposal(): MarketInstallProposalDto {
+  return {
+    id: 'prop-001',
+    action: 'install',
+    project_id: 'proj-001',
+    catalog_id: 'cat-002',
+    installation_id: null,
+    source_name: 'Official MCP Registry',
+    extension_id: 'io.github.filesense/filesense',
+    kind: 'mcp-server',
+    version: '2.0.4',
+    server_id: 'io-github-filesense-filesense',
+    replaces_command: null,
+    command: 'npx',
+    args: ['-y', 'filesense-mcp@2.0.4'],
+    environment: [{ name: 'FILESENSE_INDEX_PATH', required: false, secret: true, description: 'Where the index is kept.' }],
+    target_path: 'C:\work\demo\mcp_servers.json',
+    content: [
+      '{',
+      '  "servers": [',
+      '    {',
+      '      "id": "io-github-filesense-filesense",',
+      '      "name": "FileSense",',
+      '      "command": "npx",',
+      '      "args": [',
+      '        "-y",',
+      '        "filesense-mcp@2.0.4"',
+      '      ]',
+      '    }',
+      '  ]',
+      '}',
+    ].join('\n'),
+    expected_file_hash: 'sha256:7c1d4f0aa1b2c3d4',
+    digest: 'sha256:9b2e5c7d1a3f4b6c',
+    expires_at: iso(15),
+    warnings: [
+      'The pinned version is the package host\'s name for a release, not a content digest: a host can serve different bytes for the same version. Nothing here has downloaded or run the package.',
+      'This server asks for environment variables (FILESENSE_INDEX_PATH). No values are written by this proposal - a server that needs them may fail to start until they are configured.',
+    ],
+  }
 }
 
 /**
@@ -2030,7 +2086,8 @@ export interface MockDataBundle {
   promptFragments: PromptFragmentDto[]
   extensionSources: MarketSourceListDto
   marketCatalog: MarketCatalogPageDto
-  installedExtensions: InstalledExtensionDto[]
+  installations: MarketInstallationDto[]
+  installProposal: MarketInstallProposalDto
   mcpInventory: McpInventoryDto
   acpAdapters: AcpAdapterDto[]
   gitDiffPreview: CodeToolExecuteResultDto | null
@@ -2059,7 +2116,8 @@ export function buildMockDataBundle(sessionId: string = 'sess-tinadec-1001'): Mo
     promptFragments: mockPromptFragments(),
     extensionSources: mockExtensionSources(),
     marketCatalog: mockMarketCatalog(),
-    installedExtensions: mockInstalledExtensions(),
+    installations: mockMarketInstallations(),
+    installProposal: mockMarketInstallProposal(),
     mcpInventory: mockMcpInventory(),
     acpAdapters: mockAcpAdapters(),
     gitDiffPreview: mockGitDiffPreview(),

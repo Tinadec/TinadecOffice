@@ -6,11 +6,13 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
+using TinadecCore.Skills;
 
 namespace TinadecCore.Api.Tests;
 
@@ -432,6 +434,11 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         var item = Assert.Single((await CatalogAsync()).GetProperty("items").EnumerateArray());
         Assert.Equal("https://github.com/a/ok", item.GetProperty("homepage").GetString());
         Assert.Equal("npm", item.GetProperty("registry_type").GetString());
+        // The catalog row is a claim, and the claim's shape decides whether an install can be
+        // offered at all. A row with a package is offerable; the flag is derived, not stored twice.
+        Assert.True(item.GetProperty("installable").GetBoolean());
+        Assert.False(item.TryGetProperty("install_blocker", out var blocker)
+            && blocker.ValueKind == JsonValueKind.String);
         Assert.Equal(["stdio", "streamable-http"], item.GetProperty("transports").EnumerateArray()
             .Select(x => x.GetString()).ToArray());
 
@@ -573,6 +580,391 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────────
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Installation: a proposal, then one governed write a human approves
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task APreviewNamesTheExactVersionItPins_AndTheFileItWouldWrite()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/files", "1.2.3", "@ac/files-server"));
+        var project = await CreateProjectAsync("install-target");
+
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+
+        Assert.Equal("npx", proposal.GetProperty("command").GetString());
+        var args = proposal.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
+        Assert.Equal(new[] { "-y", "@ac/files-server@1.2.3" }, args);
+        Assert.Equal("1.2.3", proposal.GetProperty("version").GetString());
+
+        // The target is the provider's own answer, and it is absolute: a relative path would be a
+        // second rule about where files go.
+        var target = proposal.GetProperty("target_path").GetString()!;
+        Assert.True(Path.IsPathRooted(target), $"target_path should be absolute, got '{target}'.");
+        Assert.EndsWith("mcp_servers.json", target);
+        Assert.Equal(Path.Combine(_root, "workspace"), Path.GetDirectoryName(target));
+
+        // Nothing is conditioned on an overwrite until a config actually exists to overwrite.
+        // Core's JSON omits a null rather than writing it, so "no precondition" is absence.
+        Assert.False(proposal.TryGetProperty("expected_file_hash", out _),
+            "a create must not claim an overwrite precondition");
+        Assert.Contains("@ac/files-server@1.2.3", proposal.GetProperty("content").GetString()!);
+        Assert.True(proposal.GetProperty("expires_at").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMinutes(10));
+    }
+
+    [Fact]
+    public async Task APinnedArgumentCarriesThePackageVersion_NotAWordForWhateverIsLatest()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/g", "2.0.0", "@ac/g-server"));
+
+        var content = (await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("pin") })).GetProperty("content").GetString()!;
+
+        Assert.DoesNotContain("latest", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("{version}", content, StringComparison.Ordinal);
+        Assert.Contains("2.0.0", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnEntryWithNoPackageIsNotInstallable_AndSaysWhy_WithoutAProposal()
+    {
+        var source = await CreateSourceAsync("registry");
+        // A remote-only server is a real server; it is simply not one this tool layer can start.
+        var entry = await RefreshedEntryAsync(source, S("ac.remote/only", "1.0.0", transports: ["streamable-http"]));
+
+        var listed = await CatalogAsync("q=ac.remote/only");
+        var row = listed.GetProperty("items")[0];
+        Assert.False(row.GetProperty("installable").GetBoolean());
+        Assert.Contains("no package", row.GetProperty("install_blocker").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("remote") });
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Conflict, "preview of a remote-only entry");
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("market_install_not_expressible", body.GetProperty("code").GetString());
+    }
+
+    [Theory]
+    // Every one of these is text from outside that would reach a command line. The whitelist is
+    // what makes an approved proposal mean something, so it is tested at the boundary it guards.
+    [InlineData("pkg; rm -rf /")]
+    [InlineData("pkg && curl evil")]
+    [InlineData("pkg|tee")]
+    [InlineData("pkg$(id)")]
+    [InlineData(@"pkg\path")]
+    [InlineData("pkg>out")]
+    [InlineData("pkg\nname")]
+    public async Task APackageNameThatCannotBeSafeOnACommandLineIsRefused(string identifier)
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/odd", "1.0.0", identifier));
+
+        var listed = await CatalogAsync("q=@ac/odd");
+        Assert.False(listed.GetProperty("items")[0].GetProperty("installable").GetBoolean());
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("unsafe") });
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        // The stored row is still readable: refusing to install is not refusing to display.
+        Assert.Equal("@ac/odd", listed.GetProperty("items")[0].GetProperty("extension_id").GetString());
+    }
+
+    [Fact]
+    public async Task AProviderWhoseConfigLivesOutsideTheProjectIsRefused_NotWrittenSomewherePlausible()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/x", "1.0.0", "@ac/x-server"));
+        var project = await CreateProjectAsync("outside");
+
+        Provider.ConfigPath = Path.Combine(Path.GetTempPath(), "not-the-project", "mcp_servers.json");
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = project });
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Conflict, "preview with an outside config path");
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("market_install_target_unresolved", body.GetProperty("code").GetString());
+        Assert.Contains("not-the-project", body.GetProperty("message").GetString());
+        Provider.ConfigPath = null;
+    }
+
+    [Fact]
+    public async Task ApplyingAProposalQueuesOneGovernedWrite_AndWritesNothingItself()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/q", "1.0.0", "@ac/q-server"));
+        var project = await CreateProjectAsync("queued");
+        var target = Path.Combine(_root, "workspace", "mcp_servers.json");
+
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview", new { project_id = project });
+        var applied = await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+
+        var actionId = applied.GetProperty("install_action_id").GetString()!;
+        Assert.NotEmpty(actionId);
+        Assert.Equal("installing", applied.GetProperty("state").GetString());
+
+        // The whole point of routing through the user action path: nothing has happened yet.
+        var action = await GetJsonAsync("/api/v1/user/tool-actions/" + actionId);
+        Assert.Equal("write_file", action.GetProperty("tool_id").GetString());
+        Assert.True(action.GetProperty("requires_approval").GetBoolean());
+        Assert.False(File.Exists(target), "apply must not write the file; a human has to approve it first.");
+
+        // One proposal applies to one action, no matter how often the button is pressed.
+        var applyPath = $"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply";
+        var again = await PostAsync(applyPath);
+        Assert.Equal(actionId, again.GetProperty("install_action_id").GetString());
+    }
+
+    [Fact]
+    public async Task ReApplyingAConsumedProposalAnswersWithTheSameAction_NotASecondApproval()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/twice", "1.0.0", "@ac/twice-server"));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("twice") });
+        var applyPath = $"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply";
+
+        var first = await PostAsync(applyPath);
+        Provider.Requests.Clear();
+
+        // A client that retried because its response was lost gets the same answer, not an error
+        // that would send it to look for an approval that was never duplicated.
+        var second = await PostAsync(applyPath);
+        Assert.Equal(first.GetProperty("install_action_id").GetString(), second.GetProperty("install_action_id").GetString());
+        Assert.Equal(first.GetProperty("id").GetString(), second.GetProperty("id").GetString());
+        Assert.DoesNotContain(Provider.Requests, r => r.ToolId == "write_file");
+
+        // That list route answers with a bare array, so "one decision waiting" is one element.
+        // A governed write stops at the permission request before it stops at the approval
+        // envelope, and a re-apply must not add a second row for either gate.
+        var pending = await GetJsonAsync("/api/v1/user/tool-actions?status=awaiting_user");
+        Assert.Single(pending.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task ARefreshThatRepublishesTheEntryInvalidatesAPendingProposal()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/moved", "1.0.0", "@ac/moved-server"));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("moved") });
+
+        // The source changes its mind about this exact row while the proposal is pending.
+        Provider.Replies.Enqueue(Wire.Ok(Listing(Pkg("@ac/moved", "1.1.0", "@ac/moved-server"))));
+        await RefreshAsync(source);
+
+        var response = await Client.PostAsync(
+            $"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply", null);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.PreconditionFailed, "apply after the market moved");
+        Assert.Contains("no longer listed",
+            (JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement).GetProperty("message").GetString());
+    }
+
+    /// <summary>
+    /// The one invariant M2 buys with a proposal: the bytes an approval will authorize are the bytes
+    /// a human read. Everything else here is a preview detail. This test reaches into the store
+    /// because no public route can produce the condition — which is exactly the point: a proposal is
+    /// meant to be immutable once handed out, so the only way to break that promise is below the API.
+    /// </summary>
+    [Fact]
+    public async Task AProposalWhoseFrozenBytesMovedIsRefused_NotAppliedOnTheReviewersBehalf()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/tampered", "1.0.0", "@ac/tampered-server"));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("tampered") });
+        var proposalId = Guid.Parse(proposal.GetProperty("id").GetString()!);
+
+        await using (var db = await ((Factory)_factory!).Services
+                .GetRequiredService<IDbContextFactory<IntegrationDbContext>>()
+                .CreateDbContextAsync())
+        {
+            var row = await db.InstallProposals.FirstAsync(x => x.Id == proposalId);
+            var document = JsonNode.Parse(row.Content)!.AsObject();
+            document["servers"]!.AsArray().Add(new JsonObject
+            {
+                ["id"] = "extra",
+                ["command"] = "an-executable-nobody-reviewed",
+            });
+            row.Content = document.ToJsonString();
+            await db.SaveChangesAsync();
+        }
+
+        Provider.Requests.Clear();
+        var response = await Client.PostAsync($"/api/v1/market/install-proposals/{proposalId:N}/apply", null);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.PreconditionFailed, "apply of edited bytes");
+        var message = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("message").GetString();
+        Assert.Contains("digest", message);
+        Assert.DoesNotContain(Provider.Requests, r => r.ToolId == "write_file");
+
+        // Written down, not just reported once: the row stays refused rather than becoming applyable
+        // for a client that retries after the first answer was lost.
+        var retry = await Client.PostAsync($"/api/v1/market/install-proposals/{proposalId:N}/apply", null);
+        await _factory!.AssertStatusAsync(retry, HttpStatusCode.PreconditionFailed, "retry of an edited proposal");
+    }
+
+    [Fact]
+    public async Task AnInstalledEntrySurvivesAListingThatDroppedIt_AndSaysItWasRetained()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/keep", "1.0.0", "@ac/keep-server"));
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("keep") });
+        await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+
+        // The next listing no longer mentions it. An uninstalled row would be deleted; this one is
+        // what a human approved by version, and the record of that has to outlive the listing.
+        Provider.Replies.Enqueue(Wire.Ok(Listing(S("other.server", "9.9.9"))));
+        var refreshed = await RefreshAsync(source);
+        Assert.Equal(0, refreshed.GetProperty("removed_rows").GetInt32());
+        Assert.Equal(1, refreshed.GetProperty("retained_rows").GetInt32());
+
+        var listed = await CatalogAsync("q=@ac/keep");
+        var row = listed.GetProperty("items")[0];
+        Assert.True(row.GetProperty("expires_at").GetDateTimeOffset() <= DateTimeOffset.UtcNow,
+            "a retained row must not keep claiming to be current");
+
+        var deletion = await Client.DeleteAsync($"/api/v1/market/sources/{source}");
+        await _factory!.AssertStatusAsync(deletion, HttpStatusCode.Conflict, "deleting a source that still backs an install");
+        Assert.Equal("market_source_in_use",
+            JsonDocument.Parse(await deletion.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetString());
+
+        var installations = await GetJsonAsync("/api/v1/market/installations");
+        Assert.Single(installations.GetProperty("installations").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task AnUninstallProposalTakesTheEntryBackOut_AndLeavesEveryOtherServerAlone()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/rm", "2.1.0", "@ac/rm-server"));
+        var project = await CreateProjectAsync("remover");
+
+        // The second entry is what Core's own install wrote: the config id is a slug of the
+        // extension id, not the package name, and this is the config as it would read afterwards.
+        var existing = """
+            {"servers":[{"id":"someone-elses","name":"Kept","command":"docker","args":["x"],"custom":{"a":1}},{"id":"ac-rm","name":"@ac/rm","command":"npx","args":["-y","@ac/rm-server@2.1.0"]}]}
+            """;
+        Provider.QueueConfig(existing, "sha256:abc");
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview", new { project_id = project });
+        var content = proposal.GetProperty("content").GetString()!;
+
+        // The unknown key and the untouched entry both have to survive: Core edits a document, it
+        // does not re-serialize the tool layer's config through its own idea of what belongs.
+        Assert.Contains("someone-elses", content);
+        Assert.Contains("custom", content);
+        Assert.Contains(@"""a"": 1", content);
+        Assert.Equal("sha256:abc", proposal.GetProperty("expected_file_hash").GetString());
+
+        var applied = await PostAsync($"/api/v1/market/install-proposals/{proposal.GetProperty("id").GetString()}/apply");
+        var installationId = applied.GetProperty("id").GetString()!;
+
+        Provider.QueueConfig(content, "sha256:after-install");
+        var removal = await PreviewAsync($"/api/v1/market/installations/{installationId}/uninstall-preview", body: null);
+        var removed = removal.GetProperty("content").GetString()!;
+        Assert.DoesNotContain("\"id\": \"ac-rm\"", removed);
+        Assert.Contains("someone-elses", removed);
+        Assert.Equal("uninstall", removal.GetProperty("action").GetString());
+    }
+
+    [Fact]
+    public async Task AnInstallForAProjectInTheWrongWorkspaceIsRefused()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/ws", "1.0.0", "@ac/ws-server"));
+
+        var response = await Client.PostAsJsonAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = Guid.NewGuid().ToString("N") });
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.NotFound, "preview for an unknown project");
+        Assert.Equal("market_install_project_not_found",
+            JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task ApplyingAProposalWithoutAPreviewIsRefused_AndAnUnknownProposalIdNamesItself()
+    {
+        var response = await Client.PostAsync($"/api/v1/market/install-proposals/{Guid.NewGuid():N}/apply", null);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.NotFound, "apply with no such proposal");
+        Assert.Equal("market_install_proposal_not_found",
+            JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task TheOlderPackageSpellingStillProjects_AndStillPins()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Legacy(Pkg("@ac/old", "3.4.5", "@ac/old-server")));
+
+        var listed = await CatalogAsync("q=@ac/old");
+        var row = listed.GetProperty("items")[0];
+        Assert.Equal("npm", row.GetProperty("registry_type").GetString());
+        Assert.Contains("stdio", row.GetProperty("transports").EnumerateArray().Select(t => t.GetString()));
+        Assert.True(row.GetProperty("installable").GetBoolean());
+
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("legacy") });
+        Assert.Equal(new[] { "-y", "@ac/old-server@3.4.5" },
+            proposal.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray());
+    }
+
+    [Fact]
+    public async Task TheEnvListCarriesNamesAndFlags_AndNeverAValue()
+    {
+        var source = await CreateSourceAsync("registry");
+        var entry = await RefreshedEntryAsync(source, Pkg("@ac/env", "1.0.0", "@ac/env-server"));
+
+        var proposal = await PreviewAsync($"/api/v1/market/catalog/{entry}/install-preview",
+            new { project_id = await CreateProjectAsync("env") });
+        var environment = proposal.GetProperty("environment")[0];
+        Assert.Equal("API_KEY", environment.GetProperty("name").GetString());
+        Assert.True(environment.GetProperty("required").GetBoolean());
+        Assert.True(environment.GetProperty("secret").GetBoolean());
+
+        // The proposal is the last place a secret could be smuggled in from a listing, and the
+        // bytes a human approves must not be the place where a value appears.
+        Assert.DoesNotContain(@"""value""", proposal.GetProperty("content").GetString()!);
+        Assert.Contains("API_KEY", string.Join(',', (proposal.GetProperty("warnings").EnumerateArray()
+            .Select(w => w.GetString()).ToArray())));
+    }
+
+    /// <summary>Refreshes one listing and returns the catalog id of its first stored row.</summary>
+    private async Task<string> RefreshedEntryAsync(string sourceId, Server server)
+    {
+        Provider.Replies.Enqueue(Wire.Ok(Listing(server)));
+        var result = await RefreshAsync(sourceId);
+        Assert.Equal(1, result.GetProperty("fetched_rows").GetInt32());
+
+        var page = await CatalogAsync($"q={Uri.EscapeDataString(server.Name)}");
+        return page.GetProperty("items")[0].GetProperty("catalog_id").GetString()!;
+    }
+
+    private async Task<string> CreateProjectAsync(string name)
+    {
+        // The governed write path snapshots the workspace before it queues anything, so the project
+        // root has to be a real directory rather than a string.
+        Directory.CreateDirectory(Path.Combine(_root, "workspace"));
+        var response = await Client.PostAsJsonAsync("/api/v1/projects",
+            new { name, path = Path.Combine(_root, "workspace") });
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.Created, $"create project {name}");
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("id").ToString()!;
+    }
+
+    private async Task<JsonElement> PreviewAsync(string path, object? body) =>
+        await PostAsync(path, body);
+
+    private async Task<JsonElement> PostAsync(string path, object? body = null)
+    {
+        var response = body is null
+            ? await Client.PostAsync(path, new StringContent(string.Empty, Encoding.UTF8, "application/json"))
+            : await Client.PostAsJsonAsync(path, body);
+        await _factory!.AssertStatusAsync(response, HttpStatusCode.OK, $"POST {path}");
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+    }
+
     private HttpClient Client => _factory!.CreateClient();
 
     private async Task<JsonElement> GetJsonAsync(string path)
@@ -607,6 +999,12 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
     private async Task<JsonElement> CatalogAsync(string query = "") =>
         await GetJsonAsync("/api/v1/market/catalog" + (query.Length == 0 ? string.Empty : "?" + query));
 
+    /// <summary>
+    /// One row of a registry listing, as the shape rather than as the wire bytes. <c>Legacy</c>
+    /// switches the package member spelling to the older one the registry has also used, and
+    /// <c>RawIdentifier</c> carries a package identifier verbatim so a row can say something Core
+    /// must refuse.
+    /// </summary>
     private sealed record Server(
         string? Name,
         string? Version,
@@ -615,7 +1013,13 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         string? Homepage = null,
         string? RegistryType = null,
         string? PackageName = null,
-        string[]? Transports = null);
+        string[]? Transports = null,
+        bool Legacy = false,
+        string? EnvironmentName = null,
+        string? PackageVersion = null,
+        string? RuntimeHint = null,
+        string? RuntimeArgument = null,
+        bool NoTransport = false);
 
     private static Server S(
         string? name,
@@ -627,6 +1031,20 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         string? packageName = null,
         string[]? transports = null) =>
         new(name, version, title, description, homepage, registryType, packageName, transports);
+
+    /// <summary>
+    /// A packaged server in the spelling the live registry uses today: camelCase members, the
+    /// transport nested under <c>transport</c>, runtime arguments as objects, and environment
+    /// requests carrying <c>isRequired</c> and <c>isSecret</c>. This is copied from a real
+    /// <c>/v0/servers</c> answer rather than written from memory, because the point of the shape is
+    /// that Core does not invent it.
+    /// </summary>
+    private static Server Pkg(string name, string version, string identifier, string registryType = "npm") =>
+        new(name, version, Title: name, RegistryType: registryType, PackageName: identifier,
+            Transports: ["stdio"], RuntimeHint: registryType == "npm" ? "npx" : "uvx",
+            RuntimeArgument: "-y", EnvironmentName: "API_KEY", PackageVersion: version);
+
+    private static Server Legacy(Server server) => server with { Legacy = true };
 
     private static string Listing(params Server[] servers) => Listing(servers, null, false);
 
@@ -683,14 +1101,52 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
 
             if (server.RegistryType is not null)
             {
-                descriptor["packages"] = new JsonArray(
-                    (JsonNode)new JsonObject
+                var transport = server.NoTransport
+                    ? null
+                    : server.Transports is { Length: > 0 } ? server.Transports[0] : "stdio";
+                var package = new JsonObject
+                {
+                    [server.Legacy ? "registry_type" : "registryType"] = server.RegistryType,
+                    [server.Legacy ? "name" : "identifier"] = server.PackageName,
+                    ["version"] = server.PackageVersion ?? server.Version,
+                };
+
+                if (server.Legacy)
+                {
+                    if (transport is not null)
+                        package["transport_type"] = transport;
+                    if (server.RuntimeArgument is not null)
+                        package["packageArguments"] = new JsonObject { [server.RuntimeArgument.TrimStart('-')] = "true" };
+                }
+                else
+                {
+                    if (transport is not null)
+                        package["transport"] = new JsonObject { ["type"] = transport };
+                    if (server.RuntimeHint is not null)
+                        package["runtimeHint"] = server.RuntimeHint;
+                    if (server.RuntimeArgument is not null)
                     {
-                        ["registry_type"] = server.RegistryType,
-                        ["name"] = server.PackageName,
-                        ["version"] = server.Version,
-                        ["transport_type"] = server.Transports is { Length: > 0 } ? server.Transports[0] : null,
-                    });
+                        package["runtimeArguments"] = new JsonArray((JsonNode)new JsonObject
+                        {
+                            ["value"] = server.RuntimeArgument,
+                            ["type"] = "positional",
+                        });
+                    }
+                }
+
+                if (server.EnvironmentName is not null)
+                {
+                    package[server.Legacy ? "environment" : "environmentVariables"] = new JsonArray(
+                        (JsonNode)new JsonObject
+                        {
+                            ["name"] = server.EnvironmentName,
+                            ["isRequired"] = true,
+                            ["isSecret"] = true,
+                            ["description"] = "A key. The value is not here and never is.",
+                        });
+                }
+
+                descriptor["packages"] = new JsonArray(package);
             }
 
             rows.Add(new JsonObject { ["server"] = descriptor });
@@ -806,11 +1262,49 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
         internal List<ToolWireRequestDto> Requests { get; } = [];
         internal Exception? Throw { get; set; }
 
-        public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ToolManifestDto());
+        /// <summary>Overrides where <c>mcp_list</c> says the config lives. Null means the workspace root.</summary>
+        internal string? ConfigPath { get; set; }
 
+        /// <summary>Queued <c>read_file> answers, in order. Empty means "no such file".</summary>
+        internal Queue<ToolWireResponseDto> ConfigReads { get; } = new();
+
+        internal List<string> ConfigPathsSeen { get; } = [];
+        internal List<string?> FileHashesSeen { get; } = [];
+
+        public Task<ToolManifestDto> EnsureStartedAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
+            Manifest();
+
+        /// <summary>
+        /// A manifest that advertises <c>write_file</c> and hashes to itself: a user tool action
+        /// refuses to bind to a provider whose manifest identity does not compute, so the fake has
+        /// to be as careful as the real process.
+        /// </summary>
         public Task<ToolManifestDto> GetManifestAsync(string workspaceRoot, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ToolManifestDto());
+            Manifest();
+
+        private static Task<ToolManifestDto> Manifest()
+        {
+            var tools = new List<ToolManifestEntryDto>
+            {
+                new()
+                {
+                    Id = "write_file",
+                    Description = "In-process fake write probe",
+                    RequiresApproval = true,
+                    Risk = "high",
+                    MutatesWorkspace = true,
+                    InputSchema = JsonDocument.Parse(
+                        """{"type":"object","properties":{"filepath":{"type":"string"},"content":{"type":"string"},"file_hash":{"type":"string"}},"additionalProperties":true}""").RootElement.Clone(),
+                },
+            };
+
+            return Task.FromResult(new ToolManifestDto
+            {
+                ProtocolVersion = 2,
+                ManifestHash = ToolManifestHasher.Compute(tools),
+                Tools = tools,
+            });
+        }
 
         public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -823,17 +1317,96 @@ public sealed class MarketCatalogApiTests : IAsyncLifetime
             Requests.Add(request);
             if (Throw is { } failure) throw failure;
 
-            Assert.Equal("#fetch", request.ToolId);
             Assert.NotNull(timeout);
-            Assert.True(timeout > TimeSpan.Zero, "A market refresh feeds an HTTP request; it must be bounded.");
+            Assert.True(timeout > TimeSpan.Zero, "Every market call reaches a network or a disk; it must be bounded.");
 
-            var url = request.Params is { } p && p.TryGetProperty("url", out var named)
-                ? named.GetString() ?? string.Empty
-                : string.Empty;
-            Urls.Add(url);
+            switch (request.ToolId)
+            {
+                case "#fetch":
+                {
+                    var url = request.Params is { } p && p.TryGetProperty("url", out var named)
+                        ? named.GetString() ?? string.Empty
+                        : string.Empty;
+                    Urls.Add(url);
+                    Assert.True(Replies.Count > 0, $"The test queued no answer for {url}.");
+                    return Task.FromResult(Replies.Dequeue().ToWire(url));
+                }
 
-            Assert.True(Replies.Count > 0, $"The test queued no answer for {url}.");
-            return Task.FromResult(Replies.Dequeue().ToWire(url));
+                // The install surface asks the provider where its own config file is, rather than
+                // resolving a path of its own. Queueing the answer is how a test makes that answer
+                // lie on purpose.
+                case "mcp_list":
+                {
+                    ConfigPathsSeen.Add(workspaceRoot);
+                    var path = ConfigPath ?? Path.Combine(workspaceRoot, "mcp_servers.json");
+                    return Task.FromResult(Ok(new JsonObject
+                    {
+                        ["config_path"] = path,
+                        ["servers"] = new JsonArray(),
+                    }));
+                }
+
+                case "read_file":
+                {
+                    if (request.Params is { } params1
+                        && params1.TryGetProperty("filepath", out var filepath))
+                    {
+                        ConfigPathsSeen.Add(filepath.GetString());
+                    }
+
+                    if (ConfigReads.Count > 0)
+                        return Task.FromResult(ConfigReads.Dequeue());
+
+                    return Task.FromResult(Ok(new JsonObject
+                    {
+                        ["success"] = false,
+                        ["error"] = "Could not find file.",
+                        ["file_hash"] = string.Empty,
+                        ["all_contents"] = new JsonArray(),
+                    }));
+                }
+
+                default:
+                    throw new InvalidOperationException(
+                        $"The market surface called an unexpected tool '{request.ToolId}'.");
+            }
+        }
+
+        /// <summary>What <c>read_file</c> answers for a config that exists, in the tool's own wire shape.</summary>
+        internal void QueueConfig(string json, string fileHash = "sha256:existing")
+        {
+            var lines = new JsonArray();
+            var number = 0;
+            foreach (var line in json.Split('\n'))
+            {
+                number++;
+                lines.Add((JsonNode)new JsonObject
+                {
+                    // LineContent is a positional record with no JSON naming, which is exactly why
+                    // the reader under test does not assume a casing.
+                    ["content"] = new JsonObject
+                    {
+                        ["Content"] = line,
+                        ["LineNumber"] = number,
+                        ["StartOffset"] = 0,
+                        ["EndOffset"] = line.Length,
+                    },
+                    ["line_hash"] = $"{number}#hash",
+                });
+            }
+
+            ConfigReads.Enqueue(Ok(new JsonObject
+            {
+                ["success"] = true,
+                ["file_hash"] = fileHash,
+                ["all_contents"] = lines,
+            }));
         }
     }
+
+    private static ToolWireResponseDto Ok(JsonObject payload) => new()
+    {
+        IsSuccess = true,
+        Result = JsonDocument.Parse(payload.ToJsonString()).RootElement.Clone(),
+    };
 }

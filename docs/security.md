@@ -10,11 +10,52 @@
 - Workspace-local persistent read/write/environment grants are stored in `.tinadec/sandbox.json`, which is gitignored and inaccessible for writes from the sandbox account. `sandbox_status` reports readiness and `sandbox_reset` removes workspace policy or the machine account after approval.
 - `command_run` accepts timeouts from 1 ms through 30 minutes. Timeout or cancellation terminates the command job and its process tree; stdout and stderr are drained with a 65,536-character response cap per stream.
 
+## Extension-market installs (2026-09-23)
+
+The market surface (Core `Skills/MarketInstallService.cs`) treats every listing as **untrusted data,
+never as an instruction or an authorization**. What that means in the code, not in intention:
+
+- No client-supplied destination. An install request carries a `project_id` and a catalog id only;
+  the file path comes from the Tool Provider's own `mcp_list → config_path` answer, and a path
+  outside the project root is refused (`market_install_target_unresolved`) rather than written
+  "somewhere plausible".
+- No arbitrary command text. Command, args and package identifiers from a listing pass a character
+  whitelist (`[A-Za-z0-9@:._/+-=]`, braces rejected) and length caps before they can be frozen into
+  a proposal; anything else is refused as `market_install_not_expressible` **before** any I/O.
+  This is a command-line argument boundary, not a shell boundary — no string here is ever
+  interpolated into a shell command line by Core.
+- Secrets stay out of the proposal. Environment descriptors carry names and `required`/`secret`
+  flags only; values belong to the secret store. A proposal that could carry a value would leak it
+  into a durable row, an approval record and the UI.
+- Nothing on disk changes without a human. Apply creates one governed `write_file` user action with
+  the reviewed bytes frozen into it and an idempotency key bound to the proposal, so a double click
+  cannot queue a second write, and the write goes through the existing permission envelope,
+  approval record and prewrite snapshot path.
+- The proposal cannot change after it is handed out. Each stored proposal is hashed over exactly the
+  fields a reviewer is shown (`MarketInstallService.ComputeDigest`), and apply recomputes that hash
+  from the stored row before it reads the row's status or replays a previous apply: a mismatch is
+  refused as `market_install_proposal_stale` and written down as `stale`, so neither a first attempt
+  nor a retry can queue a write whose bytes are not the bytes that were reviewed. The digest is a
+  Core-side binding, not something a person is asked to compare: no market card renders it, so the
+  human-facing guarantee stays the command, args and target path the proposal names.
+- No new egress. Market reads still go through the provider's reserved `#fetch` control tool;
+  Core decides only which URL may be fetched and never accepts a client-supplied one.
+- Known limits, stated rather than hidden: the pinned version is the package host's *name* for a
+  release, not a content digest, and nothing in this phase verifies a signature or a digest
+  (still "Not In MVP" below). The proposal `warnings[]` carries this sentence to the approver
+  because an approval that cannot see what it does not guarantee is not informed.
+- Failure text policy: market routes answer with a machine code plus a message built by Core, and
+  Gateway's `ALLOWED_CODES` whitelist keeps those codes intact. The rule for what may cross is
+  "the reason the operation stopped", not "whatever the upstream process emitted": provider/HTTP
+  failure text reaches the UI only through `last_error`/`reason` fields Core itself composed, and
+  Core never echoes back a fetched body.
+
 ## Not In MVP
 
 - Enterprise policy center.
 - Remote browser sessions with login state.
-- Plugin marketplace trust and signing.
+- Plugin marketplace trust and signing — the market surface pins a version and freezes the exact
+  bytes it will write, but verifies no signature and no package digest (see the section above).
 
 ## Security Audit TODO (2026-08-24)
 

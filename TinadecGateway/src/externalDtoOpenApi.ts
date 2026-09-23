@@ -281,6 +281,10 @@ const marketRefresh = t.Object({
   fetched_rows: t.Number(),
   refused_rows: t.Number(),
   removed_rows: t.Number(),
+  // A row an installation still references is kept and aged rather than deleted, and this is the
+  // only way the two counts add up: without it a listing that dropped a row shows neither a
+  // removal nor a reason.
+  retained_rows: t.Number(),
   pages_fetched: t.Number(),
   truncated_pages: t.Boolean(),
   reason: t.Optional(t.String()),
@@ -315,6 +319,71 @@ const marketCatalogEntry = t.Object({
   manifest_hash: t.String(),
   refreshed_at: t.String(),
   expires_at: t.String(),
+  installable: t.Boolean(),
+  install_blocker: t.Optional(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * The frozen review surface: what a person is being asked to approve, before anything is written.
+ * Typed field by field rather than opaque, because the whole safety claim of the two-step install
+ * is that these exact values are what get written — a client that has to guess the key names
+ * cannot show them, and a person who is not shown them is not approving anything.
+ */
+const marketInstallEnvironmentRequest = t.Object({
+  name: t.String(),
+  required: t.Boolean(),
+  secret: t.Boolean(),
+  description: t.Optional(t.String()),
+}, { additionalProperties: false });
+
+const marketInstallProposal = t.Object({
+  id: t.String(),
+  action: t.String(),
+  project_id: t.String(),
+  catalog_id: t.Optional(t.String()),
+  installation_id: t.Optional(t.String()),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  server_id: t.String(),
+  replaces_command: t.Optional(t.String()),
+  command: t.Optional(t.String()),
+  args: t.Array(t.String()),
+  environment: t.Array(marketInstallEnvironmentRequest),
+  target_path: t.String(),
+  content: t.String(),
+  expected_file_hash: t.Optional(t.String()),
+  digest: t.String(),
+  expires_at: t.String(),
+  warnings: t.Array(t.String()),
+}, { additionalProperties: true });
+
+/**
+ * One approved install and the action that carries it. `action_status` is read live from the user
+ * tool action rather than copied, so a refused or failed approval can never be displayed as an
+ * installed server.
+ */
+const marketInstallation = t.Object({
+  id: t.String(),
+  project_id: t.String(),
+  catalog_id: t.String(),
+  source_name: t.String(),
+  extension_id: t.String(),
+  kind: t.String(),
+  version: t.String(),
+  server_id: t.String(),
+  config_path: t.String(),
+  state: t.String(),
+  install_action_id: t.String(),
+  uninstall_action_id: t.Optional(t.String()),
+  action_status: t.Optional(t.String()),
+  created_at: t.String(),
+  updated_at: t.String(),
+}, { additionalProperties: true });
+
+const marketInstallationList = t.Object({
+  installations: t.Array(componentRef('MarketInstallation')),
 }, { additionalProperties: true });
 
 export const externalDtoSchemas = {
@@ -348,6 +417,9 @@ export const externalDtoSchemas = {
   MarketRefresh: marketRefresh,
   MarketCatalogPage: marketCatalogPage,
   MarketCatalogEntry: marketCatalogEntry,
+  MarketInstallProposal: marketInstallProposal,
+  MarketInstallation: marketInstallation,
+  MarketInstallationList: marketInstallationList,
   Health: health,
   PreAuthorization: preAuthorization,
 };

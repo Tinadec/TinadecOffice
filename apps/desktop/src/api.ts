@@ -666,6 +666,8 @@ export interface MarketRefreshDto {
   fetched_rows: number;
   refused_rows: number;
   removed_rows: number;
+  /** Rows a running install still references, so a dropped listing kept them instead of deleting. */
+  retained_rows: number;
   pages_fetched: number;
   truncated_pages: boolean;
   reason?: string;
@@ -693,6 +695,9 @@ export interface MarketCatalogItemDto {
   manifest_hash: string;
   refreshed_at: string;
   expires_at: string;
+  /** False is not a defect in the entry — `install_blocker` says which case this is. */
+  installable: boolean;
+  install_blocker?: string;
 }
 
 export interface MarketCatalogPageDto {
@@ -703,47 +708,78 @@ export interface MarketCatalogPageDto {
   as_of?: string;
 }
 
-export interface InstalledExtensionDto {
+/** One environment variable a package asks for. Core's shape carries names and flags, never values. */
+export interface MarketEnvironmentRequestDto {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  description?: string;
+}
+
+/**
+ * What a human says yes or no to: the command, the file, the exact bytes, and the instant after
+ * which Core refuses to act. Nothing here is recomputed at apply time, so what was reviewed is
+ * what lands. Field list is `MarketInstallProposalDto` in Core, keyed to the wire.
+ */
+export interface MarketInstallProposalDto {
   id: string;
+  action: string;
+  project_id: string;
   catalog_id?: string | null;
+  installation_id?: string | null;
+  source_name: string;
+  extension_id: string;
+  kind: string;
+  /** The exact version pinned. Never a range, never `latest`. */
+  version: string;
+  server_id: string;
+  /** The command line this write overwrites, when the config already named this server. */
+  replaces_command?: string | null;
+  command?: string | null;
+  args: string[];
+  environment: MarketEnvironmentRequestDto[];
+  target_path: string;
+  content: string;
+  /** Absent when the file could not be read as well as when it does not exist: create, never clobber. */
+  expected_file_hash?: string | null;
+  digest: string;
+  expires_at: string;
+  /** What this phase cannot guarantee, stated for the reader of the approval. */
+  warnings: string[];
+}
+
+/**
+ * An entry this workspace approved, and where the write for it stands. The status is read live from
+ * the linked user tool action rather than copied into Core's row, so a failed or still-pending
+ * approval can never be reported as an install.
+ */
+export interface MarketInstallationDto {
+  id: string;
+  project_id: string;
+  catalog_id: string;
+  source_name: string;
   extension_id: string;
   kind: string;
   version: string;
-  publisher: string;
-  display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  enabled: boolean;
-  status: string;
-  status_message: string;
-  installed_at: string;
+  server_id: string;
+  config_path: string;
+  /** `installing` or `removing`; a removal that finished is reported as gone. */
+  state: string;
+  install_action_id: string;
+  uninstall_action_id?: string | null;
+  /** Live status of whichever action is in front of the user; absent means none is running. */
+  action_status?: string | null;
+  created_at: string;
   updated_at: string;
 }
 
-export interface ExtensionInstallPreviewDto {
-  extension_id: string;
-  kind: string;
-  version: string;
-  publisher: string;
-  display_name: string;
-  description: string;
-  source_kind: string;
-  source_location: string;
-  capabilities: string[];
-  permissions: string[];
-  risks: string[];
-  requires_approval: boolean;
-  approval_summary: string;
-}
+/** Vocabulary for `MarketInstallProposalDto.action`; Core owns the words, this mirrors them. */
+export const MARKET_INSTALL_ACTION_INSTALL = 'install'
+export const MARKET_INSTALL_ACTION_UNINSTALL = 'uninstall'
 
-export interface ExtensionInstallResultDto {
-  approval_required: boolean;
-  approval?: ApprovalDto | null;
-  extension?: InstalledExtensionDto | null;
-  preview: ExtensionInstallPreviewDto;
+/** An envelope, not a bare array: the row count alone cannot say the surface was never used. */
+export interface MarketInstallationListDto {
+  installations: MarketInstallationDto[];
 }
 
 /**
@@ -2568,19 +2604,21 @@ export const api = {
     return request<MarketCatalogPageDto>(`/api/v1/market/catalog${suffix}`);
   },
   getMarketCatalogItem: (catalogId: string) => request<MarketCatalogItemDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}`),
-  previewExtensionInstall: (input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null }) => request<ExtensionInstallPreviewDto>('/api/v1/extensions/install-preview', {
+  // A market install is always for one project: the config file written is that project's tool
+  // workspace, which is also what decides which Tool Provider process performs the write.
+  previewMarketInstall: (catalogId: string, projectId: string) => request<MarketInstallProposalDto>(`/api/v1/market/catalog/${encodeURIComponent(catalogId)}/install-preview`, {
     method: 'POST',
-    body: JSON.stringify(input)
+    body: JSON.stringify({ project_id: projectId })
   }),
-  installExtension: (input: { catalog_id?: string | null; source_kind?: string | null; source_location?: string | null; manifest_json?: string | null; approval_id?: string | null }) => request<ExtensionInstallResultDto>('/api/v1/extensions/install', {
-    method: 'POST',
-    body: JSON.stringify(input)
+  previewMarketUninstall: (installationId: string) => request<MarketInstallProposalDto>(`/api/v1/market/installations/${encodeURIComponent(installationId)}/uninstall-preview`, {
+    method: 'POST'
   }),
-  listInstalledExtensions: () => request<InstalledExtensionDto[]>('/api/v1/extensions/installed'),
-  enableExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/enable`, { method: 'POST' }),
-  disableExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/disable`, { method: 'POST' }),
-  updateExtension: (extensionId: string) => request<InstalledExtensionDto>(`/api/v1/extensions/${encodeURIComponent(extensionId)}/update`, { method: 'POST' }),
-  deleteExtension: (extensionId: string) => request<void>(`/api/v1/extensions/${encodeURIComponent(extensionId)}`, { method: 'DELETE' }),
+  // Queues the governed write and nothing more. The bytes land when a human approves the user tool
+  // action this returns, on the approval surface — never here.
+  applyMarketInstallProposal: (proposalId: string) => request<MarketInstallationDto>(`/api/v1/market/install-proposals/${encodeURIComponent(proposalId)}/apply`, {
+    method: 'POST'
+  }),
+  listMarketInstallations: () => request<MarketInstallationListDto>('/api/v1/market/installations'),
   listMcpServers: () => request<McpInventoryDto>('/api/v1/mcp/servers'),
   listMcpServerTools: (serverId: string) =>
     request<McpServerToolsDto>(`/api/v1/mcp/servers/${encodeURIComponent(serverId)}/tools`),

@@ -1423,6 +1423,41 @@ const app = new Elysia()
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'Get catalog item', tags: ['System'], responses: { 200: externalJsonResponse('MarketCatalogEntry', 'One entry as its source described it, including the metadata digest Core computed over that description.') } } })
+  .post('/api/v1/market/catalog/:catalogId/install-preview', async ({ params, body, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/catalog/${params.catalogId}/install-preview`;
+    const result = await proxyJson(path, { method: 'POST', body: body as Record<string, unknown>, headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Preview a market install', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallProposal', 'The frozen proposal: pinned command, exact file, exact bytes, and the moment it stops being applyable. Nothing was written by asking.') } } })
+  .post('/api/v1/market/installations/:installationId/uninstall-preview', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/installations/${params.installationId}/uninstall-preview`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Preview removing an installed market entry', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallProposal', 'The same config file with this one entry taken back out; downloaded package bytes are not touched.') } } })
+  .post('/api/v1/market/install-proposals/:proposalId/apply', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/market/install-proposals/${params.proposalId}/apply`;
+    const result = await proxyJson(path, { method: 'POST', headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, path); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'Queue an approved market write', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallation', 'The installation and the user tool action awaiting a human. The write happens when that action is approved, never here.') } } })
+  .get('/api/v1/market/installations', async ({ set, request }) => {
+    const headers = forwardHeaders(request);
+    const result = await proxyJson('/api/v1/market/installations', { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/market/installations'); }
+    setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
+    return result.data;
+  }, { detail: { summary: 'List installed market entries', tags: ['System'], responses: { 200: externalJsonResponse('MarketInstallationList', 'What this workspace approved, with the live status of the action that writes it.') } } })
   .post('/api/v1/extensions/install-preview', async ({ body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson('/api/v1/extensions/install-preview', { method: 'POST', body: body as Record<string, unknown>, headers });

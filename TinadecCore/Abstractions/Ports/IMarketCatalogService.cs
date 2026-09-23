@@ -6,11 +6,14 @@ namespace TinadecCore.Abstractions.Ports;
 /// Durable market knowledge: which sources Core is allowed to read, and what those sources
 /// said the last time they were read.
 ///
-/// This port is deliberately read-mostly and installation-free. Nothing here puts a package
-/// on disk, edits a config file, or hands a listing to a model — an entry is a claim a source
-/// made about a thing, kept so a human can weigh it later. The boundary between "stored" and
-/// "trusted" is the reason <see cref="RefreshSourceAsync"/> returns an outcome rather than a
-/// row count: a failed read must leave the previous catalog standing and say so.
+/// This port is read-mostly and installation-free. Nothing here puts a package on disk, edits a
+/// config file, or hands a listing to a model — an entry is a claim a source made about a thing,
+/// kept so a human can weigh it later. The writing half is
+/// <see cref="IMarketInstallService"/>, and the split is the point: reading a market is safe, and
+/// every step that could stop being safe is a separate call with its own guard.
+/// The boundary between "stored" and "trusted" is the reason <see cref="RefreshSourceAsync"/>
+/// returns an outcome rather than a row count: a failed read must leave the previous catalog
+/// standing and say so.
 /// </summary>
 public interface IMarketCatalogService
 {
@@ -130,4 +133,29 @@ public static class MarketErrorCodes
 
     /// <summary>A disabled source was asked to refresh; its rows stay as they are.</summary>
     public const string SourceDisabled = "market_source_disabled";
+
+    /// <summary>
+    /// A source still backing installations was deleted. Its rows are what an installed entry is
+    /// traceable to, so removing them would leave a running server with no recorded provenance.
+    /// </summary>
+    public const string SourceInUse = "market_source_in_use";
+
+    /// <summary>The entry exists but cannot become a command this tool layer could start.</summary>
+    public const string NotExpressible = "market_install_not_expressible";
+
+    /// <summary>
+    /// The provider's own config path is not inside the project being installed into, so a write
+    /// there could not be governed. Named instead of written somewhere plausible.
+    /// </summary>
+    public const string TargetUnresolved = "market_install_target_unresolved";
+
+    public const string ProposalNotFound = "market_install_proposal_not_found";
+
+    /// <summary>Expired, already used, or the market moved under it. Preview again.</summary>
+    public const string ProposalStale = "market_install_proposal_stale";
+
+    public const string InstallationNotFound = "market_installation_not_found";
+
+    /// <summary>The project id is empty, unknown to this tenant, or in another workspace.</summary>
+    public const string ProjectNotFound = "market_install_project_not_found";
 }
