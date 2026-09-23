@@ -135,7 +135,9 @@
   `generate:client` `GEN_EXIT=0`。
   三份契约同批再生并核对只含本批内容：`openapi.core.json` **+416/−0**（四条 install 路由 + 五个组件，逐条 grep 核过）、
   `openapi.external.json` +319/−1、`schema.d.ts` +128/0。
-  `check:drift` 按机制仍 `exit=1`（该门以 `git diff --exit-code` 收尾，未提交的有意契约变更必然让它红），提交后转绿由该门自身负责。
+  `check:drift` 提交前 `exit=1`（该门以 `git diff --exit-code` 收尾，未提交的有意契约变更必然让它红），
+  **提交后复跑 `DRIFT_EXIT=0`**——再生成的 `schema.d.ts` 与已提交字节逐字节相同，所以"三份契约自洽"这句
+  现在是量出来的而不是推出来的。
 
 ### 5f. 2026-09-23 第六批：市场面从"表存在但没人写"变成一条能读的路（#36 / M1）
 
