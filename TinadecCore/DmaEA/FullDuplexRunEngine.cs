@@ -2786,7 +2786,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         FullDuplexCheckpointV1 checkpoint,
         RuntimeAgentDefinition definition,
         Guid? instanceId,
-        Guid? parentInstanceId)
+        Guid? parentInstanceId,
+        bool streamAnswer = false,
+        bool observeOutput = true)
     {
         var resolver = _modelResolver ?? throw new InvalidOperationException("The agent model resolver is not registered.");
         var plan = definition.ModelPlan ?? throw new InvalidDataException($"Frozen agent '{definition.Id}' has no model plan.");
@@ -2795,7 +2797,27 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var modeVersionId = configuration.Bindings.Single(binding => binding.ConfigurationKind == "agent_mode_version").ConfigurationVersionId;
         return new ModelInvocationChatFactory(resolver, _chatClients, plan, new ModelInvocationContext(
             checkpoint.SessionId, checkpoint.RunId, checkpoint.TurnId, instanceId, parentInstanceId,
-            definitionId, versionId, modeVersionId, plan.StrategySource));
+            definitionId, versionId, modeVersionId, plan.StrategySource), observeOutput ? async (frame, ct) =>
+            {
+                var state = await _lifecycle.GetRunStateAsync(checkpoint.RunId.ToString(), ct).ConfigureAwait(false);
+                var epoch = LeaseEpochFor(checkpoint.RunId);
+                if (IsTerminal(state.Status) || state.Status == RunStatus.Paused
+                    || epoch is null || state.LeaseOwner != epoch.OwnerId || state.RecoveryCount != epoch.RecoveryCount)
+                    return;
+                // These are provider-produced output projections, never prompts or tool
+                // arguments. Lifecycle events and tool dispatch share this journal clock.
+                if (frame.Kind != "delta" || frame.Channel == "reasoning")
+                    await AppendEventAsync(checkpoint.RunId, $"model.output.{frame.Kind}",
+                        "Model output update.", new
+                        {
+                            run_id = checkpoint.RunId, turn_id = checkpoint.TurnId,
+                            response_id = frame.ResponseId, agent_name = definition.Id,
+                            channel = frame.Channel, delta = frame.Delta
+                        }, ct).ConfigureAwait(false);
+                if (streamAnswer && (frame.Kind is "started" or "failed" || frame.Channel == "text"))
+                    await _lifecycle.AppendRunStreamAsync(checkpoint.RunId.ToString(), new DurableRunStreamAppend(
+                        checkpoint.TurnId, $"answer.{frame.Kind}", Delta: frame.Delta), ct).ConfigureAwait(false);
+            } : null);
     }
 
     private async Task ApplyTaskResultAsync(
@@ -4362,7 +4384,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         ContextPack context,
         CancellationToken cancellationToken)
     {
-        var factory = CreateModelFactory(configuration, checkpoint, meetingDefinition, checkpoint.MeetingAgentId, null);
+        var factory = CreateModelFactory(configuration, checkpoint, meetingDefinition, checkpoint.MeetingAgentId, null, streamAnswer: true);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, meetingDefinition, context, cancellationToken).ConfigureAwait(false);
@@ -4755,7 +4777,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             return;
         }
 
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -4820,7 +4842,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -4930,7 +4952,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -5067,7 +5089,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);

@@ -6,15 +6,15 @@ import { api, type MessageDto } from '../api'
 import type { MessageAttachmentSummaryDto } from '@/generated/client'
 import { formatAttachmentBytes } from '@/lib/pendingAttachments'
 import MarkdownRender from './MarkdownRender.vue'
-import ThinkingProcess from './chat/ThinkingProcess.vue'
-import ToolCallCard from './chat/ToolCallCard.vue'
-import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
+import TurnTimeline from './chat/TurnTimeline.vue'
+import type { SupervisionReview, ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 const props = defineProps<{
   message: MessageDto
   index: number
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
+  supervisionReview?: SupervisionReview | null
 }>()
 
 const emit = defineEmits<{
@@ -112,18 +112,10 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
       <div class="assistant-message-row">
         <div class="message-content assistant">
           <!-- 思考过程 -->
-          <ThinkingProcess v-if="hasThinking" :steps="messageThinkingSteps" />
-
-          <!-- 工具调用卡片 -->
-          <div v-if="hasToolCalls" class="assistant-tool-calls">
-            <ToolCallCard
-              v-for="call in messageToolCalls"
-              :key="call.id"
-              :tool-call="call"
-              @approve="emit('approve', $event)"
-              @reject="emit('reject', $event)"
-            />
-          </div>
+          <TurnTimeline v-if="hasThinking || hasToolCalls" :thinking-steps="messageThinkingSteps"
+            :tool-calls="messageToolCalls" :run-id="message.run_id ?? undefined"
+            :supervision-review="supervisionReview"
+            @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
 
           <MarkdownRender :content="message.content" />
 

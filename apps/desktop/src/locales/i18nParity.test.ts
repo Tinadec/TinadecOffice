@@ -57,6 +57,9 @@ const panelSources = import.meta.glob(
     // The collapsed thinking row is translated by nothing but itself: its title was a hardcoded
     // Chinese sentence, which is invisible to a reader of the English app.
     './../components/chat/ThinkingProcess.vue',
+    // The supervision decision row labels Core's continue/correct/cancel vocabulary;
+    // those three buttons were hardcoded Chinese and read as Chinese in the English app.
+    './../components/chat/TurnTimeline.vue',
     // Market labels are resolved by the controller (one owner for both the filter rail and the
     // row badges), so a dead key there would render in two cards at once.
     './../controllers/MarketController.ts',

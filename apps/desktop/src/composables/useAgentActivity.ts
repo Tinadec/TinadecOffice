@@ -1,4 +1,4 @@
-import { ref, watch, onScopeDispose, type Ref } from 'vue'
+import { computed, ref, watch, onScopeDispose, type Ref } from 'vue'
 import {
   api,
   type EventEnvelope,
@@ -42,6 +42,7 @@ export interface AgentActivity {
 }
 
 export interface ToolCall {
+  runId?: string
   id: string
   toolId: string
   toolName: string
@@ -59,6 +60,8 @@ export interface ToolCall {
 }
 
 export interface ThinkingStep {
+  seq?: number
+  status?: 'running' | 'completed' | 'failed'
   id: string
   type:
     | 'run_started'
@@ -73,6 +76,7 @@ export interface ThinkingStep {
     | 'tool'
     // A terminal run failure.
     | 'run'
+    | 'reasoning'
   title: string
   description: string
   timestamp: string
@@ -80,6 +84,21 @@ export interface ThinkingStep {
   severity?: string
   category?: string
   details?: Record<string, unknown>
+}
+
+export interface TurnActivity {
+  runId?: string
+  thinkingSteps?: ThinkingStep[]
+  toolCalls?: ToolCall[]
+  supervisionReview?: SupervisionReview | null
+}
+
+export type SupervisionDecisionOption = 'continue' | 'correct' | 'cancel'
+
+export interface SupervisionReview {
+  runId: string
+  reasons: string[]
+  options: SupervisionDecisionOption[]
 }
 
 export interface AgentState {
@@ -134,6 +153,10 @@ function extractArray(value: unknown, key: string): unknown[] {
   return Array.isArray(v) ? v : []
 }
 
+function extractStringArray(value: unknown, key: string): string[] {
+  return extractArray(value, key).filter((item): item is string => typeof item === 'string')
+}
+
 function agentRoleLabel(agentType: string): string {
   const labels: Record<string, string> = {
     meeting: '会议智能体',
@@ -160,6 +183,7 @@ export function useAgentActivity(
   orchestration?: Ref<OrchestrationSnapshotDto | null>,
 ) {
   const activity = ref<AgentActivity>({ ...DEFAULT_ACTIVITY })
+  const supervisionReview = ref<SupervisionReview | null>(null)
   const toolCalls = ref<ToolCall[]>([])
   const thinkingSteps = ref<ThinkingStep[]>([])
   const agentStates = ref<Record<string, AgentState>>({})
@@ -168,14 +192,68 @@ export function useAgentActivity(
   let unsubscribe: (() => void) | null = null
   let cleanupTimer: ReturnType<typeof setTimeout> | null = null
   let lastRunStartedAt: string | null = null
+  // Reactive on purpose: `turnActivities` is a computed over these two stores, and a
+  // plain object/Map mutates without notifying anyone — the computed kept serving the
+  // snapshot from its first evaluation, so a delayed event for an earlier run was
+  // saved but never rendered. `ref` gives both the object and the Map deep reactivity.
+  const turns = ref<Record<string, {
+    activity: AgentActivity
+    thinkingSteps: ThinkingStep[]
+    toolCalls: ToolCall[]
+    agentStates: Record<string, AgentState>
+    progressEvents: ProgressEvent[]
+  }>>({})
+  let generation = 0
+  const toolReads = new Map<string, number>()
+  const supervisionReviews = ref(new Map<string, SupervisionReview>())
+  const seenEvents = new Set<string>()
+  let latestSelectedSequence = 0
+
+  function saveTurn() {
+    const id = activity.value.runId
+    if (!id) return
+    turns.value[id] = {
+      activity: { ...activity.value }, thinkingSteps: thinkingSteps.value,
+      toolCalls: toolCalls.value, agentStates: agentStates.value, progressEvents: progressEvents.value,
+    }
+  }
+
+  function selectTurn(id: string) {
+    if (cleanupTimer) clearTimeout(cleanupTimer)
+    cleanupTimer = null
+    const saved = turns.value[id]
+    activity.value = saved ? { ...saved.activity } : { ...DEFAULT_ACTIVITY, runId: id }
+    thinkingSteps.value = saved?.thinkingSteps ?? []
+    toolCalls.value = saved?.toolCalls ?? []
+    supervisionReview.value = supervisionReviews.value.get(id) ?? null
+    agentStates.value = saved?.agentStates ?? {}
+    progressEvents.value = saved?.progressEvents ?? []
+    lastRunStartedAt = activity.value.runStartedAt
+  }
+
+  const turnActivities = computed<Record<string, TurnActivity>>(() => Object.fromEntries(
+    Object.entries(turns.value).map(([runId, turn]) => [runId, {
+      runId, thinkingSteps: turn.thinkingSteps, toolCalls: turn.toolCalls,
+      supervisionReview: supervisionReviews.value.get(runId) ?? null,
+    }]),
+  ))
 
   function reset() {
+    generation++
+    turns.value = {}
+    // A review belongs to the session that raised it: leaving the map behind would
+    // resurrect a stale decision gate if the same run id ever reappeared here.
+    supervisionReviews.value.clear()
+    toolReads.clear()
+    seenEvents.clear()
+    latestSelectedSequence = 0
     activity.value = { ...DEFAULT_ACTIVITY }
     toolCalls.value = []
     thinkingSteps.value = []
     agentStates.value = {}
     progressEvents.value = []
     lastRunStartedAt = null
+    supervisionReview.value = null
     if (cleanupTimer) {
       clearTimeout(cleanupTimer)
       cleanupTimer = null
@@ -220,7 +298,9 @@ export function useAgentActivity(
   }
 
   function processRunStarted(event: EventEnvelope) {
-    const runId = extractString(event.payload, 'id')
+    const runId = event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId
+    // Admission and queue receipts describe the same run, not extra thinking steps.
+    if (activity.value.runStartedAt) return
     const summary = extractString(event.payload, 'summary')
     lastRunStartedAt = event.ts
     activity.value = {
@@ -348,9 +428,17 @@ export function useAgentActivity(
   }
 
   function processSupervision(event: EventEnvelope) {
-    const severity = extractString(event.payload, 'severity') ?? 'info'
-    const category = extractString(event.payload, 'category') ?? ''
-    const summary = extractString(event.payload, 'summary') ?? ''
+    // Core's supervision payload carries the decision and its reasons; the
+    // severity/category/summary shape only ever existed in preview fixtures. Reading
+    // just the fixture fields rendered every real review as a blank
+    // "监督发现 · info" row — the user could see a review happened, never what it
+    // decided or why, and the escalation gate below is what needs the reasons.
+    const decision = extractString(event.payload, 'decision') ?? ''
+    const reasons = extractStringArray(event.payload, 'reasons')
+    const severity = extractString(event.payload, 'severity')
+      ?? (decision === 'escalate' || decision === 'revise' ? 'warning' : 'info')
+    const category = extractString(event.payload, 'category') ?? decision
+    const summary = extractString(event.payload, 'summary') ?? reasons.join('；')
     const recommendation = extractString(event.payload, 'recommendation') ?? ''
 
     thinkingSteps.value = [
@@ -358,16 +446,42 @@ export function useAgentActivity(
       {
         id: `${event.seq}-supervision`,
         type: 'supervision',
-        title: `监督发现 · ${severity}`,
+        title: decision ? `监督发现 · ${decision}` : `监督发现 · ${severity}`,
         description: summary || recommendation || category,
         timestamp: event.ts,
         durationMs: null,
         severity,
         category,
-        details: { recommendation },
+        details: { recommendation, decision, reasons },
       },
     ]
     addProgressEvent(event.seq, event.type, 'shield', `监督检查：${category || severity}`)
+  }
+
+  function processSupervisionUserReview(event: EventEnvelope) {
+    const runId = event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId
+    if (!runId) return
+    const reasons = extractStringArray(event.payload, 'reasons')
+    const options = extractStringArray(event.payload, 'options')
+    // Keep only the options this UI can act on; an unrecognised vocabulary must not
+    // produce a button whose click has no defined meaning. Nothing recognised means
+    // the payload predates the vocabulary, so fall back to the documented trio.
+    const recognised = options.filter((option): option is SupervisionDecisionOption =>
+      option === 'continue' || option === 'correct' || option === 'cancel')
+    supervisionReviews.value.set(runId, {
+      runId,
+      reasons,
+      options: recognised.length > 0 ? recognised : ['continue', 'correct', 'cancel'],
+    })
+    if (activity.value.runId === runId) supervisionReview.value = supervisionReviews.value.get(runId) ?? null
+  }
+
+  function clearSupervisionReview(runId: string) {
+    if (!runId) return
+    // Overwrite instead of delete: the entry is the "this gate was answered" marker,
+    // and a live binding to it must re-evaluate rather than vanish from the map.
+    supervisionReviews.value.set(runId, { runId, reasons: [], options: [] })
+    if (activity.value.runId === runId) supervisionReview.value = supervisionReviews.value.get(runId) ?? null
   }
 
   function processContextPack(event: EventEnvelope) {
@@ -415,9 +529,7 @@ export function useAgentActivity(
       )
     }
 
-    // The timeline is the authoritative source for a row's approval id; pull it so a
-    // park that arrived before the row existed still becomes actionable.
-    void refreshToolExecutions()
+    // handleSessionEvent refreshes the authoritative timeline once after projection.
 
     addProgressEvent(event.seq, event.type, 'alert-circle', `等待审批：${summary}`)
   }
@@ -441,8 +553,6 @@ export function useAgentActivity(
           : call,
       )
     }
-
-    void refreshToolExecutions()
 
     addProgressEvent(
       event.seq,
@@ -491,7 +601,6 @@ export function useAgentActivity(
       addProgressEvent(event.seq, event.type, 'alert-triangle', label)
     }
 
-    void refreshToolExecutions()
   }
 
   /** A terminal run failure — previously invisible, so a failed run just stopped. */
@@ -658,6 +767,28 @@ export function useAgentActivity(
 
   function processEvent(event: EventEnvelope) {
     switch (event.type) {
+      case 'model.output.started':
+      case 'model.output.delta':
+      case 'model.output.completed':
+      case 'model.output.failed': {
+        const id = extractString(event.payload, 'response_id')
+        if (!id) break
+        const existing = thinkingSteps.value.find((step) => step.id === id)
+        const delta = extractString(event.payload, 'delta') ?? ''
+        const status = event.type === 'model.output.completed' ? 'completed'
+          : event.type === 'model.output.failed' ? 'failed' : 'running'
+        const step: ThinkingStep = existing ? { ...existing, status } : {
+          id, type: 'reasoning', title: extractString(event.payload, 'agent_name') ?? 'Model',
+          description: '', timestamp: event.ts, seq: event.seq, durationMs: null, status,
+        }
+        // Only the provider's explicit reasoning channel is a reasoning text. Internal
+        // planning JSON, prompts and tool arguments never become a "thought" here.
+        if (event.payload?.channel === 'reasoning') step.description += delta
+        thinkingSteps.value = existing
+          ? thinkingSteps.value.map((item) => item.id === id ? step : item)
+          : [...thinkingSteps.value, step]
+        break
+      }
       // Lifecycle. The real Core names come first; run.started is kept because the
       // envelope mapper still produces it for older frames.
       case 'run.started':
@@ -688,6 +819,13 @@ export function useAgentActivity(
       case 'supervision.completed':
       case 'supervision.skipped':
         processSupervision(event)
+        break
+      case 'supervision.user_review.requested':
+        processSupervisionUserReview(event)
+        break
+      case 'supervision.user_decision':
+      case 'context.goal_adjusted':
+        clearSupervisionReview(event.run_id ?? extractString(event.payload, 'run_id') ?? activity.value.runId ?? '')
         break
       case 'context.pack.created':
       case 'context.packed':
@@ -740,17 +878,24 @@ export function useAgentActivity(
   function scheduleCleanup() {
     if (cleanupTimer) clearTimeout(cleanupTimer)
     cleanupTimer = setTimeout(() => {
-      activity.value = { ...DEFAULT_ACTIVITY }
+      activity.value = { ...activity.value, status: 'idle' }
       cleanupTimer = null
     }, 30000)
   }
 
   async function refreshToolExecutions() {
-    if (!sessionId.value) return
+    const session = sessionId.value
+    const runId = activity.value.runId
+    if (!session || !runId) return
+    const epoch = generation
+    const read = (toolReads.get(runId) ?? 0) + 1
+    toolReads.set(runId, read)
     try {
-      const items = await api.listToolExecutions(sessionId.value, { limit: 20 })
-      toolCalls.value = items
+      const items = await api.listToolExecutions(session, { run_id: runId, limit: 200 })
+      if (epoch !== generation || session !== sessionId.value || toolReads.get(runId) !== read) return
+      const calls = items.filter((item) => item.run_id === runId)
         .map((item: ToolExecutionTimelineItemDto): ToolCall => ({
+          runId,
           id: item.id,
           toolId: item.tool_id,
           toolName: item.tool_display_name || item.tool_id,
@@ -767,6 +912,10 @@ export function useAgentActivity(
           risk: item.risk,
         }))
         .sort((a, b) => a.seq - b.seq)
+      if (activity.value.runId === runId) {
+        toolCalls.value = calls
+        saveTurn()
+      } else if (turns.value[runId]) turns.value[runId].toolCalls = calls
     } catch {
       // ignore fetch errors
     }
@@ -792,6 +941,14 @@ export function useAgentActivity(
 
   function enrichFromOrchestration(snapshot: OrchestrationSnapshotDto | null) {
     if (!snapshot) return
+    if (snapshot.run?.session_id && snapshot.run.session_id !== sessionId.value) return
+
+    if (snapshot.run && snapshot.run.id !== activity.value.runId) {
+      // A late snapshot for an already seen run must not replace the current turn.
+      if (turns.value[snapshot.run.id]) return
+      saveTurn()
+      selectTurn(snapshot.run.id)
+    }
 
     if (snapshot.run) {
       const isComplete =
@@ -843,18 +1000,39 @@ export function useAgentActivity(
         existing?.currentTask ?? null,
       )
     }
+    saveTurn()
   }
 
   function handleSessionEvent(event: EventEnvelope) {
+    const runId = event.run_id ?? extractString(event.payload, 'run_id')
+    const key = `${runId}:${event.seq}:${event.type}`
+    if (seenEvents.has(key)) return
+    seenEvents.add(key)
+    const previous = activity.value.runId
+    const known = runId ? !!turns.value[runId] : false
+    const historical = event.seq < latestSelectedSequence
+    if (runId && previous !== runId) {
+      saveTurn()
+      selectTurn(runId)
+    }
     processEvent(event)
+    if (['task.cancelled', 'run.failed', 'user.response'].includes(event.type)) {
+      thinkingSteps.value = thinkingSteps.value.map((step) => step.status === 'running'
+        ? { ...step, status: event.type === 'user.response' ? 'completed' : 'failed' } : step)
+    }
+    thinkingSteps.value = thinkingSteps.value.map((step) => step.seq == null ? { ...step, seq: event.seq } : step)
+    saveTurn()
     if (
       event.type.startsWith('tool.') ||
       event.type.startsWith('approval.') ||
+      event.type === 'governance.permission_decided' ||
       event.type.startsWith('step.') ||
       event.type.startsWith('task')
     ) {
       void refreshToolExecutions()
     }
+    if ((known || historical) && previous && previous !== runId) selectTurn(previous)
+    else latestSelectedSequence = Math.max(latestSelectedSequence, event.seq)
   }
 
   function connect() {
@@ -894,6 +1072,7 @@ export function useAgentActivity(
   // is closed and recreated) would otherwise leave its handler registered and keep the
   // connection alive for a panel that no longer exists.
   onScopeDispose(() => {
+    generation++
     disconnect()
     if (cleanupTimer) clearTimeout(cleanupTimer)
   })
@@ -902,6 +1081,8 @@ export function useAgentActivity(
     activity,
     toolCalls,
     thinkingSteps,
+    supervisionReview,
+    turnActivities,
     agentStates,
     progressEvents,
     reset,

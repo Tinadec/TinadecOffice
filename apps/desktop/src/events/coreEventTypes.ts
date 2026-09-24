@@ -34,6 +34,10 @@ export const RUN_EVENT_TYPES = [
   'run.paused',
   'run.resumed',
   'user.response',
+  'model.output.started',
+  'model.output.delta',
+  'model.output.completed',
+  'model.output.failed',
 ] as const
 
 /** Execution-layer instances and their tool loop. */
@@ -82,6 +86,11 @@ export const ORCHESTRATION_EVENT_TYPES = [
   'supervision.completed',
   'supervision.skipped',
   'supervision.user_review.requested',
+  // The user's answer to an escalation gate, and the correction that clears it.
+  // Both are real Core events; without a listener the decision never reached the
+  // timeline, so the decision buttons stayed on screen after the run had resumed.
+  'supervision.user_decision',
+  'context.goal_adjusted',
   'meeting.response_fallback',
   'context.packed',
   'context.patch.accepted',

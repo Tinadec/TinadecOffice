@@ -451,7 +451,7 @@ public static class DmaeaEndpoints
                 run_id = runGuid.ToString(),
                 decision = PayloadString(e.Payload, "decision"),
                 revision_round = PayloadInt(e.Payload, "revision_round") ?? 0,
-                reason = PayloadString(e.Payload, "reason"),
+                reasons = PayloadArray(e.Payload, "reasons"),
                 created_at = e.Timestamp
             }).ToList();
             var assignments = agentInstanceRows.Where(a => a.TaskId is not null).Select(a => new

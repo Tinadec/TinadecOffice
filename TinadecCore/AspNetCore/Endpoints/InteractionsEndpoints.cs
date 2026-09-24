@@ -276,6 +276,21 @@ public static class InteractionsEndpoints
             }
             await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.steering", new { interaction_id = Guid.NewGuid(), target_run_id = targetRunId.Value, content, dispatch_mode = dispatchMode }, $"Steering injected into run {targetRunId}", "info", cancellationToken: ct);
             await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "steering", null, IdempotencyKey: $"run:{targetRunId}:steering:{Guid.NewGuid():N}"), ct);
+            // A supervision escalation is a durable user-review gate: the engine
+            // re-parks on every tick while the checkpoint phase is awaiting_user, so
+            // merely enqueueing a steering patch leaves it parked and the correction is
+            // never read. Supplying correction text IS the user decision to replan, so
+            // move the run back to executing first (the engine then applies the patch
+            // and returns the checkpoint to planning).
+            var parkedRun = await lifecycle.FindRunAsync(targetRunId.Value, ct).ConfigureAwait(false);
+            if (parkedRun is not null && parkedRun.Status == "awaiting_user")
+            {
+                await lifecycle.SetRunStatusAsync(
+                    targetRunId.Value,
+                    "executing",
+                    "User correction accepted; resuming after supervision review.",
+                    ct).ConfigureAwait(false);
+            }
             var engine = (IFullDuplexRunEngine)req.HttpContext.RequestServices.GetRequiredService(typeof(IFullDuplexRunEngine));
             await engine.EnqueueAsync(targetRunId.Value, ct);
             var steeringCursor = await RunStreamCursorAsync(lifecycleDbFactory, targetRunId, ct).ConfigureAwait(false);

@@ -7,7 +7,7 @@ import WelcomeScreen from './WelcomeScreen.vue'
 import { useChatResponsiveMode } from '@/composables/useElementSize'
 import type { MessageDto, SessionDto, ProjectDto, OrchestrationSnapshotDto, MeetingModelOverrideDto } from '../api'
 import type { PermissionLevel } from '@/types/mode'
-import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
+import type { ThinkingStep, ToolCall, TurnActivity } from '@/composables/useAgentActivity'
 
 const props = defineProps<{
   messages: MessageDto[]
@@ -25,6 +25,7 @@ const props = defineProps<{
       whether it belongs to the live turn or to the message that answered. */
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
+  turnActivities?: Record<string, TurnActivity>
   panelStyle?: Record<string, string>
   panelDataAttrs?: Record<string, string>
   // new: pass runs for insert picker
@@ -85,24 +86,27 @@ const hasActivity = computed(
 )
 
 /**
- * The controller keeps one shared pair of activity arrays for the most recent
- * run, so the message stream has to decide where they belong. While a run is in
- * flight there is no assistant message to attach them to — attaching only ever
- * worked for the second turn onward, which is why the very first conversation
- * showed no tool activity and no in-chat approval entry at all. Anchor them to
- * the trailing live row instead, and to the answering message once it exists.
+ * Production supplies run-keyed activity; only standalone gallery callers use the
+ * single-turn props. Busy is a transport state, never an ownership key: sending a
+ * second message must not move the previous run's activity to the new live turn.
  */
 const liveTurn = computed(() =>
-  hasActivity.value && (props.busy || !lastAssistantId.value)
+  !props.turnActivities && hasActivity.value && (props.busy || !lastAssistantId.value)
     ? { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls }
     : undefined,
 )
 
-const activityByMessage = computed(() =>
-  hasActivity.value && !props.busy && lastAssistantId.value
+const activityByMessage = computed(() => props.turnActivities
+  ? Object.fromEntries(props.messages.filter((m) => m.role === 'assistant' && m.run_id && props.turnActivities?.[m.run_id])
+    .map((m) => [m.id, props.turnActivities![m.run_id!]]))
+  : hasActivity.value && !props.busy && lastAssistantId.value
     ? { [lastAssistantId.value]: { thinkingSteps: props.thinkingSteps, toolCalls: props.toolCalls } }
     : undefined,
 )
+
+const liveTurns = computed(() => props.turnActivities
+  ? Object.values(props.turnActivities).filter((turn) => !props.messages.some((m) => m.role === 'assistant' && m.run_id === turn.runId))
+  : undefined)
 
 const modeVersionId = ref<string | null>(null)
 watch(
@@ -169,16 +173,12 @@ function handleReject(approvalId: string) {
           :messages="messages"
           :activity-by-message="activityByMessage"
           :live-turn="liveTurn"
+          :live-turns="liveTurns"
+          :streaming-reply="streamingReply"
           @approve="handleApprove"
           @reject="handleReject"
           @edit="emit('edit-message', $event)"
         />
-        <!-- Live reply bubble: rendered from the stream while it is still arriving,
-             in the same shape as a persisted assistant message. -->
-        <div v-if="streamingReply" class="chat-streaming-bubble" data-testid="chat-streaming-reply">
-          <span class="chat-streaming-text">{{ streamingReply }}</span>
-          <span class="chat-streaming-caret" aria-hidden="true" />
-        </div>
       </div>
     </Transition>
 
@@ -208,38 +208,3 @@ function handleReject(approvalId: string) {
     />
   </section>
 </template>
-
-<style scoped>
-/* The live reply while it is still arriving. It sits in the message column with the
-   same measure as a persisted assistant bubble so the text does not jump when the
-   real message replaces it. */
-.chat-streaming-bubble {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  margin: 8px 16px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-muted);
-  border-radius: 10px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.chat-streaming-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.chat-streaming-caret {
-  flex: 0 0 auto;
-  width: 2px;
-  height: 14px;
-  background: var(--text-secondary);
-  animation: chat-streaming-blink 1s steps(2, start) infinite;
-}
-@keyframes chat-streaming-blink {
-  to { visibility: hidden; }
-}
-</style>

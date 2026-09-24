@@ -820,6 +820,10 @@ stateDiagram-v2
 
 ### 15.2 可靠性目标
 
+流式呈现契约（2026-09-23）：每次模型尝试的公开推理以 `model.output.started/delta/completed/failed` 会话事件回传，负载含 `run_id`、`turn_id`、`response_id`，与工具活动共用持久事件序号。只显示提供方公开返回的推理文本或摘要，不导出受保护推理、提示词或工具参数，不将编排事件伪称为模型思维链。每个 run 的活动独立；界面按真实 `message.run_id` 归档，允许“推理 → 工具 → 推理”交错，不重排阶段。
+
+最终会话智能体的正文通过既有 run SSE 的 `answer.started/delta/failed` 提供实时、可撤换预览；重试/失败清空旧预览。正式 `delta` 仍在完成裁决后给出全文，客户端用它替换预览，随后 `done` 挂接持久消息。预览不是完成事实，也不授予工具执行权；断流/重连沿用序号去重。工具详情默认折叠，审批依据及裁决入口不受折叠影响。
+
 - HTTP/SSE 断开不取消已接纳 run。
 - 同一幂等键只产生一个逻辑 interaction、run 或 tool execution。
 - Core 重启后从 durable checkpoint 恢复，不重复已确认副作用。

@@ -27,14 +27,14 @@ class FakeEventSource {
   close() {
     this.closed = true
   }
-  emit(type: string, payload: Record<string, unknown>, seq = 1, ts = '2026-09-17T00:00:00Z') {
+  emit(type: string, payload: Record<string, unknown>, seq = 1, ts = '2026-09-17T00:00:00Z', runId = 'r-1') {
     const frame = {
       version: '1.0',
       event_id: `e${seq}`,
       event_type: type,
       timestamp: ts,
       session_id: 's-1',
-      run_id: 'r-1',
+      run_id: runId,
       payload: { sequence: seq, ...payload },
     }
     const event = new MessageEvent(type, { data: JSON.stringify(frame), lastEventId: String(seq) })
@@ -67,8 +67,48 @@ describe('useAgentActivity event wiring', () => {
     await nextTick()
     const source = FakeEventSource.instances[0]
     expect(source, 'the composable must subscribe once a session is selected').toBeDefined()
-    return { harness, source }
+    return { harness, source, sessionId }
   }
+
+  it('cuts each run into its own activity even within the same session', async () => {
+    const { harness, source } = await mount()
+    source.emit('task.accepted', {}, 1)
+    for (let i = 2; i <= 9; i++) source.emit('context.packed', {}, i)
+    expect(harness.thinkingSteps.value).toHaveLength(9)
+    source.emit('task.accepted', {}, 10, undefined, 'r-2')
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.activity.value.runId).toBe('r-2')
+    expect(harness.turnActivities.value['r-1'].thinkingSteps).toHaveLength(9)
+    source.emit('context.packed', {}, 11, undefined, 'r-1') // delayed older run
+    expect(harness.activity.value.runId).toBe('r-2')
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.turnActivities.value['r-1'].thinkingSteps).toHaveLength(10)
+  })
+
+  it('folds reasoning deltas once per response and rejects replay duplicates', async () => {
+    const { harness, source } = await mount()
+    source.emit('model.output.started', { response_id: 'response-1', agent_name: 'worker' }, 1)
+    const payload = { response_id: 'response-1', channel: 'reasoning', delta: 'Inspect file' }
+    source.emit('model.output.delta', payload, 2)
+    source.emit('model.output.delta', payload, 2)
+    source.emit('model.output.completed', { response_id: 'response-1' }, 3)
+    expect(harness.thinkingSteps.value).toHaveLength(1)
+    expect(harness.thinkingSteps.value[0]).toMatchObject({ description: 'Inspect file', status: 'completed', seq: 1 })
+  })
+
+  it('scopes tool reads by run and cannot apply a read after switching session', async () => {
+    const { harness, source, sessionId } = await mount()
+    let resolve!: (items: never[]) => void
+    vi.mocked(api.listToolExecutions).mockImplementation(() => new Promise((done) => { resolve = done }))
+    source.emit('task.accepted', {}, 1)
+    expect(api.listToolExecutions).toHaveBeenLastCalledWith('s-1', { run_id: 'r-1', limit: 200 })
+    sessionId.value = 's-2'
+    await nextTick()
+    resolve([{ id: 'old', run_id: 'r-1' }] as never[])
+    await Promise.resolve()
+    expect(harness.toolCalls.value).toEqual([])
+    expect(harness.turnActivities.value).toEqual({})
+  })
 
   /**
    * The defect this wiring replaced: every owner of session events opened its own
@@ -161,6 +201,38 @@ describe('useAgentActivity event wiring', () => {
     expect(step!.title).toContain('未完成')
     expect(step!.description).toContain('Task not completed')
     expect(harness.progressEvents.value.some((event) => event.type === 'worker.blocked')).toBe(true)
+  })
+
+  it('captures supervision escalation evidence and clears it after a decision', async () => {
+    const { harness, source } = await mount()
+
+    // The real Core sequence for an escalation: the verdict lands on
+    // supervision.completed, then the review gate opens. Reading only the preview
+    // fixture's severity/category/summary fields rendered the verdict as a blank row.
+    source.emit('supervision.completed', {
+      decision: 'escalate',
+      reasons: ['Task budget exhausted after three rounds.'],
+    }, 11)
+    source.emit('supervision.user_review.requested', {
+      decision: 'escalate',
+      reasons: ['Task budget exhausted after three rounds.'],
+      options: ['continue', 'correct', 'cancel'],
+    }, 12)
+
+    expect(harness.supervisionReview.value).toEqual({
+      runId: 'r-1',
+      reasons: ['Task budget exhausted after three rounds.'],
+      options: ['continue', 'correct', 'cancel'],
+    })
+
+    // The verdict must also be readable in the timeline.
+    const step = harness.thinkingSteps.value.find((item) => item.id === '11-supervision')
+    expect(step, 'the escalation must appear as a supervision step').toBeDefined()
+    expect(step!.title).toContain('escalate')
+    expect(step!.description).toContain('Task budget exhausted after three rounds.')
+
+    source.emit('supervision.user_decision', { decision: 'continue' }, 13)
+    expect(harness.supervisionReview.value).toEqual({ runId: 'r-1', reasons: [], options: [] })
   })
 
   it('makes the persisted-evidence final-response fallback visible', async () => {

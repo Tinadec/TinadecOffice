@@ -48,18 +48,21 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
     private readonly IAgentChatClientFactory _inner;
     private readonly FrozenModelPlan _plan;
     private readonly ModelInvocationContext _context;
+    private readonly Func<ModelOutputFrame, CancellationToken, Task>? _output;
     private IReadOnlyList<ChatResolution>? _resolutions;
 
     public ModelInvocationChatFactory(
         IAgentModelResolver resolver,
         IAgentChatClientFactory inner,
         FrozenModelPlan plan,
-        ModelInvocationContext context)
+        ModelInvocationContext context,
+        Func<ModelOutputFrame, CancellationToken, Task>? output = null)
     {
         _resolver = resolver;
         _inner = inner;
         _plan = plan;
         _context = context;
+        _output = output;
     }
 
     public async Task<ChatResolution> ResolveChatAsync(string routePurpose, CancellationToken cancellationToken = default)
@@ -91,7 +94,7 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
     {
         _resolutions ??= await _resolver.ResolveInvocationCandidatesAsync(
             _plan, _context.ParentInstanceId, cancellationToken).ConfigureAwait(false);
-        return new TrackingChatClient(_resolver, _inner, _resolutions, _context);
+        return new TrackingChatClient(_resolver, _inner, _resolutions, _context, _output);
     }
 
     private sealed class TrackingChatClient : IChatClient
@@ -100,17 +103,20 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
         private readonly IAgentChatClientFactory _inner;
         private readonly IReadOnlyList<ChatResolution> _resolutions;
         private readonly ModelInvocationContext _context;
+        private readonly Func<ModelOutputFrame, CancellationToken, Task>? _output;
 
         public TrackingChatClient(
             IAgentModelResolver resolver,
             IAgentChatClientFactory inner,
             IReadOnlyList<ChatResolution> resolutions,
-            ModelInvocationContext context)
+            ModelInvocationContext context,
+            Func<ModelOutputFrame, CancellationToken, Task>? output)
         {
             _resolver = resolver;
             _inner = inner;
             _resolutions = resolutions;
             _context = context;
+            _output = output;
         }
 
         public async Task<ChatResponse> GetResponseAsync(
@@ -144,7 +150,9 @@ internal sealed class ModelInvocationChatFactory : IAgentChatClientFactory
                     try
                     {
                         var client = await _inner.CreateAsync(resolution, cancellationToken).ConfigureAwait(false);
-                        var response = await client.GetResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false);
+                        var response = _output is null
+                            ? await client.GetResponseAsync(materialized, options, cancellationToken).ConfigureAwait(false)
+                            : await ModelOutputStream.ReadAsync(client, materialized, options, invocationId, _output, cancellationToken).ConfigureAwait(false);
                         await _resolver.CompleteInvocationAsync(invocationId, "succeeded",
                             Maf18RuntimeAdapter.NormalizeUsage(response.Usage), cancellationToken: cancellationToken).ConfigureAwait(false);
                         return response;

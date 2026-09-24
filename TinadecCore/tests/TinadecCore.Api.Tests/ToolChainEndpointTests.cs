@@ -2552,11 +2552,12 @@ public sealed class ToolChainEndpointTests : IAsyncLifetime
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await GetResponseAsync(messages, options, cancellationToken);
-            var text = response.Text ?? "完成";
-            foreach (var chunk in text.Chunk(2))
+            // Preserve function calls and usage as well as text. The durable runtime
+            // now observes the provider stream, so a text-only fake silently loses tools.
+            foreach (var chunk in response.ToChatResponseUpdates())
             {
                 await Task.Delay(1, cancellationToken);
-                yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
+                yield return chunk;
             }
         }
     }

@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
 **Last Updated:** 2026-09-23
-**Last Updated By:** 市场安装面从"Core 只有读"变成"Core 有写口而网关仍然只是代理"：新增四条同名纯代理（`POST /market/catalog/{id}/install-preview`、`POST /market/installations/{id}/uninstall-preview`、`POST /market/install-proposals/{id}/apply`、`GET /market/installations`）、七个错误码进 `ALLOWED_CODES`白名单、四个 externalJsonResponse 类型化 200。关键仍是**语义而不是转发**：`market_install_proposal_stale` 必须是 412 而不是被压成 `conflict`——412 告诉客户端"重新预览"，`conflict` 告诉它"过一会儿重试同一件事"，而一件永远不会成功的重试是网关能造成的最安静的错误。外部契约的 market 路径集合现在用 deep-equal 钉死（M1 的教训是五条幻影路由活在 Core 从未实现的契约里，">= N 条"的断言抓不住第 N+1 条）。上一批是市场读面从"代理到 Core 桩"变成代理到真实现（六条 + 五个类型化 200），并修掉网关自己一条静默缺陷：catalog 代理曾发 `query`/`sourceId`，Core 读的是 `q`/`source_id`，两个名字都不报错都只是没人读，于是搜索与按源筛选穿过网关时静默失效。再上一批是 TinaChat 契约投影实际为 17 路径/24 操作，代理测试改为精确计数钉住
-**Last Verified Commit:** `e0c0e08` 之后的工作树：`bun test src` `BUN_EXIT=0`、**72 pass / 0 fail**（11 文件；`src/marketProxy.test.ts` 9 例，含"412 过期提案保住自己的码"与"market 路径集合与 Core 实现的恰好一致"两例）。`tests/__snapshots__/openapi.external.json` 随本批再生成（+319/−1），外部快照后须再跑 `npm run generate:client -w @tinadec/desktop`（本批 `schema.d.ts` +128/0，`GEN_EXIT=0`）。Core 同批整解 `GATE_EXIT=0`、`Api.Tests` 507/507。上一批是 M1 市场读面（70/70）。
+**Last Updated By:** 新增 run SSE 不缓冲回归：上游未结束时 `answer.delta` 原字节到达客户端；网关实现仍是透明流代理。
+**Last Verified Commit:** aa6140d 基线工作树；bun test src：73 pass / 0 fail（11 文件，GATE_EXIT=0），含上游未关闭时首帧已到达的 SSE 回归；网关产品代码/HTTP 路径未改。
 **Branch:** Everything-changed
 
 ## OVERVIEW
@@ -15,6 +15,11 @@ Gateway 自身不执行文件、Git、Shell、PTY 或 MCP 操作，只负责：
 - **流式转发**：代理到 Core 和 Tool Runtime
 
 ## ARCHITECTURE
+
+### STREAMING OUTPUT（2026-09-23）
+
+Core run stream 新增 `answer.started/delta/failed` 可替换预览，会话事件新增 `model.output.*` 公开推理投影；网关不解析、不合并、不缓冲任何帧。`runtimeProxy.test.ts` 用尚未关闭的上游流断言首个 `answer.delta` 已能读取。HTTP 路径和 OpenAPI 字段形状不变；本轮 `bun test src` 73/73，GATE_EXIT=0。
+
 
 ### 协议分层
 | 协议 | 用途 | 实现位置 |

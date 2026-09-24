@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 
 const h = vi.hoisted(() => ({
@@ -99,6 +99,22 @@ function seedProject(): void {
 
 afterEach(() => {
   vi.clearAllMocks()
+})
+
+describe('HomeController session read ownership', () => {
+  it('cannot restore an old conversation after its read resolves late', async () => {
+    let resolve!: (value: never[]) => void
+    h.listMessages.mockImplementationOnce(() => new Promise<never[]>((done) => { resolve = done }))
+    homeController.setSelectedSession('slow-session')
+    await nextTick()
+    h.listMessages.mockResolvedValue([{ id: 'new-message', session_id: 'new-session', role: 'user', content: 'new' }] as never[])
+    homeController.setSelectedSession('new-session')
+    await flushPromises()
+    resolve([{ id: 'old-message', session_id: 'slow-session', role: 'user', content: 'old' }] as never[])
+    await flushPromises()
+    expect(homeController.messages.value.map((message) => message.id)).toEqual(['new-message'])
+    h.listMessages.mockResolvedValue([])
+  })
 })
 
 describe('HomeController.requestShellApproval', () => {

@@ -1,8 +1,8 @@
 # TinadecUI — UI Engineering Suite
 
-**Last Updated:** 2026-09-18
-**Last Updated By:** TinaChat 管理员观察页面 + terminal singleton/legacy layout repair
-**Last Verified Commit:** `d5e676c` 基线上的当前未提交工作树
+**Last Updated:** 2026-09-23
+**Last Updated By:** ChatCard 透传 HomeController 的逐 run 活动投影，不再让共享活动数组决定历史消息归属。
+**Last Verified Commit:** aa6140d 基线工作树，本轮顺序实测：Desktop vitest 762 passed / 14 skipped（82 文件通过 / 1 跳过），Electron 24/24，TYPECHECK_EXIT=0、BUILD_EXIT=0、DRIFT_EXIT=0。浏览器连接不可用，未做真实 Electron/像素级验收。
 **Branch:** Everything-changed
 
 TinadecUI is the UI-engineering home inside TinadecOffice. Consumers (`apps/desktop`, `apps/web`) import it as `@tinadec/ui` — a registered alias in both packages' `vite.config.ts` and `tsconfig.json` that resolves to `apps/TinadecUI/src/index.ts`. Both consumers also map `@` → `apps/desktop/src`, so TinadecUI files may reference app code via `@/` and it resolves under every consumer. The boundary is a module home + public barrel, not a build-isolated library.
@@ -25,6 +25,11 @@ apps/TinadecUI/
 ```
 
 ## The three modules
+
+### STREAMING OUTPUT（2026-09-23）
+
+Home `ChatCard.vue` 将 `homeController.agentTurnActivities` 透传给 Desktop `ChatPanel`；活动的 run 分桶与消息归属由 Desktop 呈现层负责，UIE Engine 不接触模型输出或业务状态。验证：随桌面组件与类型门禁。
+
 
 TinadecUI organizes UI engineering into three modules (the user's framing):
 

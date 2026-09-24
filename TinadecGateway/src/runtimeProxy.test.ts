@@ -4,6 +4,25 @@ import { app } from './index.js';
 
 const originalFetch = globalThis.fetch;
 
+test('run SSE forwards live answer frames before the upstream completes', { concurrency: false, timeout: 5000 }, async () => {
+  const first = 'id: 3\nevent: answer.delta\ndata: {"kind":"answer.delta","delta":"Hello"}\n\n';
+  let upstream!: ReadableStreamDefaultController<Uint8Array>;
+  globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { upstream = controller; controller.enqueue(new TextEncoder().encode(first)); },
+  }), { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch;
+  try {
+    const response = await app.handle(new Request('http://gateway.local/api/v1/runs/run-1/stream?after_seq=2'));
+    const reader = response.body!.getReader();
+    const read = await reader.read();
+    assert.equal(read.done, false);
+    assert.equal(new TextDecoder().decode(read.value), first);
+    upstream.close();
+    assert.equal((await reader.read()).done, true);
+  } finally {
+    try { upstream?.close(); } catch { /* already closed */ }
+  }
+});
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });

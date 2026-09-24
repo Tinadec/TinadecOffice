@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import ThinkingProcess from './ThinkingProcess.vue'
-import ToolCallCard from './ToolCallCard.vue'
-import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
+import TurnTimeline from './TurnTimeline.vue'
+import { homeController } from '@/controllers/HomeController'
+import type { SupervisionReview, ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 
 /**
  * The turn currently in flight. A run produces thinking steps and tool calls
@@ -13,6 +13,10 @@ import type { ThinkingStep, ToolCall } from '@/composables/useAgentActivity'
 const props = defineProps<{
   thinkingSteps?: ThinkingStep[]
   toolCalls?: ToolCall[]
+  runId?: string
+  /** Passed by the owner that resolved this run's activity. The controller lookup
+      stays as a fallback for callers that only know the run id. */
+  supervisionReview?: SupervisionReview | null
 }>()
 
 const emit = defineEmits<{
@@ -22,20 +26,18 @@ const emit = defineEmits<{
 
 const steps = computed(() => props.thinkingSteps ?? [])
 const calls = computed(() => props.toolCalls ?? [])
+const review = computed(() => {
+  if (props.supervisionReview) return props.supervisionReview
+  if (!props.runId) return null
+  return homeController.agentTurnActivities.value[props.runId]?.supervisionReview ?? null
+})
 </script>
 
 <template>
-  <div v-if="steps.length > 0 || calls.length > 0" class="live-turn" data-testid="live-turn">
-    <ThinkingProcess v-if="steps.length > 0" :steps="steps" />
-    <div v-if="calls.length > 0" class="live-turn-tools">
-      <ToolCallCard
-        v-for="call in calls"
-        :key="call.id"
-        :tool-call="call"
-        @approve="emit('approve', $event)"
-        @reject="emit('reject', $event)"
-      />
-    </div>
+  <div v-if="steps.length > 0 || calls.length > 0 || review" class="live-turn" data-testid="live-turn">
+    <TurnTimeline :run-id="runId" :thinking-steps="steps" :tool-calls="calls"
+      :supervision-review="review"
+      @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
   </div>
 </template>
 

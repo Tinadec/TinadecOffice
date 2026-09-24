@@ -18,12 +18,13 @@ import { getDispatchPref } from '@/lib/dispatchPref'
 import { attachmentsForSend, readyAttachmentCount, settleSentAttachments } from '@/lib/pendingAttachments'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
 import { useAgentActivity } from '@/composables/useAgentActivity'
+import { projectRunReply } from '@/lib/runReply'
 import { useNotifications } from '@/composables/useNotifications'
 import type { PermissionLevel } from '@/types/mode'
 // generated client is canonical; api.ts stays as compat alias (see bottom of api.ts)
 import type { DispatchMode, MeetingModelOverrideDto } from '@/api'
 import { userToolActionIdempotencyKey, userToolActionToApproval } from '@/userToolAction'
-import { createRunStream, runStreamDelta, type RunStreamHandle } from '@/lib/runStream'
+import { createRunStream, type RunStreamHandle } from '@/lib/runStream'
 import { generatedApi } from '@/generated/client'
 import { useRunStore } from '@/stores/run'
 
@@ -66,6 +67,7 @@ const runs = ref<Array<{ id: string; status: string }>>([])
 const queuedMessages = ref<Array<{ id: string; content: string }>>([])
 const runStreams = new Map<string, RunStreamHandle>()
 const runText = new Map<string, string>()
+const provisionalReplies = new Set<string>()
 // 运行指示（问题 3 修复）：是否有活跃的 run 流。runStreams 是非响应式 Map，computed
 // 无法追踪，故用显式 ref 并在每次 set/delete/clear 后 syncWorking()。用流数量而非
 // activeRuns.length：activeRuns 含 lane_waiting/gate_review 等长驻态，会让指示永久
@@ -88,6 +90,7 @@ const {
   activity: agentActivity,
   toolCalls: agentToolCalls,
   thinkingSteps: agentThinkingSteps,
+  turnActivities: agentTurnActivities,
   agentStates: agentStatesMap,
   progressEvents: agentProgressEvents,
 } = useAgentActivity(sessionIdRef, orchestration)
@@ -167,7 +170,10 @@ async function loadSessions() {
   }
 }
 
+let sessionRead = 0
 async function loadMessagesAndApprovals() {
+  const read = ++sessionRead
+  const session = selectedSessionId.value
   if (!selectedSessionId.value) {
     messages.value = []
     approvals.value = []
@@ -177,12 +183,13 @@ async function loadMessagesAndApprovals() {
     return
   }
   const [messageList, approvalList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
-    api.listMessages(selectedSessionId.value),
-    api.listApprovals(selectedSessionId.value),
-    api.getOrchestrationSnapshot(selectedSessionId.value),
-    api.listToolExecutions(selectedSessionId.value, { limit: 12 }),
-    api.listRuns(selectedSessionId.value).catch(() => [] as unknown[]),
+    api.listMessages(session!),
+    api.listApprovals(session!),
+    api.getOrchestrationSnapshot(session!),
+    api.listToolExecutions(session!, { limit: 12 }),
+    api.listRuns(session!).catch(() => [] as unknown[]),
   ])
+  if (session !== selectedSessionId.value || read !== sessionRead) return
   // Keep optimistic pending sends until the backend echoes them: the
   // session-select reload races the first POST (new session has no messages
   // yet), and wiping the optimistic append bounces the composer back to the
@@ -208,9 +215,11 @@ async function loadMessagesAndApprovals() {
 
 function attachRun(runId: string) {
   if (runStreams.has(runId)) return
+  const session = selectedSessionId.value
   const handle = createRunStream({
     runId,
     onActivity: (chunk) => {
+      if (session !== selectedSessionId.value) return
       // 活性信号：任意去重后的 chunk（含 ack/heartbeat）都刷新活动时间，供 UI 区分
       // 「链路活着但暂无输出」与「链路已断」。
       lastStreamActivityAt.value = Date.now()
@@ -224,16 +233,17 @@ function attachRun(runId: string) {
       }
     },
     onChunk: (chunk) => {
-      if (chunk.kind === 'delta') {
-        const delta = runStreamDelta(chunk)
-        if (delta) {
-          const next = `${runText.get(runId) ?? ''}${delta}`
-          runText.set(runId, next)
-          streamingText.value = new Map(streamingText.value).set(runId, next)
-        }
+      if (session !== selectedSessionId.value) return
+      const reply = projectRunReply({ text: runText.get(runId) ?? '', provisional: provisionalReplies.has(runId) }, chunk)
+      if (reply) {
+        if (reply.provisional) provisionalReplies.add(runId)
+        else provisionalReplies.delete(runId)
+        runText.set(runId, reply.text)
+        streamingText.value = new Map(streamingText.value).set(runId, reply.text)
         return
       }
       if (chunk.kind === 'done' || chunk.kind === 'error') {
+        provisionalReplies.delete(runId)
         if (chunk.kind === 'error') {
           const payload = chunk.payload as Record<string, unknown>
           const message = payload.safe_error_message ?? payload.message ?? payload.error_category
@@ -380,7 +390,8 @@ const stoppableRunId = computed(
  * was persisted — which reads as a hung agent.
  */
 const streamingReply = computed(() =>
-  stoppableRunId.value ? streamingText.value.get(stoppableRunId.value) ?? '' : '',
+  stoppableRunId.value && !messages.value.some((message) => message.role === 'assistant' && message.run_id === stoppableRunId.value)
+    ? streamingText.value.get(stoppableRunId.value) ?? '' : '',
 )
 
 
@@ -639,10 +650,16 @@ watch(selectedProjectId, () => {
 })
 
 watch(selectedSessionId, () => {
+  messages.value = messages.value.filter((message) => message.session_id === selectedSessionId.value)
+  orchestration.value = null
+  approvals.value = []
+  toolExecutions.value = []
+  runs.value = []
   for (const stream of runStreams.values()) stream.disconnect()
   runStreams.clear()
   syncWorking()
   runText.clear()
+  provisionalReplies.clear()
   streamingText.value = new Map()
   void loadMessagesAndApprovals()
   followSession(selectedSessionId.value)
@@ -728,6 +745,7 @@ export const homeController = {
   stopRun,
   stoppableRunId,
   streamingReply,
+  agentTurnActivities,
   recordApproval,
   loadMessagesAndApprovals,
   updateDraft: (value: string) => { draft.value = value },

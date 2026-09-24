@@ -530,10 +530,10 @@ public sealed class UnattendedEndToEndTests : IAsyncLifetime
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await GetResponseAsync(messages, options, cancellationToken);
-            foreach (var chunk in (response.Text ?? "完成").Chunk(2))
+            foreach (var chunk in response.ToChatResponseUpdates())
             {
                 await Task.Delay(1, cancellationToken);
-                yield return new ChatResponseUpdate(ChatRole.Assistant, new string(chunk));
+                yield return chunk;
             }
         }
 

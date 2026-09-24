@@ -20,6 +20,7 @@ const c = homeController
     :permission="c.currentPermission.value"
     :thinking-steps="c.agentThinkingSteps.value"
     :tool-calls="c.agentToolCalls.value"
+    :turn-activities="c.agentTurnActivities.value"
     :runs-for-composer="c.runs.value"
     :streaming-reply="c.streamingReply.value"
     :can-stop="Boolean(c.stoppableRunId.value)"

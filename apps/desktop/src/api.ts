@@ -623,6 +623,7 @@ export interface ToolLayerReadinessReceiptDto {
  * not part of the Core contract and default to ''/[].
  */
 export interface EventEnvelope {
+  run_id?: string | null;
   v: string;
   type: string;
   request_id: string;

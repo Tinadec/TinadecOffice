@@ -20,6 +20,39 @@ namespace TinadecCore.AgentFramework.Tests;
 public sealed class ModelInvocationFailureTests
 {
     [Fact]
+    public async Task StreamingRetryKeepsEachAttemptSeparate_AndDoesNotCommitFailedText()
+    {
+        var frames = new List<ModelOutputFrame>();
+        var (factory, resolver) = FactoryWithClient([Resolution(true)], new PartialFailureClient(),
+            (frame, _) => { frames.Add(frame); return Task.CompletedTask; });
+        var response = await CallAsync(factory);
+        Assert.Equal("Answer", response.Text);
+        Assert.Equal(2, frames.Where(frame => frame.Kind == "started").Select(frame => frame.ResponseId).Distinct().Count());
+        Assert.Single(frames, frame => frame.Kind == "failed");
+        Assert.Single(frames, frame => frame.Kind == "completed");
+        Assert.DoesNotContain(frames, frame => (frame.Delta ?? "").Contains("provider-secret"));
+    }
+
+    private sealed class PartialFailureClient : IChatClient
+    {
+        private int _attempts;
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            if (++_attempts == 1)
+            {
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "failed partial");
+                throw new IOException("provider-secret");
+            }
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "Answer");
+        }
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+    [Fact]
     public async Task RateLimitedCall_SurfacesClassifierMessage_NotAnOpaqueOne()
     {
         // The exact shape recorded in production: the chat route had ONE candidate, the
@@ -180,14 +213,14 @@ public sealed class ModelInvocationFailureTests
             throw new InvalidOperationException("The test configured no response script.")));
 
     private static (IAgentChatClientFactory, RecordingResolver) FactoryWithClient(
-        ChatResolution[] resolutions, IChatClient client)
+        ChatResolution[] resolutions, IChatClient client, Func<ModelOutputFrame, CancellationToken, Task>? output = null)
     {
         var resolver = new RecordingResolver(resolutions);
         var plan = new FrozenModelPlan("fixed", "test", []);
         var context = new ModelInvocationContext(
             Guid.NewGuid(), Guid.NewGuid(), null, null, null,
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "test");
-        return (new ModelInvocationChatFactory(resolver, new StaticClientFactory(client), plan, context), resolver);
+        return (new ModelInvocationChatFactory(resolver, new StaticClientFactory(client), plan, context, output), resolver);
     }
 
     /// <summary>A chat client whose call runs <paramref name="script"/>: returning is success, throwing is failure.</summary>
