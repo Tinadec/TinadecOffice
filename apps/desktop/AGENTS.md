@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-09-24
 **Last Updated By:** Windows x64 完整运行包、NSIS/Portable、runtime staging 与 GitHub Release 工作流；本轮实测打包版和安装版冒烟。
-**Last Verified Commit:** 发布提交前工作树；Desktop vitest 754 passed / 23 skipped，`vue-tsc` 0 错，Vite build、`check:drift`、runtime/package 校验通过；`useDetachedTabs.test.ts` 仍有既有 `beforeAll` 10 秒超时。Electron 打包版与安装版冒烟已启动本地 Core/Gateway/Tools。
+**Last Verified Commit:** f98c473；Desktop vitest 754 passed / 23 skipped，`vue-tsc` 0 错，Vite build、`check:drift`、runtime/package 校验通过；`useDetachedTabs.test.ts` 仍有既有 `beforeAll` 10 秒超时。Electron 打包版与安装版冒烟已启动本地 Core/Gateway/Tools。
 **Branch:** Everything-changed
 
 ## OVERVIEW
