@@ -8,14 +8,21 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
-    "build": "vite build",
+    "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run && node --test electron/appConfig.test.cjs electron/layoutStore.test.cjs electron/serviceDiscovery.test.cjs electron/terminalManager.test.cjs",
+    "test": "vitest run && node --test electron/appConfig.test.cjs electron/layoutStore.test.cjs electron/serviceDiscovery.test.cjs electron/serviceManager.test.cjs electron/terminalManager.test.cjs",
     "generate:client": "npx -y openapi-typescript@6 ../../TinadecGateway/tests/__snapshots__/openapi.external.json -o src/generated/schema.d.ts",
     "check:drift": "npm run generate:client && git diff --exit-code -- src/generated/",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "typecheck": "vue-tsc --noEmit",
-    "package:portable": "npm run build && electron-builder --win portable"
+    "stage:runtime": "node scripts/stage-runtime.mjs",
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "package:win": "npm run rebuild:native && npm run build && npm run stage:runtime && npm run check:runtime && node scripts/package-win.mjs --win",
+    "package:portable": "npm run rebuild:native && npm run build && npm run stage:runtime && npm run check:runtime && node scripts/package-win.mjs --win portable",
+    "verify:package": "node scripts/verify-package-output.mjs",
+    "smoke:packaged": "node scripts/smoke-packaged-windows.mjs",
+    "smoke:installed": "node scripts/smoke-installed-windows.mjs",
+    "dist:win": "npm run package:win"
   },
   "build": {
     "appId": "com.tinadec.office",
@@ -28,6 +35,8 @@
     "files": [
       "package.json",
       "electron/**/*",
+      "!electron/*.test.cjs",
+      "!electron/**/*.test.cjs",
       "dist/**/*",
       "!node_modules/**/*",
       {
@@ -44,18 +53,40 @@
         ]
       }
     ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "**/node-pty/**"
     ],
     "npmRebuild": false,
     "win": {
       "target": [
+        "nsis",
         "portable"
       ],
       "icon": "public/tinadec-large.ico"
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "TinadecOffice-${version}-win-x64-setup.${ext}"
+    },
     "portable": {
-      "artifactName": "TinadecOffice-${version}-portable.${ext}"
+      "artifactName": "TinadecOffice-${version}-win-x64-portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Tinadec",
+      "repo": "TinadecOffice"
     }
   },
   "dependencies": {

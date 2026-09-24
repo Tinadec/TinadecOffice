@@ -34,5 +34,7 @@ oc-debug.log
 /TinadecCore/Api/data/events/
 /TinadecCore/Api/data/tasks/
 /apps/desktop/release/
+/apps/desktop/runtime/
+/apps/desktop/.runtime-cache/
 tmp/
 .workbuddy/

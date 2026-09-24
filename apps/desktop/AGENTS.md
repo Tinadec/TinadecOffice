@@ -1,13 +1,17 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-09-24
-**Last Updated By:** 监督升级的可见与可裁决（决策按钮、原因、清场）；turn 缓存改为响应式。
-**Last Verified Commit:** aa6140d 基线工作树，本轮顺序实测：Desktop vitest 763 passed / 14 skipped（82 文件通过 / 1 跳过），TYPECHECK_EXIT=0、DRIFT_EXIT=0。本轮未跑 Electron、构建与 Core 全量；浏览器连接不可用，未做真实 Electron/像素级验收。
+**Last Updated By:** Windows x64 完整运行包、NSIS/Portable、runtime staging 与 GitHub Release 工作流；本轮实测打包版和安装版冒烟。
+**Last Verified Commit:** 发布提交前工作树；Desktop vitest 754 passed / 23 skipped，`vue-tsc` 0 错，Vite build、`check:drift`、runtime/package 校验通过；`useDetachedTabs.test.ts` 仍有既有 `beforeAll` 10 秒超时。Electron 打包版与安装版冒烟已启动本地 Core/Gateway/Tools。
 **Branch:** Everything-changed
 
 ## OVERVIEW
 
-### STREAMING OUTPUT（2026-09-23）
+### WINDOWS DISTRIBUTION（2026-09-24）
+
+Windows x64 发布由 `npm run package:win -w @tinadec/desktop` 负责。`stage-runtime.mjs` 生成 Core .NET self-contained single-file、Gateway Bun standalone、TinadecTools self-contained IL single-file、ripgrep 与 PortableGit；`check-runtime.mjs` 校验文件和 PE 架构。`package-win.mjs` 使用未签名的 NSIS + Portable（`CSC_IDENTITY_AUTO_DISCOVERY=false`），`verify-package-output.mjs` 校验 app.asar、解包后的 node-pty/ConPTY、runtime 和 `latest.yml`。`serviceManager.cjs` 只在 packaged 且 Gateway 为精确本地 `127.0.0.1:48730` 时启动并拥有 Core/Gateway，数据位于 `%LOCALAPPDATA%\\TinadecOffice`。`smoke-packaged-windows.mjs` 与 `smoke-installed-windows.mjs` 覆盖真实启动、健康、工具清单和静默卸载；`.github/workflows/desktop-release.yml` 在 `vX.Y.Z` tag 且版本与 `apps/desktop/package.json` 一致时发布 GitHub Release。应用内 `electron-updater` 尚未接入。
+
+Electron + Vue 3 desktop app. Vite renders the UI; Electron provides the window/preload bridge; renderer talks to Gateway only.
 
 `useAgentActivity.turnActivities` 是会话内按 `run_id` 的呈现缓存；既有 `thinkingSteps/toolCalls` 只投影当前 run。新 run 从零开始，已知旧 run 的迟到事件只改自己的桶，切会话清桶并使旧请求失效。`listToolExecutions` 必须带 `run_id`，不是最近 20 条会话级调用。`ChatCard → ChatPanel → MessageList` 用 `message.run_id` 归位；无 assistant 的 run 有独立 live block。
 
