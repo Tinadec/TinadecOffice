@@ -53,8 +53,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.300
-          cache: true
-          cache-dependency-path: '**/*.csproj'
+          cache: false
 
       - uses: oven-sh/setup-bun@v2
         with:
