@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   listRuns: vi.fn(async () => []),
   connectEvents: vi.fn(() => ({ close: vi.fn(), disconnect: vi.fn() })),
   createInteraction: vi.fn(async (_sessionId: string, _body: Record<string, unknown>) => ({ run_id: null, status: 'accepted' })),
+  cancelInteraction: vi.fn(async () => ({ status: 'cancelled' })),
   updateSessionTitle: vi.fn(async () => ({ id: 'session-1' })),
   notifyError: vi.fn(),
 }))
@@ -56,6 +57,7 @@ vi.mock('@/api', () => ({
     listRuns: h.listRuns,
     connectEvents: h.connectEvents,
     createInteraction: h.createInteraction,
+    cancelInteraction: h.cancelInteraction,
     updateSessionTitle: h.updateSessionTitle,
   },
   createUserToolActionForPath: h.createUserToolActionForPath,
@@ -337,5 +339,75 @@ describe('HomeController.sendMessage attachment hand-off', () => {
 
     expect(h.createInteraction).not.toHaveBeenCalled()
     expect(attach.settle).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Queued delivery waits behind the unfinished run (Core todo D1). Core answers with the run the
+ * message waits behind and no turn of its own; the card is Core's queue entry, so acting on it
+ * takes it out of that queue first — sending it again without that would post the words twice.
+ */
+describe('HomeController queued messages Core holds', () => {
+  async function queuedBehind(): Promise<void> {
+    homeController.projects.value = []
+    homeController.setSelectedProject(null)
+    await flushPromises()
+    homeController.selectedSessionId.value = 'session-q'
+    homeController.updateDraft('完成后再跑一遍测试')
+    await flushPromises()
+    h.createInteraction.mockResolvedValueOnce({ interaction_id: 'directive-1', run_id: 'run-busy', status: 'queued', reason: 'busy' } as never)
+    await homeController.sendMessage({ dispatch_mode: 'queued' })
+    await flushPromises()
+  }
+
+  it('shows a waiting message as a queued card and leaves the busy run alone', async () => {
+    await queuedBehind()
+    expect(homeController.queuedMessages.value).toEqual([
+      expect.objectContaining({ content: '完成后再跑一遍测试', interactionId: 'directive-1' }),
+    ])
+    expect(homeController.runs.value.find((run) => run.id === 'run-busy')?.status).not.toBe('queued')
+    homeController.queuedMessages.value = []
+  })
+
+  it('dequeues in Core before dismissing, and keeps the card when Core says it already left', async () => {
+    await queuedBehind()
+    const card = homeController.queuedMessages.value[0]!
+    h.cancelInteraction.mockRejectedValueOnce(Object.assign(new Error('conflict'), { status: 409 }))
+    await homeController.dismissQueued(card.id)
+    expect(h.cancelInteraction).toHaveBeenCalledWith('session-q', 'directive-1')
+    expect(homeController.queuedMessages.value).toHaveLength(1)
+
+    await homeController.dismissQueued(card.id)
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('runs a promoted waiting message under its original id instead of posting it twice', async () => {
+    await queuedBehind()
+    const card = homeController.queuedMessages.value[0]!
+    h.createInteraction.mockClear()
+    await homeController.promoteQueued(card.id)
+    expect(h.cancelInteraction).toHaveBeenCalledWith('session-q', 'directive-1')
+    const body = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(body.dispatch_mode).toBe('parallel')
+    expect(body.client_message_id).toBe(card.id)
+    expect(homeController.queuedMessages.value).toEqual([])
+  })
+
+  it('asks Core to interrupt only when the user chose to interrupt (hard insert)', async () => {
+    await queuedBehind()
+    h.createInteraction.mockClear()
+    h.createInteraction.mockResolvedValue({ interaction_id: 'i', session_id: 'session-q', status: 'steering_injected' } as never)
+    await homeController.steerQueued(homeController.queuedMessages.value[0]!.id, 'run-busy', true)
+    const hard = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(hard).toMatchObject({ dispatch_mode: 'insert', target_run_id: 'run-busy', interrupt: true })
+
+    await queuedBehind()
+    h.createInteraction.mockClear()
+    await homeController.steerQueued(homeController.queuedMessages.value[0]!.id, 'run-busy')
+    const soft = h.createInteraction.mock.calls[0]![1] as Record<string, unknown>
+    expect(soft.dispatch_mode).toBe('insert')
+    expect(soft).not.toHaveProperty('interrupt')
+    expect(homeController.queuedMessages.value).toEqual([])
+    h.createInteraction.mockReset()
   })
 })

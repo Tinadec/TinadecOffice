@@ -10,6 +10,9 @@ import {
   ChevronRight,
   ChevronDown,
   Clock,
+  Send,
+  Hourglass,
+  ListChecks,
 } from '@lucide/vue'
 import type { ThinkingStep } from '@/composables/useAgentActivity'
 import { useI18n } from 'vue-i18n'
@@ -42,6 +45,12 @@ const stepConfig = computed(() => {
         return { icon: Package, color: 'step-context' }
       case 'step_result':
         return { icon: CheckCircle2, color: 'step-result' }
+      case 'dispatch':
+        return { icon: Send, color: 'step-assign' }
+      case 'wait':
+        return { icon: Hourglass, color: 'step-graph' }
+      case 'plan':
+        return { icon: ListChecks, color: 'step-graph' }
       default:
         return { icon: Brain, color: 'step-default' }
     }
@@ -143,7 +152,7 @@ function stepMetaSuffix(step: ThinkingStep): string {
                 <strong>{{ step.title }}</strong>
                 <span class="thinking-step-suffix">{{ stepMetaSuffix(step) }}</span>
               </div>
-              <p v-if="step.description" class="thinking-step-desc">{{ step.description }}</p>
+              <p v-if="step.description" class="thinking-step-desc" :class="{ 'is-plan': step.type === 'plan' }">{{ step.description }}</p>
             </div>
           </div>
         </div>
@@ -327,5 +336,10 @@ function stepMetaSuffix(step: ThinkingStep): string {
   line-height: 1.4;
   color: var(--text-chat-muted);
   word-break: break-word;
+}
+
+/* A plan is one step per line (✓ / → / ○). */
+.thinking-step-desc.is-plan {
+  white-space: pre-line;
 }
 </style>

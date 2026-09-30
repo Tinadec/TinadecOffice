@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChevronDown, Shield, ShieldCheck, ShieldAlert } from '@lucide/vue'
+import { ChevronDown, Eye, Shield, ShieldAlert, ShieldCheck, UserCheck, Users } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import type { PermissionLevel } from '@/types/mode'
@@ -14,12 +14,17 @@ interface PermissionOption {
   key: PermissionLevel
   label: string
   icon: any
+  /** What the level hands away, shown on hover. */
+  hint?: string
 }
 
 const permissions = computed<PermissionOption[]>(() => [
   { key: 'default', label: t('permission.default'), icon: Shield },
   { key: 'auto-approve', label: t('permission.autoApprove'), icon: ShieldCheck },
   { key: 'full-access', label: t('permission.fullAccess'), icon: ShieldAlert },
+  { key: 'delegate-conversation', label: t('permission.delegateConversation'), icon: UserCheck, hint: t('permission.delegateConversationHint') },
+  { key: 'delegate-reviewer', label: t('permission.delegateReviewer'), icon: Eye, hint: t('permission.delegateReviewerHint') },
+  { key: 'delegate-both', label: t('permission.delegateBoth'), icon: Users, hint: t('permission.delegateBothHint') },
 ])
 
 const props = defineProps<{
@@ -117,6 +122,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
           :key="perm.key"
           class="permission-selector-item"
           :class="{ active: perm.key === modelValue }"
+          :title="perm.hint"
           @click="selectPermission(perm.key)"
         >
           <component :is="perm.icon" :size="14" />

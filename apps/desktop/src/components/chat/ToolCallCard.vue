@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight } from
 import { UiCollapsible } from '@/components/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import TerminalCallBlock from './TerminalCallBlock.vue'
+import ApprovalGateStatus from '@/components/approval/ApprovalGateStatus.vue'
 
 const props = defineProps<{ toolCall: ToolCall; runId?: string | null }>()
 const emit = defineEmits<{ approve: [approvalId: string]; reject: [approvalId: string] }>()
@@ -55,6 +56,8 @@ const isShellCall = computed(() => props.toolCall.toolId === 'shell')
     <div v-if="toolCall.status === 'waiting_approval' && toolCall.approvalId" class="tool-call-approval">
       <pre v-if="toolCall.argsSummary">{{ toolCall.argsSummary }}</pre>
       <span>{{ t('agent.toolApprovalRequired') }}</span>
+      <!-- A delegated approval shows its gates; the person's buttons stay and always win. -->
+      <ApprovalGateStatus :approval-id="toolCall.approvalId" />
       <div class="tool-call-approval-actions">
         <button class="tool-call-approve-btn" type="button" @click="emit('approve', toolCall.approvalId!)">
           <CheckCircle2 :size="12" />{{ t('agent.approve') }}

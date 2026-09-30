@@ -1327,12 +1327,13 @@ export interface AgentModeTopologyWriteDto {
 
 export interface AgentModeTopologyDto {
   id: string;
+  /** Stable mode id (for a pack mode, its manifest resource_key); keys the icon in modePresentation.ts. */
+  slug?: string | null;
   display_name: string;
   /** 该 mode 最新已发布版本的 id —— 提交 interaction 时作为 mode_version_id 使用。 */
   latest_published_mode_version_id?: string | null;
-  /** conversation.* 模式推导出的对话模式名（plan/spec/…）；工作区默认模式为 null。 */
-  application_mode?: string | null;
-  summary?: string | null;
+  /** User-facing one-liner: what the mode does and when to pick it. */
+  description?: string | null;
   nodes: AgentModeNodeDto[];
   edges: AgentModeEdgeDto[];
   canvas_layout?: Record<string, unknown> | null;
@@ -1427,6 +1428,10 @@ export interface SessionInteractionDto {
   context_revision?: number;
   stream_cursor?: number;
   reason?: string;
+  /** Hard insert (steering only): the run's work in progress was cut off, not just steered. */
+  interrupt?: boolean;
+  /** How many model calls of the run Core cut off on this host. */
+  interrupted_model_calls?: number;
 }
 
 /** `.../interactions/{id}/reassign` and `.../cancel` answer about the acted-on run only. */
@@ -2061,10 +2066,15 @@ export interface DeclaredModeGraphDto {
 
 /** Observed data flow projected from the durable task graph (dispatch through the conversation identity). */
 export interface OrchestrationFlowDto {
+  /** Conversation template slug for a planned task; the dispatching instance's handle for a task_dispatch hand-off. */
   from: string;
   to: string;
+  /** Run-scoped instance name (search#2), once a worker is assigned. */
+  handle?: string | null;
   task_key: string;
   kind: string;
+  /** 'plan' (planner task array) or 'task_dispatch' (handed off from inside a tool loop). */
+  via?: 'plan' | 'task_dispatch';
   status: string;
 }
 
@@ -2078,6 +2088,306 @@ export interface OrchestrationSnapshotDto {
   step_results: StepResultDto[];
   context_packs: ContextPackDto[];
   supervision_findings: SupervisionFindingDto[];
+}
+
+// --- Session topology (GET /api/v1/sessions/{id}/topology) ---
+// Mirrors of Core's SessionTopologyDtos.cs / OrganizationDtos.cs. The generated schema has the same
+// bodies, but types every int64 as `number | string` and every nullable field as present; Core drops
+// null keys, so absent-or-null is spelled `?: T | null` here. api.test.ts pins the key sets against
+// the generated contract, so a field invented or dropped on either side fails the typecheck.
+
+export interface TopologyTaskDto {
+  task_id: string;
+  task_key: string;
+  title: string;
+  status: string;
+  handle?: string | null;
+  agent_slug?: string | null;
+  worker_instance_id?: string | null;
+  dispatched_by_task_id?: string | null;
+  dependencies: string[];
+  write_scope: string[];
+  result_summary?: string | null;
+}
+
+export interface TopologyInstanceDto {
+  instance_id: string;
+  agent_slug?: string | null;
+  layer: string;
+  role: string;
+  status: string;
+  parent_instance_id?: string | null;
+  task_id?: string | null;
+  depth: number;
+}
+
+export interface TopologyRunDto {
+  run_id: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  tier?: string | null;
+  phase?: string | null;
+  tasks: TopologyTaskDto[];
+  instances: TopologyInstanceDto[];
+  tasks_truncated: boolean;
+  instances_truncated: boolean;
+}
+
+export interface TopologyLeaseDto {
+  lease_id: string;
+  kind: string;
+  resource_key: string;
+  purpose?: string | null;
+  exclusive: boolean;
+  run_id?: string | null;
+  task_id?: string | null;
+  agent_instance_id?: string | null;
+}
+
+export interface TopologyMemberDto {
+  participant_id: string;
+  handle: string;
+  display_name: string;
+  role: string;
+  presence: string;
+  agent_slug?: string | null;
+  parent_participant_id?: string | null;
+  run_id?: string | null;
+  agent_instance_id?: string | null;
+}
+
+export interface SessionTopologyDto {
+  session_id: string;
+  runs: TopologyRunDto[];
+  leases: TopologyLeaseDto[];
+  members: TopologyMemberDto[];
+  runs_truncated: boolean;
+  leases_truncated: boolean;
+  members_truncated: boolean;
+  generated_at: string;
+}
+
+export interface SessionTopologyQuery {
+  run_id?: string;
+  include_finished?: boolean;
+  max_runs?: number;
+  max_tasks?: number;
+}
+
+// --- Delegated approval gates (GET /api/v1/approvals/{id}/gates) ---
+
+/** One gate of a delegated approval: who was asked, what they decided, and exactly what they were shown. */
+export interface ApprovalGateDto {
+  gate_index: number;
+  /** `reviewer_agent` (independent context) or `conversation_identity` (knows the user's goal). */
+  gate_kind: string;
+  /** pending · evaluating · approved · rejected · escalated · skipped · superseded */
+  status: string;
+  decider_agent: string | null;
+  reason: string | null;
+  /** The facts the gate saw — for the reviewer the call and the task, never the conversation. */
+  evidence: Record<string, unknown> | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+/** A delegated approval's gates. `status`: evaluating · approved · rejected · escalated (back to you) · superseded (you decided first). */
+export interface ApprovalGatesDto {
+  approval_id: string;
+  run_id: string | null;
+  status: string;
+  gates: ApprovalGateDto[];
+}
+
+// --- Session evidence archive (GET /api/v1/sessions/{id}/evidence) ---
+
+/** One piece of archived evidence that matched; `matched_by`: semantic · keyword · both. */
+export interface EvidenceHitDto {
+  evidence_id: string;
+  /** task_result · report · member_turn · summary */
+  kind: string;
+  title: string;
+  author: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  snippet: string;
+  score: number;
+  matched_by: string;
+  created_at: string;
+}
+
+/** `mode`: hybrid when the semantic index answered, keyword when it could not; `note` says why. */
+export interface EvidenceRecallDto {
+  mode: string;
+  note: string | null;
+  hits: EvidenceHitDto[];
+}
+
+// --- Environment registry (GET/POST /api/v1/environments, PATCH /api/v1/environments/{id}) ---
+
+export type EnvironmentKind = 'local' | 'cloud' | 'remote' | 'terminal' | 'test';
+
+/** One slot of an environment and the run holding it. */
+export interface EnvironmentHolderDto {
+  slot: number;
+  lease_id: string;
+  session_id: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  reason: string;
+}
+
+/** A registered environment and who holds its slots; `connection` never carries a credential (only `secret_ref`). */
+export interface EnvironmentDto {
+  id: string;
+  key: string;
+  kind: EnvironmentKind | string;
+  display_name: string;
+  description: string | null;
+  connection: Record<string, unknown>;
+  capacity: number;
+  free_slots: number;
+  status: 'available' | 'disabled' | string;
+  holders: EnvironmentHolderDto[];
+  updated_at: string;
+}
+
+export interface EnvironmentRegisterInput {
+  key: string;
+  kind: EnvironmentKind;
+  display_name: string;
+  description?: string | null;
+  connection?: Record<string, unknown> | null;
+  capacity?: number | null;
+}
+
+/** Omitted fields are left as they are. */
+export interface EnvironmentUpdateInput {
+  display_name?: string | null;
+  description?: string | null;
+  connection?: Record<string, unknown> | null;
+  capacity?: number | null;
+  status?: 'available' | 'disabled' | null;
+}
+
+// --- Session organization (GET /api/v1/sessions/{id}/organization/*) ---
+
+export type OrganizationMemberRole = 'human' | 'conversation' | 'governance' | 'executor';
+
+export interface OrganizationMemberDto {
+  id: string;
+  handle: string;
+  display_name: string;
+  role: OrganizationMemberRole;
+  presence: 'online' | 'offline';
+  agent_slug?: string | null;
+  parent_id?: string | null;
+  run_id?: string | null;
+}
+
+export interface OrganizationRoomDto {
+  id: string;
+  kind: 'lobby' | 'board' | 'plan' | 'adhoc';
+  title: string;
+  last_sequence: number;
+  member_count: number;
+  is_member: boolean;
+  plan_owner_id?: string | null;
+}
+
+export interface OrganizationDto {
+  id: string;
+  session_id: string;
+  status: 'active' | 'archived';
+  you_participant_id: string;
+  members: OrganizationMemberDto[];
+  rooms: OrganizationRoomDto[];
+  open_reports: number;
+  members_truncated: boolean;
+  rooms_truncated: boolean;
+}
+
+/** The live state of a report's subject, resolved by Core at read time; `status` is absent when Core cannot tell. */
+export interface OrganizationSubjectStateDto {
+  kind: string;
+  id: string;
+  status?: string | null;
+  label?: string | null;
+}
+
+export interface OrganizationReportDto {
+  id: string;
+  room_id: string;
+  author_id: string;
+  author_display_name: string;
+  report_kind: 'conflict' | 'risk' | 'drift' | 'budget' | 'progress';
+  severity: 'info' | 'warning' | 'blocking';
+  status: 'open' | 'acted' | 'dismissed' | 'superseded';
+  subject_kind?: string | null;
+  subject_id?: string | null;
+  proposed_verb?: string | null;
+  proposed_args_json?: string | null;
+  finding: string;
+  evidence: string[];
+  revision: number;
+  created_at: string;
+  decided_by_id?: string | null;
+  decision_note?: string | null;
+  decided_at?: string | null;
+  supersedes_report_id?: string | null;
+  subject_state?: OrganizationSubjectStateDto | null;
+}
+
+export interface OrganizationMessageDto {
+  id: string;
+  room_id: string;
+  sender_id: string;
+  sender_display_name: string;
+  sender_role: string;
+  sequence: number;
+  kind: 'message' | 'report' | 'notice';
+  content: string;
+  sensitivity?: string | null;
+  created_at: string;
+  report?: OrganizationReportDto | null;
+}
+
+export interface OrganizationMessagePageDto {
+  items: OrganizationMessageDto[];
+  /** Sequence of the last row Core scanned (readable or not); read on with `after_sequence = next_cursor`. */
+  next_cursor: number;
+}
+
+export interface OrganizationReportPageDto {
+  items: OrganizationReportDto[];
+  truncated: boolean;
+}
+
+export interface PostOrganizationMessageInput {
+  content: string;
+  client_message_id: string;
+  reply_to_message_id?: string;
+  mention?: string[];
+}
+
+export interface OrganizationReportDecisionInput {
+  decision: 'acted' | 'dismissed';
+  expected_revision: number;
+  note?: string;
+}
+
+function organizationPath(sessionId: string, suffix = ''): string {
+  return `/api/v1/sessions/${encodeURIComponent(sessionId)}/organization${suffix}`;
+}
+
+function querySuffix(params: Record<string, string | number | boolean | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : '';
 }
 
 const gatewayUrl = window.tinadec?.gatewayUrl?.() ?? 'http://127.0.0.1:48730';
@@ -2407,9 +2717,10 @@ export const api = {
     body: JSON.stringify({ name, path })
   }),
   listSessions: (projectId?: string) => request<SessionDto[]>(`/api/v1/sessions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
-  createSession: (projectId?: string | null, title?: string) => request<SessionDto>('/api/v1/sessions', {
+  // mode_version_id decides which agent holds the conversation. Omitted = the workspace default.
+  createSession: (projectId?: string | null, title?: string, modeVersionId?: string | null) => request<SessionDto>('/api/v1/sessions', {
     method: 'POST',
-    body: JSON.stringify({ project_id: projectId ?? undefined, title })
+    body: JSON.stringify({ project_id: projectId ?? undefined, title, mode_version_id: modeVersionId ?? undefined })
   }),
   migrateSession: (sessionId: string, payload: { target_project_id?: string; project_name?: string; project_path?: string }) => request<SessionDto>(`/api/v1/sessions/${sessionId}/migrate`, {
     method: 'POST',
@@ -2426,6 +2737,42 @@ export const api = {
   }),
   revertSessionMessage: (sessionId: string, messageId: string) => request<SessionHistoryRevertDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/revert`, { method: 'POST' }),
   getOrchestrationSnapshot: (sessionId: string) => request<OrchestrationSnapshotDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/orchestration`),
+  // Session organization + graph (Core OrganizationEndpoints, proxied verbatim by the Gateway).
+  /** The session's organization, or null before its first run creates one (404 `organization_not_started`). */
+  getOrganization: async (sessionId: string): Promise<OrganizationDto | null> => {
+    try {
+      return await request<OrganizationDto>(organizationPath(sessionId), { cache: 'no-store' })
+    } catch (error) {
+      const { status, code } = error as { status?: number; code?: string | null }
+      if (status === 404 && code === 'organization_not_started') return null
+      throw error
+    }
+  },
+  readOrganizationRoom: (sessionId: string, roomId: string, afterSequence?: number, limit?: number) =>
+    request<OrganizationMessagePageDto>(organizationPath(sessionId, `/rooms/${encodeURIComponent(roomId)}/messages${querySuffix({ after_sequence: afterSequence, limit })}`), { cache: 'no-store' }),
+  postOrganizationMessage: (sessionId: string, roomId: string, body: PostOrganizationMessageInput) =>
+    request<OrganizationMessageDto>(organizationPath(sessionId, `/rooms/${encodeURIComponent(roomId)}/messages`), { method: 'POST', body: JSON.stringify(body) }),
+  listOrganizationReports: (sessionId: string, status?: OrganizationReportDto['status'], limit?: number) =>
+    request<OrganizationReportPageDto>(organizationPath(sessionId, `/reports${querySuffix({ status, limit })}`), { cache: 'no-store' }),
+  /** Recorded against the revision the report was read at: 412 = stale revision, 409 `report_closed` = already decided. */
+  decideOrganizationReport: (sessionId: string, reportId: string, body: OrganizationReportDecisionInput) =>
+    request<OrganizationReportDto>(organizationPath(sessionId, `/reports/${encodeURIComponent(reportId)}/decision`), { method: 'POST', body: JSON.stringify(body) }),
+  /** Search the session's evidence archive (verbatim task results, reports, member conclusions, summaries). */
+  recallEvidence: (sessionId: string, q: string, params: { kinds?: string[]; run_id?: string; limit?: number } = {}) =>
+    request<EvidenceRecallDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/evidence${querySuffix({
+      q, kinds: params.kinds?.join(','), run_id: params.run_id, limit: params.limit,
+    })}`, { cache: 'no-store' }),
+  /** The workspace's environments (what the environment steward hands out) and who holds each slot. */
+  listEnvironments: () => request<EnvironmentDto[]>('/api/v1/environments', { cache: 'no-store' }),
+  /** 409 `environment_exists`; 400 `environment_connection_invalid` when the connection carries a credential. */
+  registerEnvironment: (body: EnvironmentRegisterInput) =>
+    request<EnvironmentDto>('/api/v1/environments', { method: 'POST', body: JSON.stringify(body) }),
+  updateEnvironment: (environmentId: string, body: EnvironmentUpdateInput) =>
+    request<EnvironmentDto>(`/api/v1/environments/${encodeURIComponent(environmentId)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  getSessionTopology: (sessionId: string, params: SessionTopologyQuery = {}) =>
+    request<SessionTopologyDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/topology${querySuffix({
+      run_id: params.run_id, include_finished: params.include_finished, max_runs: params.max_runs, max_tasks: params.max_tasks,
+    })}`, { cache: 'no-store' }),
   listToolExecutions: (sessionId: string, params: { run_id?: string; limit?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.run_id) search.set('run_id', params.run_id);
@@ -2443,6 +2790,15 @@ export const api = {
     if (sessionId) search.set('session_id', sessionId);
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`);
+  },
+  /** The delegated gates of one approval, or null when it was never delegated (404). */
+  getApprovalGates: async (approvalId: string): Promise<ApprovalGatesDto | null> => {
+    try {
+      return await request<ApprovalGatesDto>(`/api/v1/approvals/${encodeURIComponent(approvalId)}/gates`, { cache: 'no-store' })
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return null
+      throw error
+    }
   },
   listPermissionRequests: (params: { status?: string; run_id?: string; task_id?: string } = {}) => {
     const search = new URLSearchParams();
@@ -2699,7 +3055,7 @@ export const api = {
     return request<AgentRuntimeInstanceDto[]>(`/api/v1/agent-runtime-instances${qs}`);
   },
   // interactions (queued/insert/parallel)
-  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; attachment_ids?: string[] }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
+  createInteraction: (sessionId: string, body: { content: string; client_message_id: string; mode_version_id?: string | null; permission_mode?: string | null; dispatch_mode: DispatchMode; target_run_id?: string | null; meeting_model_override?: MeetingModelOverrideDto | null; attachment_ids?: string[]; interrupt?: boolean }) => request<SessionInteractionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions`, { method: 'POST', body: JSON.stringify(body) }),
   reassignInteraction: (sessionId: string, interactionId: string, body: { target_run_id: string }) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/reassign`, { method: 'POST', body: JSON.stringify(body) }),
   cancelInteraction: (sessionId: string, interactionId: string) => request<InteractionActionDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/cancel`, { method: 'POST' }),
   // --- Attachments ---

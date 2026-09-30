@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MessageList from './MessageList.vue'
 import MessageItem from './MessageItem.vue'
@@ -67,6 +67,9 @@ function mountList(props: Record<string, unknown>) {
 }
 
 describe('MessageList turn anchoring', () => {
+  // A pending card asks whether its approval was delegated; none of these were.
+  beforeEach(() => { vi.spyOn(api, 'getApprovalGates').mockResolvedValue(null) })
+
   /**
    * Regression guard for the 真机走查 finding: a first-turn run has no assistant
    * message yet, so activity that only ever hangs off a message id renders

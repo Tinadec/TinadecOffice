@@ -478,19 +478,21 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
-function startSteer(id: string) {
+// With one active run there is nothing to choose, so steering goes straight to it; the choice
+// between steering at the next step and interrupting now is still the user's.
+function startSteer(id: string, interrupt = false) {
   const list = activeRuns.value
   if (list.length === 1) {
-    void homeController.steerQueued(id, list[0].id)
+    void homeController.steerQueued(id, list[0].id, interrupt)
     return
   }
   steeringId.value = id
   steerTarget.value = ''
 }
 
-function confirmSteer(id: string) {
+function confirmSteer(id: string, interrupt = false) {
   if (!steerTarget.value) return
-  void homeController.steerQueued(id, steerTarget.value)
+  void homeController.steerQueued(id, steerTarget.value, interrupt)
   steeringId.value = null
 }
 </script>
@@ -515,9 +517,11 @@ function confirmSteer(id: string) {
                 <option v-for="r in activeRuns" :key="r.id" :value="r.id">{{ r.id.slice(0,8) }} · {{ r.status }}</option>
               </select>
               <button class="queued-action" :disabled="!steerTarget" @click="confirmSteer(item.id)">{{ t('composer.confirmSteer') }}</button>
+              <button class="queued-action" :disabled="!steerTarget" :title="t('composer.interruptSteerHint')" @click="confirmSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
             </template>
             <template v-else>
               <button class="queued-action" @click="startSteer(item.id)">{{ t('composer.steer') }}</button>
+              <button class="queued-action" :title="t('composer.interruptSteerHint')" @click="startSteer(item.id, true)">{{ t('composer.interruptSteer') }}</button>
               <button class="queued-action" @click="homeController.promoteQueued(item.id)">{{ t('composer.parallel') }}</button>
               <button class="queued-action" @click="homeController.editQueued(item.id)">{{ t('composer.edit') }}</button>
               <button class="queued-action" :aria-label="t('composer.dismiss')" @click="homeController.dismissQueued(item.id)">×</button>

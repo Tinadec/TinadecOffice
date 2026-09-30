@@ -2,6 +2,7 @@
 import { Check, FileText, Infinity as InfinityIcon, ShieldX, Terminal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { ApprovalDto } from '../api'
+import ApprovalGateStatus from './approval/ApprovalGateStatus.vue'
 
 const { t } = useI18n()
 
@@ -62,6 +63,8 @@ const pendingApprovals = (approvals: ApprovalDto[]) =>
           <summary>{{ t('approval.parameters') }}</summary>
           <code>{{ approval.arguments }}</code>
         </details>
+        <!-- Only the approval layer is ever delegated; a policy park always waits for the person. -->
+        <ApprovalGateStatus v-if="approval.kind === 'tool'" :approval-id="approval.id" />
       </div>
       <div class="approval-actions">
         <!-- "Always allow for this session": one tool, this run. Only offered for a

@@ -2,6 +2,14 @@
 // api.ts reads `window.tinadec?.gatewayUrl?.()` at module top level, so tests need a DOM-ish global.
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { api, normalizeEventEnvelope, type EventEnvelope, type ModelStreamChunkDto } from './api'
+import type {
+  ApprovalGateDto, ApprovalGatesDto, EvidenceHitDto, EvidenceRecallDto,
+  EnvironmentDto, EnvironmentHolderDto, EnvironmentRegisterInput, EnvironmentUpdateInput,
+  OrganizationDto, OrganizationMemberDto, OrganizationMessageDto, OrganizationMessagePageDto, OrganizationReportDecisionInput,
+  OrganizationReportDto, OrganizationReportPageDto, OrganizationRoomDto, OrganizationSubjectStateDto, PostOrganizationMessageInput,
+  SessionTopologyDto, TopologyInstanceDto, TopologyLeaseDto, TopologyMemberDto, TopologyRunDto, TopologyTaskDto,
+} from './api'
+import type { components } from './generated/schema'
 
 describe('normalizeEventEnvelope', () => {
   it('maps the Core wire shape (event_type/timestamp/version + payload.sequence)', () => {
@@ -333,5 +341,119 @@ describe('market catalog query string', () => {
 
     await api.listMarketCatalog()
     expect(urls[0]).not.toContain('?')
+  })
+})
+
+
+describe('session organization requests', () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+
+  /** The Gateway forwards Core's status and problem details verbatim, so a stub that answers like Core is enough. */
+  function answer(status: number, body: unknown) {
+    calls.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+    }))
+  }
+
+  const sentBody = () => JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads a session whose first run has not happened as "no organization", and nothing else', async () => {
+    answer(404, { code: 'organization_not_started', detail: 'This session has no organization yet.' })
+    await expect(api.getOrganization('s 1')).resolves.toBeNull()
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s%201\/organization$/)
+
+    // Any other 404 — a session or room this principal cannot see — is an error, not an empty state.
+    answer(404, { code: 'tina_chat_not_found', detail: 'The requested resource is not available in this scope.' })
+    await expect(api.getOrganization('s-1')).rejects.toMatchObject({ status: 404, code: 'tina_chat_not_found' })
+  })
+
+  it('pages a room by the cursor Core hands back', async () => {
+    answer(200, { items: [], next_cursor: 62 })
+    const page = await api.readOrganizationRoom('s-1', 'room/1', 12, 50)
+    expect(calls[0].url).toContain('/api/v1/sessions/s-1/organization/rooms/room%2F1/messages?after_sequence=12&limit=50')
+    expect(page.next_cursor).toBe(62)
+
+    // Sequence 0 is a real cursor (the start of the room), not an absent one.
+    answer(200, { items: [], next_cursor: 0 })
+    await api.readOrganizationRoom('s-1', 'room-1', 0)
+    expect(calls[0].url).toMatch(/\/messages\?after_sequence=0$/)
+  })
+
+  it('posts only the fields Core accepts (its request type refuses unknown members)', async () => {
+    answer(200, { id: 'm-1' })
+    const body: PostOrganizationMessageInput = { content: '先串行', client_message_id: 'c-1', mention: ['reviewer'] }
+    await api.postOrganizationMessage('s-1', 'room-1', body)
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/organization\/rooms\/room-1\/messages$/)
+    expect(sentBody()).toEqual({ content: '先串行', client_message_id: 'c-1', mention: ['reviewer'] })
+  })
+
+  it('decides a report at the revision it was read at, and keeps the conflict code for the caller', async () => {
+    answer(200, { id: 'r-1', status: 'acted', revision: 4 })
+    await api.decideOrganizationReport('s-1', 'r-1', { decision: 'acted', expected_revision: 3, note: '已串行' })
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/organization\/reports\/r-1\/decision$/)
+    expect(sentBody()).toEqual({ decision: 'acted', expected_revision: 3, note: '已串行' })
+
+    answer(412, { code: 'tina_chat_revision_conflict', detail: 'Expected revision 3; current revision is 4.' })
+    await expect(api.decideOrganizationReport('s-1', 'r-1', { decision: 'dismissed', expected_revision: 3 }))
+      .rejects.toMatchObject({ status: 412, code: 'tina_chat_revision_conflict' })
+    answer(409, { code: 'report_closed', detail: 'The report is already acted.' })
+    await expect(api.decideOrganizationReport('s-1', 'r-1', { decision: 'dismissed', expected_revision: 4 }))
+      .rejects.toMatchObject({ status: 409, code: 'report_closed' })
+  })
+
+  it('filters reports and bounds the topology exactly as asked', async () => {
+    answer(200, { items: [], truncated: false })
+    await api.listOrganizationReports('s-1', 'open', 100)
+    expect(calls[0].url).toMatch(/\/organization\/reports\?status=open&limit=100$/)
+    await api.listOrganizationReports('s-1')
+    expect(calls.at(-1)?.url).toMatch(/\/organization\/reports$/)
+
+    answer(200, { session_id: 's-1', runs: [], leases: [], members: [] })
+    await api.getSessionTopology('s-1', { include_finished: false, max_runs: 3 })
+    // `false` is a value Core reads (hide finished runs), so it must not be dropped like an absent one.
+    expect(calls[0].url).toMatch(/\/api\/v1\/sessions\/s-1\/topology\?include_finished=false&max_runs=3$/)
+    await api.getSessionTopology('s-1')
+    expect(calls.at(-1)?.url).toMatch(/\/topology$/)
+  })
+
+  it('mirrors the generated contract field for field (the teeth are in the typecheck)', () => {
+    // A mirror that invents a field (`proposed_args` for `proposed_args_json`) or drops one fails
+    // `vue-tsc`: `true` is not assignable to `false`. The runtime assertion only keeps the list honest.
+    type C = components['schemas']
+    type SameKeys<A, B> = [Exclude<keyof A, keyof B>, Exclude<keyof B, keyof A>] extends [never, never] ? true : false
+    const mirrors: true[] = [
+      true satisfies SameKeys<OrganizationDto, C['OrganizationDto']>,
+      true satisfies SameKeys<OrganizationMemberDto, C['OrganizationMemberDto']>,
+      true satisfies SameKeys<OrganizationRoomDto, C['OrganizationRoomDto']>,
+      true satisfies SameKeys<OrganizationMessageDto, C['OrganizationMessageDto']>,
+      true satisfies SameKeys<OrganizationMessagePageDto, C['OrganizationMessagePage']>,
+      true satisfies SameKeys<OrganizationReportDto, C['OrganizationReportDto']>,
+      true satisfies SameKeys<OrganizationSubjectStateDto, C['OrganizationSubjectStateDto']>,
+      true satisfies SameKeys<OrganizationReportPageDto, C['OrganizationReportPage']>,
+      true satisfies SameKeys<PostOrganizationMessageInput, C['OrganizationPostRequest']>,
+      true satisfies SameKeys<OrganizationReportDecisionInput, C['OrganizationReportDecisionRequest']>,
+      true satisfies SameKeys<SessionTopologyDto, C['SessionTopologyDto']>,
+      true satisfies SameKeys<TopologyRunDto, C['SessionTopologyRunDto']>,
+      true satisfies SameKeys<TopologyTaskDto, C['SessionTopologyTaskDto']>,
+      true satisfies SameKeys<TopologyInstanceDto, C['SessionTopologyInstanceDto']>,
+      true satisfies SameKeys<TopologyLeaseDto, C['SessionTopologyLeaseDto']>,
+      true satisfies SameKeys<TopologyMemberDto, C['SessionTopologyMemberDto']>,
+      true satisfies SameKeys<ApprovalGatesDto, C['ApprovalGatesDto']>,
+      true satisfies SameKeys<ApprovalGateDto, C['ApprovalGateDto']>,
+      true satisfies SameKeys<EvidenceRecallDto, C['EvidenceRecallDto']>,
+      true satisfies SameKeys<EvidenceHitDto, C['EvidenceHitDto']>,
+      true satisfies SameKeys<EnvironmentDto, C['EnvironmentDto']>,
+      true satisfies SameKeys<EnvironmentHolderDto, C['EnvironmentHolderDto']>,
+      true satisfies SameKeys<EnvironmentRegisterInput, C['EnvironmentRegisterRequest']>,
+      true satisfies SameKeys<EnvironmentUpdateInput, C['EnvironmentUpdateRequest']>,
+    ]
+    expect(mirrors).toHaveLength(24)
   })
 })

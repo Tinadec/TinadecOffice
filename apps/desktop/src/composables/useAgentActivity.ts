@@ -77,6 +77,11 @@ export interface ThinkingStep {
     // A terminal run failure.
     | 'run'
     | 'reasoning'
+    // The coordinator handing a sub-task off (task_dispatch) and pausing for results (task_wait).
+    | 'dispatch'
+    | 'wait'
+    // An agent's plan_update plan. One step per agent instance, replaced in place on each update.
+    | 'plan'
   title: string
   description: string
   timestamp: string
@@ -563,6 +568,24 @@ export function useAgentActivity(
   }
 
   /**
+   * One delegated gate decided (delegate-* permission modes). Only a progress note: the call
+   * itself moves on approval.decided, which follows once every gate has approved (or one refused).
+   * An escalation hands the approval back, so the pending card stays the user's to decide.
+   */
+  function processGateDecided(event: EventEnvelope) {
+    const decision = extractString(event.payload, 'decision')
+    const rationale = extractString(event.payload, 'rationale')
+    const who = extractString(event.payload, 'gate_kind') === 'conversation_identity' ? '对话身份' : '审查员'
+    const text = decision === 'approved' ? `${who}已批准` : decision === 'rejected' ? `${who}已驳回` : `${who}交还给你决定`
+    addProgressEvent(
+      event.seq,
+      event.type,
+      decision === 'approved' ? 'check' : decision === 'rejected' ? 'x' : 'alert-circle',
+      rationale ? `${text}：${rationale}` : text,
+    )
+  }
+
+  /**
    * A tool dispatch outcome. Every one of these used to be unsubscribed, so the
    * timeline only ever moved when the whole run finished — a call could fail, be
    * fed back to the model, and be retried with nothing shown in between.
@@ -669,7 +692,11 @@ export function useAgentActivity(
     }
 
     if (event.type === 'worker.assigned') {
-      addProgressEvent(event.seq, event.type, 'user-check', `${slug} 接单${reason ? `（${reason}）` : ''}`)
+      // Core names each assignment with a run-scoped handle (search#2): the only way to tell
+      // two instances of one role apart in the list.
+      const who = extractString(event.payload, 'handle') ?? slug
+      const why = reason === 'coordinator_assigned' ? '协调者点名' : reason
+      addProgressEvent(event.seq, event.type, 'user-check', `${who} 接单${why ? `（${why}）` : ''}`)
       return
     }
     if (event.type === 'worker.tool_failed') {
@@ -707,6 +734,89 @@ export function useAgentActivity(
       event.type === 'worker.failed' ? 'x' : 'check-circle',
       message || (event.type === 'worker.failed' ? `${slug} 失败` : `${slug} 完成`),
     )
+  }
+
+  /**
+   * The coordinator's dispatch and wait moves. They are reasoning-trail steps, not just
+   * progress lines: they are the only visible answer to "why did search#2 start" and
+   * "why has the coordinator gone quiet".
+   */
+  function processCoordinatorEvent(event: EventEnvelope) {
+    const payload = event.payload
+    const awaited = extractArray(payload, 'awaited')
+      .map((item) => extractString(item, 'handle') ?? extractString(item, 'title') ?? extractString(item, 'task_key'))
+      .filter((item): item is string => Boolean(item))
+    const waiter = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '协调者'
+    let step: Pick<ThinkingStep, 'type' | 'title' | 'description'> & { severity?: string }
+    let icon: string
+    switch (event.type) {
+      case 'task.dispatched': {
+        const agent = extractString(payload, 'agent') ?? '执行者'
+        const followUp = extractString(payload, 'follow_up_of')
+        const by = extractString(payload, 'dispatched_by') ?? '协调者'
+        step = {
+          type: 'dispatch',
+          title: `${by} 派发给 ${agent}`,
+          description: (extractString(payload, 'title') ?? '') + (followUp ? `（接续 ${followUp}）` : ''),
+        }
+        icon = 'send'
+        break
+      }
+      case 'task.dispatch_rejected':
+        step = {
+          type: 'dispatch',
+          title: '子任务派发被拒绝',
+          description: extractString(payload, 'code') ?? '',
+          severity: 'warning',
+        }
+        icon = 'alert-triangle'
+        break
+      case 'task.wait_started':
+        step = { type: 'wait', title: `${waiter} 等待子任务结果`, description: awaited.join('、') }
+        icon = 'hourglass'
+        break
+      default:
+        step = { type: 'wait', title: `${waiter} 收到子任务结果`, description: awaited.join('、') }
+        icon = 'check-circle'
+    }
+    activity.value = { ...activity.value, lastUpdated: event.ts }
+    thinkingSteps.value = [
+      ...thinkingSteps.value,
+      { id: `${event.seq}-${event.type}`, timestamp: event.ts, durationMs: null, ...step },
+    ]
+    addProgressEvent(event.seq, event.type, icon, step.description ? `${step.title}：${step.description}` : step.title)
+  }
+
+  /**
+   * An agent's working plan. Every update carries the whole plan, so the step is keyed by
+   * the task and replaced in place: the trail shows the plan's current state, not a pile
+   * of stale copies.
+   */
+  function processPlanUpdated(event: EventEnvelope) {
+    const payload = event.payload
+    const taskId = extractString(payload, 'task_id') ?? extractString(payload, 'task_key') ?? String(event.seq)
+    const who = extractString(payload, 'handle') ?? extractString(payload, 'task_key') ?? '智能体'
+    const steps = extractArray(payload, 'steps')
+      .map((item) => ({ step: extractString(item, 'step') ?? '', status: extractString(item, 'status') ?? 'pending' }))
+      .filter((item) => item.step)
+    const done = steps.filter((item) => item.status === 'completed').length
+    const marker: Record<string, string> = { completed: '✓', in_progress: '→', pending: '○' }
+    const id = `plan-${taskId}`
+    const step: ThinkingStep = {
+      id,
+      type: 'plan',
+      title: `${who} 的计划（${done}/${steps.length}）`,
+      description: steps.map((item) => `${marker[item.status] ?? '○'} ${item.step}`).join('\n'),
+      timestamp: event.ts,
+      durationMs: null,
+      details: { steps, explanation: extractString(payload, 'explanation') },
+    }
+    thinkingSteps.value = thinkingSteps.value.some((item) => item.id === id)
+      ? thinkingSteps.value.map((item) => item.id === id ? step : item)
+      : [...thinkingSteps.value, step]
+    activity.value = { ...activity.value, lastUpdated: event.ts }
+    const current = steps.find((item) => item.status === 'in_progress')
+    addProgressEvent(event.seq, event.type, 'list-checks', current ? `${who}：${current.step}` : `${who} 更新了计划`)
   }
 
   function processShellApprovalRequired(event: EventEnvelope) {
@@ -770,15 +880,19 @@ export function useAgentActivity(
       case 'model.output.started':
       case 'model.output.delta':
       case 'model.output.completed':
-      case 'model.output.failed': {
+      case 'model.output.failed':
+      case 'model.output.interrupted': {
         const id = extractString(event.payload, 'response_id')
         if (!id) break
         const existing = thinkingSteps.value.find((step) => step.id === id)
         const delta = extractString(event.payload, 'delta') ?? ''
-        const status = event.type === 'model.output.completed' ? 'completed'
+        // A thought the user cut off ended; it did not fail.
+        const status = event.type === 'model.output.completed' || event.type === 'model.output.interrupted' ? 'completed'
           : event.type === 'model.output.failed' ? 'failed' : 'running'
         const step: ThinkingStep = existing ? { ...existing, status } : {
-          id, type: 'reasoning', title: extractString(event.payload, 'agent_name') ?? 'Model',
+          // The run handle (search#2) names the instance; parallel workers of one role
+          // share agent_name and would otherwise render as identical "search" thoughts.
+          id, type: 'reasoning', title: extractString(event.payload, 'handle') ?? extractString(event.payload, 'agent_name') ?? 'Model',
           description: '', timestamp: event.ts, seq: event.seq, durationMs: null, status,
         }
         // Only the provider's explicit reasoning channel is a reasoning text. Internal
@@ -813,6 +927,21 @@ export function useAgentActivity(
         break
       case 'step.result.created':
         processStepResult(event)
+        break
+      case 'worker.interrupted':
+      case 'run.interrupted':
+        addProgressEvent(event.seq, event.type, 'hand', event.type === 'worker.interrupted'
+          ? `${extractString(event.payload, 'handle') ?? '执行者'} 被打断，按新的指示继续`
+          : '运行被打断，正在按新的指示重做当前一步')
+        break
+      case 'task.dispatched':
+      case 'task.dispatch_rejected':
+      case 'task.wait_started':
+      case 'task.wait_resolved':
+        processCoordinatorEvent(event)
+        break
+      case 'plan.updated':
+        processPlanUpdated(event)
         break
       case 'supervision.checked':
       case 'supervision.requested':
@@ -852,6 +981,9 @@ export function useAgentActivity(
         break
       case 'approval.rejected':
         processApprovalDecided(event, 'rejected')
+        break
+      case 'approval.gate_decided':
+        processGateDecided(event)
         break
       case 'approval.decided':
       case 'governance.permission_decided': {

@@ -86,14 +86,17 @@ export const PROVIDER_TOOL_IDS = [
 
 /**
  * Tools Core executes itself, so they never appear in the provider manifest.
- * Mirrors `CoreVirtualToolPolicy` (`create_workspace` :12, `task_dispatch` :23,
- * `read_attachment`, the nine `tina_chat_*` ids) — and `toolPresentation.test.ts` now proves the
+ * Mirrors `CoreVirtualToolPolicy` (`create_workspace`, `task_dispatch`, `task_wait`, `plan_update`,
+ * `read_attachment`, the nine `tina_chat_*` ids, the seven `org_*` organization tools,
+ * `graph_view`, `recall_evidence` and the three `environment_*` steward tools) — and `toolPresentation.test.ts` now proves the
  * copy by parsing that file, so a Core virtual tool cannot arrive here as an unknown id.
  */
 export const CORE_VIRTUAL_TOOL_IDS = [
   'create_workspace',
   'read_attachment',
   'task_dispatch',
+  'task_wait',
+  'plan_update',
   'tina_chat_bind',
   'tina_chat_search_people',
   'tina_chat_list_rooms',
@@ -102,7 +105,19 @@ export const CORE_VIRTUAL_TOOL_IDS = [
   'tina_chat_propose_intent',
   'tina_chat_list_intents',
   'tina_chat_decide_intent',
-  'tina_chat_execute_intent'
+  'tina_chat_execute_intent',
+  'org_directory',
+  'org_read',
+  'org_send',
+  'org_report',
+  'org_decide_report',
+  'org_contact',
+  'org_room',
+  'graph_view',
+  'recall_evidence',
+  'environment_list',
+  'environment_acquire',
+  'environment_release'
 ] as const
 
 /**
@@ -152,7 +167,14 @@ const KIND_BY_ID: Record<string, ToolKind> = {
   sandbox_status: 'sandbox',
   sandbox_reset: 'sandbox',
   create_workspace: 'orchestration',
-  task_dispatch: 'orchestration'
+  task_dispatch: 'orchestration',
+  task_wait: 'orchestration',
+  plan_update: 'orchestration',
+  graph_view: 'orchestration',
+  recall_evidence: 'search',
+  environment_list: 'orchestration',
+  environment_acquire: 'orchestration',
+  environment_release: 'orchestration'
 }
 
 const ICON_BY_KIND: Record<ToolKind, Component> = {
@@ -193,7 +215,7 @@ export function toolKindOf(toolId: string | null | undefined): ToolKind {
   const explicit = KIND_BY_ID[toolId]
   if (explicit) return explicit
   if (toolId === GIT_FACADE_TOOL_ID || toolId.startsWith('git_')) return 'git'
-  if (toolId.startsWith('tina_chat_')) return 'chat'
+  if (toolId.startsWith('tina_chat_') || toolId.startsWith('org_')) return 'chat'
   return 'other'
 }
 

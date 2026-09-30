@@ -152,6 +152,9 @@ export interface paths {
     /** Decide approval */
     post: operations["postApiV1ApprovalsByApprovalIdDecision"];
   };
+  "/api/v1/approvals/{approvalId}/gates": {
+    get: operations["getApiV1ApprovalsByApprovalIdGates"];
+  };
   "/api/v1/attachments/{attachmentId}": {
     /** Read attachment metadata */
     get: operations["getApiV1AttachmentsByAttachmentId"];
@@ -237,6 +240,13 @@ export interface paths {
   "/api/v1/doctor": {
     /** Doctor checks */
     get: operations["getApiV1Doctor"];
+  };
+  "/api/v1/environments": {
+    get: operations["getApiV1Environments"];
+    post: operations["postApiV1Environments"];
+  };
+  "/api/v1/environments/{environmentId}": {
+    patch: operations["patchApiV1EnvironmentsByEnvironmentId"];
   };
   "/api/v1/events": {
     /**
@@ -640,6 +650,9 @@ export interface paths {
     /** Session context versions */
     get: operations["getApiV1SessionsBySessionIdContext-versions"];
   };
+  "/api/v1/sessions/{sessionId}/evidence": {
+    get: operations["getApiV1SessionsBySessionIdEvidence"];
+  };
   "/api/v1/sessions/{sessionId}/interactions": {
     /** Create session interaction */
     post: operations["postApiV1SessionsBySessionIdInteractions"];
@@ -678,6 +691,19 @@ export interface paths {
     /** Session orchestration snapshot */
     get: operations["getApiV1SessionsBySessionIdOrchestration"];
   };
+  "/api/v1/sessions/{sessionId}/organization": {
+    get: operations["getApiV1SessionsBySessionIdOrganization"];
+  };
+  "/api/v1/sessions/{sessionId}/organization/reports": {
+    get: operations["getApiV1SessionsBySessionIdOrganizationReports"];
+  };
+  "/api/v1/sessions/{sessionId}/organization/reports/{reportId}/decision": {
+    post: operations["postApiV1SessionsBySessionIdOrganizationReportsByReportIdDecision"];
+  };
+  "/api/v1/sessions/{sessionId}/organization/rooms/{roomId}/messages": {
+    get: operations["getApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages"];
+    post: operations["postApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages"];
+  };
   "/api/v1/sessions/{sessionId}/restore": {
     /** Restore session */
     post: operations["postApiV1SessionsBySessionIdRestore"];
@@ -697,6 +723,9 @@ export interface paths {
   "/api/v1/sessions/{sessionId}/tool-executions": {
     /** Session tool executions */
     get: operations["getApiV1SessionsBySessionIdTool-executions"];
+  };
+  "/api/v1/sessions/{sessionId}/topology": {
+    get: operations["getApiV1SessionsBySessionIdTopology"];
   };
   "/api/v1/sessions/{sessionId}/trash": {
     /** Move session to trash */
@@ -1081,6 +1110,27 @@ export interface components {
       /** @description Pack-local prompt pipeline resource key. */
       prompt_pipeline_ref: string;
     };
+    ApprovalGateDto: {
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      decided_at: string | null;
+      decider_agent: string | null;
+      evidence: null | components["schemas"]["OrganizationJsonElement"];
+      /** Format: int32 */
+      gate_index: number | string;
+      gate_kind: string;
+      reason: string | null;
+      status: string;
+    };
+    ApprovalGatesDto: {
+      /** Format: uuid */
+      approval_id: string;
+      gates: components["schemas"]["ApprovalGateDto"][];
+      /** Format: uuid */
+      run_id: string | null;
+      status: string;
+    };
     Assignment: {
       agent_id: string;
       /** @enum {string} */
@@ -1104,6 +1154,75 @@ export interface components {
       [key: string]: unknown;
     };
     ContextVersionList: components["schemas"]["ContextVersion"][];
+    EnvironmentDto: {
+      /** Format: int32 */
+      capacity: number | string;
+      connection: components["schemas"]["OrganizationJsonElement"];
+      description: string | null;
+      display_name: string;
+      /** Format: int32 */
+      free_slots: number | string;
+      holders: components["schemas"]["EnvironmentHolderDto"][];
+      /** Format: uuid */
+      id: string;
+      key: string;
+      kind: string;
+      status: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    EnvironmentHolderDto: {
+      /** Format: uuid */
+      lease_id: string;
+      reason: string;
+      /** Format: uuid */
+      run_id: string | null;
+      /** Format: uuid */
+      session_id: string | null;
+      /** Format: int32 */
+      slot: number | string;
+      /** Format: uuid */
+      task_id: string | null;
+    };
+    EnvironmentRegisterRequest: {
+      /** Format: int32 */
+      capacity?: (number | null) | string;
+      connection?: unknown;
+      description?: string | null;
+      display_name: string;
+      key: string;
+      kind: string;
+    };
+    EnvironmentUpdateRequest: {
+      /** Format: int32 */
+      capacity?: (number | null) | string;
+      connection?: unknown;
+      description?: string | null;
+      display_name?: string | null;
+      status?: string | null;
+    };
+    EvidenceHitDto: {
+      author: string | null;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      evidence_id: string;
+      kind: string;
+      matched_by: string;
+      /** Format: uuid */
+      run_id: string | null;
+      /** Format: double */
+      score: number | string;
+      snippet: string;
+      /** Format: uuid */
+      task_id: string | null;
+      title: string;
+    };
+    EvidenceRecallDto: {
+      hits: components["schemas"]["EvidenceHitDto"][];
+      mode: string;
+      note: string | null;
+    };
     /** @description Gateway health fingerprint with forwarded Core health fields. */
     Health: {
       /** @enum {string} */
@@ -1317,6 +1436,124 @@ export interface components {
       supervision_findings: components["schemas"]["SupervisionFinding"][];
       [key: string]: unknown;
     };
+    OrganizationDto: {
+      /** Format: uuid */
+      id: string;
+      members: components["schemas"]["OrganizationMemberDto"][];
+      members_truncated: boolean;
+      /** Format: int32 */
+      open_reports: number | string;
+      rooms: components["schemas"]["OrganizationRoomDto"][];
+      rooms_truncated: boolean;
+      /** Format: uuid */
+      session_id: string;
+      status: string;
+      /** Format: uuid */
+      you_participant_id: string;
+    };
+    OrganizationJsonElement: unknown;
+    OrganizationMemberDto: {
+      agent_slug: string | null;
+      display_name: string;
+      handle: string;
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      parent_id: string | null;
+      presence: string;
+      role: string;
+      /** Format: uuid */
+      run_id: string | null;
+    };
+    OrganizationMessageDto: {
+      content: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      id: string;
+      kind: string;
+      report: null | components["schemas"]["OrganizationReportDto"];
+      /** Format: uuid */
+      room_id: string;
+      sender_display_name: string;
+      /** Format: uuid */
+      sender_id: string;
+      sender_role: string;
+      sensitivity: string;
+      /** Format: int64 */
+      sequence: number | string;
+    };
+    OrganizationMessagePage: {
+      items: components["schemas"]["OrganizationMessageDto"][];
+      /** Format: int64 */
+      next_cursor: number | string;
+    };
+    OrganizationPostRequest: {
+      client_message_id: string;
+      content: string;
+      mention?: string[] | null;
+      /** Format: uuid */
+      reply_to_message_id?: string | null;
+    };
+    OrganizationReportDecisionRequest: {
+      decision: string;
+      /** Format: int64 */
+      expected_revision: number | string;
+      note?: string | null;
+    };
+    OrganizationReportDto: {
+      author_display_name: string;
+      /** Format: uuid */
+      author_id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      decided_at: string | null;
+      /** Format: uuid */
+      decided_by_id: string | null;
+      decision_note: string | null;
+      evidence: string[];
+      finding: string;
+      /** Format: uuid */
+      id: string;
+      proposed_args_json: string | null;
+      proposed_verb: string | null;
+      report_kind: string;
+      /** Format: int64 */
+      revision: number | string;
+      /** Format: uuid */
+      room_id: string;
+      severity: string;
+      status: string;
+      subject_id: string | null;
+      subject_kind: string | null;
+      subject_state?: null | components["schemas"]["OrganizationSubjectStateDto"];
+      /** Format: uuid */
+      supersedes_report_id: string | null;
+    };
+    OrganizationReportPage: {
+      items: components["schemas"]["OrganizationReportDto"][];
+      truncated: boolean;
+    };
+    OrganizationRoomDto: {
+      /** Format: uuid */
+      id: string;
+      is_member: boolean;
+      kind: string;
+      /** Format: int64 */
+      last_sequence: number | string;
+      /** Format: int32 */
+      member_count: number | string;
+      /** Format: uuid */
+      plan_owner_id: string | null;
+      title: string;
+    };
+    OrganizationSubjectStateDto: {
+      id: string;
+      kind: string;
+      label: string | null;
+      status: string | null;
+    };
     PreAuthorization: {
       expires_at: string | null;
       /** Format: uuid */
@@ -1394,6 +1631,92 @@ export interface components {
       [key: string]: unknown;
     };
     SessionList: components["schemas"]["Session"][];
+    SessionTopologyDto: {
+      /** Format: date-time */
+      generated_at: string;
+      leases: components["schemas"]["SessionTopologyLeaseDto"][];
+      leases_truncated: boolean;
+      members: components["schemas"]["SessionTopologyMemberDto"][];
+      members_truncated: boolean;
+      runs: components["schemas"]["SessionTopologyRunDto"][];
+      runs_truncated: boolean;
+      /** Format: uuid */
+      session_id: string;
+    };
+    SessionTopologyInstanceDto: {
+      agent_slug: string;
+      /** Format: int32 */
+      depth: number | string;
+      /** Format: uuid */
+      instance_id: string;
+      layer: string;
+      /** Format: uuid */
+      parent_instance_id: string | null;
+      role: string;
+      status: string;
+      /** Format: uuid */
+      task_id: string | null;
+    };
+    SessionTopologyLeaseDto: {
+      /** Format: uuid */
+      agent_instance_id: string | null;
+      exclusive: boolean;
+      kind: string;
+      /** Format: uuid */
+      lease_id: string;
+      purpose: string;
+      resource_key: string;
+      /** Format: uuid */
+      run_id: string | null;
+      /** Format: uuid */
+      task_id: string | null;
+    };
+    SessionTopologyMemberDto: {
+      /** Format: uuid */
+      agent_instance_id: string | null;
+      agent_slug: string | null;
+      display_name: string;
+      handle: string;
+      /** Format: uuid */
+      parent_participant_id: string | null;
+      /** Format: uuid */
+      participant_id: string;
+      presence: string;
+      role: string;
+      /** Format: uuid */
+      run_id: string | null;
+    };
+    SessionTopologyRunDto: {
+      /** Format: date-time */
+      completed_at: string | null;
+      instances: components["schemas"]["SessionTopologyInstanceDto"][];
+      instances_truncated: boolean;
+      phase: string | null;
+      /** Format: uuid */
+      run_id: string;
+      /** Format: date-time */
+      started_at: string;
+      status: string;
+      tasks: components["schemas"]["SessionTopologyTaskDto"][];
+      tasks_truncated: boolean;
+      tier: string | null;
+    };
+    SessionTopologyTaskDto: {
+      agent_slug: string | null;
+      dependencies: string[];
+      /** Format: uuid */
+      dispatched_by_task_id: string | null;
+      handle: string | null;
+      result_summary: string | null;
+      status: string;
+      /** Format: uuid */
+      task_id: string;
+      task_key: string;
+      title: string;
+      /** Format: uuid */
+      worker_instance_id: string | null;
+      write_scope: string[];
+    };
     SupervisionFinding: {
       category: string;
       created_at: string | null;
@@ -2477,6 +2800,21 @@ export interface operations {
       };
     };
   };
+  getApiV1ApprovalsByApprovalIdGates: {
+    parameters: {
+      path: {
+        approvalId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["ApprovalGatesDto"];
+        };
+      };
+    };
+  };
   /** Read attachment metadata */
   getApiV1AttachmentsByAttachmentId: {
     parameters: {
@@ -2686,6 +3024,51 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  getApiV1Environments: {
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["EnvironmentDto"][];
+        };
+      };
+    };
+  };
+  postApiV1Environments: {
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvironmentRegisterRequest"];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        content: {
+          "application/json": components["schemas"]["EnvironmentDto"];
+        };
+      };
+    };
+  };
+  patchApiV1EnvironmentsByEnvironmentId: {
+    parameters: {
+      path: {
+        environmentId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvironmentUpdateRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["EnvironmentDto"];
+        };
       };
     };
   };
@@ -4043,6 +4426,27 @@ export interface operations {
       };
     };
   };
+  getApiV1SessionsBySessionIdEvidence: {
+    parameters: {
+      query?: {
+        q?: string;
+        kinds?: string;
+        run_id?: string;
+        limit?: number | string;
+      };
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["EvidenceRecallDto"];
+        };
+      };
+    };
+  };
   /** Create session interaction */
   postApiV1SessionsBySessionIdInteractions: {
     parameters: {
@@ -4195,6 +4599,102 @@ export interface operations {
       };
     };
   };
+  getApiV1SessionsBySessionIdOrganization: {
+    parameters: {
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationDto"];
+        };
+      };
+    };
+  };
+  getApiV1SessionsBySessionIdOrganizationReports: {
+    parameters: {
+      query?: {
+        status?: string;
+        limit?: number | string;
+      };
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationReportPage"];
+        };
+      };
+    };
+  };
+  postApiV1SessionsBySessionIdOrganizationReportsByReportIdDecision: {
+    parameters: {
+      path: {
+        sessionId: string;
+        reportId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrganizationReportDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationReportDto"];
+        };
+      };
+    };
+  };
+  getApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages: {
+    parameters: {
+      query?: {
+        after_sequence?: number | string;
+        limit?: number | string;
+      };
+      path: {
+        sessionId: string;
+        roomId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationMessagePage"];
+        };
+      };
+    };
+  };
+  postApiV1SessionsBySessionIdOrganizationRoomsByRoomIdMessages: {
+    parameters: {
+      path: {
+        sessionId: string;
+        roomId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrganizationPostRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationMessageDto"];
+        };
+      };
+    };
+  };
   /** Restore session */
   postApiV1SessionsBySessionIdRestore: {
     parameters: {
@@ -4266,6 +4766,27 @@ export interface operations {
     responses: {
       200: {
         content: never;
+      };
+    };
+  };
+  getApiV1SessionsBySessionIdTopology: {
+    parameters: {
+      query?: {
+        run_id?: string;
+        include_finished?: boolean;
+        max_runs?: number | string;
+        max_tasks?: number | string;
+      };
+      path: {
+        sessionId: string;
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["SessionTopologyDto"];
+        };
       };
     };
   };

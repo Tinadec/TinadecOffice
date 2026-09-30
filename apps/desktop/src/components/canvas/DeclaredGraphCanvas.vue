@@ -98,7 +98,7 @@ const tierLabel = computed(() => {
     </VueFlow>
     <ul v-if="flowSummary.length" class="declared-graph-flows">
       <li v-for="flow in flowSummary" :key="flow.task_key">
-        {{ flow.from }} → {{ flow.to }} · {{ flow.task_key }} · {{ flow.status }}
+        {{ flow.from }} → {{ flow.handle ?? flow.to }} · {{ flow.task_key }} · {{ flow.status }}
       </li>
     </ul>
   </div>

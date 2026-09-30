@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { ChevronDown, Sparkles, Moon } from '@lucide/vue'
+import { ChevronDown, Moon } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { api, type AgentModeTopologyDto } from '@/api'
+import { modeIcon, sortModes } from '@/lib/modePresentation'
 
 const { t } = useI18n()
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
@@ -30,15 +31,15 @@ const modeVersions = ref<AgentModeTopologyDto[]>([])
 
 const availableVersions = computed(() => {
   const seen = new Set<string>()
-  return modeVersions.value.filter((v) => {
+  return sortModes(modeVersions.value.filter((v) => {
     if (v.status !== 'published' || !v.latest_published_mode_version_id) return false
-    // 同 slug 可能存在多行 published（运维/夹具安装各一条，Core 把去重责任下放给
-    // 客户端）；拓扑 DTO 不带 slug，按用户可见的 display_name 去重。
+    // 同一模式可能存在多行 published（运维/夹具安装各一条，Core 把去重责任下放给
+    // 客户端）；按用户可见的 display_name 去重——两行名字相同，用户就分不出来。
     const key = v.display_name.trim().toLowerCase()
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  })
+  }))
 })
 
 const selectedVersion = computed(() =>
@@ -48,6 +49,10 @@ const selectedVersion = computed(() =>
 // 仍然带着，服务端会以 pack_disabled / invalid_request 显式失败，绝不静默回落。
 const selectionStale = computed(() => !!props.modeVersionId && !selectedVersion.value)
 const triggerLabel = computed(() => selectedVersion.value?.display_name ?? t('chat.followDefault'))
+
+function versionSummary(version: AgentModeTopologyDto): string {
+  return version.description?.trim() || ''
+}
 
 async function loadModeVersions() {
   try {
@@ -71,8 +76,9 @@ function updateDropdownPosition() {
   const rect = trigger.getBoundingClientRect()
   const vh = window.innerHeight
   const vw = window.innerWidth
-  const ddWidth = 200
-  const estH = 220
+  // Wide enough for a two-line description; estH covers seven modes before it scrolls.
+  const ddWidth = 340
+  const estH = 380
   const spaceBelow = vh - rect.bottom
   const spaceAbove = rect.top
   const flip = spaceBelow < estH && spaceAbove > spaceBelow
@@ -82,8 +88,8 @@ function updateDropdownPosition() {
       position: 'fixed',
       bottom: `${vh - rect.top + 6}px`,
       left: `${left}px`,
-      minWidth: '200px',
-      maxHeight: `${Math.min(280, spaceAbove - 12)}px`,
+      minWidth: '240px',
+      maxHeight: `${Math.min(440, spaceAbove - 12)}px`,
       overflowY: 'auto',
     }
   } else {
@@ -91,8 +97,8 @@ function updateDropdownPosition() {
       position: 'fixed',
       top: `${rect.bottom + 6}px`,
       left: `${left}px`,
-      minWidth: '200px',
-      maxHeight: `${Math.min(280, spaceBelow - 12)}px`,
+      minWidth: '240px',
+      maxHeight: `${Math.min(440, spaceBelow - 12)}px`,
       overflowY: 'auto',
     }
   }
@@ -130,7 +136,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       :title="t('chat.modeVersion')"
       @click="toggleDropdown"
     >
-      <component :is="selectedVersion ? Sparkles : Moon" :size="14" />
+      <component :is="selectedVersion ? modeIcon(selectedVersion.slug) : Moon" :size="14" />
       <span class="mode-selector-label">{{ triggerLabel }}</span>
       <span v-if="selectionStale" class="mode-selector-stale" :title="t('chat.modeUnavailable')">⚠</span>
       <ChevronDown :size="12" class="mode-selector-chevron" />
@@ -160,10 +166,14 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             :key="m.id"
             class="mode-selector-item"
             :class="{ active: m.latest_published_mode_version_id === modeVersionId }"
+            :title="versionSummary(m) || m.display_name"
             @click="selectVersion(m.latest_published_mode_version_id!)"
           >
-            <Sparkles :size="14" />
-            <span>{{ m.display_name }}</span>
+            <component :is="modeIcon(m.slug)" :size="14" class="mode-selector-item-icon" />
+            <span class="mode-selector-item-copy">
+              <strong>{{ m.display_name }}</strong>
+              <small v-if="versionSummary(m)">{{ versionSummary(m) }}</small>
+            </span>
           </button>
         </template>
       </div>

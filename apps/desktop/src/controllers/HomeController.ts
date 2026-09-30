@@ -12,6 +12,7 @@ import {
   type RuntimeReadinessReceiptDto,
   type SessionDto,
   type ToolExecutionTimelineItemDto,
+  type ToolDescriptorDto,
 } from '@/api'
 import { basenameFromPath } from '@/format'
 import { getDispatchPref } from '@/lib/dispatchPref'
@@ -58,13 +59,16 @@ const modelName = ref('')
 const modelApiKey = ref('')
 const shellCommand = ref('npm test')
 const busy = ref(false)
-const rightRailCollapsed = ref(false)
-const rightRailWidth = ref(420)
 // 模式身份只剩「已发布的 ModeVersion」：六值 agent_mode 词表已从契约删除，
 // 因此不再有本地存储的"当前模式"——选择跟着会话走（session.mode_version_id）。
 const currentPermission = ref<PermissionLevel>('default')
 const runs = ref<Array<{ id: string; status: string }>>([])
-const queuedMessages = ref<Array<{ id: string; content: string }>>([])
+/**
+ * Messages waiting in the session's queue. `interactionId` is set when Core holds the message
+ * (queued delivery never runs beside an unfinished run); the card then leaves when Core admits,
+ * rejects or dequeues it, and acting on it takes it out of Core's queue first.
+ */
+const queuedMessages = ref<Array<{ id: string; content: string; interactionId?: string }>>([])
 const runStreams = new Map<string, RunStreamHandle>()
 const runText = new Map<string, string>()
 const provisionalReplies = new Set<string>()
@@ -399,7 +403,9 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
   await run('send message', async () => {
     let sessionId = selectedSessionId.value
     if (!sessionId) {
-      const session = await api.createSession(selectedProjectId.value ?? null, 'Tinadec session')
+      // Created in the mode being sent: ChatPanel resets the picker to the new session's own
+      // mode, so a session created on the default would flip the picker back after this send.
+      const session = await api.createSession(selectedProjectId.value ?? null, 'Tinadec session', opts?.mode_version_id ?? null)
       sessions.value = [session, ...sessions.value]
       selectedSessionId.value = session.id
       sessionId = session.id
@@ -436,11 +442,16 @@ async function handleSend(content: string, opts?: { dispatch_mode?: DispatchMode
         ...(outgoing.attachmentIds.length > 0 ? { attachment_ids: outgoing.attachmentIds } : {}),
       })
       settleSentAttachments(outgoing)
-      if (resp.run_id) {
+      // An admitted interaction names its own turn; a queued one names the run it waits behind
+      // and no turn — that run's status is not "queued", so it is left alone.
+      const waitingBehind = resp.status === 'queued' && !resp.turn_id && Boolean(resp.interaction_id)
+      if (resp.run_id && !waitingBehind) {
         attachRun(resp.run_id)
         runs.value = [{ id: resp.run_id, status: resp.status || 'planning' }, ...runs.value.filter((run) => run.id !== resp.run_id)]
       }
-      if (!resp.run_id && resp.status === 'queued') queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent }]
+      if (waitingBehind || (!resp.run_id && resp.status === 'queued')) {
+        queuedMessages.value = [...queuedMessages.value, { id: clientMessageId, content: snapshotContent, interactionId: waitingBehind ? resp.interaction_id : undefined }]
+      }
       // optionally still stream via invoke for backwards compat if needed; interaction SSE will arrive via events
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -507,21 +518,50 @@ async function editAndResend(payload: { id: string; content: string }) {
   await loadMessagesAndApprovals()
 }
 
-function dismissQueued(id: string) {
+function forgetQueued(id: string) {
   queuedMessages.value = queuedMessages.value.filter((item) => item.id !== id)
 }
 
-function editQueued(id: string) {
-  const item = queuedMessages.value.find((q) => q.id === id)
-  if (!item) return
-  draft.value = item.content
-  dismissQueued(id)
+/**
+ * Takes a message Core holds out of its queue. False when it already left (admitted or decided):
+ * then acting on it again would send the same words twice.
+ */
+async function dequeue(item: { interactionId?: string }): Promise<boolean> {
+  if (!item.interactionId || !selectedSessionId.value) return true
+  try {
+    await api.cancelInteraction(selectedSessionId.value, item.interactionId)
+    return true
+  } catch (err) {
+    const status = (err as { status?: number }).status
+    // 404: Core no longer knows it as queued; nothing is waiting to be taken out.
+    return status === 404
+  }
 }
 
-async function steerQueued(id: string, targetRunId: string) {
+async function dismissQueued(id: string) {
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  if (await dequeue(item)) forgetQueued(id)
+}
+
+async function editQueued(id: string) {
+  const item = queuedMessages.value.find((q) => q.id === id)
+  if (!item) return
+  if (!(await dequeue(item))) return
+  draft.value = item.content
+  forgetQueued(id)
+}
+
+/**
+ * Steers a run with a waiting message. `interrupt` is the hard insert: Core cuts off what the run is
+ * doing (a model call is redone, tool calls not yet started are skipped) instead of letting the
+ * steering apply at its next step.
+ */
+async function steerQueued(id: string, targetRunId: string, interrupt = false) {
   if (!selectedSessionId.value) return
   const item = queuedMessages.value.find((q) => q.id === id)
   if (!item) return
+  if (!(await dequeue(item))) return
   let sent = false
   await run('steer message', async () => {
     await api.createInteraction(selectedSessionId.value!, {
@@ -530,28 +570,32 @@ async function steerQueued(id: string, targetRunId: string) {
       mode_version_id: null,
       dispatch_mode: 'insert',
       target_run_id: targetRunId,
+      ...(interrupt ? { interrupt: true } : {}),
     })
     sent = true
   })
-  if (sent) dismissQueued(id)
+  if (sent) forgetQueued(id)
 }
 
 async function promoteQueued(id: string) {
   if (!selectedSessionId.value) return
   const item = queuedMessages.value.find((q) => q.id === id)
   if (!item) return
+  if (!(await dequeue(item))) return
   let sent = false
   await run('promote message', async () => {
     await api.createInteraction(selectedSessionId.value!, {
       content: item.content,
-      client_message_id: newId(),
+      // A message Core already holds keeps its id, so running it now reuses the words the user
+      // already sent instead of posting them a second time.
+      client_message_id: item.interactionId ? item.id : newId(),
       mode_version_id: null,
       dispatch_mode: 'parallel',
       target_run_id: null,
     })
     sent = true
   })
-  if (sent) dismissQueued(id)
+  if (sent) forgetQueued(id)
 }
 
 async function requestShellApproval() {
@@ -613,6 +657,33 @@ async function stopRun() {
   })
 }
 
+/** Run a catalogued tool with the active workspace/session context. The
+ * provider remains the authority for approval and execution policy. */
+async function executeCatalogTool(tool: ToolDescriptorDto) {
+  const sessionId = selectedSessionId.value
+  const cwd = currentProject.value?.path
+  if (!sessionId || !cwd) {
+    notify.warning({
+      key: 'tool-catalog-context',
+      title: '需要工作区',
+      message: '请选择一个项目和会话后再运行工具。',
+      source: 'tools',
+    })
+    return
+  }
+  await run(`run ${tool.display_name}`, async () => {
+    const response = tool.execute_endpoint.includes('/tool-runtime/')
+      ? await api.executeToolRuntime(tool.id, { session_id: sessionId, cwd, arguments: {} })
+      : await api.executeCodeTool(tool.id, { session_id: sessionId, cwd, arguments: {} })
+    if (response.approval_summary) {
+      notify.info({ key: `tool-approval-${tool.id}`, title: '工具需要审批', message: response.approval_summary, source: 'tools' })
+    } else {
+      notify.success({ key: `tool-complete-${tool.id}`, title: '工具已完成', message: response.summary, source: 'tools' })
+    }
+    await loadMessagesAndApprovals()
+  })
+}
+
 function recordApproval(approval: ApprovalDto) {
   approvals.value = [approval, ...approvals.value.filter((item) => item.id !== approval.id)]
 }
@@ -631,6 +702,13 @@ async function handleSessionEvent(event: EventEnvelope) {
   const bySeq = new Map(events.value.map((item) => [item.seq, item]))
   bySeq.set(event.seq, event)
   events.value = [...bySeq.values()].sort((left, right) => left.seq - right.seq).slice(-80)
+  // Core took a waiting message out of the queue: it runs now, was rejected, or was dequeued.
+  if (event.type === 'interaction.queued_executed' || event.type === 'interaction.queue_cancelled' || event.type === 'interaction.queued_unreadable') {
+    const directive = event.payload?.['directive_id']
+    if (typeof directive === 'string') queuedMessages.value = queuedMessages.value.filter((item) => item.interactionId !== directive)
+    const released = event.payload?.['released_run_id']
+    if (event.type === 'interaction.queued_executed' && typeof released === 'string') attachRun(released)
+  }
   if (
     event.type.startsWith('message.') ||
     event.type.startsWith('approval.') ||
@@ -698,8 +776,6 @@ export const homeController = {
   modelApiKey,
   shellCommand,
   busy,
-  rightRailCollapsed,
-  rightRailWidth,
   currentPermission,
   currentProject,
   currentSession,
@@ -743,6 +819,7 @@ export const homeController = {
   decideApproval,
   decideApprovalById,
   stopRun,
+  executeCatalogTool,
   stoppableRunId,
   streamingReply,
   agentTurnActivities,

@@ -26,18 +26,28 @@ export const RUN_EVENT_TYPES = [
   'task.cancelled',
   'interaction.created',
   'run.queued',
+  // The session queue (queued delivery waits behind an unfinished run): a waiting message was
+  // admitted, moved behind the next run, is still waiting, was rejected, or was dequeued.
+  'interaction.queued_executed',
+  'interaction.queue_moved',
+  'interaction.queued_deferred',
+  'interaction.queued_unreadable',
+  'interaction.queue_cancelled',
   'run.failed',
   'run.model_retry_scheduled',
   'run.model_retry_resumed',
   'run.model_retry_recovered',
   'run.recovered',
-  'run.paused',
-  'run.resumed',
+  // Hard insert: the user asked to cut the run off; a step in progress was redone.
+  'interaction.interrupt_requested',
+  'run.interrupted',
   'user.response',
   'model.output.started',
   'model.output.delta',
   'model.output.completed',
   'model.output.failed',
+  // A model call the user cut off (hard insert): it ended, it did not fail.
+  'model.output.interrupted',
 ] as const
 
 /** Execution-layer instances and their tool loop. */
@@ -52,6 +62,8 @@ export const WORKER_EVENT_TYPES = [
   'worker.tool_failed',
   'worker.tool_round',
   'worker.budget_exhausted',
+  // A worker round the user cut off; the worker continues with the new instructions.
+  'worker.interrupted',
 ] as const
 
 /** Tool dispatch outcomes and the terminal stream. */
@@ -78,6 +90,9 @@ export const APPROVAL_EVENT_TYPES = [
   // "Always allow for this session": the run-scoped envelopes a decision minted.
   'approval.run_scope_granted',
   'governance.permission_decided',
+  // One delegated gate's decision (delegate-* permission modes). The approval itself moves
+  // only on approval.decided; this says who looked and what they concluded.
+  'approval.gate_decided',
 ] as const
 
 /** Supervision, context, orchestration, and operational roles. */
@@ -96,6 +111,15 @@ export const ORCHESTRATION_EVENT_TYPES = [
   'context.patch.accepted',
   'context.patch.stale',
   'context.compacted',
+  // The coordinator's own moves: handing a sub-task off, and pausing on task_wait until
+  // the results come back. Without these the reasoning trail showed sub-agents starting
+  // work with no visible reason, and a waiting coordinator looked stalled.
+  'task.dispatched',
+  'task.dispatch_rejected',
+  'task.wait_started',
+  'task.wait_resolved',
+  // An agent's own step-by-step plan (plan_update), resent whole on every change.
+  'plan.updated',
   'orchestration.mode_tier_decided',
   'orchestration.directive.rejected',
   'capability.recommended',

@@ -7,6 +7,7 @@ import AgentModeCanvas from '@/components/canvas/AgentModeCanvas.vue'
 import GovernanceRolesPanel from '@/components/agentCenter/GovernanceRolesPanel.vue'
 import { api, type AgentDefinitionDto, type AgentModeEdgeDto, type AgentModeNodeDto, type AgentModeTopologyDto, type ModeVersionDto, type ModelProviderInstanceDto, type ModelRouteDto } from '@/api'
 import { useNotifications } from '@/composables/useNotifications'
+import { modeIcon, sortModes } from '@/lib/modePresentation'
 
 const { t } = useI18n()
 const { notify } = useNotifications()
@@ -42,8 +43,9 @@ const routes = ref<ModelRouteDto[]>([])
 
 const filteredModes = computed(() => {
   const q = modeQuery.value.trim().toLowerCase()
-  if (!q) return modes.value
-  return modes.value.filter((m) => `${m.display_name} ${m.summary ?? ''}`.toLowerCase().includes(q))
+  const sorted = sortModes(modes.value)
+  if (!q) return sorted
+  return sorted.filter((m) => `${m.display_name} ${m.description ?? ''}`.toLowerCase().includes(q))
 })
 const selectedMode = computed(() => modes.value.find((m) => m.id === selectedModeId.value) ?? null)
 const selectedModeReadOnly = computed(() => {
@@ -132,7 +134,6 @@ async function createMode() {
   try {
     const m = await api.createAgentModeDraft({
       display_name: `mode-${Date.now().toString(36).slice(0, 6)}`,
-      summary: 'draft',
       nodes: [],
       edges: [],
       canvas_layout: {}
@@ -202,7 +203,7 @@ async function cloneSelectedMode() {
   try {
     const m = await api.createAgentModeDraft({
       display_name: `${source.display_name} (copy)`,
-      summary: 'draft',
+      description: source.description ?? null,
       ...toCoreTopology(modeNodes.value, modeEdges.value),
       canvas_layout: {}
     })
@@ -383,9 +384,10 @@ defineExpose({ loadModes })
             class="ac-mode-row"
             @click="selectMode(m.id)"
           >
-            <span class="ac-mode-meta">
+            <component :is="modeIcon(m.slug)" :size="14" class="ac-mode-icon" />
+            <span class="ac-mode-meta" :title="m.description ?? undefined">
               <strong>{{ m.display_name }}</strong>
-              <small>rev {{ m.revision ?? '—' }}</small>
+              <small>{{ m.description || `rev ${m.revision ?? '—'}` }}</small>
             </span>
             <UiBadge :variant="readinessVariant(m.status)">{{ m.status ?? 'draft' }}</UiBadge>
           </button>
@@ -559,6 +561,18 @@ defineExpose({ loadModes })
 .ac-mode-meta small {
   color: var(--text-muted);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The meta column takes the slack, so the name stays next to its icon instead of drifting
+   to the middle under the row's space-between. */
+.ac-mode-row > .ac-mode-meta {
+  flex: 1;
+}
+.ac-mode-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
 }
 .ac-mode-empty {
   font-size: 11px;

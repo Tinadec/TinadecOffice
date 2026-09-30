@@ -17,7 +17,7 @@ const observer = useChatroomObserver((error) => {
 })
 const { access, conversations, total, hasMoreConversations, selectedId, detail, messages, hasOlder, loading,
   loadingMessages, refreshing, forbidden, error, updatedAt } = observer
-const active = inject<MaybeRefOrGetter<boolean>>('wb:active', true)
+const active = inject<MaybeRefOrGetter<boolean>>('uie:active', true)
 const query = ref('')
 const kind = ref('')
 const workspace = ref('')

@@ -141,7 +141,7 @@ onMounted(() => {
       <PreviewIslandCard v-else-if="activeTab === 'graph'" variant="raised" padding="none" class="debug-graph-layout">
         <template #header>
           <span class="island-title">{{ t('debugStudio.tabAgentGraph') }}</span>
-          <span class="island-subtitle">{{ t('debugStudio.loadingGraph') }}</span>
+          <span class="island-subtitle">{{ t('debugStudio.graphDirectoryNote') }}</span>
         </template>
         <AgentGraphCanvas />
       </PreviewIslandCard>

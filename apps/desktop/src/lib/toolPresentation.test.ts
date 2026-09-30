@@ -74,9 +74,15 @@ describe('Core virtual tool mirror', () => {
 
   function mintedById(): string[] {
     const singles = [...policySource.matchAll(/public const string \w+ = "([a-z_]+)";/g)].map((m) => m[1])
-    const roster = policySource.match(/TinaChatToolIds\s*=\s*\[([^\]]*)\]/)
-    const chat = roster ? [...roster[1].matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]) : []
-    return [...singles, ...chat]
+    const rosters: Record<string, RegExp> = {
+      TinaChatToolIds: /TinaChatToolIds\s*=\s*\[([^\]]*)\]/,
+      OrganizationToolIds: /OrganizationToolIds\s*=\s*\[([^\]]*)\]/,
+    }
+    const roster = (name: string) => {
+      const found = policySource.match(rosters[name])
+      return found ? [...found[1].matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]) : []
+    }
+    return [...singles, ...roster('TinaChatToolIds'), ...roster('OrganizationToolIds')]
   }
 
   it('reads the real policy file, so a moved file cannot blank the check', () => {

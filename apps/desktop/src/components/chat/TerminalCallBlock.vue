@@ -184,17 +184,17 @@ function openInPanel() {
     source: panelSource,
   })
   try {
-    const wb = useUie()
-    wb.bus.dispatch({
+    const uie = useUie()
+    uie.bus.dispatch({
       command: {
         type: 'openCard',
-        scope: wb.scope.value,
+        scope: uie.scope.value,
         descriptorId: 'terminal',
         slotId: 'right',
         title: props.command?.slice(0, 24) || 'Agent terminal',
       },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     })
   } catch {
     // No layout engine on this host: the session is registered, just not visible.

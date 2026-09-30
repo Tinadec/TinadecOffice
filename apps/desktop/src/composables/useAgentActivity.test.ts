@@ -186,6 +186,71 @@ describe('useAgentActivity event wiring', () => {
     expect(progress!.message).toContain('spawnable_whitelist')
   })
 
+  it('names a coordinator-assigned worker by its run handle', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('worker.assigned', {
+      agent_slug: 'search',
+      handle: 'search#2',
+      reason: 'coordinator_assigned',
+    }, 5)
+
+    const progress = harness.progressEvents.value.find((event) => event.type === 'worker.assigned')
+    // Two instances of one role are only distinguishable by the handle.
+    expect(progress!.message).toBe('search#2 接单（协调者点名）')
+  })
+
+  it('shows the coordinator dispatching, waiting, and getting results back', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('task.dispatched', {
+      dispatch_id: 'd-1', dispatched_by: 'solo_master#1', agent: 'search', title: '找出所有引用',
+    }, 3)
+    source.emit('task.wait_started', {
+      handle: 'solo_master#1', awaited: [{ task_key: 'find-refs', handle: null, title: '找出所有引用' }],
+    }, 4)
+    source.emit('task.wait_resolved', {
+      handle: 'solo_master#1', awaited: [{ task_key: 'find-refs', handle: 'search#1', status: 'completed' }],
+    }, 9)
+
+    const steps = harness.thinkingSteps.value.filter((step) => step.type === 'dispatch' || step.type === 'wait')
+    expect(steps.map((step) => step.title)).toEqual([
+      'solo_master#1 派发给 search',
+      'solo_master#1 等待子任务结果',
+      'solo_master#1 收到子任务结果',
+    ])
+    expect(steps[1].description).toBe('找出所有引用')
+    expect(steps[2].description).toBe('search#1')
+  })
+
+  it('titles each parallel worker reasoning stream by its run handle', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('model.output.started', { response_id: 'r-a', agent_name: 'search', handle: 'search#2' }, 1)
+
+    expect(harness.thinkingSteps.value.find((step) => step.id === 'r-a')!.title).toBe('search#2')
+  })
+
+  it('keeps one live plan per agent and replaces it on each update', async () => {
+    const { harness, source } = await mount()
+
+    source.emit('plan.updated', {
+      task_id: 't-1', handle: 'solo_master#1',
+      steps: [{ step: '读现状', status: 'in_progress' }, { step: '改代码', status: 'pending' }],
+    }, 3)
+    source.emit('plan.updated', {
+      task_id: 't-1', handle: 'solo_master#1',
+      steps: [{ step: '读现状', status: 'completed' }, { step: '改代码', status: 'in_progress' }],
+    }, 4)
+
+    const plans = harness.thinkingSteps.value.filter((step) => step.type === 'plan')
+    expect(plans).toHaveLength(1)
+    expect(plans[0].title).toBe('solo_master#1 的计划（1/2）')
+    expect(plans[0].description.split('\n')).toEqual(['✓ 读现状', '→ 改代码'])
+    const progress = harness.progressEvents.value.filter((event) => event.type === 'plan.updated')
+    expect(progress.at(-1)!.message).toBe('solo_master#1：改代码')
+  })
+
   it('shows a blocked worker as unfinished work instead of completion', async () => {
     const { harness, source } = await mount()
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, Wrench } from '@lucide/vue'
+import { AlertTriangle, Archive, BarChart3, CheckCircle2, GitBranch, Layers3, ListTree, Package, RefreshCw, Wrench } from '@lucide/vue'
 import { api, type ContextBudgetShareDto, type ContextPackDto, type ModelInvocationDto, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto, type ToolDescriptorDto } from '../api'
 import { summarizeModelInvocations, type ModelUsageGroup, type ModelUsageSummary } from '../lib/modelUsage'
 import DeclaredGraphCanvas from './canvas/DeclaredGraphCanvas.vue'
@@ -12,6 +12,7 @@ const props = defineProps<{
   snapshot: OrchestrationSnapshotDto | null
   toolExecutions: ToolExecutionTimelineItemDto[]
   tools?: ToolDescriptorDto[]
+  sessionId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +24,9 @@ const emit = defineEmits<{
 type TabKey = 'timeline' | 'catalog' | 'stats'
 
 const activeTab = ref<TabKey>('timeline')
+
+const toolCatalog = ref<ToolDescriptorDto[]>([])
+const toolCatalogLoading = ref(false)
 
 const hasSnapshot = computed(() => Boolean(props.snapshot?.run))
 
@@ -63,6 +67,26 @@ async function loadModelUsage(runId?: string | null): Promise<void> {
 }
 
 watch(() => props.snapshot?.run?.id, (runId) => { void loadModelUsage(runId) }, { immediate: true })
+watch(activeTab, (tab) => {
+  if (tab === 'catalog') void loadToolCatalog()
+})
+
+async function loadToolCatalog(): Promise<void> {
+  if (props.tools?.length || toolCatalogLoading.value) return
+  toolCatalogLoading.value = true
+  try {
+    toolCatalog.value = await api.listTools()
+  } catch {
+    toolCatalog.value = []
+  } finally {
+    toolCatalogLoading.value = false
+  }
+}
+
+function refreshToolCatalog(): void {
+  toolCatalog.value = []
+  void loadToolCatalog()
+}
 
 /** The provider is named only when two rows would otherwise read as one model. */
 const ambiguousModels = computed(() => {
@@ -222,7 +246,7 @@ function onExecuteTool(tool: ToolDescriptorDto) {
           />
           <ToolCatalogBrowser
             v-else-if="activeTab === 'catalog'"
-            :tools="tools"
+            :tools="tools ?? toolCatalog"
             @execute="onExecuteTool"
           />
           <ToolStatsDashboard
@@ -230,6 +254,16 @@ function onExecuteTool(tool: ToolDescriptorDto) {
             :tool-executions="toolExecutions"
           />
         </div>
+        <button
+          v-if="activeTab === 'catalog'"
+          class="orchestration-refresh"
+          :disabled="toolCatalogLoading"
+          title="Refresh tool catalog"
+          @click="refreshToolCatalog"
+        >
+          <RefreshCw :size="12" :class="{ spinning: toolCatalogLoading }" />
+          <span>Refresh tools</span>
+        </button>
       </article>
 
       <article class="orchestration-block">
