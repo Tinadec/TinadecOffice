@@ -11,6 +11,8 @@ export interface AgentPackNodeRelationship {
   success_criteria: string[]
   /** Spawn whitelist: the only agent slugs a node may create at runtime. */
   agent_types: string[]
+  /** Governance topics a standing member is woken by (e.g. `lease_conflict`); absent on dispatch nodes. */
+  subscriptions?: string[]
 }
 
 export interface AgentPackAgentResource {
@@ -130,7 +132,7 @@ export interface AgentPackEnvelope {
 }
 
 export const GRAPH_SEED_PACK_ID = 'tinadec.graph.seed-pack'
-export const GRAPH_SEED_PACK_VERSION = '2.7.0'
+export const GRAPH_SEED_PACK_VERSION = '2.16.0'
 
 export const graphSeedPackManifest = manifestJson as AgentPackManifest
 
@@ -143,7 +145,7 @@ export const graphSeedPackManifest = manifestJson as AgentPackManifest
 // The digest must be computed over the DTO-closed manifest, i.e. the raw file as
 // written — Core canonicalizes its DTO round-trip of this same body. See
 // packIntegrity.ts for the invariant and the gates that enforce it.
-export const GRAPH_SEED_PACK_DIGEST = '3dc3e5d1d4543e5455997180b01e647ac9081063c5132e0b76985b98c3cc37ba'
+export const GRAPH_SEED_PACK_DIGEST = 'cc104972f4f2929163aec2ef3fdb2a47c23aa32d76a7c603d8eaf3ce7d0fd899'
 
 export const graphSeedPackEnvelope: AgentPackEnvelope = {
   manifest: graphSeedPackManifest,
