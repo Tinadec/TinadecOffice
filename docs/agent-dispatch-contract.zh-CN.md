@@ -54,7 +54,7 @@ Claude Code subagents（`subagent_type` = 固定名 + `description` 驱动委派
 | 选人 | `FullDuplexRunEngine.ResolveRequestedWorker`（点名优先，边/spawn/预算不变）；`NextWorkerHandle`；`worker.assigned` 带 `handle` |
 | 等待与接续 | `task_wait`（`Tools/CoreTaskWaitTool.cs` 声明，`FullDuplexRunEngine.HandleTaskWaitAsync` 执行：驻留 → 子任务跑完 → 同一轮次恢复并拿到结果）；`task_dispatch.follow_up_of` → `FollowUpBrief` |
 | 收尾 | `FullDuplexRunEngine.FormatTaskEvidenceForMeeting` |
-| 种子包 | `apps/desktop/src/agentPacks/GraphSeedPack/manifest.json`（2.9.0 起职责式描述、管线提示词对齐 `assignee`/`agent`；2.10.0 `solo_master` 持 `task_wait`；2.11.0 `solo_master`/`global_engineering` 持 `plan_update`；2.12.0 新增只读执行者 `reviewer` 与 Plan / Review / Spec 三个模式，固定 id 变为 `search` / `global_engineering` / `reviewer`） |
+| 种子包 | `apps/desktop/src/agentPacks/GraphSeedPack/manifest.json`（2.9.0 起职责式描述、管线提示词对齐 `assignee`/`agent`；2.10.0 `solo_master` 持 `task_wait`；2.11.0 `solo_master`/`global_engineering` 持 `plan_update`；2.12.0 新增只读执行者 `reviewer` 与 Plan / Review / Spec 三个模式，固定 id 变为 `search` / `global_engineering` / `reviewer`；2.13.0–2.16.0 组织/证据/worktree/环境工具；**3.0.0 对话身份合一：七模式全部由 `meeting` 对话**） |
 
 ## 边界（尚未解决）
 

@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-09-23
-**Last Updated By:** 新增 run SSE 不缓冲回归：上游未结束时 `answer.delta` 原字节到达客户端；网关实现仍是透明流代理。
-**Last Verified Commit:** aa6140d 基线工作树；bun test src：73 pass / 0 fail（11 文件，GATE_EXIT=0），含上游未关闭时首帧已到达的 SSE 回归；网关产品代码/HTTP 路径未改。
+**Last Updated:** 2026-09-30
+**Last Updated By:** 组织合约投影 9→10 路径（成员可见性 PATCH）、`GET …/projects/{id}/overview` 透传、审批门与审批规则路由；契约三件套再生零漂移。
+**Last Verified Commit:** f50dfb1 之后的工作树；bun test 75 pass / 0 fail（12 文件）。
 **Branch:** Everything-changed
 
 ## OVERVIEW

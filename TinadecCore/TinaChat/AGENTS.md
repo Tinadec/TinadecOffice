@@ -1,8 +1,8 @@
 # TinaChat 模块约定
 
-**Last Updated:** 2026-09-20
-**Last Updated By:** 智能体双向闭环：持久唤醒队列、执行结果回群、设置页群管理面；智能体侧工具面扩到 9 个，聊天室收为纯观察。修正操作数为 24。
-**Last Verified Commit:** `a82ed34` 之后的工作树（唤醒闭环 + 智能体侧 list/decide/execute 工具，均未提交）
+**Last Updated:** 2026-09-30
+**Last Updated By:** 会话 = 组织（成员/通讯录/计划室/公告板/报告/唤醒泛化）+ 按身份可见性（E5）；工具面扩到 7 个 `org_*` + `graph_view` + `recall_evidence`。
+**Last Verified Commit:** f50dfb1 之后的工作树（OrganizationTests 9/9，含可见性用例）
 **Branch:** Everything-changed
 
 ## 位置与依赖
@@ -24,6 +24,8 @@
 - 这些工具不加审批门是有意的：授权来自“模式声明 ∩ 冻结清单 ∩ 实例 grant”，副作用面只有该参与者本可发出的通信记录。若将来给工具加工作区副作用，必须先回到审批门。
 - 消息与它欠下的回合必须同事务落盘（`tina_chat_wakes`）；同一 (会话, 参与者, 原因) 未完成前只留一条待办并合并来源。不得用内存队列或 fire-and-forget 任务替代，冷却只推迟回合、绝不丢弃。
 - 意图简报不再唤醒整理者，发送者不唤醒自己：这两条是防两个整理者互相作答的回路闸，移除前必须另设替代熔断。
+- 会话 = 组织（architecture §9.1）：一会话一组织，成员自动入组（`(OrganizationId, MemberKey)` 唯一），默认联系人按派发图现算不落行，公告板只有用户/对话身份/治理层能发，报告带结构化证据与版本号。
+- 按身份可见性（E5）：`ChatParticipant.VisibilityScope`（null=全通/`own`）；受限常驻治理成员完全静音（muted 通知不改写其 `CurrentRunId`），执行者收窄为它的 run；owner/host 不可被改。
 - 后台回合以参与者所有者自身、经 Tenancy 核验的身份运行，绝不复用请求侧的环境主体；400/403/404/409 视为终止，模型故障与修订竞争退避重试。
 - 执行结果回群以接收参与者身份发出，受众与来源沿用被执行的简报且不扩大，保密等级继承简报；parked（等待人工决定）不是终态，不得播报。
 
