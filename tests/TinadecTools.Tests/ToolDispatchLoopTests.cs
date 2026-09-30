@@ -47,10 +47,12 @@ public sealed class ToolDispatchLoopTests
             blockingStarted.TrySetResult();
             await releaseBlocking.Task;
             return OkResponse(req.ToolCallId);
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: block a workspace mutation until the test releases it.");
         ToolRegistry.Register("#test.loop-control",
             (req, _) => ValueTask.FromResult(OkResponse(req.ToolCallId)),
-            requiresApproval: false, mutatesWorkspace: false);
+            requiresApproval: false, mutatesWorkspace: false,
+            description: "Test fixture: respond immediately to a reserved control-plane call.");
 
         var blockingId = NextCallId();
         var controlId = NextCallId();
@@ -93,12 +95,14 @@ public sealed class ToolDispatchLoopTests
             firstStarted.TrySetResult();
             await releaseFirst.Task;
             return OkResponse(req.ToolCallId);
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: hold the first mutation to verify mutation serialization.");
         ToolRegistry.Register("test.loop-mut-b", (req, _) =>
         {
             Interlocked.Increment(ref secondEntered);
             return ValueTask.FromResult(OkResponse(req.ToolCallId));
-        }, requiresApproval: false, mutatesWorkspace: true);
+        }, requiresApproval: false, mutatesWorkspace: true,
+            description: "Test fixture: record when the second serialized mutation starts.");
 
         var firstId = NextCallId();
         var secondId = NextCallId();
@@ -127,7 +131,8 @@ public sealed class ToolDispatchLoopTests
     {
         ToolRegistry.Register("test.loop-fast-read",
             (req, _) => ValueTask.FromResult(OkResponse(req.ToolCallId)),
-            requiresApproval: false, mutatesWorkspace: false);
+            requiresApproval: false, mutatesWorkspace: false,
+            description: "Test fixture: return an immediate read-only response.");
 
         var unknownId = NextCallId();
         var fastId = NextCallId();

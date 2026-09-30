@@ -163,14 +163,18 @@ describe('GraphSeedPack', () => {
     // session can move between any two modes; switching what the mode does is strategy, not
     // identity. A session frozen on the legacy solo_master identity migrates at admission
     // while nothing is running.
-    const conversationAgent = (key: string) => bySlug.get(key)!.nodes.find((node) => node.config.conversation === true)!.agent_ref
+    const conversationAgent = (key: string) => bySlug.get(key)?.nodes?.find((node) => node.config?.conversation === true)?.agent_ref
     for (const slug of ['solo', 'plan', 'free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
       expect(conversationAgent(slug), `${slug} conversation`).toBe('agent:meeting')
     }
     // The modes whose conversation must hold NO tools (their tier derives from effective
     // tools) switch the whole chairman ceiling off; Solo and Plan opt into their own tools.
-    const conversationBinding = (key: string) => bySlug.get(key)!.bindings.find((binding) =>
-      binding.agent_ref === 'agent:meeting' && (binding.node_key ?? 'meeting') === 'meeting')!
+    const conversationBinding = (key: string) => {
+      const binding = bySlug.get(key)?.bindings?.find((candidate) =>
+        candidate.agent_ref === 'agent:meeting' && (candidate.node_key ?? 'meeting') === 'meeting')
+      expect(binding, `${key} conversation binding`).toBeDefined()
+      return binding!
+    }
     const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
     for (const slug of ['free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
       const switches = conversationBinding(slug).tool_switches ?? {}

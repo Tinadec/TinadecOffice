@@ -1,11 +1,15 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-09-24
-**Last Updated By:** Windows x64 完整运行包、NSIS/Portable、runtime staging 与 GitHub Release 工作流；本轮实测打包版和安装版冒烟。
-**Last Verified Commit:** 92447e2；Desktop vitest 754 passed / 23 skipped，`vue-tsc` 0 错，Vite build、`check:drift`、runtime/package 校验通过；`useDetachedTabs.test.ts` 仍有既有 `beforeAll` 10 秒超时。Electron 打包版与安装版冒烟已启动本地 Core/Gateway/Tools；`v0.1.0` Actions 构建/测试/打包/冒烟/上传成功，Release 仅因 setup-dotnet post-cache 目录缺失而跳过，已在 `0.1.1` 关闭该 cache。
+**Last Updated:** 2026-10-01
+**Last Updated By:** Codex 亲自复查；修复种子包测试对可选 bindings 的直接读取，并显式断言对话绑定存在。
+**Last Verified Commit:** f67ce4f + 本次测试修复；Desktop 801 passed / 14 skipped / 0 failed（maxWorkers=2），GraphSeedPack 9/9，Electron node:test 31/31，`vue-tsc` 与 Vite build 通过，`check:drift` 零漂移。本轮没有真实 Electron/模型走查或重新打包验收。
 **Branch:** Everything-changed
 
 ## OVERVIEW
+
+### 2026-10-01 复查
+
+类型检查原在 `GraphSeedPack.test.ts:172` 失败：模式的 `bindings` 可选，测试直接 `.find`。现在安全取值并断言该绑定存在，仍严格验证每个模式的对话身份与工具开关，没有放宽清单契约。图工程组织界面存在不代表后端闭环；当前缺口与重开的任务见 `docs/agent-graph/review-2026-10-01.zh-CN.md`。
 
 ### WINDOWS DISTRIBUTION（2026-09-24）
 
