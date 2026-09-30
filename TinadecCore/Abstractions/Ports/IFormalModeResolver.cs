@@ -105,6 +105,15 @@ public sealed record DeclaredSpawnableTemplate(
 {
     /// <summary>Resource-path grants from the template's binding envelope (empty = no workspace authorization).</summary>
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
+
+    /// <summary>
+    /// The agent's published responsibility description ("what it is for / when to use it /
+    /// what it cannot do"). It is what the coordinator reads to choose a dispatch target, so it
+    /// travels into the frozen roster verbatim. Null-suppressed so bodies frozen before it
+    /// existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
 }
 
 /// <summary>
@@ -133,6 +142,31 @@ public sealed record RuntimeAgentRosterEntry(
     Guid? AgentVersionId = null,
     string VersionContentHash = "")
 {
+    /// <summary>
+    /// The agent's published responsibility description ("what it is for / when to use it /
+    /// what it cannot do"). It is what the coordinator reads to choose a dispatch target, so it
+    /// travels into the frozen roster verbatim. Null-suppressed so bodies frozen before it
+    /// existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// The facts this role wakes on, from its relationship file's <c>subscriptions</c>
+    /// (<see cref="GovernanceTopics"/>). Null when the role declares none, which keeps the derived
+    /// role-name wiring and serializes a pre-subscription body to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Triggers { get; init; }
+
+    /// <summary>
+    /// The executor ids this node may dispatch to, from its relationship file's
+    /// <c>allowed_dispatch_targets</c>. Null when the file does not declare it (the tier's roster
+    /// applies, as before); an empty list means the node may dispatch to nobody.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+
     public string SystemPrompt { get; init; } = string.Empty;
     public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
     public string ModelStrategySource { get; init; } = "agent_version";

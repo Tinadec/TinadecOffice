@@ -118,6 +118,8 @@ public sealed class MemoryDbContext : DbContext
             entity.ToTable("context_patches"); entity.HasKey(x => x.Id);
             entity.Property(x => x.Status).HasMaxLength(32).IsRequired(); entity.Property(x => x.ContentReference).HasMaxLength(1024).IsRequired(); entity.Property(x => x.ContentHash).HasMaxLength(128).IsRequired();
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.CreatedAt });
+            // Every context build reads the run's recent patches (migration 202609300001).
+            entity.HasIndex(x => new { x.SessionId, x.RunId, x.AppliedRevision }).HasDatabaseName("ix_context_patches_run_revision");
         });
         modelBuilder.Entity<MemoryCandidateRecord>(entity =>
         {

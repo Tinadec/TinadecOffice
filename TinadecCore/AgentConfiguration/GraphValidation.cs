@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using TinadecCore.Abstractions.Ports;
 
 namespace TinadecCore.AgentConfiguration;
 
@@ -93,6 +94,11 @@ internal static class GraphValidation
     /// <see cref="MaxRelationshipBytes"/>. Present-but-incomplete is rejected: the
     /// file is compiled into the role prompt and drives dispatch validation, so a
     /// partial file would silently narrow semantics.
+    ///
+    /// An optional sixth field, <c>subscriptions</c>, lists the facts the role wakes on. It is
+    /// checked here, at publish, against <see cref="GovernanceTopics"/>: a misspelled topic would
+    /// otherwise publish cleanly and the role would simply never wake, which is the most
+    /// confusing way for wiring to fail.
     /// </summary>
     internal static void ValidateRelationship(string modeKey, string nodeKey, JsonElement relationship)
     {
@@ -100,6 +106,16 @@ internal static class GraphValidation
         {
             if (!relationship.TryGetProperty(field, out _))
                 Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file is missing the '{field}' field.");
+        }
+        if (relationship.TryGetProperty("subscriptions", out var subscriptions))
+        {
+            if (subscriptions.ValueKind != JsonValueKind.Array)
+                Invalid($"mode '{modeKey}' node '{nodeKey}' relationship file 'subscriptions' must be an array of topic names.");
+            foreach (var topic in subscriptions.EnumerateArray())
+            {
+                if (topic.ValueKind != JsonValueKind.String || !GovernanceTopics.IsKnown(topic.GetString()))
+                    Invalid($"mode '{modeKey}' node '{nodeKey}' subscribes to unknown topic {topic.GetRawText()}; known topics: {string.Join(", ", GovernanceTopics.All)}.");
+            }
         }
         var serialized = JsonSerializer.Serialize(relationship);
         if (Encoding.UTF8.GetByteCount(serialized) > MaxRelationshipBytes)

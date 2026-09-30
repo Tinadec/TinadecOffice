@@ -57,7 +57,8 @@ public sealed class ExecutionAgent
         IReadOnlyList<WorkerToolDescriptor> tools,
         string? assembledInstructions,
         int maxHistoryMessages,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<WorkerInterruption>? interruptions = null)
     {
         var resolved = await _chatClients.ResolveChatAsync(agent.ModelRoutePurpose ?? "chat", ct).ConfigureAwait(false);
         if (!resolved.IsAvailable)
@@ -99,7 +100,7 @@ public sealed class ExecutionAgent
                 .ToList();
         }
 
-        var conversation = await BuildConversationAsync(ctx.UserGoal, history, maxHistoryMessages, ct).ConfigureAwait(false);
+        var conversation = await BuildConversationAsync(ctx.UserGoal, history, interruptions ?? [], maxHistoryMessages, ct).ConfigureAwait(false);
         var response = await (await _chatClients.CreateAsync(resolved, ct).ConfigureAwait(false))
             .GetResponseAsync(conversation, options, ct)
             .ConfigureAwait(false);
@@ -151,10 +152,27 @@ public sealed class ExecutionAgent
     private static async Task<IReadOnlyList<ChatMessage>> BuildConversationAsync(
         string goal,
         IReadOnlyList<WorkerToolTurn> history,
+        IReadOnlyList<WorkerInterruption> interruptions,
         int maxHistoryMessages,
         CancellationToken cancellationToken)
     {
         var messages = new List<ChatMessage>();
+        // A round the user cut off sits in the transcript where it happened: what the worker had
+        // said so far, then what the user sent. Only ever between whole tool rounds, never between a
+        // call and its result.
+        var next = 0;
+        void AddInterruptions(int afterTurns)
+        {
+            for (; next < interruptions.Count && interruptions[next].AfterTurns <= afterTurns; next++)
+            {
+                var interruption = interruptions[next];
+                if (!string.IsNullOrWhiteSpace(interruption.PartialText))
+                    messages.Add(new ChatMessage(ChatRole.Assistant, interruption.PartialText));
+                messages.Add(new ChatMessage(ChatRole.User, InterruptionNote(interruption)));
+            }
+        }
+        AddInterruptions(0);
+        var index = 0;
         foreach (var turn in history)
         {
             var assistantContents = new List<AIContent>();
@@ -165,16 +183,27 @@ public sealed class ExecutionAgent
             {
                 messages.Add(new ChatMessage(ChatRole.Tool,
                 [
-                    new FunctionResultContent(turn.CallId, ParseJsonValue(turn.ResultJson))
+                    new FunctionResultContent(turn.CallId, ModelFacingResult(turn.ResultJson))
                 ]));
             }
+            AddInterruptions(++index);
         }
+        AddInterruptions(int.MaxValue);
         return await Maf18RuntimeAdapter.CompactWorkerConversationAsync(
             new ChatMessage(ChatRole.User, goal),
             messages,
             maxHistoryMessages,
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>What the worker reads after a round the user cut off (hard insert, todo D2).</summary>
+    internal static string InterruptionNote(WorkerInterruption interruption) =>
+        "[用户打断] 你上一轮的工作在完成前被用户打断了。用户发来的新指示：\n"
+        + interruption.Steering
+        + (interruption.SkippedCalls > 0
+            ? $"\n打断时你已请求、但尚未开始的 {interruption.SkippedCalls} 个工具调用没有执行（结果里标为 not_run）。"
+            : string.Empty)
+        + "\n这是用户对目标和约束的最新意见：据此重新决定下一步，与先前要求冲突时以它为准。";
 
     private static IDictionary<string, object?> ParseArguments(string json)
     {
@@ -191,12 +220,32 @@ public sealed class ExecutionAgent
         }
     }
 
-    private static object? ParseJsonValue(string json)
+    private static readonly JsonWriterOptions ModelFacingWriterOptions = new()
+    {
+        Indented = false,
+        // Model input, never HTML: escaping only costs tokens. A default-encoded result turns every
+        // CJK character into a six-character \uXXXX sequence.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    /// <summary>
+    /// The tool result exactly as the model should read it: compact JSON with non-ASCII text left
+    /// readable. Handed over as a string because provider adapters pass a string through verbatim,
+    /// whereas a JsonElement is re-serialized with AIJsonUtilities.DefaultOptions — indented — and
+    /// keeps whatever escaping the producer wrote (TinadecTools writes \uXXXX for all non-ASCII).
+    /// Non-JSON results pass through unchanged.
+    /// </summary>
+    internal static string ModelFacingResult(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
-            return document.RootElement.Clone();
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>(json.Length);
+            using (var writer = new Utf8JsonWriter(buffer, ModelFacingWriterOptions))
+            {
+                document.RootElement.WriteTo(writer);
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
         }
         catch (JsonException)
         {
@@ -224,6 +273,18 @@ public sealed class ExecutionAgent
         Evidence = []
     };
 }
+
+/// <summary>
+/// A worker round the user cut off with a hard insert (todo D2), kept on the task so the worker is
+/// told where it happened: after <see cref="AfterTurns"/> tool turns, what it had said so far, what
+/// the user sent, and how many calls it had asked for that were not run.
+/// </summary>
+public sealed record WorkerInterruption(
+    int AfterTurns,
+    string Steering,
+    string? PartialText,
+    int SkippedCalls,
+    DateTimeOffset At);
 
 /// <summary>Manifest-backed declaration supplied to one worker model turn.</summary>
 public sealed record WorkerToolDescriptor(string ToolId, string Description, JsonElement InputSchema);

@@ -118,6 +118,14 @@ public interface ILifecycleManager
     Task<IReadOnlyList<RunState>> ListNonTerminalRunsAsync(
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// One session's unfinished runs, newest first — including runs parked on a decision, which
+    /// the admission limit does not count but a queued message still waits behind.
+    /// </summary>
+    Task<IReadOnlyList<RunState>> ListActiveRunsAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Lists non-terminal runs that are not held by a live execution lease.</summary>
     Task<IReadOnlyList<RunState>> ListLeaseEligibleRunsAsync(
         DateTimeOffset now,
@@ -157,6 +165,17 @@ public interface ILifecycleManager
         Guid runId,
         IReadOnlyList<Guid> directiveIds,
         string drainedStatus,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves still-pending directives from one run to another run of the same session, keeping
+    /// their creation order: how a queue of messages waits behind whichever run the session is
+    /// working on now. Returns how many moved.
+    /// </summary>
+    Task<int> RequeueRunDirectivesAsync(
+        Guid fromRunId,
+        IReadOnlyList<Guid> directiveIds,
+        Guid toRunId,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -76,7 +76,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var laneOrder = checkpoint.Lanes
             .Where(lane => !lane.Escalated
                 && lane.Status is LaneStatus.Pending or LaneStatus.Executing
-                && checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && task.Status is "pending" or "ready" or "running"))
+                && checkpoint.Tasks.Any(task => LaneKeyOf(task) == lane.LaneKey && (task.Status is "running" || IsDispatchable(task, checkpoint.Tasks))))
             .Select(lane => lane.LaneKey)
             .OrderBy(key => string.Equals(key, "main", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(key => key, StringComparer.OrdinalIgnoreCase)
@@ -91,7 +91,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 if (dispatched.Count >= budget) break;
                 var ready = checkpoint.Tasks
                     .Where(item => LaneKeyOf(item) == laneKey
-                        && item.Status is "pending" or "ready"
+                        && IsDispatchable(item, checkpoint.Tasks)
                         && item.Dependencies.All(dependency => checkpoint.Tasks.Any(other => other.TaskKey == dependency && other.Status == "completed")))
                     .OrderBy(item => item.Priority).ThenBy(item => item.TaskKey, StringComparer.Ordinal)
                     .FirstOrDefault(item => dispatched.All(pair => pair.Task != item));
@@ -141,8 +141,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         foreach (var (_, task) in dispatched)
         {
+            // See the single-lane path: a task resuming from task_wait keeps its attempt.
+            if (task.Status != "waiting") task.Attempt++;
             task.Status = "running";
-            task.Attempt++;
             task.InputContextRevision = checkpoint.ContextRevision;
             task.Waits = [];
         }
@@ -158,15 +159,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var workers = new Dictionary<Guid, RuntimeAgentInstance>();
         foreach (var (_, task) in dispatched)
         {
-            try
-            {
-                workers[task.TaskId] = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
-            }
-            catch (WorkerAssignmentException ex)
-            {
-                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
-                    FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
-            }
+            // Same assignment path as the single-lane tick: worker, write-scope lease, organization.
+            if (await AssignWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false) is { } assigned)
+                workers[task.TaskId] = assigned;
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
 
@@ -1010,21 +1005,64 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         if (!Guid.TryParse(run.RunId, out var runId)) return 0;
         var released = 0;
-        foreach (var directive in pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList())
+        // Oldest first (the lifecycle lists pending directives in creation order). The queue keeps
+        // its order (todo D1): only its head is admitted, and the rest move to wait behind whatever
+        // run the session is working on next, so two queued messages never run side by side.
+        var queue = pending.Where(item => string.Equals(item.Kind, "queued_interaction", StringComparison.Ordinal)).ToList();
+        for (var index = 0; index < queue.Count; index++)
         {
-            var status = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
-            // Deferred means the user message is still accepted but no run slot is
-            // available yet. Keep it pending so the hosted terminal repair loop can
-            // retry; only a successful admission or permanently unreadable payload
-            // is terminal for the directive itself.
-            if (!string.Equals(status, "deferred", StringComparison.Ordinal))
+            var directive = queue[index];
+            var outcome = await ReleaseQueuedInteractionAsync(run, directive, cancellationToken).ConfigureAwait(false);
+            switch (outcome.Status)
             {
-                await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], status, cancellationToken).ConfigureAwait(false);
-                released++;
+                case "executed":
+                    await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], "executed", cancellationToken).ConfigureAwait(false);
+                    released++;
+                    await MoveQueueAsync(run, queue.Skip(index + 1).ToArray(), outcome.OwnerRunId!.Value, cancellationToken).ConfigureAwait(false);
+                    return released;
+                case "busy":
+                    // Another run of the session is still working (a parallel one, or one admitted a
+                    // moment ago): the whole remaining queue now waits behind it, in order.
+                    await MoveQueueAsync(run, queue.Skip(index).ToArray(), outcome.OwnerRunId!.Value, cancellationToken).ConfigureAwait(false);
+                    return released;
+                case "rejected":
+                    await _lifecycle.DrainRunDirectivesAsync(runId, [directive.Id], "rejected", cancellationToken).ConfigureAwait(false);
+                    released++;
+                    continue;
+                default:
+                    // Deferred: still accepted, but nothing can admit it right now. It stays pending
+                    // here for the terminal repair pass, and nothing behind it may overtake it.
+                    return released;
             }
         }
         return released;
     }
+
+    /// <summary>Moves the rest of a queue behind the run that now owns it, and says so on both runs.</summary>
+    private async Task MoveQueueAsync(RunState from, IReadOnlyList<RunDirective> rest, Guid ownerRunId, CancellationToken cancellationToken)
+    {
+        if (rest.Count == 0) return;
+        var fromRunId = Guid.Parse(from.RunId);
+        var moved = await _lifecycle.RequeueRunDirectivesAsync(fromRunId, rest.Select(item => item.Id).ToArray(), ownerRunId, cancellationToken).ConfigureAwait(false);
+        if (moved == 0) return;
+        await AppendEventAsync(fromRunId, "interaction.queue_moved",
+            $"{moved} queued message(s) now wait behind run {ownerRunId:N}.",
+            new { behind_run_id = ownerRunId, directive_ids = rest.Select(item => item.Id).ToArray(), moved }, cancellationToken).ConfigureAwait(false);
+        // The new owner announces what waits behind it, exactly as when a message is first queued.
+        foreach (var directive in rest)
+        {
+            var payload = ParseQueuedInteractionPayload(directive.PayloadJson);
+            await AppendEventAsync(ownerRunId, "run.queued", "Interaction queued behind the active run", new
+            {
+                interaction_id = directive.Id,
+                directive_id = directive.Id,
+                content = payload?.Content,
+                moved_from_run_id = fromRunId
+            }, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed record QueuedRelease(string Status, Guid? OwnerRunId = null);
 
     /// <summary>
     /// Re-admits an interaction that was queued behind this run, now that the run has
@@ -1033,13 +1071,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// for becomes the run that actually answers it.
     /// </summary>
     /// <returns>
-    /// The drain status to record. <c>executed</c> when a run was admitted;
-    /// <c>deferred</c> when it still could not be admitted (the reason is published on
-    /// the run rather than swallowed) or when no coordinator is available in this host;
-    /// <c>rejected</c> only when the stored payload cannot be read at all, because a
-    /// message that cannot be reconstructed can never be executed.
+    /// <c>executed</c> with the admitted run; <c>busy</c> with the session run it must now wait
+    /// behind (queued still means "after", so a parallel run still working blocks it);
+    /// <c>deferred</c> when it still could not be admitted and no run can own it (the reason is
+    /// published on the run rather than swallowed) or when no coordinator is available in this
+    /// host; <c>rejected</c> only when the stored payload cannot be read at all, because a message
+    /// that cannot be reconstructed can never be executed.
     /// </returns>
-    private async Task<string> ReleaseQueuedInteractionAsync(RunState run, RunDirective directive, CancellationToken cancellationToken)
+    private async Task<QueuedRelease> ReleaseQueuedInteractionAsync(RunState run, RunDirective directive, CancellationToken cancellationToken)
     {
         var runId = Guid.Parse(run.RunId);
         var payload = ParseQueuedInteractionPayload(directive.PayloadJson);
@@ -1049,7 +1088,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             await AppendEventAsync(runId, "interaction.queued_unreadable",
                 "A queued interaction could not be re-admitted: its stored payload carries no content.",
                 new { directive_id = directive.Id, code = "queued_payload_unreadable" }, cancellationToken).ConfigureAwait(false);
-            return "rejected";
+            return new QueuedRelease("rejected");
         }
 
         // Resolved lazily for the same reason the other optional collaborators are:
@@ -1060,7 +1099,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             await AppendEventAsync(runId, "interaction.queued_deferred",
                 "A queued interaction is still pending: this host has no run coordinator to admit it.",
                 new { directive_id = directive.Id, code = "run_coordinator_unavailable" }, cancellationToken).ConfigureAwait(false);
-            return "deferred";
+            return new QueuedRelease("deferred");
         }
 
         try
@@ -1073,11 +1112,21 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 TargetRunId: null,
                 ExpectedContextRevision: null,
                 MeetingModelOverride: payload.MeetingModelOverride,
-                ModeVersionId: payload.ModeVersionId), cancellationToken).ConfigureAwait(false);
+                ModeVersionId: payload.ModeVersionId,
+                QueueBehindActiveRun: true), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "interaction.queued_executed",
                 "A queued interaction was admitted as its own run once this run finished.",
                 new { directive_id = directive.Id, released_run_id = submission.RunId, existing = submission.Existing }, cancellationToken).ConfigureAwait(false);
-            return "executed";
+            return new QueuedRelease("executed", submission.RunId);
+        }
+        catch (RunAdmissionException ex) when (ex.Code is "SESSION_BUSY" or "ACTIVE_RUN_LIMIT")
+        {
+            if (await NewestActiveRunAsync(directive.SessionId, runId, cancellationToken).ConfigureAwait(false) is { } owner)
+                return new QueuedRelease("busy", owner);
+            await AppendEventAsync(runId, "interaction.queued_deferred",
+                $"A queued interaction is still waiting: {ex.Message}",
+                new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
+            return new QueuedRelease("deferred");
         }
         catch (RunAdmissionException ex)
         {
@@ -1086,8 +1135,18 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             await AppendEventAsync(runId, "interaction.queued_deferred",
                 $"A queued interaction is still waiting: {ex.Message}",
                 new { directive_id = directive.Id, code = ex.Code }, cancellationToken).ConfigureAwait(false);
-            return "deferred";
+            return new QueuedRelease("deferred");
         }
+    }
+
+    /// <summary>The session run a waiting message should now sit behind: the newest unfinished one other than <paramref name="except"/>.</summary>
+    private async Task<Guid?> NewestActiveRunAsync(Guid sessionId, Guid except, CancellationToken cancellationToken)
+    {
+        var active = await _lifecycle.ListActiveRunsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return active.Where(item => Guid.TryParse(item.RunId, out var id) && id != except)
+            .OrderByDescending(item => item.StartedAt)
+            .Select(item => (Guid?)Guid.Parse(item.RunId))
+            .FirstOrDefault();
     }
 
     internal sealed record QueuedInteractionPayload(
@@ -1224,7 +1283,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             var laneTasks = ReadLaneTasks(document.RootElement);
             nodes = laneTasks.Length == 0
                 ? []
-                : ValidateAndMaterializeGraph(laneTasks, configuration.Orchestration.MaxTasksPerLane);
+                : ValidateAndMaterializeGraph(laneTasks, configuration.Orchestration.MaxTasksPerLane, DispatchRosterOf(configuration));
         }
         catch (Exception ex) when (ex is JsonException or InvalidTaskGraphException)
         {
@@ -1458,7 +1517,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     cancellationToken).ConfigureAwait(false);
                 laneParseError = planner.LastParseErrorDetail;
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
-                return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane);
+                return ValidateAndMaterializeGraph(planned, configuration.Orchestration.MaxTasksPerLane, DispatchRosterOf(configuration));
             }
             catch (InvalidTaskGraphException ex)
             {

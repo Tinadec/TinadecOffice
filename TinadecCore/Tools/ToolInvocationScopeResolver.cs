@@ -143,7 +143,29 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             policy.SerializeWorkspaceWrites,
             frozenManifest.Tools,
             frozenManifest.ManifestHash,
-            policy.PermissionMode);
+            policy.PermissionMode,
+            ReadFrozenDispatchRoster(frozen.Content));
+    }
+
+    /// <summary>Reads the frozen dispatch roster (ids + responsibility text); null when absent.</summary>
+    internal static IReadOnlyList<DispatchRosterEntry>? ReadFrozenDispatchRoster(string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            if (!TryGetProperty(document.RootElement, out var roster, "dispatchRoster", "dispatch_roster")
+                || roster.ValueKind != JsonValueKind.Array)
+                return null;
+            return roster.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new DispatchRosterEntry(ReadRootText(item, "id") ?? string.Empty, ReadRootText(item, "description") ?? string.Empty))
+                .Where(item => item.Id.Length > 0)
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static bool IsToolAllowed(IReadOnlyList<string> allowedTools, string toolId) =>
@@ -273,7 +295,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
     {
         var normalized = permissionMode?.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(normalized)
-            && normalized is not ("ask" or "default" or "auto-approve" or "full-access"))
+            && normalized is not ("ask" or "default" or "auto-approve" or "full-access")
+            && !ApprovalDelegationModes.IsDelegated(normalized))
         {
             throw new UnauthorizedAccessException("Frozen run permission mode does not permit tool execution.");
         }

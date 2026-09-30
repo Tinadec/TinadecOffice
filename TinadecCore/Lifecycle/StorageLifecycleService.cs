@@ -783,6 +783,22 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
         return new RunDirectiveDrainResult(updated);
     }
 
+    public async Task<int> RequeueRunDirectivesAsync(Guid fromRunId, IReadOnlyList<Guid> directiveIds, Guid toRunId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(directiveIds);
+        if (directiveIds.Count == 0 || fromRunId == toRunId) return 0;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var target = await db.Runs.AsNoTracking().Where(x => x.Id == toRunId).Select(x => new { x.SessionId }).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Target run was not found.");
+        var now = DateTimeOffset.UtcNow;
+        // Only pending rows of the same session move; CreatedAt is untouched, so the order survives the move.
+        return await db.RunDirectives
+            .Where(x => x.RunId == fromRunId && directiveIds.Contains(x.Id) && x.Status == "pending" && x.SessionId == target.SessionId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.RunId, toRunId)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<RunDirective> EnqueueRunDirectiveAsync(RunDirectiveWrite write, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

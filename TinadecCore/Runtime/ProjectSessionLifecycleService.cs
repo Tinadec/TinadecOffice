@@ -25,15 +25,18 @@ public sealed class ProjectSessionLifecycleService
     private readonly ProjectSessionStore _store;
     private readonly IDbContextFactory<LifecycleDbContext> _lifecycleFactory;
     private readonly StoragePaths _paths;
+    private readonly ISessionOrganization? _organization;
 
     public ProjectSessionLifecycleService(
         ProjectSessionStore store,
         IDbContextFactory<LifecycleDbContext> lifecycleFactory,
-        StoragePaths paths)
+        StoragePaths paths,
+        ISessionOrganization? organization = null)
     {
         _store = store;
         _lifecycleFactory = lifecycleFactory;
         _paths = paths;
+        _organization = organization;
     }
 
     public Task<ProjectRecord> ArchiveProjectAsync(Guid projectId, CancellationToken ct = default) =>
@@ -76,7 +79,12 @@ public sealed class ProjectSessionLifecycleService
     private async Task<SessionRecord> TransitionSessionAsync(Guid sessionId, string target, CancellationToken ct)
     {
         await ThrowIfAnyActiveRunAsync([sessionId], ct).ConfigureAwait(false);
-        return await _store.SetSessionLifecycleAsync(sessionId, target, ct).ConfigureAwait(false);
+        var record = await _store.SetSessionLifecycleAsync(sessionId, target, ct).ConfigureAwait(false);
+        // An archived or trashed session keeps its organization readable and refuses writes to it;
+        // restoring it reopens it. Nothing in the organization is ever deleted by a transition.
+        if (_organization is not null)
+            await _organization.SetArchivedAsync(sessionId, target != LifecycleStatuses.Active, ct).ConfigureAwait(false);
+        return record;
     }
 
     /// <summary>Permanently deletes a trashed session: lifecycle rows, memory rows, and Core-owned run files.</summary>

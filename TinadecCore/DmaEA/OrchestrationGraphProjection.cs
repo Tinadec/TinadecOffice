@@ -81,25 +81,35 @@ internal static class OrchestrationGraphProjection
     }
 
     /// <summary>
-    /// Observed data flows projected from the durable task graph: every task in
-    /// the checkpoint is a dispatch through the conversation identity (or the
-    /// legacy "meeting" fallback) to the task's resolved worker, with the result
-    /// flowing back on completion. Derived from checkpoint state, so replay and
-    /// the orchestration projection agree on the same durable source.
+    /// Observed data flows projected from the durable task graph. A planned task is a
+    /// dispatch through the conversation identity (or the legacy "meeting" fallback); a
+    /// task handed off with task_dispatch flows from the instance that dispatched it
+    /// (<c>via = "task_dispatch"</c>), so the solo master's sub-agents hang off the
+    /// master instead of appearing as the conversation's own work. <c>handle</c> is the
+    /// run-scoped instance name (search#2) that tells two instances of one role apart;
+    /// <c>follow_up_of</c> is set when the brief continued an earlier sub-task. Derived
+    /// from checkpoint state, so replay and the orchestration projection agree.
     /// </summary>
     public static IReadOnlyList<object> FlowsFromCheckpoint(
         FullDuplexCheckpointV1? checkpoint,
         string? conversationTemplateSlug)
     {
         if (checkpoint is null) return [];
-        var source = string.IsNullOrWhiteSpace(conversationTemplateSlug) ? "meeting" : conversationTemplateSlug!;
-        return checkpoint.Tasks.Select(task => (object)new
+        var conversation = string.IsNullOrWhiteSpace(conversationTemplateSlug) ? "meeting" : conversationTemplateSlug!;
+        var byId = checkpoint.Tasks.ToDictionary(task => task.TaskId);
+        return checkpoint.Tasks.Select(task =>
         {
-            from = source,
-            to = string.IsNullOrWhiteSpace(task.WorkerAgentSlug) ? "worker.general" : task.WorkerAgentSlug.Trim(),
-            task_key = task.TaskKey,
-            kind = "dispatch",
-            status = task.Status
+            var dispatcher = task.DispatchedByTaskId is { } by && byId.TryGetValue(by, out var parent) ? parent : null;
+            return (object)new
+            {
+                from = dispatcher is null ? conversation : dispatcher.WorkerHandle ?? dispatcher.WorkerAgentSlug ?? dispatcher.TaskKey,
+                to = string.IsNullOrWhiteSpace(task.WorkerAgentSlug) ? "worker.general" : task.WorkerAgentSlug.Trim(),
+                handle = task.WorkerHandle,
+                task_key = task.TaskKey,
+                kind = "dispatch",
+                via = dispatcher is null ? "plan" : "task_dispatch",
+                status = task.Status
+            };
         }).ToArray();
     }
 

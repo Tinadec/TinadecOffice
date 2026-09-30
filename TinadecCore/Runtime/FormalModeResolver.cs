@@ -204,6 +204,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     ReadStringArray(agent, "capabilities"))
                 {
                     SystemPrompt = systemPrompt,
+                    Description = OptionalString(agent, "description"),
                     Enabled = enabled,
                     Order = order
                 });
@@ -255,6 +256,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                     item.Node.AgentVersionHash)
                 {
                     SystemPrompt = item.SystemPrompt,
+                    Description = item.Description,
+                    Triggers = item.Node.RelationshipSubscriptions is { Count: > 0 } subscriptions ? subscriptions : null,
+                    AllowedDispatchTargets = item.Node.RelationshipDispatchTargets,
                     ModelStrategyJson = item.ModelStrategyJson,
                     ModelStrategySource = item.ModelStrategySource,
                     Enabled = item.Enabled,
@@ -369,7 +373,8 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 toolScope,
                 ReadStringArray(agent, "capabilities"))
             {
-                ResourceGrants = envelopes.TemplateGrants.TryGetValue(slug, out var grants) ? grants : []
+                ResourceGrants = envelopes.TemplateGrants.TryGetValue(slug, out var grants) ? grants : [],
+                Description = OptionalString(agent, "description")
             });
         }
         return result.OrderBy(item => item.Slug, StringComparer.Ordinal).ToArray();
@@ -518,10 +523,32 @@ internal sealed class FormalModeResolver : IFormalModeResolver
             // Relationship files are optional per node; when present, the
             // structured `agent_types` whitelist is the spawnable-template source.
             List<string> relationshipAgentTypes = [];
-            if (node.TryGetProperty("relationship", out var relationship) && relationship.ValueKind == JsonValueKind.Object
-                && relationship.TryGetProperty("agent_types", out var agentTypes))
+            List<string> relationshipSubscriptions = [];
+            // Null (not empty) when the relationship file does not say: "may dispatch to nobody" and
+            // "did not declare" are different statements, and only the second keeps the tier's roster.
+            List<string>? relationshipDispatchTargets = null;
+            if (node.TryGetProperty("relationship", out var relationship) && relationship.ValueKind == JsonValueKind.Object)
             {
-                relationshipAgentTypes = ReadStringArray(relationship, "agent_types").ToList();
+                if (relationship.TryGetProperty("agent_types", out _))
+                    relationshipAgentTypes = ReadStringArray(relationship, "agent_types").ToList();
+                if (relationship.TryGetProperty("allowed_dispatch_targets", out var targetsElement) && targetsElement.ValueKind == JsonValueKind.Array)
+                    relationshipDispatchTargets = ReadStringArray(relationship, "allowed_dispatch_targets")
+                        .Select(target => target.Trim())
+                        .Where(target => target.Length > 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                // Optional: the facts this role wakes on. Publishing already rejected unknown topics,
+                // so a snapshot that carries one is corrupt rather than merely newer.
+                if (relationship.TryGetProperty("subscriptions", out _))
+                {
+                    relationshipSubscriptions = ReadStringArray(relationship, "subscriptions")
+                        .Select(topic => topic.Trim().ToLowerInvariant())
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    var unknown = relationshipSubscriptions.Where(topic => !GovernanceTopics.IsKnown(topic)).ToArray();
+                    if (unknown.Length > 0)
+                        throw new InvalidDataException($"Mode node '{RequiredString(node, "node_key")}' subscribes to unknown topic(s): {string.Join(", ", unknown)}.");
+                }
             }
             result.Add(new ModeNodeSnapshot(
                 RequiredString(node, "node_key"),
@@ -536,7 +563,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 RawNullableJson(node, "model_strategy_override"),
                 OptionalString(node, "label"),
                 config,
-                relationshipAgentTypes));
+                relationshipAgentTypes,
+                relationshipSubscriptions,
+                relationshipDispatchTargets));
         }
         if (result.Count == 0) throw new InvalidDataException($"ModeVersion '{version.Id}' snapshot contains no nodes.");
         if (result.Select(item => item.NodeKey).Distinct(StringComparer.Ordinal).Count() != result.Count)
@@ -674,6 +703,7 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         IReadOnlyList<string> Capabilities)
     {
         public string SystemPrompt { get; init; } = string.Empty;
+        public string? Description { get; init; }
         public bool Enabled { get; init; } = true;
         public int Order { get; init; }
     }
@@ -691,7 +721,9 @@ internal sealed class FormalModeResolver : IFormalModeResolver
         string? ModelStrategyOverrideJson,
         string? Label = null,
         JsonElement? Config = null,
-        IReadOnlyList<string>? RelationshipAgentTypes = null);
+        IReadOnlyList<string>? RelationshipAgentTypes = null,
+        IReadOnlyList<string>? RelationshipSubscriptions = null,
+        IReadOnlyList<string>? RelationshipDispatchTargets = null);
 
     /// <summary>Per-mode binding envelope narrowing parsed from the snapshot.</summary>
     private sealed record BindingEnvelopes(

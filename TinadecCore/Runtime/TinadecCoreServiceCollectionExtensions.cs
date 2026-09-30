@@ -14,6 +14,7 @@ using TinadecCore.Models;
 using TinadecCore.Prompts;
 using TinadecCore.Skills;
 using TinadecCore.Tenancy;
+using TinadecCore.AgentGraph;
 using TinadecCore.TinaChat;
 using TinadecCore.Tools;
 using TinadecCore.VectorStore;
@@ -49,6 +50,7 @@ public static class TinadecCoreServiceCollectionExtensions
         new ToolsModuleRegistrar().Register(builder);
         new DmaEAModuleRegistrar().Register(builder);
 
+        new AgentGraphModuleRegistrar().Register(builder);
         new TinaChatModuleRegistrar().Register(builder);
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
@@ -61,9 +63,18 @@ public static class TinadecCoreServiceCollectionExtensions
             sp.GetRequiredService<ITinaChatRunService>(),
             sp.GetRequiredService<ITenantContextAccessor>(),
             sp.GetRequiredService<IDbContextFactory<AgentConfigurationDbContext>>())));
+        // The session as a graph (runs, instances, tasks, leases, organization members): composed here
+        // because only the host reads across those modules. Serves graph_view and the topology endpoint.
+        services.AddSingleton<ISessionTopology, SessionTopologyService>();
         // TinaChat turns are owed by durable rows, not by this process: one singleton scheduler drains them.
         services.AddSingleton<TinaChatWakeService>();
         services.AddHostedService(sp => sp.GetRequiredService<TinaChatWakeService>());
+        // Delegated approval gates (the delegate-* permission modes): one singleton asks each approval's
+        // gates in order and applies the outcome; the same instance serves the gates' read side.
+        services.AddOptions<ApprovalGateOptions>().BindConfiguration(ApprovalGateOptions.SectionName);
+        services.AddSingleton<ApprovalGateService>();
+        services.AddSingleton<IApprovalGateLedger>(sp => sp.GetRequiredService<ApprovalGateService>());
+        services.AddHostedService(sp => sp.GetRequiredService<ApprovalGateService>());
 
         // Governance is registered before DmaEA so it can remain independently
         // packageable. The composition root replaces its fail-closed placeholder

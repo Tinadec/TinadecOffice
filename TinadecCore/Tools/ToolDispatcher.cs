@@ -49,6 +49,24 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly ISessionWorkspaceBinder? _workspaceBinder;
     private readonly ITinaChatToolGateway? _tinaChat;
     private readonly IMessageAttachmentStore? _attachments;
+    /// <summary>
+    /// The resource ledger, when the host registered one. Optional so a trimmed composition still
+    /// dispatches tools; the ledger only ever adds a refusal, never authority.
+    /// </summary>
+    private readonly IResourceLeaseService? _resourceLeases;
+
+    /// <summary>Where governance facts the dispatcher sees (a lost lease, a parked approval) are raised. Optional, best-effort.</summary>
+    private readonly IGovernanceTopicSink? _topics;
+
+    /// <summary>The session-as-a-graph projection behind <c>graph_view</c>. Optional: a trimmed host simply does not offer the tool.</summary>
+    private readonly ISessionTopology? _topology;
+
+    /// <summary>The session's evidence archive behind <c>recall_evidence</c>. Optional like the graph.</summary>
+    private readonly IEvidenceArchive? _evidence;
+    /// <summary>The environment steward's registry behind <c>environment_*</c>. Optional like the archive.</summary>
+    private readonly IEnvironmentRegistry? _environments;
+    /// <summary>Standing approvals a person gave (todo E7): command prefixes honored at prepare, shell's per-session delegation opt-in re-checked at the gates.</summary>
+    private readonly IApprovalRules? _approvalRules;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -63,7 +81,13 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ILogger<ToolDispatcher> logger,
         ISessionWorkspaceBinder? workspaceBinder = null,
         ITinaChatToolGateway? tinaChat = null,
-        IMessageAttachmentStore? attachments = null)
+        IMessageAttachmentStore? attachments = null,
+        IResourceLeaseService? resourceLeases = null,
+        IGovernanceTopicSink? topics = null,
+        ISessionTopology? topology = null,
+        IEvidenceArchive? evidence = null,
+        IEnvironmentRegistry? environments = null,
+        IApprovalRules? approvalRules = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -78,6 +102,12 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _workspaceBinder = workspaceBinder;
         _tinaChat = tinaChat;
         _attachments = attachments;
+        _resourceLeases = resourceLeases;
+        _topics = topics;
+        _topology = topology;
+        _evidence = evidence;
+        _environments = environments;
+        _approvalRules = approvalRules;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -97,6 +127,42 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
 
             var parametersJson = request.Params is { } parameters ? parameters.GetRawText() : "{}";
             if (!IsObjectOrNull(parametersJson)) return Blocked("Tool parameters must be a JSON object or null.");
+
+            // Claim the resource before anything else this call does. A refusal here is correctable —
+            // the model can wait or work elsewhere — so it goes back to the worker as a tool result
+            // naming the current holder, instead of being discovered as a destroyed file later.
+            if (_resourceLeases is not null)
+            {
+                var claim = ResourceClaimResolver.Resolve(
+                    descriptor.Entry.Id, ReadStringArguments(parametersJson), scope.WorkspaceRoot, descriptor.Entry.MutatesWorkspace);
+                if (claim is not null)
+                {
+                    var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(
+                        claim,
+                        scope.SessionId,
+                        scope.RunId,
+                        scope.TaskId,
+                        scope.AgentInstanceId,
+                        $"Tool '{descriptor.Entry.Id}' by agent {scope.AgentInstanceId}."), cancellationToken).ConfigureAwait(false);
+                    if (!decision.Granted)
+                    {
+                        // Announced as well as refused: a governance role subscribed to
+                        // lease_conflict must see the collision, not only the worker that lost it.
+                        await AppendEventAsync(scope.RunId, ResourceLeaseMessages.ConflictEventType,
+                            $"Tool '{descriptor.Entry.Id}' was refused: {claim.Kind} '{claim.ResourceKey}' is held by another run.",
+                            ResourceLeaseMessages.ConflictPayload(claim, decision.Conflicts, scope.RunId, scope.TaskId, ResourceLeaseMessages.DetectedAtToolCall),
+                            cancellationToken, scope.TaskId, descriptor.Entry.Id, "warning").ConfigureAwait(false);
+                        await RaiseTopicAsync(scope, GovernanceTopics.LeaseConflict,
+                            $"Tool '{descriptor.Entry.Id}' was refused (tool_call): {ResourceLeaseMessages.Describe(claim, decision.Conflicts)}",
+                            "lease", decision.Conflicts.FirstOrDefault()?.Id.ToString("N"), cancellationToken).ConfigureAwait(false);
+                        return Blocked(
+                            $"Another run is using this resource: {ResourceLeaseMessages.Describe(claim, decision.Conflicts)} Wait for it to finish, "
+                            + "work in a different worktree, or choose a different file.",
+                            errorCategory: RunErrorTaxonomy.ResourceConflict);
+                    }
+                }
+            }
+
             var requiresApproval = descriptor.Entry.MutatesWorkspace || descriptor.Entry.RequiresApproval;
             var toolCallKey = ResolveToolCallKey(request, runId, taskId, agentId, descriptor.Entry.Id, parametersJson);
             var preparation = await _executions.PrepareAsync(new ToolExecutionPrepareRequest(
@@ -179,6 +245,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                             status = authorization.Status,
                             lane_key = execution.LaneKey
                         }, cancellationToken, scope.TaskId, descriptor.Entry.Id, "warning").ConfigureAwait(false);
+                    await RaiseTopicAsync(scope, GovernanceTopics.ApprovalRequested,
+                        $"Tool '{descriptor.Entry.Id}' ({execution.Risk} risk) is waiting for a resource-authorization decision.",
+                        "approval", authorization.PermissionRequestId?.ToString(), cancellationToken).ConfigureAwait(false);
                     return PreparedResult(execution, preparation.Existing, authorization);
                 }
                 if (authorization.Status == ToolDispatchStatus.Blocked)
@@ -201,7 +270,10 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 if (execution.RequiresApproval)
                 {
                     execution = await _executions.EnsureApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
-                    var minted = await _executions.TryMintPreAuthorizedApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
+                    // A person's standing command-prefix rule is honored first: a covered call
+                    // never reaches a human, and its audit says where it came from (todo E7).
+                    var minted = await HonorCommandPrefixAsync(scope, descriptor.Entry, execution, cancellationToken).ConfigureAwait(false)
+                        ?? await _executions.TryMintPreAuthorizedApprovalAsync(execution.Id, cancellationToken).ConfigureAwait(false);
                     if (minted is not null)
                     {
                         execution = minted.Snapshot;
@@ -238,6 +310,11 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                         risk = execution.Risk,
                         lane_key = execution.LaneKey
                     }, cancellationToken, scope.TaskId, descriptor.Entry.Id).ConfigureAwait(false);
+                    // A call that was already approved (pre-authorized) owes nobody a look.
+                    if (execution.ApprovalId is not null && !string.Equals(execution.Status, "approved", StringComparison.OrdinalIgnoreCase))
+                        await RaiseTopicAsync(scope, GovernanceTopics.ApprovalRequested,
+                            $"Tool '{descriptor.Entry.Id}' ({execution.Risk} risk) is waiting for approval.",
+                            "approval", execution.ApprovalId?.ToString(), cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -620,6 +697,10 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                         attempt,
                         tool_success = toolSuccess
                     }, cancellationToken, execution.TaskId, descriptor.Id, toolSuccess == false ? "warning" : "info").ConfigureAwait(false);
+                    if (execution.MutatesWorkspace && execution.WorkspaceSnapshotId is { } observedSnapshot)
+                        await ObserveUnclaimedChangesAsync(scope, descriptor.Id, execution, observedSnapshot, cancellationToken).ConfigureAwait(false);
+                    if (toolSuccess != false && WorktreeTools.IsMutation(descriptor.Id))
+                        await StewardWorktreeAsync(scope, descriptor.Id, execution, response.Result, cancellationToken).ConfigureAwait(false);
                     return new ToolDispatchResultDto
                     {
                         Status = ToolDispatchStatus.Completed,
@@ -708,6 +789,13 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             return await ExecuteTaskDispatchToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
+        if (CoreVirtualToolPolicy.IsTaskWait(wire.ToolId) || CoreVirtualToolPolicy.IsPlanUpdate(wire.ToolId))
+        {
+            // The run engine executes task_wait and plan_update against the task graph it owns;
+            // reaching the dispatcher means the call came from outside a worker's tool loop.
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = $"{wire.ToolId} can only be called from inside a run's tool loop." };
+        }
+
         if (CoreVirtualToolPolicy.IsReadAttachment(wire.ToolId))
         {
             return _attachments is null
@@ -715,9 +803,24 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 : await CoreAttachmentReadTool.ExecuteAsync(_attachments, scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
-        if (CoreVirtualToolPolicy.IsTinaChat(wire.ToolId))
+        if (CoreVirtualToolPolicy.IsTinaChat(wire.ToolId) || CoreVirtualToolPolicy.IsOrganization(wire.ToolId))
         {
             return await ExecuteTinaChatToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsGraphView(wire.ToolId))
+        {
+            return await ExecuteGraphViewAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsRecallEvidence(wire.ToolId))
+        {
+            return await ExecuteRecallEvidenceAsync(scope, wire, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (CoreVirtualToolPolicy.IsEnvironment(wire.ToolId))
+        {
+            return await ExecuteEnvironmentToolAsync(scope, wire, cancellationToken).ConfigureAwait(false);
         }
 
         if (!scope.SerializeWorkspaceWrites || !execution.MutatesWorkspace)
@@ -759,13 +862,20 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ToolWireRequestDto wire,
         CancellationToken cancellationToken)
     {
+        string? agent = null;
+        string? followUpOf = null;
         string? title = null;
         string? description = null;
         string[] successCriteria = [];
         string[] requiredTools = [];
         string[] requiredCapabilities = [];
+        string[] writeScope = [];
         if (wire.Params is { ValueKind: JsonValueKind.Object } parameters)
         {
+            if (parameters.TryGetProperty("agent", out var agentElement) && agentElement.ValueKind == JsonValueKind.String)
+                agent = agentElement.GetString()?.Trim();
+            if (parameters.TryGetProperty("follow_up_of", out var followElement) && followElement.ValueKind == JsonValueKind.String)
+                followUpOf = followElement.GetString()?.Trim();
             if (parameters.TryGetProperty("title", out var titleElement) && titleElement.ValueKind == JsonValueKind.String)
                 title = titleElement.GetString()?.Trim();
             if (parameters.TryGetProperty("description", out var descriptionElement) && descriptionElement.ValueKind == JsonValueKind.String)
@@ -773,21 +883,82 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             successCriteria = ReadStringArray(parameters, "success_criteria");
             requiredTools = ReadStringArray(parameters, "required_tools");
             requiredCapabilities = ReadStringArray(parameters, "required_capabilities");
+            writeScope = ReadStringArray(parameters, "write_scope")
+                .Where(entry => !string.IsNullOrWhiteSpace(entry)).Select(entry => entry.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(32).ToArray();
         }
         if (string.IsNullOrWhiteSpace(title))
         {
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "task_dispatch requires a non-empty 'title'." };
         }
+        // The executor is validated HERE, while the caller can still correct it in its next turn: a
+        // name only discovered to be wrong when the worker is assigned would fail the sub-task after
+        // the caller had already moved on believing it was queued.
+        if (scope.DispatchRoster is { } roster)
+        {
+            var match = string.IsNullOrWhiteSpace(agent)
+                ? null
+                : roster.FirstOrDefault(entry => string.Equals(entry.Id, agent, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                var choices = roster.Count == 0
+                    ? "This run has no dispatchable executor; do the work yourself or tell the user."
+                    : "Choose one of: " + string.Join("; ", roster.Select(entry =>
+                        string.IsNullOrWhiteSpace(entry.Description) ? entry.Id : $"{entry.Id} — {entry.Description}")) + ".";
+                var problem = string.IsNullOrWhiteSpace(agent)
+                    ? "task_dispatch requires 'agent' (the executor id)."
+                    : $"'{agent}' is not a dispatchable executor in this run.";
+                return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = $"{problem} {choices}" };
+            }
+            agent = match.Id;
+        }
 
-        var dispatchId = Guid.NewGuid();
+        // Derived from the call, not random: the directive below is de-duplicated per tool call, so a
+        // replayed call must hand the model the SAME id the queued sub-task carries (a fresh one would
+        // name a task that does not exist, and task_wait on it would fail). It is also the sub-task's
+        // task id, which is what its write-scope leases are keyed by.
+        var dispatchId = DeterministicGuid($"run:{scope.RunId:N}:task-dispatch:{wire.ToolCallId}");
+
+        // A declared write scope is leased NOW, while the caller can still react: an overlap with
+        // another run's work is refused before either side runs a command.
+        if (writeScope.Length > 0 && _resourceLeases is not null)
+        {
+            foreach (var claim in ResourceClaimResolver.ResolveWriteScope(writeScope, scope.WorkspaceRoot))
+            {
+                var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(
+                    claim, scope.SessionId, scope.RunId, dispatchId, null,
+                    $"Declared write scope of sub-task '{title}'.", ResourceLeasePurposes.WriteScope), cancellationToken).ConfigureAwait(false);
+                if (decision.Granted) continue;
+                await _resourceLeases.ReleaseTaskAsync(scope.RunId, dispatchId, cancellationToken).ConfigureAwait(false);
+                await AppendEventAsync(scope.RunId, ResourceLeaseMessages.ConflictEventType,
+                    $"Sub-task '{title}' was not dispatched: its write scope overlaps a resource another run holds.",
+                    ResourceLeaseMessages.ConflictPayload(claim, decision.Conflicts, scope.RunId, scope.TaskId, ResourceLeaseMessages.DetectedAtWriteScope),
+                    cancellationToken, scope.TaskId, CoreTaskDispatchTool.ToolId, "warning").ConfigureAwait(false);
+                await RaiseTopicAsync(scope, GovernanceTopics.LeaseConflict,
+                    $"Sub-task '{title}' was not dispatched (write_scope): {ResourceLeaseMessages.Describe(claim, decision.Conflicts)}",
+                    "lease", decision.Conflicts.FirstOrDefault()?.Id.ToString("N"), cancellationToken).ConfigureAwait(false);
+                return new ToolWireResponseDto
+                {
+                    CallId = wire.ToolCallId,
+                    IsSuccess = false,
+                    Error = "The sub-task was not dispatched because its write_scope overlaps work another run holds: "
+                        + ResourceLeaseMessages.Describe(claim, decision.Conflicts)
+                        + " Wait for that work, narrow write_scope, or dispatch it into a separate worktree."
+                };
+            }
+        }
+
         var payload = JsonSerializer.Serialize(new
         {
             dispatch_id = dispatchId,
+            agent,
+            follow_up_of = string.IsNullOrWhiteSpace(followUpOf) ? null : followUpOf,
             title,
             description,
             success_criteria = successCriteria,
             required_tools = requiredTools,
             required_capabilities = requiredCapabilities,
+            write_scope = writeScope.Length == 0 ? null : writeScope,
             dispatched_by_tool_call = wire.ToolCallId,
             task_id = scope.TaskId
         });
@@ -814,9 +985,11 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             new
             {
                 dispatch_id = dispatchId,
+                agent,
                 title,
                 required_tools = requiredTools,
                 required_capabilities = requiredCapabilities,
+                write_scope = writeScope,
                 requested_by_task_id = scope.TaskId,
                 agent_instance_id = scope.AgentInstanceId
             }, cancellationToken, scope.TaskId, CoreTaskDispatchTool.ToolId).ConfigureAwait(false);
@@ -829,8 +1002,9 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             {
                 queued = true,
                 dispatch_id = dispatchId,
+                agent,
                 title,
-                message = $"Sub-task '{title}' is queued and will run after your current step. Its result is NOT in this reply — check the run evidence before reporting on it."
+                message = $"Sub-task '{title}' is queued for {agent ?? "an executor"}. Its result is NOT in this reply: call task_wait with this dispatch_id to get it, and do not report it as done before then."
             })
         };
     }
@@ -851,7 +1025,11 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "TinaChat is not available in this host." };
         var outcome = await _tinaChat.ExecuteAsync(new TinaChatToolCall(
             scope.TenantId, scope.WorkspaceId, scope.PrincipalId, scope.SessionId, scope.RunId,
-            wire.ToolCallId, wire.ToolId, wire.Params), cancellationToken).ConfigureAwait(false);
+            wire.ToolCallId, wire.ToolId, wire.Params)
+        {
+            // Organization tools act as the member this instance was enrolled as.
+            AgentInstanceId = scope.AgentInstanceId
+        }, cancellationToken).ConfigureAwait(false);
         if (!outcome.IsSuccess)
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = outcome.Error ?? "The chat tool call failed." };
         return new ToolWireResponseDto
@@ -860,6 +1038,219 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             IsSuccess = true,
             Result = JsonDocument.Parse(outcome.ResultJson).RootElement.Clone(),
         };
+    }
+
+    /// <summary>
+    /// Serves <c>graph_view</c>: the session as a graph, bounded, in the model-facing shape. Read-only, so
+    /// like the other Core-owned reads it needs no approval; the declared tool surface is what grants it.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteGraphViewAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken cancellationToken)
+    {
+        if (_topology is null)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "The session graph is not available in this host." };
+        Guid? runId = null;
+        var includeFinished = true;
+        if (wire.Params is { ValueKind: JsonValueKind.Object } parameters)
+        {
+            if (parameters.TryGetProperty("run_id", out var run) && run.ValueKind == JsonValueKind.String)
+            {
+                if (!Guid.TryParse(run.GetString(), out var parsed))
+                    return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = $"'{run.GetString()}' is not a run id from graph_view." };
+                runId = parsed;
+            }
+            if (parameters.TryGetProperty("include_finished", out var finished) && finished.ValueKind == JsonValueKind.False) includeFinished = false;
+        }
+        var view = await _topology.GetAsync(scope.SessionId, new SessionTopologyQuery(IncludeFinishedRuns: includeFinished, RunId: runId), cancellationToken).ConfigureAwait(false);
+        if (view is null)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "This run's session could not be read." };
+        return new ToolWireResponseDto
+        {
+            CallId = wire.ToolCallId,
+            IsSuccess = true,
+            Result = JsonSerializer.SerializeToElement(SessionTopologyProjection.ForModel(view)),
+        };
+    }
+
+    /// <summary>
+    /// The worktree steward (todo R5). A created worktree is assigned to the run that created it: an
+    /// exclusive <c>assignment</c> lease with no task, so it outlives the creating call and task — a
+    /// sub-task of the same run may work in it (its write scope inside the worktree is the same run's
+    /// business), while another run's writer is refused with this run named as the holder. Removing
+    /// the worktree releases the assignment; the run's end releases whatever is left. The path comes
+    /// from the tool's own result, the only authority on where the worktree really is. Best-effort:
+    /// the git operation already happened, and its outcome stands.
+    /// </summary>
+    private async Task StewardWorktreeAsync(ToolInvocationScope scope, string toolId, ToolExecutionSnapshot execution, JsonElement? result, CancellationToken cancellationToken)
+    {
+        if (_resourceLeases is null) return;
+        if (result is not { ValueKind: JsonValueKind.Object } payload
+            || !payload.TryGetProperty("path", out var pathNode) || pathNode.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(pathNode.GetString())) return;
+        var key = ResourceClaimResolver.Absolute(pathNode.GetString()!, scope.WorkspaceRoot);
+        var branch = payload.TryGetProperty("branch", out var branchNode) && branchNode.ValueKind == JsonValueKind.String ? branchNode.GetString() : null;
+        try
+        {
+            if (string.Equals(toolId, WorktreeTools.Create, StringComparison.OrdinalIgnoreCase))
+            {
+                var claim = new ResourceClaim(ResourceLeaseKinds.Worktree, key, Exclusive: true);
+                var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(claim, scope.SessionId, scope.RunId,
+                    TaskId: null, AgentInstanceId: scope.AgentInstanceId,
+                    Reason: $"Worktree {key}{(branch is null ? "" : $" on {branch}")}, assigned to the run that created it.",
+                    Purpose: ResourceLeasePurposes.Assignment), cancellationToken).ConfigureAwait(false);
+                if (decision.Granted)
+                {
+                    await AppendEventAsync(execution.RunId, "worktree.assigned", $"Worktree {key} is assigned to this run.", new
+                    {
+                        path = key, branch, lease_id = decision.Lease!.Id, run_id = scope.RunId, task_id = scope.TaskId, agent_instance_id = scope.AgentInstanceId
+                    }, cancellationToken, scope.TaskId, toolId).ConfigureAwait(false);
+                }
+                else
+                {
+                    await AppendEventAsync(execution.RunId, ResourceLeaseMessages.ConflictEventType,
+                        $"Worktree {key} was created but another run already holds it.",
+                        ResourceLeaseMessages.ConflictPayload(claim, decision.Conflicts, execution.RunId, execution.TaskId, ResourceLeaseMessages.DetectedAfterTheFact),
+                        cancellationToken, scope.TaskId, toolId, "warning").ConfigureAwait(false);
+                    await RaiseTopicAsync(scope, GovernanceTopics.LeaseConflict,
+                        $"Worktree {key} was created by this run but is held elsewhere: {ResourceLeaseMessages.Describe(claim, decision.Conflicts)}",
+                        "path", key, cancellationToken).ConfigureAwait(false);
+                }
+                return;
+            }
+
+            // Removal: release this run's assignment of that worktree (another run's hold would have
+            // refused the removal call itself before it ran).
+            var released = 0;
+            foreach (var lease in await _resourceLeases.ListActiveAsync(scope.SessionId, cancellationToken).ConfigureAwait(false))
+            {
+                if (lease.RunId != scope.RunId || !string.Equals(lease.Kind, ResourceLeaseKinds.Worktree, StringComparison.Ordinal)
+                    || !string.Equals(lease.Purpose, ResourceLeasePurposes.Assignment, StringComparison.Ordinal)
+                    || !string.Equals(ResourceLeasePolicy.Normalize(lease.ResourceKey), ResourceLeasePolicy.Normalize(key), StringComparison.Ordinal)) continue;
+                released += await _resourceLeases.ReleaseAsync(lease.Id, cancellationToken).ConfigureAwait(false);
+            }
+            await AppendEventAsync(execution.RunId, "worktree.released", $"Worktree {key} was removed; its assignment is released.", new
+            {
+                path = key, released, run_id = scope.RunId, task_id = scope.TaskId
+            }, cancellationToken, scope.TaskId, toolId).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Worktree steward could not record {ToolId} of {Path} for run {RunId}.", toolId, key, scope.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Serves <c>recall_evidence</c> inside the caller's own session — the session is the scope's, never
+    /// an argument, so a worker cannot read another session's archive by naming it.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteRecallEvidenceAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken cancellationToken)
+    {
+        if (_evidence is null)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "The evidence archive is not available in this host." };
+        var parsed = EvidenceRecallArguments.Parse(wire.Params);
+        if (parsed.Error is { } error)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = error };
+        var result = await _evidence.RecallAsync(new EvidenceRecallQuery(scope.TenantId, scope.WorkspaceId, scope.SessionId,
+            parsed.Query!, parsed.Kinds, parsed.RunId, parsed.Limit), cancellationToken).ConfigureAwait(false);
+        return new ToolWireResponseDto
+        {
+            CallId = wire.ToolCallId,
+            IsSuccess = true,
+            Result = JsonSerializer.SerializeToElement(EvidenceRecallArguments.ForModel(result)),
+        };
+    }
+
+    /// <summary>
+    /// Serves the environment steward's tools (todo E1) for the calling run: the run and session are the
+    /// scope's, never arguments, so a worker can only take or give back environments for its own run.
+    /// </summary>
+    private async Task<ToolWireResponseDto> ExecuteEnvironmentToolAsync(ToolInvocationScope scope, ToolWireRequestDto wire, CancellationToken cancellationToken)
+    {
+        if (_environments is not { } registry)
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "No environment registry is available in this host." };
+        static string? Text(JsonElement parameters, string name) =>
+            parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()?.Trim() is { Length: > 0 } text ? text : null
+                : null;
+        ToolWireResponseDto Ok(object result) => new() { CallId = wire.ToolCallId, IsSuccess = true, Result = JsonSerializer.SerializeToElement(result) };
+        object Describe(EnvironmentView environment) => new
+        {
+            key = environment.Key,
+            kind = environment.Kind,
+            name = environment.DisplayName,
+            description = environment.Description,
+            connection = JsonDocument.Parse(environment.ConnectionJson).RootElement.Clone(),
+            status = environment.Status,
+            capacity = environment.Capacity,
+            free_slots = environment.FreeSlots,
+            held_by = environment.Holders.Select(holder => new
+            {
+                slot = holder.Slot,
+                run_id = holder.RunId?.ToString("N"),
+                this_run = holder.RunId == scope.RunId,
+                reason = holder.Reason
+            }).ToArray()
+        };
+
+        var parameters = wire.Params ?? default;
+        try
+        {
+            if (string.Equals(wire.ToolId, CoreVirtualToolPolicy.EnvironmentListToolId, StringComparison.OrdinalIgnoreCase))
+            {
+                var kind = Text(parameters, "kind");
+                var all = await registry.ListAsync(cancellationToken).ConfigureAwait(false);
+                return Ok(new { environments = all.Where(x => kind is null || x.Kind == kind).Take(50).Select(Describe).ToArray(), total = all.Count });
+            }
+            if (string.Equals(wire.ToolId, CoreVirtualToolPolicy.EnvironmentAcquireToolId, StringComparison.OrdinalIgnoreCase))
+            {
+                var result = await registry.AcquireAsync(new EnvironmentAcquireRequest(scope.SessionId, scope.RunId, scope.TaskId, scope.AgentInstanceId,
+                    Text(parameters, "key"), Text(parameters, "kind"), Text(parameters, "reason") ?? string.Empty), cancellationToken).ConfigureAwait(false);
+                if (result.Granted)
+                {
+                    await AppendEventAsync(scope.RunId, "environment.assigned", $"Environment {result.Environment!.Key} slot {result.Slot} was assigned to the run.", new
+                    {
+                        key = result.Environment.Key, kind = result.Environment.Kind, slot = result.Slot, lease_id = result.LeaseId, run_id = scope.RunId, task_id = scope.TaskId
+                    }, cancellationToken, scope.TaskId, wire.ToolId).ConfigureAwait(false);
+                    return Ok(new { granted = true, slot = result.Slot, environment = Describe(result.Environment) });
+                }
+                // A refusal is an answer, not a failure: the model reads who holds it and decides.
+                return Ok(new
+                {
+                    granted = false,
+                    reason = result.Error,
+                    held_by = result.BusyHolders.Select(holder => new { slot = holder.Slot, run_id = holder.RunId?.ToString("N"), reason = holder.Reason }).ToArray()
+                });
+            }
+            var key = Text(parameters, "key");
+            if (key is null) return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "environment_release needs the key of the environment to give back." };
+            var released = await registry.ReleaseAsync(scope.RunId, key, cancellationToken).ConfigureAwait(false);
+            if (released > 0)
+                await AppendEventAsync(scope.RunId, "environment.released", $"The run gave back environment {key}.", new
+                {
+                    key, released, run_id = scope.RunId, task_id = scope.TaskId
+                }, cancellationToken, scope.TaskId, wire.ToolId).ConfigureAwait(false);
+            return Ok(new { released, note = released == 0 ? "This run held no slot of that environment." : null });
+        }
+        catch (EnvironmentRegistryException ex)
+        {
+            return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Raises a governance fact for the run's standing subscribers. Best-effort: the call the fact came
+    /// from has its own outcome, and a reviewer that cannot be told must never change it.
+    /// </summary>
+    private async Task RaiseTopicAsync(ToolInvocationScope scope, string topic, string summary, string? subjectKind, string? subjectId, CancellationToken cancellationToken)
+    {
+        if (_topics is null) return;
+        try
+        {
+            await _topics.RaiseAsync(new GovernanceTopicSignal(scope.SessionId, scope.RunId, topic, summary, subjectKind, subjectId), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Could not raise {Topic} for run {RunId}.", topic, scope.RunId);
+        }
     }
 
     private static string[] ReadStringArray(JsonElement parameters, string propertyName) =>
@@ -871,6 +1262,32 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray()
             : [];
+
+    /// <summary>
+    /// Covers this execution when a person's standing "commands that start with this are fine"
+    /// rule matches the command the call would run (todo E7). The match is the engine's own
+    /// against the execution's parameters — a caller naming a rule id in its arguments cannot
+    /// ride in on it. The mint's <see cref="PreAuthorizationMintResult.Source"/> becomes
+    /// <c>approval_rule</c> so the audit says where it came from.
+    /// </summary>
+    private async Task<PreAuthorizationMintResult?> HonorCommandPrefixAsync(
+        ToolInvocationScope scope,
+        ToolManifestEntryDto descriptor,
+        ToolExecutionSnapshot execution,
+        CancellationToken cancellationToken)
+    {
+        if (_approvalRules is null || execution.ParametersJson is not { Length: > 0 } parametersJson) return null;
+        string? command;
+        try { command = CommandPrefixRules.CommandOf(descriptor.Id, JsonDocument.Parse(parametersJson).RootElement); }
+        catch (JsonException) { return null; }
+        if (command is null) return null;
+        var rule = await _approvalRules.MatchCommandAsync(scope.SessionId, descriptor.Id, command, cancellationToken).ConfigureAwait(false);
+        if (rule is null) return null;
+        // A covered call never reaches a human: mint from the rule the person wrote, always — the
+        // run-grant and auto-policy paths would name the wrong source, or ask a human who was never
+        // meant to be there.
+        return await _executions.MintApprovalFromRuleAsync(execution.Id, rule.Id, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Executes the Core-owned create_workspace virtual tool: creates the directory,
@@ -1059,6 +1476,97 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             _logger.LogDebug(ex, "Could not move run {RunId} to {Status}", runId, status);
             return false;
         }
+    }
+
+    /// <summary>
+    /// The after-the-fact half of resource governance, for a call that named no file (a shell
+    /// command, <c>command_run</c>, a git mutation) and therefore claimed nothing up front.
+    ///
+    /// Compares the pre-write snapshot this call was guarded by with the workspace as it is now and
+    /// publishes what changed (<c>workspace.changes_observed</c>), what fell outside the task's
+    /// declared write scope (<c>scope.violation</c>), and what overlaps a resource another live run
+    /// holds (<c>lease.conflict</c>, detected after the fact). It never changes the call's outcome:
+    /// the write already happened, and the point is that a reviewer sees it before a merge does.
+    /// Bounded for large workspaces and clusters: at most 50 paths are published and probed.
+    /// </summary>
+    private async Task ObserveUnclaimedChangesAsync(
+        ToolInvocationScope scope,
+        string toolId,
+        ToolExecutionSnapshot execution,
+        Guid snapshotId,
+        CancellationToken cancellationToken)
+    {
+        const int PathBudget = 50;
+        if (_resourceLeases is null) return;
+        // A call that named its file already holds a lease on exactly that file.
+        if (ResourceClaimResolver.Resolve(toolId, ReadStringArguments(execution.ParametersJson), scope.WorkspaceRoot, mutatesWorkspace: true) is not null) return;
+        try
+        {
+            var changes = await _snapshots.ListFileChangesAsync(snapshotId, cancellationToken).ConfigureAwait(false);
+            var changed = changes
+                .Where(change => !string.Equals(change.Status, "unchanged", StringComparison.OrdinalIgnoreCase))
+                .Select(change => ResourceClaimResolver.Absolute(change.Path, scope.WorkspaceRoot))
+                .ToArray();
+            if (changed.Length == 0) return;
+            var sample = changed.Take(PathBudget).ToArray();
+            await AppendEventAsync(execution.RunId, "workspace.changes_observed",
+                $"Tool '{toolId}' changed {changed.Length} file(s).", new
+                {
+                    execution_id = execution.Id,
+                    task_id = execution.TaskId,
+                    tool_id = toolId,
+                    changed_count = changed.Length,
+                    paths = sample,
+                    truncated = changed.Length > sample.Length
+                }, cancellationToken, execution.TaskId, toolId).ConfigureAwait(false);
+
+            var own = await _resourceLeases.ListTaskAsync(execution.RunId, execution.TaskId, cancellationToken).ConfigureAwait(false);
+            var outside = ResourceLeasePolicy.OutsideScope(changed, own);
+            if (outside.Count > 0)
+            {
+                await AppendEventAsync(execution.RunId, "scope.violation",
+                    $"Tool '{toolId}' changed {outside.Count} file(s) outside the task's declared write scope.", new
+                    {
+                        execution_id = execution.Id,
+                        task_id = execution.TaskId,
+                        tool_id = toolId,
+                        outside_count = outside.Count,
+                        paths = outside.Take(PathBudget).ToArray(),
+                        write_scope = own.Where(lease => lease.Purpose == ResourceLeasePurposes.WriteScope).Select(lease => lease.ResourceKey).ToArray()
+                    }, cancellationToken, execution.TaskId, toolId, "warning").ConfigureAwait(false);
+                await RaiseTopicAsync(scope, GovernanceTopics.LeaseConflict,
+                    $"Tool '{toolId}' changed {outside.Count} file(s) outside its task's declared write scope, e.g. {outside[0]}.",
+                    "task", execution.TaskId.ToString("N"), cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var path in sample)
+            {
+                var claim = new ResourceClaim(ResourceLeaseKinds.Path, path, Exclusive: true);
+                var holders = await _resourceLeases.ProbeAsync(claim, execution.RunId, cancellationToken).ConfigureAwait(false);
+                if (holders.Count == 0) continue;
+                await AppendEventAsync(execution.RunId, ResourceLeaseMessages.ConflictEventType,
+                    $"Tool '{toolId}' changed '{path}', which another run holds.",
+                    ResourceLeaseMessages.ConflictPayload(claim, holders, execution.RunId, execution.TaskId, ResourceLeaseMessages.DetectedAfterTheFact),
+                    cancellationToken, execution.TaskId, toolId, "warning").ConfigureAwait(false);
+                await RaiseTopicAsync(scope, GovernanceTopics.LeaseConflict,
+                    $"Tool '{toolId}' already changed '{path}' (after_the_fact): {ResourceLeaseMessages.Describe(claim, holders)}",
+                    "lease", holders[0].Id.ToString("N"), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Observation must never turn a completed call into a failure.
+            _logger.LogDebug(ex, "Could not observe the changes of execution {ExecutionId}.", execution.Id);
+        }
+    }
+
+    /// <summary>A stable id derived from a key (RFC 4122 variant bits set so it reads as a normal GUID).</summary>
+    private static Guid DeterministicGuid(string key)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)).AsSpan(0, 16).ToArray();
+        bytes[7] = (byte)((bytes[7] & 0x0F) | 0x50);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+        return new Guid(bytes);
     }
 
     private async Task AppendEventAsync(Guid runId, string type, string summary, object payload, CancellationToken cancellationToken, Guid taskId, string toolId, string severity = "info")
@@ -1255,6 +1763,31 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ErrorCategory = execution.ErrorCategory,
         Message = execution.SafeErrorMessage
     };
+
+    /// <summary>
+    /// Top-level string arguments as a lookup for <see cref="ResourceClaimResolver"/>. Only strings
+    /// are read: a claim is always named by a path or a directory, so a nested object or array is not
+    /// a target the ledger can reason about. A parameter that is not a JSON object yields no keys.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string?> ReadStringArguments(string parametersJson)
+    {
+        var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var document = JsonDocument.Parse(parametersJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return result;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                result[property.Name] = property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null;
+            }
+        }
+        catch (JsonException)
+        {
+            // Unparseable parameters are reported by the execution layer; the ledger simply claims nothing.
+            return result;
+        }
+        return result;
+    }
 
     private static ToolDispatchResultDto Blocked(string message, ToolExecutionSnapshot? execution = null, string errorCategory = "blocked") => new()
     {

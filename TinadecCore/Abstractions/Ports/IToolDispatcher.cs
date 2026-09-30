@@ -170,7 +170,15 @@ public sealed record ToolInvocationScope(
     bool SerializeWorkspaceWrites,
     IReadOnlyList<FrozenToolManifestEntry>? AuthorizedToolManifest = null,
     string? FrozenToolManifestHash = null,
-    string? PermissionMode = null);
+    string? PermissionMode = null,
+    IReadOnlyList<DispatchRosterEntry>? DispatchRoster = null);
+
+/// <summary>
+/// One executor the run's coordinator may name in <c>task_dispatch.agent</c>, read from the run's
+/// frozen dispatch roster. Null roster on a scope = a body frozen before the roster existed; the
+/// engine then validates the name when it assigns the worker.
+/// </summary>
+public sealed record DispatchRosterEntry(string Id, string Description);
 
 /// <summary>
 /// Agent-runtime authorization boundary consumed by the Tools module. DmaEA owns
@@ -251,6 +259,14 @@ public interface IToolExecutionCoordinator
     /// waiting on its normal human approval path.
     /// </summary>
     Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Mints this execution's pending approval directly from a person's standing rule
+    /// (todo E7): no run grant, no auto policy — the rule the person wrote is the reason.
+    /// The caller (the dispatcher) has already matched the rule against the call's own
+    /// parameters, so this only records it. Returns null when the execution needs no
+    /// approval or none is pending.
+    /// </summary>
+    Task<PreAuthorizationMintResult?> MintApprovalFromRuleAsync(Guid executionId, Guid ruleId, CancellationToken cancellationToken = default);
     /// <summary>
     /// Compatibility projection for callers that own an execution coordinator but
     /// need to atomically consume its bound action approval.
@@ -420,6 +436,18 @@ public interface IToolApprovalCoordinator
         string decision,
         string? reason,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists a decision a delegated approval gate made on the user's behalf (the <c>delegate-*</c>
+    /// permission modes). The same transition as <see cref="DecideAsync"/>, but no human principal is
+    /// recorded as the decider: the gate records say who decided and what each gate was shown.
+    /// </summary>
+    Task<ToolApprovalDecision> DecideDelegatedAsync(
+        Guid approvalId,
+        string decision,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        DecideAsync(approvalId, decision, reason, cancellationToken);
 }
 
 public sealed record ToolApprovalDecision(

@@ -148,6 +148,48 @@ public static class ApprovalEvidenceProjector
         }
     }
 
+    /// <summary>
+    /// The parameters with every secret-keyed value replaced, at any depth, and everything else
+    /// kept. For a reader that must judge the call itself — a delegated approval gate — hashing
+    /// the bulk away (as <see cref="Project"/> does for listings) would hide exactly what it is
+    /// asked to judge; a token's value, though, never helps a judgement and never leaves Core.
+    /// Never throws: unparseable input degrades to an opaque descriptor.
+    /// </summary>
+    public static string RedactSecrets(string? parametersJson)
+    {
+        if (string.IsNullOrWhiteSpace(parametersJson)) return "{}";
+        try
+        {
+            var node = JsonNode.Parse(parametersJson);
+            RedactNode(node);
+            return node?.ToJsonString(Readable) ?? "{}";
+        }
+        catch (JsonException)
+        {
+            return "{\"[unparsed parameters]\":\"" + DescribeBlob(parametersJson) + "\"}";
+        }
+    }
+
+    // Read by a model, not embedded in HTML: non-ASCII text stays readable instead of escaped.
+    private static readonly JsonSerializerOptions Readable = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    private static void RedactNode(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject item:
+                foreach (var key in item.Select(property => property.Key).ToList())
+                {
+                    if (SecretKeys.Contains(key)) item[key] = "[redacted]";
+                    else RedactNode(item[key]);
+                }
+                break;
+            case JsonArray items:
+                foreach (var child in items) RedactNode(child);
+                break;
+        }
+    }
+
     private static string Name(string? toolId, string? subject)
     {
         var name = string.IsNullOrWhiteSpace(toolId) ? "tool call" : toolId;

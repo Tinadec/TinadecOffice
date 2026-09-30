@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
 using TinadecCore.Persistence;
@@ -16,7 +17,9 @@ public sealed partial class TinaChatService(
     ITinaChatIdentityBoundary identity,
     IContentStore content,
     ITinaChatIntentInterpreter interpreter,
-    ITinaChatObserverAuthority observerAuthority) : ITinaChatService, ITinaChatRunInput, ITinaChatObserver, ITinaChatWakeProcessor
+    ITinaChatObserverAuthority observerAuthority,
+    IServiceProvider? services = null,
+    IOptions<TinaChatWakeOptions>? wakeOptions = null) : ITinaChatService, ITinaChatRunInput, ITinaChatObserver, ITinaChatWakeProcessor
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private const int MaxMembers = 64;
@@ -74,7 +77,9 @@ public sealed partial class TinaChatService(
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         var term = Optional(query, "query", 256);
-        var candidates = db.Participants.Where(x => x.TenantId == scope.TenantId && x.Status == "active"
+        // Organization members are session-scoped (search#1 of one session is nobody in another), so
+        // they never appear in the workspace directory — not even to the principal that owns them.
+        var candidates = db.Participants.Where(x => x.TenantId == scope.TenantId && x.Status == "active" && x.OrganizationId == null
             && (x.Discoverable || (x.OwnerPrincipalId == scope.PrincipalId && x.WorkspaceId == scope.WorkspaceId)));
         if (term is not null) candidates = candidates.Where(x => x.Handle.Contains(term) || x.DisplayName.Contains(term)
             || (x.JobTitle != null && x.JobTitle.Contains(term)));

@@ -42,3 +42,20 @@ internal static class AutoApprovePolicyRules
         && !string.Equals(risk?.Trim(), "elevated", StringComparison.OrdinalIgnoreCase)
         && RiskRank(risk) <= RiskRank(options.AutoApproveRiskMax);
 }
+
+/// <summary>
+/// Which calls a delegated approval gate may decide at all. One rule, read by the PDP (which releases a
+/// delegable mutating claim to the approval layer instead of parking it for the person) and by the
+/// gate service (which refuses to decide anything else even if it reached the approval layer another
+/// way), so the two can never disagree about what stays with the human.
+/// </summary>
+public static class DelegatedApprovalRules
+{
+    public static bool Delegable(AutoApproveOptions options, string? toolId, string? risk) =>
+        !string.IsNullOrWhiteSpace(toolId)
+        && !options.IsHumanOnlyTool(toolId)
+        // Core's own virtual tools with an approval (create_workspace) keep the person's click: their
+        // approval gate is their whole safety net.
+        && !Abstractions.Ports.CoreVirtualToolPolicy.IsCoreVirtual(toolId)
+        && AutoApprovePolicyRules.RiskRank(risk) <= AutoApprovePolicyRules.RiskRank(options.DelegatedApprovalRiskMax);
+}

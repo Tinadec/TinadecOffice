@@ -40,7 +40,7 @@ public static class InteractionsEndpoints
         // admit a run under a mode nobody reads anymore.
         var unknownField = el.EnumerateObject()
             .Select(property => property.Name)
-            .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "meeting_model_override" or "attachment_ids"));
+            .FirstOrDefault(name => name is not ("content" or "client_message_id" or "mode_version_id" or "permission_mode" or "dispatch_mode" or "target_run_id" or "expected_context_revision" or "meeting_model_override" or "attachment_ids" or "interrupt"));
         if (unknownField is not null) return Results.BadRequest(new { code = "unknown_field", message = $"Field '{unknownField}' is not part of the interaction contract." });
         var content = el.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
         // Not "content is required" here: a message that carries a file does say something, it
@@ -54,6 +54,17 @@ public static class InteractionsEndpoints
         Guid? targetRunId = null;
         if (el.TryGetProperty("target_run_id", out var tr) && Guid.TryParse(tr.GetString(), out var tg)) targetRunId = tg;
         if (dispatchMode == "insert" && targetRunId is null) return Results.BadRequest(new { code = "invalid_request", message = "insert requires target_run_id" });
+        // Hard insert (todo D2): the steering also cuts off what the run is doing now instead of
+        // waiting for its next boundary. Only an insert steers a run, so only an insert can.
+        var interrupt = false;
+        if (el.TryGetProperty("interrupt", out var interruptElement) && interruptElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            if (interruptElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                return Results.BadRequest(new { code = "invalid_request", message = "interrupt must be a boolean." });
+            interrupt = interruptElement.GetBoolean();
+            if (interrupt && dispatchMode != "insert")
+                return Results.BadRequest(new { code = "invalid_request", message = "interrupt applies to dispatch_mode insert only." });
+        }
         MeetingModelOverrideDto? meetingModelOverride = null;
         if (el.TryGetProperty("meeting_model_override", out var overrideElement)
             && overrideElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
@@ -247,6 +258,27 @@ public static class InteractionsEndpoints
         if (dispatchMode == "insert" && meetingModelOverride is not null)
             return Results.Conflict(new { code = "model_override_frozen", message = "A model override cannot be changed when inserting into an already frozen run." });
 
+        // A session that has said nothing yet takes the conversation identity of the mode its
+        // first message is sent in. Revision 0 is the cheap pre-check (every append bumps it);
+        // the store re-checks for messages before it writes. Once anything has been said this
+        // changes nothing, and a switch to a mode held by another agent is refused at run
+        // freeze as conversation_identity_locked_mismatch.
+        if (await sessions.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false) == 0)
+        {
+            await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
+            var snapshotJson = await cfg.ModeVersions.AsNoTracking()
+                .Where(x => x.Id == modeVersionId.Value && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
+                .Select(x => x.SnapshotJson)
+                .FirstOrDefaultAsync(ct);
+            var definitions = await cfg.AgentDefinitions.AsNoTracking()
+                .Where(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
+                .Select(x => new TinadecCore.Runtime.ConversationIdentityResolver.DefinitionInput(x.Id, x.Slug, x.Layer, x.CapabilitiesJson))
+                .ToListAsync(ct);
+            var identity = TinadecCore.Runtime.ConversationIdentityResolver.Resolve(snapshotJson, definitions);
+            if (identity is not null && !string.Equals(identity.TemplateSlug, session.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase))
+                await sessions.AdoptConversationIdentityIfEmptyAsync(sessionId, identity.NodeKey, identity.TemplateSlug, ct).ConfigureAwait(false);
+        }
+
         // Persist the chosen mode_version onto the session so the run engine's roster resolver
         // reads the same relational mode the center edits — not a per-call event hint.
         if (modeVersionId.HasValue)
@@ -274,8 +306,18 @@ public static class InteractionsEndpoints
                 await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "context_conflict", null, IdempotencyKey: $"run:{targetRunId}:conflict:{Guid.NewGuid():N}", FinishReason: "stale"), ct);
                 return Results.Conflict(new { code = "context_conflict", message = $"Context revision conflict: base {baseRev} vs current {patch.CurrentRevision}", base_revision = baseRev, current_revision = patch.CurrentRevision });
             }
-            await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.steering", new { interaction_id = Guid.NewGuid(), target_run_id = targetRunId.Value, content, dispatch_mode = dispatchMode }, $"Steering injected into run {targetRunId}", "info", cancellationToken: ct);
+            await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.steering", new { interaction_id = Guid.NewGuid(), target_run_id = targetRunId.Value, content, dispatch_mode = dispatchMode, interrupt }, $"Steering injected into run {targetRunId}", "info", cancellationToken: ct);
             await lifecycle.AppendRunStreamAsync(targetRunId.Value, new DurableRunStreamAppend(Guid.NewGuid(), "steering", null, IdempotencyKey: $"run:{targetRunId}:steering:{Guid.NewGuid():N}"), ct);
+            // The steering is durable above, so whatever the run redoes after the cut reads it. The
+            // signal reaches the run's calls on this host; elsewhere the next model call reads it anyway.
+            var interruptedModelCalls = 0;
+            if (interrupt && req.HttpContext.RequestServices.GetService<IRunInterrupts>() is { } interrupts)
+            {
+                interruptedModelCalls = interrupts.Request(targetRunId.Value, new RunInterruptRequest(patch.PatchId, content, DateTimeOffset.UtcNow));
+                await lifecycle.AppendEventAsync(targetRunId.Value, "interaction.interrupt_requested",
+                    new { target_run_id = targetRunId.Value, patch_id = patch.PatchId, interrupted_model_calls = interruptedModelCalls },
+                    "The user interrupted the run to steer it.", "info", cancellationToken: ct).ConfigureAwait(false);
+            }
             // A supervision escalation is a durable user-review gate: the engine
             // re-parks on every tick while the checkpoint phase is awaiting_user, so
             // merely enqueueing a steering patch leaves it parked and the correction is
@@ -294,7 +336,7 @@ public static class InteractionsEndpoints
             var engine = (IFullDuplexRunEngine)req.HttpContext.RequestServices.GetRequiredService(typeof(IFullDuplexRunEngine));
             await engine.EnqueueAsync(targetRunId.Value, ct);
             var steeringCursor = await RunStreamCursorAsync(lifecycleDbFactory, targetRunId, ct).ConfigureAwait(false);
-            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content, client_message_id = clientMessageId, context_revision = patch.CurrentRevision, stream_cursor = steeringCursor, correlation_id = clientMessageId });
+            return Results.Created($"/api/v1/sessions/{sessionId}/interactions/{targetRunId.Value}", new { interaction_id = Guid.NewGuid(), session_id = sessionId, run_id = targetRunId.Value, dispatch_mode = dispatchMode, status = "steering_injected", content, client_message_id = clientMessageId, context_revision = patch.CurrentRevision, stream_cursor = steeringCursor, correlation_id = clientMessageId, interrupt, interrupted_model_calls = interruptedModelCalls });
         }
 
         // queued / parallel: normal admission via coordinator
@@ -312,6 +354,8 @@ public static class InteractionsEndpoints
             // version; no legacy application-mode/agent-mode admission surface
             // exists anymore. Unattended permission policies ride on
             // permission_mode alone.
+            // queued = after what the session is doing now (todo D1); parallel = alongside it,
+            // bounded by the active-run limit. The coordinator decides with the run ledger in hand.
             admission = await coordinator.SubmitAsync(new FullDuplexInvocation(
                 sessionId,
                 content,
@@ -320,10 +364,11 @@ public static class InteractionsEndpoints
                 targetRunId,
                 expectedRev,
                 invocationOverride,
-                modeVersionId), ct);
+                modeVersionId,
+                QueueBehindActiveRun: dispatchMode == "queued"), ct);
             admissionStatus = dispatchMode == "parallel" ? "assigned" : "queued";
         }
-        catch (RunAdmissionException ex) when (ex.Code == "ACTIVE_RUN_LIMIT" && dispatchMode == "queued")
+        catch (RunAdmissionException ex) when (ex.Code is "ACTIVE_RUN_LIMIT" or "SESSION_BUSY" && dispatchMode == "queued")
         {
             // Meeting busy: the interaction must survive the wait. Persist a
             // directive row + the user message + a run.queued event on the
@@ -346,7 +391,7 @@ public static class InteractionsEndpoints
             }
 
             var runs = await lifecycle.ListRunsAsync(sessionId, ct);
-            var activeRun = runs.FirstOrDefault(run => run.Status is not ("completed" or "failed" or "cancelled"));
+            var activeRun = await QueueOwnerAsync(lifecycleDb, runs, ct).ConfigureAwait(false);
             if (activeRun is null)
             {
                 // The limiting run may have crossed terminal between admission and
@@ -362,13 +407,14 @@ public static class InteractionsEndpoints
                         targetRunId,
                         expectedRev,
                         invocationOverride,
-                        modeVersionId), ct).ConfigureAwait(false);
+                        modeVersionId,
+                        QueueBehindActiveRun: true), ct).ConfigureAwait(false);
                     admissionStatus = "queued";
                 }
-                catch (RunAdmissionException retry) when (retry.Code == "ACTIVE_RUN_LIMIT")
+                catch (RunAdmissionException retry) when (retry.Code is "ACTIVE_RUN_LIMIT" or "SESSION_BUSY")
                 {
                     runs = await lifecycle.ListRunsAsync(sessionId, ct).ConfigureAwait(false);
-                    activeRun = runs.FirstOrDefault(run => run.Status is not ("completed" or "failed" or "cancelled"));
+                    activeRun = await QueueOwnerAsync(lifecycleDb, runs, ct).ConfigureAwait(false);
                 }
             }
 
@@ -442,6 +488,19 @@ public static class InteractionsEndpoints
         {
             return Results.Conflict(new { code = "context_conflict", message = ex.Message });
         }
+        catch (RunAdmissionException ex) when (ex.Code == "conversation_identity_locked_mismatch")
+        {
+            // The gate's own message names template slugs; the person reading it needs to know
+            // what happened and what to do instead. The raw text travels as `diagnostic`, not
+            // `detail`: the Gateway's problem mapping reads detail before message, so a raw
+            // detail would replace the sentence meant for the user.
+            return Results.Conflict(new
+            {
+                code = ex.Code,
+                message = "所选模式由另一位智能体负责和你对话，已经开始对话的会话不能中途更换它。请新建会话后再选择这个模式。",
+                diagnostic = ex.Message
+            });
+        }
         catch (RunAdmissionException ex)
         {
             // Fail-closed admission rejections (graph_tier_lanes_unsupported,
@@ -458,7 +517,8 @@ public static class InteractionsEndpoints
             {
                 code = "mode_unavailable",
                 message = "当前会话绑定的对话模式不可用，请在输入框左下角重新选择模式后重试。",
-                detail = ex.Message
+                // Not `detail`: the Gateway would surface it in place of the message above.
+                diagnostic = ex.Message
             });
         }
         if (admission is null) return Results.Conflict(new { code = "conflict", message = "Admission failed" });
@@ -494,6 +554,25 @@ public static class InteractionsEndpoints
     /// following from it continues the live stream without duplication; a client
     /// that wants the full history opens the stream without a cursor.
     /// </summary>
+    /// <summary>
+    /// Which unfinished run a queued message waits behind. The session's queue has one owner at a
+    /// time, so a run that already holds pending queued messages keeps receiving them (a new message
+    /// never jumps ahead of older ones held by another run); otherwise the newest unfinished run.
+    /// </summary>
+    private static async Task<RunRecord?> QueueOwnerAsync(LifecycleDbContext db, IReadOnlyList<RunRecord> runs, CancellationToken ct)
+    {
+        var active = runs.Where(run => run.Status is not ("completed" or "failed" or "cancelled")).ToList();
+        if (active.Count <= 1) return active.FirstOrDefault();
+        var ids = active.Select(run => (Guid?)run.Id).ToArray();
+        var owners = await db.RunDirectives.AsNoTracking()
+            .Where(x => x.Kind == "queued_interaction" && x.Status == "pending" && ids.Contains(x.RunId))
+            .Select(x => x.RunId)
+            .Distinct()
+            .ToListAsync(ct).ConfigureAwait(false);
+        // ListRunsAsync is newest first.
+        return active.FirstOrDefault(run => owners.Contains(run.Id)) ?? active[0];
+    }
+
     static async Task<long> RunStreamCursorAsync(IDbContextFactory<LifecycleDbContext> factory, Guid? runId, CancellationToken ct)
     {
         if (runId is null) return 0;
@@ -520,11 +599,31 @@ public static class InteractionsEndpoints
         return Results.Ok(new { interaction_id = interactionId, run_id = run.Id, dispatch_mode = newMode, status = "reassigned", target_run_id = targetRunId });
     }
 
-    static async Task<IResult> CancelInteraction(Guid sessionId, Guid interactionId, StorageLifecycleService lifecycle, IFullDuplexRunCoordinator coordinator, CancellationToken ct)
+    static async Task<IResult> CancelInteraction(Guid sessionId, Guid interactionId, StorageLifecycleService lifecycle, IFullDuplexRunCoordinator coordinator,
+        IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, CancellationToken ct)
     {
         var runs = await lifecycle.ListRunsAsync(sessionId, ct);
         var run = runs.FirstOrDefault(r => r.TurnId == interactionId);
-        if (run is null) return Results.NotFound(new { code = "not_found" });
+        if (run is null)
+        {
+            // Not a run yet: a message still waiting in the session's queue (todo D1). Cancelling it
+            // takes it out of the queue; its text stays in the conversation as what the user said.
+            await using var db = await lifecycleDbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var now = DateTimeOffset.UtcNow;
+            var queued = await db.RunDirectives.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == interactionId && x.SessionId == sessionId && x.Kind == "queued_interaction", ct).ConfigureAwait(false);
+            if (queued is null) return Results.NotFound(new { code = "not_found" });
+            var cancelled = await db.RunDirectives
+                .Where(x => x.Id == interactionId && x.Status == "pending")
+                .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, "cancelled").SetProperty(x => x.DrainedAt, now).SetProperty(x => x.UpdatedAt, now), ct)
+                .ConfigureAwait(false);
+            if (cancelled == 1 && queued.RunId is { } owner)
+                await lifecycle.AppendEventAsync(owner, "interaction.queue_cancelled", new { interaction_id = interactionId, directive_id = interactionId },
+                    "A queued message was taken out of the queue.", "info", cancellationToken: ct).ConfigureAwait(false);
+            return cancelled == 1
+                ? Results.Ok(new { interaction_id = interactionId, run_id = queued.RunId, status = "cancelled", action = "dequeued" })
+                : Results.Conflict(new { code = "conflict", message = "The message already left the queue: it is running or was decided." });
+        }
         var res = await coordinator.ControlAsync(run.Id, new RunControlCommand("cancel", null, null), ct);
         return Results.Ok(new { interaction_id = interactionId, run_id = run.Id, status = res.Status, action = res.Action });
     }

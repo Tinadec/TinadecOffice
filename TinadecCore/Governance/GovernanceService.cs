@@ -20,6 +20,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     private readonly TimeProvider _timeProvider;
     private readonly IOptions<AutoApproveOptions> _autoApproveOptions;
     private readonly ILifecycleManager? _lifecycle;
+    private readonly IApprovalRules? _approvalRules;
 
     public GovernanceService(
         IDbContextFactory<GovernanceDbContext> dbFactory,
@@ -28,7 +29,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         TimeProvider? timeProvider = null,
         INonceMaterialStore? nonceMaterials = null,
         IOptions<AutoApproveOptions>? autoApproveOptions = null,
-        ILifecycleManager? lifecycle = null)
+        ILifecycleManager? lifecycle = null,
+        IApprovalRules? approvalRules = null)
     {
         _dbFactory = dbFactory;
         _tenantAccessor = tenantAccessor;
@@ -37,6 +39,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         _nonceMaterials = nonceMaterials ?? new InMemoryNonceMaterialStore();
         _autoApproveOptions = autoApproveOptions ?? Options.Create(new AutoApproveOptions());
         _lifecycle = lifecycle;
+        _approvalRules = approvalRules;
     }
 
     /// <summary>
@@ -558,7 +561,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 // where the same envelope is consumed once. The release never
                 // widens authority: every boundary rule above has already passed,
                 // and the approval layer re-checks risk ceilings and budgets.
-                var unattendedReason = UnattendedPermissionReleaseReason(command);
+                var unattendedReason = await UnattendedPermissionReleaseReasonAsync(command, cancellationToken).ConfigureAwait(false);
                 if (unattendedReason is not null)
                 {
                     var releaseGrant = NewGrant(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId,
@@ -1412,7 +1415,7 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     /// the single place that spends it, so an exhausted budget parks the
     /// approval instead of widening this release.
     /// </summary>
-    private string? UnattendedPermissionReleaseReason(PermissionRequestCommand command)
+    private async Task<string?> UnattendedPermissionReleaseReasonAsync(PermissionRequestCommand command, CancellationToken cancellationToken)
     {
         if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
             return "full_access_auto_grant";
@@ -1426,6 +1429,24 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                 : null;
         }
 
+        // Delegated approval modes release a delegable MUTATING claim the way auto-approve does: the
+        // grant is minted so the call reaches the durable approval layer, where a delegated gate — not
+        // this PDP — decides it. The release never widens authority: every boundary rule above has
+        // already passed, the approval is still consumed once against its request hash, and a
+        // human-only tool or a risk above the delegable ceiling falls through to the person's park.
+        if (ApprovalDelegationModes.IsDelegated(command.PermissionMode)
+            && !string.Equals(command.Claim.Action, "read", StringComparison.OrdinalIgnoreCase))
+        {
+            if (DelegatedApprovalRules.Delegable(_autoApproveOptions.Value, toolId, command.Risk))
+                return "delegated_gate_release";
+            // Shell (human-only by default) reaches the gates only when this run's session opted
+            // it in; the gates re-verify against the run's own session, never the call's word.
+            var optedIn = _approvalRules is not null
+                && command.RunId is { } optRunId
+                && await _approvalRules.IsDelegatedToolAsync(optRunId, toolId, cancellationToken).ConfigureAwait(false);
+            if (optedIn) return "delegated_gate_release";
+        }
+
         // READ-level claims are released in the ask family too. A read cannot change
         // the workspace, and the resource envelope plus the tool process's own root
         // check already bound which paths it may touch, so a human click adds no
@@ -1434,8 +1455,11 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
         // an operator can still force a gate on a specific read tool.
         // The ask FAMILY only — an unmodeled mode keeps its historical "always park"
         // semantics rather than silently gaining a release.
+        // Delegated approval modes belong to the ask family here: they move the approval-gate click to
+        // an agent, never a resource-authorization decision, so a read releases exactly as in ask.
         var askFamily = string.Equals(command.PermissionMode, "ask", StringComparison.Ordinal)
-            || string.Equals(command.PermissionMode, "default", StringComparison.Ordinal);
+            || string.Equals(command.PermissionMode, "default", StringComparison.Ordinal)
+            || ApprovalDelegationModes.IsDelegated(command.PermissionMode);
         if (!askFamily || !_autoApproveOptions.Value.ReleaseReadOnlyInAskMode) return null;
         if (!string.Equals(command.Claim.Action, "read", StringComparison.OrdinalIgnoreCase)) return null;
         var options = _autoApproveOptions.Value;

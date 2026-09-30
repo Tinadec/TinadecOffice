@@ -102,6 +102,46 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     private readonly ILoopGuard? _loopGuard;
     private readonly IOrchestrationDirectiveValidator? _directiveValidator;
     private readonly ILongTermMemoryService? _longTermMemory;
+    /// <summary>
+    /// The resource ledger, when the host registered one. Optional so a trimmed composition still runs;
+    /// the ledger only ever refuses a call, never grants one.
+    /// </summary>
+    private readonly IResourceLeaseService? _resourceLeases;
+    private ISessionOrganization? _organization;
+    private bool _organizationResolved;
+    private IRunInterrupts? _interrupts;
+    private bool _interruptsResolved;
+
+    /// <summary>
+    /// The hard-insert signal (todo D2), when the host registered one. Without it every insert is
+    /// soft: the steering is read at the run's next model call.
+    /// </summary>
+    private IRunInterrupts? Interrupts
+    {
+        get
+        {
+            if (_interruptsResolved) return _interrupts;
+            _interrupts = _services.GetService(typeof(IRunInterrupts)) as IRunInterrupts;
+            _interruptsResolved = true;
+            return _interrupts;
+        }
+    }
+
+    /// <summary>
+    /// The session's TinaChat organization, resolved on first use (the communication module is optional
+    /// in a host). Every call through it is best-effort: communication is a view over the work, so a
+    /// failure to enrol or to notify is logged and never fails a run.
+    /// </summary>
+    private ISessionOrganization? Organization
+    {
+        get
+        {
+            if (_organizationResolved) return _organization;
+            _organization = _services.GetService(typeof(ISessionOrganization)) as ISessionOrganization;
+            _organizationResolved = true;
+            return _organization;
+        }
+    }
     private readonly ILogger<FullDuplexRunEngine> _logger;
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
     {
@@ -145,6 +185,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         _loopGuard = loopGuard ?? services.GetService(typeof(ILoopGuard)) as ILoopGuard;
         _directiveValidator = directiveValidator ?? services.GetService(typeof(IOrchestrationDirectiveValidator)) as IOrchestrationDirectiveValidator;
         _longTermMemory = services.GetService(typeof(ILongTermMemoryService)) as ILongTermMemoryService;
+        _resourceLeases = services.GetService(typeof(IResourceLeaseService)) as IResourceLeaseService;
         _logger = logger;
     }
 
@@ -280,6 +321,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         try
         {
             await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
+            await ReleaseRunLeasesAsync(runId, cancellationToken).ConfigureAwait(false);
+            await SetRunMembersOfflineAsync(runId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -589,6 +632,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     return;
                 }
 
+                // A pending hard insert (todo D2) is taken only where it is acted on: the tool loop (calls
+                // not started are not run), or the catch of a model call it cut off. A model call that
+                // starts while one is pending is cut off at once and redone, which costs nothing.
                 if (await ApplyPendingContextPatchesAsync(run, checkpoint, stoppingToken).ConfigureAwait(false))
                 {
                     checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "context-patch", stoppingToken).ConfigureAwait(false);
@@ -663,6 +709,16 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             // Approval, pause/resume, and unknown-outcome decisions are durable
             // wake-up boundaries. Keep the checkpoint and release the lease; the
             // decision endpoint or recovery scan will enqueue the run again.
+        }
+        catch (RunInterruptedException interrupted) when (!stoppingToken.IsCancellationRequested)
+        {
+            // A hard insert cut a model call off mid-step (todo D2). Everything durable up to the
+            // last checkpoint stands: this pass ends and the next one redoes the step from there,
+            // with the steering applied first. That is the resume a lease recovery performs,
+            // started at once instead of by the scan.
+            Interrupts?.TakePending(runId);
+            await AppendRunInterruptedAsync(runId, interrupted, stoppingToken).ConfigureAwait(false);
+            await EnqueueAsync(runId, stoppingToken).ConfigureAwait(false);
         }
         catch (RunCheckpointConflictException)
         {
@@ -1076,7 +1132,17 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var checkpoint = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(stored.Content, JsonOptions)
                     ?? throw new InvalidDataException("Checkpoint is empty.");
                 checkpoint.CheckpointRevision = stored.Revision;
+                // The instance pool is recovery state like the rest: a restored pool whose shape
+                // does not hold (members without an identity, a main that is not the identity)
+                // fails closed instead of resuming under an identity nobody froze.
+                RunFreezeGate.ValidatePool(new RunFreezeGate.PoolState(
+                    checkpoint.ConversationIdentityInstanceId, checkpoint.InstancePoolIds, checkpoint.MainInstanceId));
                 return checkpoint;
+            }
+            catch (RunAdmissionException ex)
+            {
+                await FailLegacyRunAsync(runId, run, ex.Code, ex.Message, cancellationToken).ConfigureAwait(false);
+                return null;
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException)
             {
@@ -1121,7 +1187,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var author = await EnsureConversationAuthorAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         checkpoint.MeetingAgentId = author.Id;
         checkpoint.PlannerAgentId = author.Id;
+        await JoinConversationPoolAsync(run, checkpoint, author.Id, cancellationToken).ConfigureAwait(false);
         var plannerDefinition = RequiredConversationAgent(configuration);
+        await EnrolConversationAsync(run, configuration, author.Id, cancellationToken).ConfigureAwait(false);
         if (!checkpoint.GraphTierAnnounced)
         {
             var graphRunId = Guid.Parse(run.RunId);
@@ -1237,7 +1305,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 var noWorkToPlan = planner.LastPlanWasParsed && planned.Length == 0 && checkpoint.PlanRevision == 0;
                 var materialized = noWorkToPlan
                     ? new List<DurableTaskNode>()
-                    : ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun);
+                    : ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun, DispatchRosterOf(configuration));
                 checkpoint.Tasks = checkpoint.PlanRevision == 0
                     ? materialized
                     : MergeReplannedGraph(checkpoint.Tasks, materialized);
@@ -1329,7 +1397,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         MarkBlockedDescendants(checkpoint.Tasks);
         var ready = checkpoint.Tasks
-            .Where(item => item.Status is "pending" or "ready")
+            .Where(item => IsDispatchable(item, checkpoint.Tasks))
             .Where(item => item.Dependencies.All(dependency => checkpoint.Tasks.Any(other => other.TaskKey == dependency && other.Status == "completed")))
             .Take(Math.Max(1, configuration.Spawn.MaxParallelWorkers))
             .ToList();
@@ -1357,8 +1425,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         foreach (var task in ready)
         {
+            // A task resuming from task_wait continues its own attempt: its tool-call keys
+            // must stay stable so already-prepared calls are not prepared a second time.
+            if (task.Status != "waiting") task.Attempt++;
             task.Status = "running";
-            task.Attempt++;
             task.InputContextRevision = checkpoint.ContextRevision;
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "tasks-dispatched", cancellationToken).ConfigureAwait(false);
@@ -1371,15 +1441,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var workers = new Dictionary<Guid, RuntimeAgentInstance>();
         foreach (var task in ready)
         {
-            try
-            {
-                workers[task.TaskId] = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
-            }
-            catch (WorkerAssignmentException ex)
-            {
-                await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
-                    FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
-            }
+            if (await AssignWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false) is { } assigned)
+                workers[task.TaskId] = assigned;
         }
         checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "workers-assigned", cancellationToken).ConfigureAwait(false);
 
@@ -1572,10 +1635,31 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            // A hard insert that arrived while a tool call ran, or between rounds (todo D2): the calls
+            // the model asked for that have not started are not run, and the next turn reads the
+            // steering. A call already running was left to finish — its outcome must stay known.
+            if (Interrupts?.TakePending(Guid.Parse(run.RunId)) is { } steering)
+                checkpoint = await SkipUnstartedToolCallsAsync(run, checkpoint, task, steering, cancellationToken).ConfigureAwait(false);
+
             // At most one unresolved call is resumed at a time. A model response
             // may contain multiple calls, but each call gets its own durable
             // prepare/resume boundary and approval decision.
             var pendingTurn = task.ToolTurns.FirstOrDefault(item => string.IsNullOrWhiteSpace(item.ResultJson));
+            if (pendingTurn is not null && CoreVirtualToolPolicy.IsTaskWait(pendingTurn.ToolId))
+            {
+                // task_wait is executed here, not by the dispatcher: it reads and parks the task
+                // graph this engine owns. Parking hands the tick back so the sub-tasks can run.
+                var wait = await HandleTaskWaitAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                checkpoint = wait.Checkpoint;
+                if (wait.Parked) return new ToolTaskExecutionResult(checkpoint, Waiting: false, Result: null);
+                continue;
+            }
+            if (pendingTurn is not null && CoreVirtualToolPolicy.IsPlanUpdate(pendingTurn.ToolId))
+            {
+                // plan_update is state on the task node, so the engine answers it in place.
+                checkpoint = await HandlePlanUpdateAsync(run, checkpoint, task, pendingTurn, descriptors, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
             if (pendingTurn is not null)
             {
                 ToolDispatchResultDto dispatch;
@@ -1830,6 +1914,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 }
                 model = await GetWorkerModelTurnAsync(run, configuration, checkpoint, task, worker, declaredTools, cancellationToken, closeoutPrompt).ConfigureAwait(false);
             }
+            catch (RunInterruptedException interrupted) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The user cut this round off. It leaves a record the worker reads on its next turn —
+                // what it had said so far, what the user sent — and the loop goes round again.
+                Interrupts?.TakePending(Guid.Parse(run.RunId));
+                checkpoint = await RecordWorkerInterruptionAsync(run, checkpoint, task, interrupted.Request, interrupted.PartialText, [], cancellationToken).ConfigureAwait(false);
+                continue;
+            }
             catch (InvalidDataException ex)
             {
                 // The frozen worker binding vanished or drifted mid-run: fail this
@@ -2056,6 +2148,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             selected = new WorkerSelection(SpawnableDefinition(spawnable, configuration), task.WorkerAssignmentReason ?? "spawnable_whitelist");
         }
+        else if (!string.IsNullOrWhiteSpace(task.RequestedAgent))
+        {
+            // The coordinator named the executor by responsibility: honor it. Inferring a worker
+            // from required_tools is only the fallback for tasks that name none — least-privilege
+            // matching picks the NARROWEST holder of the listed tools, which routed evidence work
+            // to a reviewer and code edits to a doc writer in the 2026-09-27 dispatch sampling.
+            (selected, spawnable) = ResolveRequestedWorker(configuration, task);
+        }
         else
         {
             try
@@ -2064,7 +2164,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             }
             catch (WorkerUnavailableException)
             {
-                await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.CapabilityMissing, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+                await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.CapabilityMissing, run, configuration, checkpoint, cancellationToken,
+                    $"No executor covers task '{task.TaskKey}' (tools: {string.Join(", ", task.RequiredTools)}; capabilities: {string.Join(", ", task.RequiredCapabilities)}).",
+                    "task", task.TaskId.ToString("N")).ConfigureAwait(false);
                 // A task no roster worker covers is a spawn demand. The frozen
                 // spawnable whitelist decides what it means: nothing covers it →
                 // the loud worker_unavailable failure (run-level, unchanged); a
@@ -2105,6 +2207,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             throw new WorkerAssignmentException(
                 $"Task '{task.TaskKey}' worker '{selected.Agent.Id}' is not a declared dispatch target of the mode graph (tier {graph.Tier}).");
         EnsureGraphWorkerBudget(instances, configuration.Spawn.MaxAgentsPerRun, task.TaskKey);
+        var lineage = ResolveDispatcherLineage(instances, checkpoint.Tasks, task);
+        EnsureGraphWorkerDepth(lineage.Dispatched, lineage.Depth, configuration.Spawn.MaxDepth, task.TaskKey);
         if (string.IsNullOrWhiteSpace(task.WorkerAgentSlug))
         {
             task.WorkerAgentSlug = selected.Agent.Id;
@@ -2112,11 +2216,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             task.WorkerAgentVersionId = selected.Agent.AgentVersionId;
             task.WorkerAgentVersionHash = selected.Agent.VersionContentHash;
             task.WorkerAssignmentReason = selected.Reason;
+            task.WorkerHandle = NextWorkerHandle(checkpoint.Tasks, selected.Agent.Id);
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-selected", cancellationToken).ConfigureAwait(false);
-            await AppendEventAsync(runId, "worker.assigned", $"Task assigned to {selected.Agent.Id}.", new
+            await AppendEventAsync(runId, "worker.assigned", $"Task assigned to {task.WorkerHandle}.", new
             {
                 task_id = task.TaskId,
                 task_key = task.TaskKey,
+                handle = task.WorkerHandle,
+                requested_agent = task.RequestedAgent,
                 agent_slug = selected.Agent.Id,
                 agent_definition_id = selected.Agent.AgentDefinitionId,
                 agent_version_id = selected.Agent.AgentVersionId,
@@ -2189,7 +2296,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 TaskId: task.TaskId,
                 AgentDefinitionId: definitionId,
                 AgentVersionId: versionId,
-                VersionContentHash: selected.Agent.VersionContentHash), cancellationToken).ConfigureAwait(false);
+                VersionContentHash: selected.Agent.VersionContentHash,
+                // Lineage so the created worker carries a real depth instead of starting the
+                // count over: the ceiling above was checked against the dispatcher's depth, and
+                // the same value must land on the row or a later sub-task would see depth 0.
+                ParentInstanceId: lineage.InstanceId,
+                GenerationDepth: lineage.Depth ?? 0), cancellationToken).ConfigureAwait(false);
             await AppendEventAsync(runId, "agent.created",
                 spawnable is null ? "Graph-tier execution worker created." : $"Spawnable worker '{spawnable.Slug}' created from the frozen whitelist.",
                 new
@@ -2220,11 +2332,71 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// boundary against planner sprawl. Concurrency remains bounded by the ready
     /// dispatch window; per-task tool spend stays behind approval and loop-guard.
     /// </summary>
-    private static void EnsureGraphWorkerBudget(IReadOnlyList<RuntimeAgentInstance> instances, int maxAgentsPerRun, string taskKey)
+    internal static void EnsureGraphWorkerBudget(IReadOnlyList<RuntimeAgentInstance> instances, int maxAgentsPerRun, string taskKey)
     {
         if (instances.Count >= maxAgentsPerRun)
             throw new WorkerAssignmentException(
                 $"Graph-tier worker budget exhausted for task '{taskKey}': the run already carries {instances.Count} instances (ceiling {maxAgentsPerRun}).");
+    }
+
+    /// <summary>
+    /// Resolves the lineage for the worker about to be created for <paramref name="task"/>:
+    /// its parent instance and the depth it will carry. A root task (no
+    /// <c>DispatchedByTaskId</c>) is depth 0; a <c>task_dispatch</c> sub-task sits one level
+    /// below the worker that dispatched it. <c>Depth</c> is null — never 0 — when the
+    /// dispatcher cannot be resolved, and callers distinguish "root" from "unresolvable" by
+    /// <c>Dispatched</c>.
+    /// </summary>
+    /// <remarks>
+    /// The dispatcher's worker row is expected to exist because <c>WorkersAssigned</c>
+    /// durably assigns a whole ready batch before any task in it executes, so a sub-task
+    /// cannot become ready before its dispatcher's worker was persisted. The one case that
+    /// does miss is a lane directive dispatching across runs: the dispatcher's worker lives
+    /// under a different run's instance set, so the lookup here finds nothing and we fail
+    /// closed. Lanes are unreachable today (<c>RunFreezeGate</c> rejects
+    /// <c>lanes_enabled</c>, <c>graph_tier_lanes_unsupported</c>), so this is latent rather
+    /// than live — but it must stay a refusal, never a silent depth-0 restart.
+    /// </remarks>
+    internal static (bool Dispatched, Guid? InstanceId, int? Depth) ResolveDispatcherLineage(
+        IReadOnlyList<RuntimeAgentInstance> instances,
+        IReadOnlyList<DurableTaskNode> tasks,
+        DurableTaskNode task)
+    {
+        if (task.DispatchedByTaskId is not { } dispatchedBy) return (false, null, 0);
+        var dispatcher = tasks.FirstOrDefault(item => item.TaskId == dispatchedBy);
+        if (dispatcher?.WorkerAgentId is not { } dispatcherInstanceId) return (true, null, null);
+        var dispatcherInstance = instances.FirstOrDefault(item => item.Id == dispatcherInstanceId);
+        return (true, dispatcherInstanceId, dispatcherInstance?.GenerationDepth + 1);
+    }
+
+    /// <summary>
+    /// Depth ceiling for the engine-authored root path. <see cref="EnsureGraphWorkerBudget"/>
+    /// above stays run-scoped and must not be folded in here: it counts the run's whole
+    /// instance population, and the four non-worker root call sites (conversation author,
+    /// supervisor, curator, lane planner) are legitimately exempt from it. Depth is the
+    /// per-instance question — "how far below the run root does this worker sit" — and the
+    /// engine is the only party that can answer it, because SpawnAsync's own check sits on a
+    /// path the engine never takes.
+    /// </summary>
+    /// <param name="dispatched">
+    /// Whether the task came from a <c>task_dispatch</c> sub-task at all.
+    /// </param>
+    /// <param name="workerDepth">
+    /// The depth the worker about to be created will carry, as returned by
+    /// <see cref="ResolveDispatcherLineage"/> — already relative to the run root, not
+    /// relative to its dispatcher. Null when the dispatcher could not be resolved; a
+    /// <c>task_dispatch</c> sub-task is never legitimately a root, so that fails closed
+    /// rather than silently restarting the count.
+    /// </param>
+    internal static void EnsureGraphWorkerDepth(bool dispatched, int? workerDepth, int maxDepth, string taskKey)
+    {
+        if (!dispatched) return;
+        if (workerDepth is null)
+            throw new WorkerAssignmentException(
+                $"Task '{taskKey}' is a dispatched sub-task whose dispatcher worker could not be resolved, so its spawn depth is unverifiable (max_depth = {maxDepth}). Refusing to create it at depth 0.");
+        if (workerDepth.Value > maxDepth)
+            throw new WorkerAssignmentException(
+                $"Task '{taskKey}' would exceed the spawn depth ceiling (max_depth = {maxDepth}): it would be created at depth {workerDepth.Value}.");
     }
 
     /// <summary>
@@ -2290,6 +2462,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             AgentVersionId = template.AgentVersionId,
             VersionContentHash = template.VersionHash,
             AllowedTools = template.ToolCeiling,
+            Description = template.Description,
             ModelPlan = conversation.ModelPlan,
             Enabled = true
         };
@@ -2307,7 +2480,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         var workerDefinition = GetAssignedWorkerDefinition(configuration, task);
         var context = await BuildContextAsync(run, configuration, workerDefinition.Id,
-            $"Task: {task.Title}\nDescription: {task.Description}\nSuccess criteria: {string.Join("; ", task.SuccessCriteria)}",
+            $"Task: {task.Title}\nDescription: {task.Description}\nSuccess criteria: {string.Join("; ", task.SuccessCriteria)}"
+                + (task.WriteScope is { Count: > 0 } scope
+                    ? $"\nWrite scope (reserved for you; change files only inside it — changes elsewhere are reported to the reviewer): {string.Join("; ", scope)}"
+                    : string.Empty),
             cancellationToken).ConfigureAwait(false);
         var assembly = await AssemblePromptAsync(configuration, workerDefinition, context, cancellationToken).ConfigureAwait(false);
         var agent = new AgentDefinition
@@ -2320,8 +2496,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             AllowedTools = worker.AllowedTools,
             Enabled = true
         };
+        // An instance that may call task_dispatch must see who it can name: the tool's `agent`
+        // field is validated against this same frozen roster, so the prompt and the check agree.
+        var dispatchSection = worker.AllowedTools.Any(CoreVirtualToolPolicy.IsTaskDispatch)
+            ? "\n\n" + BuildDispatchRosterSection(DispatchRosterOf(configuration))
+            : string.Empty;
         return await new ExecutionAgent(CreateModelFactory(configuration, checkpoint, workerDefinition,
-            worker.Id, worker.ParentInstanceId), _logger).GetNextTurnAsync(
+            worker.Id, worker.ParentInstanceId, task: task), _logger).GetNextTurnAsync(
             CreateRunContext(run, checkpoint),
             agent,
             ToPlannedTask(task),
@@ -2330,10 +2511,68 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             // The close-out instruction leads: on that turn the model must hand off,
             // not continue, so it must not be buried under the normal task framing.
             closeoutPrompt is null
-                ? assembly.Instructions + WorkerPatchProtocol
-                : closeoutPrompt + "\n\n" + assembly.Instructions + WorkerPatchProtocol,
+                ? assembly.Instructions + dispatchSection + WorkerPatchProtocol
+                : closeoutPrompt + "\n\n" + assembly.Instructions + dispatchSection + WorkerPatchProtocol,
             configuration.Context.RecentMessageLimit,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            task.Interruptions).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Resolves the executor a coordinator named (<see cref="DurableTaskNode.RequestedAgent"/>):
+    /// an enabled roster worker first, then a spawnable template — which still needs the tier's
+    /// spawn authority. Edge authority and the agent budget are checked by the caller exactly as
+    /// for an inferred worker, so naming a target never widens what the mode permits.
+    /// </summary>
+    internal static (WorkerSelection Selection, FrozenSpawnableTemplate? Spawnable) ResolveRequestedWorker(
+        FrozenRunConfigurationV1 configuration,
+        DurableTaskNode task)
+    {
+        var requested = task.RequestedAgent!.Trim();
+        // Last line of the allowed_dispatch_targets gate: planning and task_dispatch already check
+        // the frozen roster, but a task restored from an older checkpoint (or replanned) reaches here
+        // without passing either.
+        if (ConversationDispatchTargets(configuration) is { } allowed
+            && !allowed.Contains(requested, StringComparer.OrdinalIgnoreCase))
+            throw new WorkerAssignmentException(
+                $"Task '{task.TaskKey}' names executor '{requested}', which this mode does not allow its coordinator to dispatch to. {DescribeDispatchChoices(DispatchRosterOf(configuration))}");
+        var agent = configuration.ExecutionAgents.FirstOrDefault(candidate =>
+            candidate.Enabled && string.Equals(candidate.Id, requested, StringComparison.OrdinalIgnoreCase));
+        if (agent is not null)
+        {
+            ValidateFrozenAgent(agent, "worker");
+            if (!string.IsNullOrWhiteSpace(task.WorkerAgentSlug)
+                && (!string.Equals(task.WorkerAgentSlug, agent.Id, StringComparison.Ordinal)
+                    || task.WorkerAgentDefinitionId != agent.AgentDefinitionId
+                    || task.WorkerAgentVersionId != agent.AgentVersionId
+                    || !string.Equals(task.WorkerAgentVersionHash, agent.VersionContentHash, StringComparison.OrdinalIgnoreCase)))
+                throw new WorkerAssignmentException($"Persisted worker assignment for task '{task.TaskKey}' does not match its requested executor '{agent.Id}'.");
+            return (new WorkerSelection(agent, task.WorkerAssignmentReason ?? "coordinator_assigned"), null);
+        }
+        var graph = configuration.Graph;
+        var template = graph?.SpawnableTemplates.FirstOrDefault(candidate =>
+            string.Equals(candidate.Slug, requested, StringComparison.OrdinalIgnoreCase));
+        if (template is not null)
+        {
+            if (!GraphSpawnAuthority.CarriesSpawnAuthority(graph!.Tier))
+                throw new WorkerAssignmentException(
+                    $"Task '{task.TaskKey}' names spawnable template '{template.Slug}', but the {graph.Tier} tier denies spawn (graph_tier_spawn_denied).");
+            return (new WorkerSelection(SpawnableDefinition(template, configuration), task.WorkerAssignmentReason ?? "coordinator_assigned"), template);
+        }
+        throw new WorkerAssignmentException(
+            $"Task '{task.TaskKey}' names executor '{requested}', which this run cannot dispatch to. {DescribeDispatchChoices(DispatchRosterOf(configuration))}");
+    }
+
+    /// <summary>
+    /// Run-scoped handle for a new assignment: <c>&lt;agent&gt;#&lt;n&gt;</c>, where n counts that
+    /// agent's assignments in this run. Deterministic from the checkpoint (a replayed assignment
+    /// reproduces it) and readable — no random names for a model or a person to misquote.
+    /// </summary>
+    internal static string NextWorkerHandle(IEnumerable<DurableTaskNode> tasks, string agentId)
+    {
+        var used = tasks.Count(item => !string.IsNullOrWhiteSpace(item.WorkerHandle)
+            && string.Equals(item.WorkerAgentSlug, agentId, StringComparison.OrdinalIgnoreCase));
+        return $"{agentId}#{used + 1}";
     }
 
     internal static WorkerSelection ResolveOrSelectWorker(FrozenRunConfigurationV1 configuration, DurableTaskNode task)
@@ -2438,6 +2677,53 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     // 展示/审计元数据，不再做硬白名单（worker.*/task_executor 过滤退役：GraphSeedPack
     // 能进名册纯属 role 恰好叫 task_executor，下一个自定角色词汇的包会隐形）。
     // Graph 为 null 仅存在于手工构造的测试配置，回落为全部启用执行智能体。
+    /// <summary>
+    /// The run's dispatch roster: the frozen list when the body carries one, else computed from
+    /// the frozen roster (bodies admitted before the list was frozen).
+    /// </summary>
+    internal static IReadOnlyList<FrozenDispatchTarget> DispatchRosterOf(FrozenRunConfigurationV1 configuration) =>
+        configuration.DispatchRoster ?? ComputeDispatchRoster(configuration);
+
+    /// <summary>
+    /// Computes the dispatch roster; the coordinator freezes its result at admission. When the
+    /// conversation node's relationship file declares <c>allowed_dispatch_targets</c>, the roster is
+    /// narrowed to it here — once — so the planner's roster, the solo roster section and the
+    /// call-time <c>task_dispatch</c> check all enforce the same declaration.
+    /// </summary>
+    internal static IReadOnlyList<FrozenDispatchTarget> ComputeDispatchRoster(FrozenRunConfigurationV1 configuration)
+    {
+        var allowed = ConversationDispatchTargets(configuration);
+        return BuildFrozenPlannerRoster(configuration)
+            .Where(agent => allowed is null || allowed.Contains(agent.Name, StringComparer.OrdinalIgnoreCase))
+            .Select(agent => new FrozenDispatchTarget(agent.Name, agent.Description ?? string.Empty, agent.AllowedTools))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The conversation node's declared dispatch targets, or null when it declares none (the tier's
+    /// roster applies). Declared targets only narrow: a target the tier would refuse stays refused.
+    /// </summary>
+    internal static IReadOnlyList<string>? ConversationDispatchTargets(FrozenRunConfigurationV1 configuration)
+    {
+        var slug = configuration.Graph?.ConversationTemplateSlug;
+        if (string.IsNullOrWhiteSpace(slug)) return null;
+        return configuration.OperationAgents
+            .FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase))?
+            .AllowedDispatchTargets;
+    }
+
+    /// <summary>The roster section for an instance that holds <c>task_dispatch</c>.</summary>
+    internal static string BuildDispatchRosterSection(IReadOnlyList<FrozenDispatchTarget> roster)
+    {
+        if (roster.Count == 0)
+            return "## 可派发执行者\n本次运行没有可派发的执行者：task_dispatch 不可用，需要的工作请自己完成或如实告知用户。";
+        var lines = roster.Select(target =>
+            $"- {target.Id}: {(string.IsNullOrWhiteSpace(target.Description) ? "（未写职责）" : target.Description.Trim())} | 工具: {(target.Tools.Count == 0 ? "无" : string.Join(", ", target.Tools))}");
+        return "## 可派发执行者（task_dispatch 的 agent 取值）\n"
+            + "按职责选：看谁的职责与边界匹配这项子任务，把它的 id 原样填进 agent。description 要自足——执行者看不到你的对话。\n"
+            + string.Join("\n", lines);
+    }
+
     internal static IReadOnlyList<AgentDefinition> BuildFrozenPlannerRoster(FrozenRunConfigurationV1 configuration)
     {
         var graph = configuration.Graph;
@@ -2446,7 +2732,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 .Where(agent => agent.Enabled && !string.Equals(agent.Id, "task_planner", StringComparison.Ordinal))
                 .OrderBy(agent => agent.RosterOrder)
                 .ThenBy(agent => agent.Id, StringComparer.Ordinal)
-                .Select(agent => ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools))
+                .Select(agent => ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools, agent.Description))
                 .ToArray();
 
         var slugByNodeKey = graph.Nodes.ToDictionary(node => node.NodeKey, node => node.AgentSlug, StringComparer.Ordinal);
@@ -2482,13 +2768,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         {
             if (enabledBySlug.TryGetValue(slug, out var agent))
             {
-                roster.Add(ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools));
+                roster.Add(ToPlannerRosterEntry(agent.AgentDefinitionId ?? Guid.Empty, agent.Id, agent.Role, agent.Capabilities, agent.AllowedTools, agent.Description));
                 continue;
             }
             var template = graph.SpawnableTemplates.FirstOrDefault(candidate =>
                 string.Equals(candidate.Slug, slug, StringComparison.OrdinalIgnoreCase));
             if (template is not null)
-                roster.Add(ToPlannerRosterEntry(template.AgentDefinitionId, template.Slug, template.Role, template.Capabilities, template.ToolCeiling));
+                roster.Add(ToPlannerRosterEntry(template.AgentDefinitionId, template.Slug, template.Role, template.Capabilities, template.ToolCeiling, template.Description));
         }
         return roster;
     }
@@ -2498,10 +2784,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         string slug,
         string role,
         IReadOnlyList<string> capabilities,
-        IReadOnlyList<string> allowedTools) => new()
+        IReadOnlyList<string> allowedTools,
+        string? description) => new()
     {
         Id = definitionId,
         Name = slug,
+        Description = description,
         Layer = "execution",
         AgentType = role,
         Capabilities = capabilities,
@@ -2592,17 +2880,32 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var added = 0;
         foreach (var directive in dispatches)
         {
+            string? agent = null;
+            string? followUpOf = null;
+            Guid? dispatchId = null;
+            Guid? dispatchedBy = null;
             string? title = null;
             string? description = null;
             string[] criteria = [];
             string[] tools = [];
             string[] capabilities = [];
+            string[] writeScope = [];
             try
             {
                 using var document = JsonDocument.Parse(directive.PayloadJson);
                 var root = document.RootElement;
                 if (root.ValueKind == JsonValueKind.Object)
                 {
+                    if (root.TryGetProperty("agent", out var agentElement) && agentElement.ValueKind == JsonValueKind.String)
+                        agent = agentElement.GetString()?.Trim();
+                    if (root.TryGetProperty("follow_up_of", out var followElement) && followElement.ValueKind == JsonValueKind.String)
+                        followUpOf = followElement.GetString()?.Trim();
+                    if (root.TryGetProperty("dispatch_id", out var idElement) && idElement.ValueKind == JsonValueKind.String
+                        && Guid.TryParse(idElement.GetString(), out var parsedId))
+                        dispatchId = parsedId;
+                    if (root.TryGetProperty("task_id", out var byElement) && byElement.ValueKind == JsonValueKind.String
+                        && Guid.TryParse(byElement.GetString(), out var parsedBy))
+                        dispatchedBy = parsedBy;
                     if (root.TryGetProperty("title", out var titleElement) && titleElement.ValueKind == JsonValueKind.String)
                         title = titleElement.GetString()?.Trim();
                     if (root.TryGetProperty("description", out var descriptionElement) && descriptionElement.ValueKind == JsonValueKind.String)
@@ -2610,6 +2913,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     criteria = ReadStringArray(root, "success_criteria");
                     tools = ReadStringArray(root, "required_tools");
                     capabilities = ReadStringArray(root, "required_capabilities");
+                    writeScope = ReadStringArray(root, "write_scope");
                 }
             }
             catch (JsonException)
@@ -2637,16 +2941,24 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     key = $"{key}-{checkpoint.Tasks.Count(node => node.TaskKey.StartsWith(key, StringComparison.OrdinalIgnoreCase)) + 1}";
                 }
                 checkpoint.DirectiveCursor++;
+                var prior = string.IsNullOrWhiteSpace(followUpOf) ? null : FindDispatchedTask(checkpoint.Tasks, dispatchedBy, followUpOf);
                 checkpoint.Tasks.Add(new DurableTaskNode
                 {
-                    TaskId = Guid.NewGuid(),
+                    // The dispatch id IS the sub-task's id: the write-scope leases taken when
+                    // task_dispatch was called are keyed by it, and they are released when this
+                    // task reaches a terminal status.
+                    TaskId = dispatchId is { } id && checkpoint.Tasks.All(item => item.TaskId != id) ? id : Guid.NewGuid(),
                     TaskKey = key,
                     Title = title,
-                    Description = description,
+                    Description = prior is null ? description : FollowUpBrief(prior, description),
+                    DispatchId = dispatchId,
+                    DispatchedByTaskId = dispatchedBy,
+                    WriteScope = NormalizeWriteScope(writeScope),
                     SuccessCriteria = criteria.Length > 0 ? [.. criteria] : ["The sub-task's stated goal is met."],
                     Dependencies = [],
                     RequiredCapabilities = [.. capabilities],
                     RequiredTools = [.. tools],
+                    RequestedAgent = string.IsNullOrWhiteSpace(agent) ? null : agent,
                     Priority = 2,
                     Risk = "medium",
                     Status = "pending"
@@ -2657,8 +2969,12 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                     new
                     {
                         directive_id = directive.Id,
+                        dispatch_id = dispatchId,
+                        dispatched_by = checkpoint.Tasks.FirstOrDefault(item => item.TaskId == dispatchedBy)?.WorkerHandle,
                         task_key = key,
                         title,
+                        agent,
+                        follow_up_of = prior?.WorkerHandle ?? prior?.TaskKey,
                         required_tools = tools,
                         required_capabilities = capabilities
                     }, cancellationToken).ConfigureAwait(false);
@@ -2788,7 +3104,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         Guid? instanceId,
         Guid? parentInstanceId,
         bool streamAnswer = false,
-        bool observeOutput = true)
+        bool observeOutput = true,
+        DurableTaskNode? task = null,
+        bool interruptible = true)
     {
         var resolver = _modelResolver ?? throw new InvalidOperationException("The agent model resolver is not registered.");
         var plan = definition.ModelPlan ?? throw new InvalidDataException($"Frozen agent '{definition.Id}' has no model plan.");
@@ -2812,12 +3130,286 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                         {
                             run_id = checkpoint.RunId, turn_id = checkpoint.TurnId,
                             response_id = frame.ResponseId, agent_name = definition.Id,
+                            // Which instance is thinking: two parallel search#n workers share
+                            // agent_name, and only the handle tells their reasoning apart.
+                            instance_id = instanceId, task_id = task?.TaskId, handle = task?.WorkerHandle,
                             channel = frame.Channel, delta = frame.Delta
                         }, ct).ConfigureAwait(false);
-                if (streamAnswer && (frame.Kind is "started" or "failed" || frame.Channel == "text"))
+                // An answer the user cut off is withdrawn like a failed one; the redone step streams anew.
+                if (streamAnswer && (frame.Kind is "started" or "failed" or "interrupted" || frame.Channel == "text"))
                     await _lifecycle.AppendRunStreamAsync(checkpoint.RunId.ToString(), new DurableRunStreamAppend(
-                        checkpoint.TurnId, $"answer.{frame.Kind}", Delta: frame.Delta), ct).ConfigureAwait(false);
-            } : null);
+                        checkpoint.TurnId, frame.Kind == "interrupted" ? "answer.failed" : $"answer.{frame.Kind}", Delta: frame.Delta), ct).ConfigureAwait(false);
+            } : null,
+            // Only calls whose step the engine redoes may be cut off: the operations that run
+            // after an answer (observeOutput: false) are not.
+            interruptible ? Interrupts : null);
+    }
+
+    /// <summary>
+    /// Releases every resource lease the run still holds at its terminal boundary. A task releases its
+    /// own leases when it finishes, so this is the safety net: a task killed by a crash, an expired
+    /// approval or a cancelled run never reaches that boundary, and its leases would otherwise keep
+    /// blocking sibling runs forever.
+    /// Failure is swallowed on purpose — a ledger that cannot be reached must not turn a completed run
+    /// into a failed one. A missed release is not permanent: the next run that collides with the lease
+    /// finds its holder terminal and reclaims it (<see cref="IRunLivenessProbe"/>).
+    /// </summary>
+    private async Task ReleaseRunLeasesAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        if (_resourceLeases is null) return;
+        try
+        {
+            await _resourceLeases.ReleaseRunAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Releasing resource leases for run {RunId} failed.", runId);
+        }
+    }
+
+    /// <summary>
+    /// Resolves a ready task's worker, leases its declared write scope and enrols it in the session's
+    /// organization. Null when the task was failed instead (it then carries the reason): a worker that
+    /// cannot be created, or a write scope another run holds, fails only its own task.
+    /// </summary>
+    private async Task<RuntimeAgentInstance?> AssignWorkerAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        FullDuplexCheckpointV1 checkpoint,
+        Guid plannerId,
+        DurableTaskNode task,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.Parse(run.RunId);
+        RuntimeAgentInstance worker;
+        try
+        {
+            worker = await GetOrCreateWorkerAsync(run, configuration, checkpoint, plannerId, task, cancellationToken).ConfigureAwait(false);
+        }
+        catch (WorkerAssignmentException ex)
+        {
+            await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                FailedTaskResult(task, task.WorkerAgentId, WorkerAssignmentInvalidCategory, SafeError(ex)), cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        // A declared write scope is leased when the task starts (idempotent for a resumed task and for a
+        // sub-task whose scope task_dispatch already leased). Losing it fails only this task, naming the
+        // holder: waiting in place would spin the run with nothing to wake it.
+        var refusal = await AcquireWriteScopeAsync(run, configuration, runId, task, worker.Id, cancellationToken).ConfigureAwait(false);
+        if (refusal is not null)
+        {
+            await ApplyTaskResultAsync(run, configuration, runId, checkpoint,
+                FailedTaskResult(task, task.WorkerAgentId, RunErrorTaxonomy.ResourceConflict, refusal), cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        await EnrolWorkerAsync(run, configuration, checkpoint, task, worker, cancellationToken).ConfigureAwait(false);
+        return worker;
+    }
+
+    /// <summary>
+    /// Makes the conversation identity (through its authoring instance) and every standing governance
+    /// role members of the session's organization when a run starts planning. Idempotent: the author
+    /// instance binds once, standing members are keyed by role.
+    /// </summary>
+    private async Task EnrolConversationAsync(RunState run, FrozenRunConfigurationV1 configuration, Guid authorId, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization || OrganizationScopeOf(run) is not { } scope) return;
+        try
+        {
+            var conversation = configuration.OperationAgents.FirstOrDefault(agent => agent.DirectUserOutput)
+                ?? configuration.OperationAgents.FirstOrDefault();
+            await organization.EnrolAsync(new OrganizationMemberEnrolment(scope, OrganizationRoles.Conversation,
+                conversation?.Id ?? "conversation", conversation?.Id ?? "conversation", Guid.Parse(run.RunId), authorId,
+                AgentDefinitionId: conversation?.AgentDefinitionId, Description: conversation?.Description), cancellationToken).ConfigureAwait(false);
+            foreach (var standing in GovernanceSubscribers.Standing(configuration))
+            {
+                await organization.EnrolAsync(new OrganizationMemberEnrolment(scope, OrganizationRoles.Governance, standing.Id, standing.Id,
+                    Guid.Parse(run.RunId), AgentDefinitionId: standing.AgentDefinitionId, Description: standing.Description), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not enrol run {RunId} in its session's organization.", run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Enrols a task's worker: its own member for an executor (addressed by its handle, joined to its
+    /// dispatcher's plan room), or the conversation member when the solo master works the task itself,
+    /// so all of the master's instances speak with one voice.
+    /// </summary>
+    private async Task EnrolWorkerAsync(RunState run, FrozenRunConfigurationV1 configuration, FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task, RuntimeAgentInstance worker, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization || OrganizationScopeOf(run) is not { } scope) return;
+        try
+        {
+            var slug = string.IsNullOrWhiteSpace(task.WorkerAgentSlug) ? worker.Role : task.WorkerAgentSlug!;
+            var definition = configuration.OperationAgents.Concat(configuration.ExecutionAgents)
+                .FirstOrDefault(agent => string.Equals(agent.Id, slug, StringComparison.OrdinalIgnoreCase));
+            var isConversation = string.Equals(worker.Layer, "operation", StringComparison.Ordinal)
+                && (definition?.DirectUserOutput ?? true);
+            var dispatcher = task.DispatchedByTaskId is { } dispatchedBy
+                ? checkpoint.Tasks.FirstOrDefault(item => item.TaskId == dispatchedBy)?.WorkerAgentId
+                : checkpoint.PlannerAgentId;
+            await organization.EnrolAsync(isConversation
+                ? new OrganizationMemberEnrolment(scope, OrganizationRoles.Conversation, slug, slug,
+                    Guid.Parse(run.RunId), worker.Id, task.TaskId, AgentDefinitionId: worker.AgentDefinitionId)
+                : new OrganizationMemberEnrolment(scope, OrganizationRoles.Executor, slug,
+                    string.IsNullOrWhiteSpace(task.WorkerHandle) ? slug : task.WorkerHandle,
+                    Guid.Parse(run.RunId), worker.Id, task.TaskId, dispatcher ?? checkpoint.PlannerAgentId,
+                    worker.AgentDefinitionId, definition?.Description), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not enrol task {TaskKey} of run {RunId} in its session's organization.", task.TaskKey, run.RunId);
+        }
+    }
+
+    /// <summary>
+    /// Tells the run's standing subscribers of <paramref name="topic"/> through their organization inbox.
+    /// They take their own turn later; this run never waits for them.
+    /// </summary>
+    private async Task RaiseStandingAsync(RunState run, FrozenRunConfigurationV1 configuration, string topic, string summary,
+        string? subjectKind, string? subjectId, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization || OrganizationScopeOf(run) is not { } scope) return;
+        var subscribers = GovernanceSubscribers.For(configuration, topic);
+        if (subscribers.Count == 0) return;
+        foreach (var agent in subscribers)
+        {
+            try
+            {
+                await organization.NotifyAsync(new OrganizationNotice(scope, Guid.Parse(run.RunId), topic, agent.Id, summary, subjectKind, subjectId),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                _logger.TryLogWarning(ex, "Could not tell standing member {Agent} about {Topic} in run {RunId}.", agent.Id, topic, run.RunId);
+            }
+        }
+    }
+
+    private async Task SetMemberOfflineAsync(Guid instanceId, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization) return;
+        try
+        {
+            await organization.SetInstanceOfflineAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogDebug(ex, "Could not mark instance {InstanceId} offline.", instanceId);
+        }
+    }
+
+    private async Task SetRunMembersOfflineAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization) return;
+        try
+        {
+            await organization.SetRunOfflineAsync(runId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogDebug(ex, "Could not mark the members of run {RunId} offline.", runId);
+        }
+    }
+
+    /// <summary>
+    /// Keeps a lower layer's own words in the session's evidence archive (todo R4), so a summary can
+    /// always be traced back to what was said. Best-effort: archiving never changes a run's outcome.
+    /// </summary>
+    private async Task ArchiveEvidenceAsync(RunState run, Guid? taskId, string kind, string title, string? author, string content,
+        string sourceKey, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(content) || OrganizationScopeOf(run) is not { } scope) return;
+        if (_services.GetService(typeof(IEvidenceArchive)) is not IEvidenceArchive archive) return;
+        try
+        {
+            await archive.AppendAsync(new EvidenceEntry(scope.TenantId, scope.WorkspaceId, scope.SessionId, Guid.Parse(run.RunId), taskId,
+                kind, title, author, content, sourceKey), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogDebug(ex, "Could not archive {Kind} evidence of run {RunId}.", kind, run.RunId);
+        }
+    }
+
+    /// <summary>A finished task in full: status, who worked it, the answer, the evidence and every criterion verdict.</summary>
+    internal static string TaskEvidenceText(DurableTaskNode task)
+    {
+        var text = new System.Text.StringBuilder();
+        text.Append("Status: ").AppendLine(task.Status);
+        text.Append("Task: ").Append(task.TaskKey).Append(" — ").AppendLine(task.Title);
+        if (!string.IsNullOrWhiteSpace(task.Description)) text.Append("Brief: ").AppendLine(task.Description);
+        var worker = task.WorkerHandle ?? task.WorkerAgentSlug;
+        if (!string.IsNullOrWhiteSpace(worker)) text.Append("Worker: ").AppendLine(worker);
+        if (task.WriteScope is { Count: > 0 } scope) text.Append("Write scope: ").AppendLine(string.Join(", ", scope));
+        text.AppendLine("Result:").AppendLine(string.IsNullOrWhiteSpace(task.ResultSummary) ? "(no result text)" : task.ResultSummary);
+        if (task.Evidence.Count > 0)
+        {
+            text.AppendLine("Evidence:");
+            foreach (var item in task.Evidence) text.Append("- ").AppendLine(item);
+        }
+        if (task.CriteriaVerdicts.Count > 0)
+        {
+            text.AppendLine("Criteria:");
+            foreach (var verdict in task.CriteriaVerdicts)
+                text.Append(verdict.Satisfied ? "- ✓ " : "- ✗ ").Append(verdict.Criterion)
+                    .AppendLine(string.IsNullOrWhiteSpace(verdict.Evidence) ? string.Empty : " — " + verdict.Evidence);
+        }
+        return text.ToString();
+    }
+
+    private static OrganizationScope? OrganizationScopeOf(RunState run) =>
+        Guid.TryParse(run.TenantId, out var tenantId) && Guid.TryParse(run.WorkspaceId, out var workspaceId)
+        && Guid.TryParse(run.InitiatedByPrincipalId, out var principalId) && Guid.TryParse(run.SessionId, out var sessionId)
+            ? new OrganizationScope(tenantId, workspaceId, principalId, sessionId)
+            : null;
+
+    private static string DefaultSummary(OperationalTriggerPoint point, FullDuplexCheckpointV1 checkpoint) => point switch
+    {
+        OperationalTriggerPoint.TaskGraphCreated => $"The task graph was (re)planned: {checkpoint.Tasks.Count} task(s): {string.Join(", ", checkpoint.Tasks.Take(12).Select(task => task.TaskKey))}.",
+        OperationalTriggerPoint.RunFinalized => "The run finished and its answer was delivered.",
+        _ => point.ToString()
+    };
+
+    private static string Clip(string? value, int max) =>
+        string.IsNullOrWhiteSpace(value) ? "(no summary)" : value.Length <= max ? value : value[..max] + "…";
+
+    /// <summary>
+    /// Leases a task's declared write scope, all-or-nothing. Returns null when the scope is held (or
+    /// the task declared none), else a correctable sentence naming what is held and by whom; a
+    /// partially acquired scope is released so a refused task never keeps half its claims.
+    /// </summary>
+    private async Task<string?> AcquireWriteScopeAsync(
+        RunState run,
+        FrozenRunConfigurationV1 configuration,
+        Guid runId,
+        DurableTaskNode task,
+        Guid? workerId,
+        CancellationToken cancellationToken)
+    {
+        if (_resourceLeases is null || task.WriteScope is not { Count: > 0 } scope) return null;
+        Guid? sessionId = Guid.TryParse(run.SessionId, out var parsedSession) ? parsedSession : null;
+        foreach (var claim in ResourceClaimResolver.ResolveWriteScope(scope, configuration.Workspace?.RootPath))
+        {
+            var decision = await _resourceLeases.AcquireAsync(new ResourceAcquireRequest(
+                claim, sessionId, runId, task.TaskId, workerId,
+                $"Declared write scope of task '{task.TaskKey}'.", ResourceLeasePurposes.WriteScope), cancellationToken).ConfigureAwait(false);
+            if (decision.Granted) continue;
+            await _resourceLeases.ReleaseTaskAsync(runId, task.TaskId, cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(runId, ResourceLeaseMessages.ConflictEventType,
+                $"Task '{task.TaskKey}' could not start: its write scope overlaps a resource another run holds.",
+                ResourceLeaseMessages.ConflictPayload(claim, decision.Conflicts, runId, task.TaskId, ResourceLeaseMessages.DetectedAtWriteScope), cancellationToken).ConfigureAwait(false);
+            await RaiseStandingAsync(run, configuration, GovernanceTopics.LeaseConflict,
+                $"Task '{task.TaskKey}' could not start (write_scope): {ResourceLeaseMessages.Describe(claim, decision.Conflicts)}",
+                "task", task.TaskId.ToString("N"), cancellationToken).ConfigureAwait(false);
+            return ResourceLeaseMessages.Describe(claim, decision.Conflicts)
+                + " Dispatch it again once that work is done, give it a separate worktree, or narrow its write_scope.";
+        }
+        return null;
     }
 
     private async Task ApplyTaskResultAsync(
@@ -2847,6 +3439,17 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         if (execution.WorkerAgentId is { } workerId) task.WorkerAgentId = workerId;
         if (execution.Status is "completed" or "failed" or "blocked")
         {
+            // Free the resources this task claimed. Releasing only at run end would keep a finished
+            // task's files locked for the rest of the run, which is the opposite of what the ledger
+            // is for: two runs of one session are meant to work in parallel on different files.
+            if (_resourceLeases is not null)
+            {
+                await _resourceLeases.ReleaseTaskAsync(runId, task.TaskId, cancellationToken).ConfigureAwait(false);
+            }
+            if (task.WorkerAgentId is { } finishedWorker) await SetMemberOfflineAsync(finishedWorker, cancellationToken).ConfigureAwait(false);
+            // The result is kept verbatim, per attempt: the meeting and the summaries compress it, the archive never does.
+            await ArchiveEvidenceAsync(run, task.TaskId, EvidenceKinds.TaskResult, task.Title, task.WorkerHandle ?? task.WorkerAgentSlug,
+                TaskEvidenceText(task), $"task:{task.TaskId:N}:{task.Attempt}", cancellationToken).ConfigureAwait(false);
             // A terminal task never carries a pending execution into later ticks:
             // without this, a failed task would be resumed (and re-evented) on every
             // wake for the rest of the run.
@@ -2924,7 +3527,16 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         if (execution.Status == "completed")
         {
-            await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskCompleted, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
+            await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.TaskCompleted, run, configuration, checkpoint, cancellationToken,
+                $"Task '{task.TaskKey}' ({task.WorkerHandle ?? task.WorkerAgentSlug}) completed: {Clip(task.ResultSummary, 240)}", "task", task.TaskId.ToString("N")).ConfigureAwait(false);
+        }
+        else if (execution.Status is "failed" or "blocked")
+        {
+            // The built-in behaviours only ever answered completed tasks; a standing member subscribed
+            // to task_closed is told about every terminal task, because a failure is what it watches for.
+            await RaiseStandingAsync(run, configuration, GovernanceTopics.TaskClosed,
+                $"Task '{task.TaskKey}' ({task.WorkerHandle ?? task.WorkerAgentSlug}) ended {execution.Status}: {Clip(task.ResultSummary, 240)}",
+                "task", task.TaskId.ToString("N"), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -2979,6 +3591,142 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// </summary>
     private static string ToolCallFailureJson(string toolId, string category, string message) =>
         JsonSerializer.Serialize(new { tool_id = toolId, error_category = category, message });
+
+    /// <summary>Dispatch status of a call a hard insert kept from starting (todo D2).</summary>
+    internal const string NotRunAfterInterrupt = "not_run";
+
+    /// <summary>Interruptions kept per task; the newest are the ones the worker must act on.</summary>
+    private const int MaxTaskInterruptions = 5;
+
+    /// <summary>
+    /// A hard insert arrived while this task's tool calls were in progress: every call the model
+    /// asked for that has not started gets a "not run" result (the transcript needs one per call, and
+    /// the worker must know it did not happen). Not an error — the loop guard does not count it.
+    /// When nothing was left to skip, nothing was cut off: the next turn simply reads the steering.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> SkipUnstartedToolCallsAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        RunInterruptRequest steering,
+        CancellationToken cancellationToken)
+    {
+        var unstarted = task.ToolTurns
+            .Where(turn => string.IsNullOrWhiteSpace(turn.ResultJson) && string.IsNullOrWhiteSpace(turn.ExecutionId))
+            .ToList();
+        if (unstarted.Count == 0) return checkpoint;
+        foreach (var turn in unstarted)
+        {
+            turn.DispatchStatus = NotRunAfterInterrupt;
+            turn.ResultJson = JsonSerializer.Serialize(new
+            {
+                tool_id = turn.ToolId,
+                status = NotRunAfterInterrupt,
+                reason = "interrupted",
+                message = "Not run: the user sent new instructions before this call started. Read them and decide again whether it is still needed."
+            });
+        }
+        return await RecordWorkerInterruptionAsync(run, checkpoint, task, steering, null,
+            unstarted.Select(turn => turn.ToolId).ToArray(), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Keeps the record of a round the user cut off on the task (shown to the worker where it
+    /// happened, see <see cref="WorkerInterruption"/>) and says so on the run's journal.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> RecordWorkerInterruptionAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        RunInterruptRequest steering,
+        string? partialText,
+        IReadOnlyList<string> skippedTools,
+        CancellationToken cancellationToken)
+    {
+        var partial = string.IsNullOrWhiteSpace(partialText) ? null : Clip(partialText.Trim(), 2000);
+        var interruptions = task.Interruptions ??= [];
+        interruptions.Add(new WorkerInterruption(task.ToolTurns.Count, Clip(steering.Content.Trim(), 2000), partial, skippedTools.Count, DateTimeOffset.UtcNow));
+        if (interruptions.Count > MaxTaskInterruptions) interruptions.RemoveRange(0, interruptions.Count - MaxTaskInterruptions);
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "worker-interrupted", cancellationToken).ConfigureAwait(false);
+        var runId = Guid.Parse(run.RunId);
+        await AppendEventAsync(runId, "worker.interrupted",
+            $"The user interrupted {task.WorkerHandle ?? task.WorkerAgentSlug ?? task.TaskKey}; it continues with the new instructions.",
+            new
+            {
+                run_id = runId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                handle = task.WorkerHandle,
+                lane_key = LaneKeyOf(task),
+                patch_id = steering.PatchId,
+                during = skippedTools.Count > 0 ? "tool_calls" : "model_call",
+                skipped_tools = skippedTools,
+                partial_characters = partial?.Length ?? 0
+            }, cancellationToken, task.TaskId,
+            idempotencyKey: $"worker-interrupted:{task.TaskId}:{steering.PatchId:N}:{task.ToolTurns.Count}").ConfigureAwait(false);
+        return checkpoint;
+    }
+
+    /// <summary>Sibling runs read for the pool; the active-run limit keeps the real number small.</summary>
+    private const int MaxPoolSiblings = 16;
+
+    /// <summary>
+    /// Writes this run's place in the session's conversation pool (todo D3), once: its conversation
+    /// identity instance is the run's main instance, and the pool is that instance plus the identity
+    /// instances of the session's other unfinished runs at the time — the parallel instances of the
+    /// same identity this one shares the session context with. The pool is what they were at planning;
+    /// the live picture is the session topology.
+    /// </summary>
+    private async Task JoinConversationPoolAsync(RunState run, FullDuplexCheckpointV1 checkpoint, Guid identityInstanceId, CancellationToken cancellationToken)
+    {
+        if (checkpoint.ConversationIdentityInstanceId is not null) return;
+        var pool = new List<Guid> { identityInstanceId };
+        try
+        {
+            var siblings = await _lifecycle.ListActiveRunsAsync(checkpoint.SessionId, cancellationToken).ConfigureAwait(false);
+            foreach (var sibling in siblings.Where(item => item.RunId != run.RunId).Take(MaxPoolSiblings))
+            {
+                var stored = await _lifecycle.GetCurrentRunCheckpointAsync(sibling.RunId, cancellationToken).ConfigureAwait(false);
+                if (stored is null) continue;
+                var other = JsonSerializer.Deserialize<FullDuplexCheckpointV1>(stored.Content, JsonOptions);
+                if (other?.ConversationIdentityInstanceId is { } instance && !pool.Contains(instance)) pool.Add(instance);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The pool is a record of who ran alongside; failing to read a sibling never stops the run.
+            _logger.TryLogDebug(ex, "Could not read the sibling runs of {RunId} for its conversation pool.", run.RunId);
+        }
+        checkpoint.ConversationIdentityInstanceId = identityInstanceId;
+        checkpoint.MainInstanceId = identityInstanceId;
+        checkpoint.InstancePoolIds = pool;
+        if (pool.Count > 1)
+            await AppendEventAsync(checkpoint.RunId, "conversation.pool_joined",
+                "This run's conversation identity runs alongside other instances of it in the session and shares their context.",
+                new { run_id = checkpoint.RunId, instance_id = identityInstanceId, pool = pool }, cancellationToken,
+                idempotencyKey: $"run:{checkpoint.RunId}:pool").ConfigureAwait(false);
+    }
+
+    /// <summary>The run-level record of a step a hard insert cut off and the engine is redoing.</summary>
+    private async Task AppendRunInterruptedAsync(Guid runId, RunInterruptedException interrupted, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await AppendEventAsync(runId, "run.interrupted",
+                "The user interrupted the run; the step in progress is redone with the new instructions.",
+                new
+                {
+                    run_id = runId,
+                    patch_id = interrupted.Request.PatchId,
+                    redone = "step",
+                    partial_characters = interrupted.PartialText.Length
+                }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogWarning(ex, "Could not append the interruption event for run {RunId}.", runId);
+        }
+    }
 
     private static void ClearPendingToolExecution(DurableTaskNode task, string? category = null)
     {
@@ -3100,7 +3848,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         for (var index = task.ToolTurns.Count - 1; index >= 0 && tail.Count < max; index--)
         {
             var turn = task.ToolTurns[index];
-            if (string.IsNullOrWhiteSpace(turn.ResultJson)) continue;
+            // A call a hard insert kept from running was not a repeat of anything.
+            if (string.IsNullOrWhiteSpace(turn.ResultJson) || turn.DispatchStatus == NotRunAfterInterrupt) continue;
             tail.Add($"{turn.ToolId}:{turn.ArgumentsJson}");
         }
         tail.Reverse();
@@ -3631,7 +4380,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 RefuseSilentPlanningFallbackOnDeclaredEdges(configuration, planned);
                 checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage, planner.LastUsage);
                 checkpoint.Tasks = MergeReplannedGraph(checkpoint.Tasks,
-                    ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun));
+                    ValidateAndMaterializeGraph(planned, configuration.Spawn.MaxAgentsPerRun, DispatchRosterOf(configuration)));
                 // A revise verdict explicitly rejects the flagged tasks' results,
                 // so those keys re-execute even when the planner keeps them.
                 foreach (var node in checkpoint.Tasks.Where(node => reviseKeys.Contains(node.TaskKey)))
@@ -4060,6 +4809,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         checkpoint = await DrainRunDirectivesAsync(run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await EvaluateAndDispatchOperationsAsync(OperationalTriggerPoint.RunFinalized, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
         await _instances.ReleaseRunInstancesAsync(runId, cancellationToken).ConfigureAwait(false);
+        await ReleaseRunLeasesAsync(runId, cancellationToken).ConfigureAwait(false);
+        await SetRunMembersOfflineAsync(runId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task FinalizeCancellationCoreAsync(
@@ -4360,8 +5111,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
     }
 
-    private async Task<ContextPack> BuildContextAsync(RunState run, FrozenRunConfigurationV1 config, string agentId, string taskContext, CancellationToken cancellationToken) =>
-        await _contextProvider.BuildContextAsync(new ContextBuildRequest(
+    private async Task<ContextPack> BuildContextAsync(RunState run, FrozenRunConfigurationV1 config, string agentId, string taskContext, CancellationToken cancellationToken)
+    {
+        var pack = await _contextProvider.BuildContextAsync(new ContextBuildRequest(
             run.SessionId,
             run.RunId,
             config.RuntimeProfileId,
@@ -4376,6 +5128,51 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             // builder reads the project's own instructions from the directory this run was granted.
             Workspace = config.Workspace,
         }, cancellationToken).ConfigureAwait(false);
+        return await WithOpenReportsAsync(run, config, agentId, pack, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Hands the conversation identity the open warning and blocking reports of its session's
+    /// organization. In the coordinator modes it holds no tools (a tool surface would make its mode
+    /// a solo tier), so reading reports has to arrive as context rather than as a tool call; this is
+    /// how a standing reviewer's judgement reaches the next plan and the answer the user reads. The
+    /// reports are observations: the evidence says so, and deciding stays with whoever holds the verb.
+    /// </summary>
+    private async Task<ContextPack> WithOpenReportsAsync(RunState run, FrozenRunConfigurationV1 config, string agentId, ContextPack pack, CancellationToken cancellationToken)
+    {
+        if (Organization is not { } organization || !Guid.TryParse(run.SessionId, out var sessionId)) return pack;
+        var conversation = config.OperationAgents.FirstOrDefault(agent => agent.DirectUserOutput);
+        if (conversation is null || !string.Equals(conversation.Id, agentId, StringComparison.OrdinalIgnoreCase)) return pack;
+        IReadOnlyList<OrganizationReportDigest> reports;
+        try
+        {
+            reports = await organization.ListOpenReportsAsync(sessionId, 8, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            _logger.TryLogDebug(ex, "Could not read the open reports of session {SessionId}.", sessionId);
+            return pack;
+        }
+        var relevant = reports.Where(report => report.Severity is "warning" or "blocking").Take(5).ToArray();
+        if (relevant.Length == 0) return pack;
+        var text = "Open governance reports in this session's organization (observations by standing roles; they change nothing by themselves. "
+            + "Take them into account, say so to the user when one blocks the work, and do not claim a proposal was carried out unless evidence shows it):\n"
+            + string.Join("\n", relevant.Select(report =>
+                $"- [{report.Severity}/{report.ReportKind}] {report.AuthorDisplayName}: {Clip(report.Finding, 300)}"
+                + (report.SubjectKind is null ? string.Empty : $" (about {report.SubjectKind} {report.SubjectId})")
+                + (report.ProposedVerb is null ? string.Empty : $"; proposes {report.ProposedVerb}")));
+        var evidence = new ContextEvidence { Source = "organization_reports", Content = text, EstimatedTokens = Math.Max(1, text.Length / 2) };
+        return new ContextPack
+        {
+            SessionId = pack.SessionId,
+            RunId = pack.RunId,
+            TokenBudget = pack.TokenBudget,
+            EstimatedTokens = pack.EstimatedTokens + evidence.EstimatedTokens,
+            Evidence = [.. pack.Evidence, evidence],
+            Dropped = pack.Dropped,
+            Metadata = pack.Metadata
+        };
+    }
 
     private async Task<string> GenerateMeetingResponseAsync(
         FrozenRunConfigurationV1 configuration,
@@ -4391,7 +5188,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         var escalation = checkpoint.SupervisionDecision == "escalate"
             ? "\n\nIMPORTANT: supervision escalated this run. Explain the unresolved decision clearly and ask the user for direction."
             : string.Empty;
-        var evidence = string.Join("\n", checkpoint.Tasks.Select(item => $"- [{item.ResultStatus ?? item.Status}] {item.ResultSummary}"));
+        var evidence = string.Join("\n", checkpoint.Tasks.Select(FormatTaskEvidenceForMeeting));
         var instructions = assembly.Instructions + "\n\nYou are the conversation agent responsible for this run's reply. Reply directly and honestly in the user's language. Summarize completed work, evidence, limits, and next action. Do not claim tools ran if evidence does not say so." + escalation;
         var prompt = $"Current user goal:\n{checkpoint.UserGoal}\n\nExecution evidence:\n{evidence}";
         using var agent = Maf18RuntimeAdapter.CreateGovernanceAgent(
@@ -4411,6 +5208,44 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             throw new MeetingResponseUnavailableException("empty_model_response", "Meeting agent returned no output.");
         }
         return answer;
+    }
+
+    private const int MeetingEvidenceLineLimit = 400;
+
+    /// <summary>
+    /// One task as the conversation agent reads it at close-out: status, what the task was, who
+    /// did it (the run-scoped handle), what it reported, and the per-criterion evidence. A bare
+    /// "[status] summary" line left the coordinator unable to say which sub-task a result
+    /// belonged to or whether each success criterion actually had evidence.
+    /// </summary>
+    internal static string FormatTaskEvidenceForMeeting(DurableTaskNode item)
+    {
+        var who = item.WorkerHandle ?? item.WorkerAgentSlug ?? "unassigned";
+        var builder = new System.Text.StringBuilder()
+            .Append("- [").Append(item.ResultStatus ?? item.Status).Append("] ")
+            .Append(item.Title).Append(" (").Append(who).Append("): ")
+            .Append(Bound(item.ResultSummary ?? "no result reported"));
+        foreach (var entry in item.Evidence)
+        {
+            if (entry.StartsWith("criterion_evidence:", StringComparison.Ordinal))
+            {
+                var body = entry["criterion_evidence:".Length..];
+                var split = body.IndexOf("||", StringComparison.Ordinal);
+                builder.Append("\n    - ✓ ")
+                    .Append(split < 0 ? Bound(body) : $"{Bound(body[..split])} — {Bound(body[(split + 2)..])}");
+            }
+            else if (entry.StartsWith("missing_criterion_evidence:", StringComparison.Ordinal))
+            {
+                builder.Append("\n    - ✗ no evidence: ").Append(Bound(entry["missing_criterion_evidence:".Length..]));
+            }
+        }
+        return builder.ToString();
+
+        static string Bound(string value)
+        {
+            var text = value.ReplaceLineEndings(" ").Trim();
+            return text.Length <= MeetingEvidenceLineLimit ? text : text[..MeetingEvidenceLineLimit] + "…";
+        }
     }
 
     internal static bool CanUseMeetingEvidenceFallback(FullDuplexCheckpointV1 checkpoint)
@@ -4472,7 +5307,10 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     }
 
 
-    internal static List<DurableTaskNode> ValidateAndMaterializeGraph(PlannedTask[] tasks, int maxTasks)
+    internal static List<DurableTaskNode> ValidateAndMaterializeGraph(
+        PlannedTask[] tasks,
+        int maxTasks,
+        IReadOnlyList<FrozenDispatchTarget>? dispatchRoster = null)
     {
         if (tasks.Length == 0) throw new InvalidTaskGraphException("The planner returned no tasks.");
         if (tasks.Length > maxTasks) throw new InvalidTaskGraphException($"The planner returned {tasks.Length} tasks, above the frozen limit of {maxTasks}.");
@@ -4506,6 +5344,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             Dependencies = candidate.Task.Dependencies.Select(value => aliases.TryGetValue(value, out var dependency) ? dependency : throw new InvalidTaskGraphException($"Task '{candidate.Key}' references unknown dependency '{value}'.")).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             RequiredCapabilities = candidate.Task.RequiredCapabilities.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             RequiredTools = candidate.Task.RequiredTools.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            RequestedAgent = ResolveAssignee(candidate.Key, candidate.Task.Assignee, dispatchRoster),
+            WriteScope = NormalizeWriteScope(candidate.Task.WriteScope),
             Priority = candidate.Task.Priority,
             Risk = string.IsNullOrWhiteSpace(candidate.Task.Risk) ? "medium" : candidate.Task.Risk.Trim(),
             Status = "pending",
@@ -4531,6 +5371,41 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             visited.Add(identity);
         }
     }
+
+    /// <summary>
+    /// Canonicalizes a coordinator-named executor against the dispatch roster. An id the roster
+    /// does not hold is a correctable planning error — the message lists the valid ids with their
+    /// responsibilities so the planner retry can fix it — never a silent re-route.
+    /// </summary>
+    internal static string? ResolveAssignee(string taskKey, string? assignee, IReadOnlyList<FrozenDispatchTarget>? roster)
+    {
+        if (string.IsNullOrWhiteSpace(assignee)) return null;
+        var requested = assignee.Trim();
+        if (roster is null) return requested;
+        var match = roster.FirstOrDefault(target => string.Equals(target.Id, requested, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) return match.Id;
+        throw new InvalidTaskGraphException(
+            $"Task '{taskKey}' names assignee '{requested}', which is not a dispatchable executor. {DescribeDispatchChoices(roster)}");
+    }
+
+    /// <summary>A declared write scope, trimmed and de-duplicated; null when nothing was declared.</summary>
+    internal static List<string>? NormalizeWriteScope(IEnumerable<string>? entries)
+    {
+        var scope = (entries ?? [])
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Select(entry => entry.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(32)
+            .ToList();
+        return scope.Count == 0 ? null : scope;
+    }
+
+    /// <summary>One-line-per-executor listing used in every "pick a valid executor" error.</summary>
+    internal static string DescribeDispatchChoices(IReadOnlyList<FrozenDispatchTarget> roster) =>
+        roster.Count == 0
+            ? "This run has no dispatchable executor."
+            : "Valid ids: " + string.Join("; ", roster.Select(target =>
+                string.IsNullOrWhiteSpace(target.Description) ? target.Id : $"{target.Id} ({target.Description})")) + ".";
 
     internal static List<DurableTaskNode> MergeReplannedGraph(
         IReadOnlyList<DurableTaskNode> existing,
@@ -4570,6 +5445,14 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 WorkerAgentVersionId = prior.WorkerAgentVersionId,
                 WorkerAgentVersionHash = prior.WorkerAgentVersionHash,
                 WorkerAssignmentReason = prior.WorkerAssignmentReason,
+                RequestedAgent = prior.RequestedAgent,
+                WorkerHandle = prior.WorkerHandle,
+                DispatchId = prior.DispatchId,
+                WriteScope = prior.WriteScope,
+                DispatchedByTaskId = prior.DispatchedByTaskId,
+                AwaitingTaskIds = prior.AwaitingTaskIds,
+                ReportedTaskIds = prior.ReportedTaskIds,
+                Plan = prior.Plan,
                 InputContextRevision = prior.InputContextRevision,
                 ResultStatus = prior.ResultStatus,
                 ResultSummary = prior.ResultSummary,
@@ -4665,8 +5548,15 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         RunState run,
         FrozenRunConfigurationV1 configuration,
         FullDuplexCheckpointV1 checkpoint,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? summary = null,
+        string? subjectKind = null,
+        string? subjectId = null)
     {
+        // Standing members hear the fact through their organization inbox and take their own turn
+        // later; the built-in behaviours below run inline. Neither ever holds this run up.
+        await RaiseStandingAsync(run, configuration, OperationalTriggerEvaluator.TopicOf(point),
+            summary ?? DefaultSummary(point, checkpoint), subjectKind, subjectId, cancellationToken).ConfigureAwait(false);
         if (_triggerEvaluator is null || !configuration.Triggers.Enabled) return;
         IReadOnlyList<OperationalTriggerMatch> matches;
         try
@@ -4682,6 +5572,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         foreach (var match in matches)
         {
+            if (OperationalRoles.BuiltInKind(match.Agent) is null) continue;
             try
             {
                 await DispatchOperationalRoleAsync(match, run, configuration, checkpoint, cancellationToken).ConfigureAwait(false);
@@ -4750,7 +5641,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         // ToolCallAware guard: never compress while a worker turn or tool
         // execution is in flight; the summary could split an unfinished
         // call/result group.
-        if (checkpoint.Tasks.Any(task => task.Status == "running" || !string.IsNullOrWhiteSpace(task.PendingToolExecutionId)))
+        if (checkpoint.Tasks.Any(task => task.Status is "running" or "waiting" || !string.IsNullOrWhiteSpace(task.PendingToolExecutionId)))
         {
             await AppendEventAsync(runId, "context.compaction.skipped", "Compression skipped: a task is still executing.", new
             {
@@ -4777,7 +5668,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             return;
         }
 
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false, interruptible: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -4807,6 +5698,9 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             $"Compressed session context at revision {baseRevision}.",
             checkpoint.RunId,
             Kind: "compaction"), cancellationToken).ConfigureAwait(false);
+        // The upper layer is archived next to what it summarised, so recall can walk from one to the other.
+        await ArchiveEvidenceAsync(run, null, EvidenceKinds.Summary, $"Context summary at revision {baseRevision}", match.Agent.Id,
+            summary, $"summary:{result.PatchId}", cancellationToken).ConfigureAwait(false);
         if (string.Equals(result.Status, "applied", StringComparison.OrdinalIgnoreCase))
         {
             await AppendEventAsync(runId, "context.compacted", "Context compression applied as a session patch.", new
@@ -4842,7 +5736,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     {
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false, interruptible: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -4952,7 +5846,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false, interruptible: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -5089,7 +5983,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         var runId = Guid.Parse(run.RunId);
         var context = await BuildContextAsync(run, configuration, match.Agent.Id, checkpoint.UserGoal, cancellationToken).ConfigureAwait(false);
-        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false);
+        var factory = CreateModelFactory(configuration, checkpoint, match.Agent, null, null, observeOutput: false, interruptible: false);
         var resolution = await factory.ResolveChatAsync("chat", cancellationToken).ConfigureAwait(false);
         if (!resolution.IsAvailable) throw new InvalidOperationException(resolution.Error ?? "Chat route is unavailable.");
         var assembly = await AssemblePromptAsync(configuration, match.Agent, context, cancellationToken).ConfigureAwait(false);
@@ -5343,6 +6237,283 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// the model never told why. Convergence stays with the loop guard and the token
     /// budgets, not with this exit.
     /// </summary>
+    private sealed record TaskWaitOutcome(FullDuplexCheckpointV1 Checkpoint, bool Parked);
+
+    /// <summary>
+    /// Executes a <c>task_wait</c> call. Queued dispatches are materialized first (a sub-task the
+    /// caller dispatched in the same response must be waitable at once). When every awaited
+    /// sub-task is terminal the call completes with their outcomes; otherwise the caller parks as
+    /// <c>waiting</c> and the tick moves on, so the sub-tasks run — the caller is dispatched again
+    /// once they are all terminal and re-enters here with the same pending call.
+    /// </summary>
+    private async Task<TaskWaitOutcome> HandleTaskWaitAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        WorkerToolTurn turn,
+        IReadOnlyList<WorkerToolDescriptor> declared,
+        CancellationToken cancellationToken)
+    {
+        if (!declared.Any(tool => CoreVirtualToolPolicy.IsTaskWait(tool.ToolId)))
+        {
+            return new(await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "task_wait is not in your tool surface for this task.", checkpoint, cancellationToken).ConfigureAwait(false), false);
+        }
+        if (await ApplyPendingTaskDispatchesAsync(run, checkpoint, cancellationToken).ConfigureAwait(false))
+        {
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-dispatched", cancellationToken).ConfigureAwait(false);
+        }
+
+        var requested = TryParseJsonObject(turn.ArgumentsJson, out var parameters)
+            ? ReadStringArray(parameters, "dispatch_ids")
+            : [];
+        var targets = ResolveWaitTargets(checkpoint.Tasks, task, requested, out var unknown);
+        if (unknown.Count > 0)
+        {
+            var own = checkpoint.Tasks.Where(item => item.DispatchedByTaskId == task.TaskId)
+                .Select(item => $"{item.DispatchId} ({item.WorkerHandle ?? item.RequestedAgent ?? item.TaskKey}: {item.Title})")
+                .ToArray();
+            var choices = own.Length == 0 ? "You have not dispatched any sub-task in this task." : "Your sub-tasks: " + string.Join("; ", own) + ".";
+            return new(await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                $"task_wait does not know {string.Join(", ", unknown.Select(id => $"'{id}'"))}. {choices}",
+                checkpoint, cancellationToken).ConfigureAwait(false), false);
+        }
+
+        if (targets.All(item => IsTerminalTaskStatus(item.Status)))
+        {
+            turn.ResultJson = BuildTaskWaitResult(targets);
+            turn.DispatchStatus = ToolDispatchStatus.Completed;
+            turn.ToolSuccess = true;
+            foreach (var item in targets.Where(item => !task.ReportedTaskIds.Contains(item.TaskId)))
+                task.ReportedTaskIds.Add(item.TaskId);
+            var resumed = task.AwaitingTaskIds.Count > 0;
+            task.AwaitingTaskIds = [];
+            checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-wait-resolved", cancellationToken).ConfigureAwait(false);
+            await AppendEventAsync(Guid.Parse(run.RunId), "task.wait_resolved",
+                $"{targets.Count} sub-task result(s) returned to '{task.TaskKey}'.",
+                new
+                {
+                    run_id = run.RunId,
+                    task_id = task.TaskId,
+                    task_key = task.TaskKey,
+                handle = task.WorkerHandle,
+                    call_id = turn.CallId,
+                    resumed,
+                    awaited = targets.Select(item => new { task_key = item.TaskKey, handle = item.WorkerHandle, status = item.ResultStatus ?? item.Status }).ToArray()
+                }, cancellationToken, task.TaskId, idempotencyKey: $"task-wait-resolved:{task.TaskId}:{turn.CallId}").ConfigureAwait(false);
+            return new(checkpoint, false);
+        }
+
+        task.AwaitingTaskIds = targets.Select(item => item.TaskId).ToList();
+        task.Status = "waiting";
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "task-waiting", cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(Guid.Parse(run.RunId), "task.wait_started",
+            $"'{task.TaskKey}' is waiting for {targets.Count} sub-task(s).",
+            new
+            {
+                run_id = run.RunId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                handle = task.WorkerHandle,
+                call_id = turn.CallId,
+                awaited = targets.Select(item => new { task_key = item.TaskKey, handle = item.WorkerHandle, title = item.Title, agent = item.RequestedAgent, status = item.Status }).ToArray()
+            }, cancellationToken, task.TaskId, idempotencyKey: $"task-wait-started:{task.TaskId}:{turn.CallId}").ConfigureAwait(false);
+        return new(checkpoint, true);
+    }
+
+    /// <summary>
+    /// Executes plan_update: validates the steps, stores them on the task node and emits
+    /// plan.updated. A malformed plan goes back to the model as a correctable tool error.
+    /// </summary>
+    private async Task<FullDuplexCheckpointV1> HandlePlanUpdateAsync(
+        RunState run,
+        FullDuplexCheckpointV1 checkpoint,
+        DurableTaskNode task,
+        WorkerToolTurn turn,
+        IReadOnlyList<WorkerToolDescriptor> declared,
+        CancellationToken cancellationToken)
+    {
+        if (!declared.Any(tool => CoreVirtualToolPolicy.IsPlanUpdate(tool.ToolId)))
+        {
+            return await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                "plan_update is not in your tool surface for this task.", checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+        var error = TryParsePlan(turn.ArgumentsJson, out var steps, out var explanation);
+        if (error is not null)
+        {
+            return await FeedToolFailureBackAsync(run, task, turn, RunErrorTaxonomy.InvalidToolArguments,
+                error, checkpoint, cancellationToken).ConfigureAwait(false);
+        }
+
+        task.Plan = steps;
+        turn.ResultJson = JsonSerializer.Serialize(new
+        {
+            ok = true,
+            steps = steps.Count,
+            completed = steps.Count(step => step.Status == "completed")
+        });
+        turn.DispatchStatus = ToolDispatchStatus.Completed;
+        turn.ToolSuccess = true;
+        checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "plan-updated", cancellationToken).ConfigureAwait(false);
+        await AppendEventAsync(Guid.Parse(run.RunId), "plan.updated",
+            $"'{task.TaskKey}' updated its plan ({steps.Count} step(s)).",
+            new
+            {
+                run_id = run.RunId,
+                task_id = task.TaskId,
+                task_key = task.TaskKey,
+                handle = task.WorkerHandle,
+                explanation,
+                steps = steps.Select(step => new { step = step.Step, status = step.Status }).ToArray()
+            }, cancellationToken, task.TaskId, idempotencyKey: $"plan-updated:{task.TaskId}:{turn.CallId}").ConfigureAwait(false);
+        return checkpoint;
+    }
+
+    /// <summary>Parses plan_update arguments; returns the model-facing error, or null when the plan is valid.</summary>
+    internal static string? TryParsePlan(string? argumentsJson, out List<TaskPlanStep> steps, out string? explanation)
+    {
+        steps = [];
+        explanation = null;
+        const string shape = "Send {\"steps\": [{\"step\": \"...\", \"status\": \"pending\" | \"in_progress\" | \"completed\"}]}.";
+        if (string.IsNullOrWhiteSpace(argumentsJson)
+            || !TryParseJsonObject(argumentsJson, out var parameters)
+            || !parameters.TryGetProperty("steps", out var array)
+            || array.ValueKind != JsonValueKind.Array)
+        {
+            return "plan_update needs a steps array. " + shape;
+        }
+        if (parameters.TryGetProperty("explanation", out var why) && why.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(why.GetString()))
+        {
+            explanation = BoundText(why.GetString()!.Trim(), 500);
+        }
+        foreach (var item in array.EnumerateArray())
+        {
+            var text = item.ValueKind == JsonValueKind.Object && item.TryGetProperty("step", out var stepValue)
+                && stepValue.ValueKind == JsonValueKind.String ? stepValue.GetString()?.Trim() : null;
+            var status = item.ValueKind == JsonValueKind.Object && item.TryGetProperty("status", out var statusValue)
+                && statusValue.ValueKind == JsonValueKind.String ? statusValue.GetString()?.Trim().ToLowerInvariant() : null;
+            if (string.IsNullOrEmpty(text))
+                return $"Step {steps.Count + 1} has no step text. " + shape;
+            if (status is not ("pending" or "in_progress" or "completed"))
+                return $"Step {steps.Count + 1} ('{BoundText(text, 80)}') has status '{status}'; use pending, in_progress or completed.";
+            steps.Add(new TaskPlanStep(BoundText(text, 300), status));
+        }
+        if (steps.Count == 0)
+            return "The plan is empty. " + shape;
+        if (steps.Count > CoreVirtualToolPolicy.PlanUpdateMaxSteps)
+            return $"The plan has {steps.Count} steps; keep it to {CoreVirtualToolPolicy.PlanUpdateMaxSteps} or fewer by merging steps.";
+        if (steps.Count(step => step.Status == "in_progress") > 1)
+            return "More than one step is in_progress; keep exactly the step you are working on in_progress.";
+        return null;
+    }
+
+    internal static bool IsTerminalTaskStatus(string status) => status is "completed" or "failed" or "blocked";
+
+    /// <summary>Dispatchable this tick: pending/ready, or parked on task_wait with every awaited sub-task terminal.</summary>
+    internal static bool IsDispatchable(DurableTaskNode task, IReadOnlyList<DurableTaskNode> tasks) =>
+        task.Status is "pending" or "ready" || IsWaitSatisfied(task, tasks);
+
+    internal static bool IsWaitSatisfied(DurableTaskNode task, IReadOnlyList<DurableTaskNode> tasks) =>
+        task.Status == "waiting"
+        && task.AwaitingTaskIds.All(id => tasks.FirstOrDefault(other => other.TaskId == id) is not { } awaited
+            || IsTerminalTaskStatus(awaited.Status));
+
+    /// <summary>
+    /// The sub-tasks a task_wait call names: by dispatch_id or handle among the caller's own
+    /// dispatches, or — when it names none — every one of them not yet reported to it.
+    /// </summary>
+    internal static List<DurableTaskNode> ResolveWaitTargets(
+        IReadOnlyList<DurableTaskNode> tasks,
+        DurableTaskNode waiter,
+        IReadOnlyList<string> requested,
+        out List<string> unknown)
+    {
+        unknown = [];
+        var own = tasks.Where(item => item.DispatchedByTaskId == waiter.TaskId).ToList();
+        if (requested.Count == 0)
+            return own.Where(item => !waiter.ReportedTaskIds.Contains(item.TaskId)).ToList();
+        var targets = new List<DurableTaskNode>();
+        foreach (var reference in requested)
+        {
+            var match = FindDispatchedTask(own, waiter.TaskId, reference);
+            if (match is null) unknown.Add(reference);
+            else if (!targets.Contains(match)) targets.Add(match);
+        }
+        return targets;
+    }
+
+    /// <summary>A dispatched sub-task by dispatch_id, handle or task key, among one dispatcher's sub-tasks.</summary>
+    internal static DurableTaskNode? FindDispatchedTask(IReadOnlyList<DurableTaskNode> tasks, Guid? dispatcher, string reference)
+    {
+        var value = reference.Trim();
+        var candidates = tasks.Where(item => dispatcher is null || item.DispatchedByTaskId == dispatcher).ToList();
+        return candidates.FirstOrDefault(item => Guid.TryParse(value, out var id) && item.DispatchId == id)
+            ?? candidates.FirstOrDefault(item => string.Equals(item.WorkerHandle, value, StringComparison.OrdinalIgnoreCase))
+            ?? candidates.FirstOrDefault(item => string.Equals(item.TaskKey, value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private const int TaskWaitFieldLimit = 2000;
+
+    /// <summary>task_wait's result: one entry per awaited sub-task, bounded, evidence per criterion.</summary>
+    internal static string BuildTaskWaitResult(IReadOnlyList<DurableTaskNode> targets) =>
+        JsonSerializer.Serialize(new
+        {
+            tasks = targets.Select(item => new
+            {
+                dispatch_id = item.DispatchId,
+                handle = item.WorkerHandle,
+                agent = item.WorkerAgentSlug ?? item.RequestedAgent,
+                title = item.Title,
+                status = item.ResultStatus ?? item.Status,
+                summary = BoundText(item.ResultSummary ?? string.Empty, TaskWaitFieldLimit),
+                criteria = item.Evidence
+                    .Where(entry => entry.StartsWith("criterion_evidence:", StringComparison.Ordinal)
+                        || entry.StartsWith("missing_criterion_evidence:", StringComparison.Ordinal))
+                    .Select(entry => entry.StartsWith("criterion_evidence:", StringComparison.Ordinal)
+                        ? SplitCriterion(entry["criterion_evidence:".Length..])
+                        : new CriterionResult(BoundText(entry["missing_criterion_evidence:".Length..], 400), false, null))
+                    .ToArray()
+            }).ToArray()
+        });
+
+    private sealed record CriterionResult(
+        [property: JsonPropertyName("criterion")] string Criterion,
+        [property: JsonPropertyName("met")] bool Met,
+        [property: JsonPropertyName("evidence")] string? Evidence);
+
+    private static CriterionResult SplitCriterion(string body)
+    {
+        var split = body.IndexOf("||", StringComparison.Ordinal);
+        return split < 0
+            ? new CriterionResult(BoundText(body, 400), true, null)
+            : new CriterionResult(BoundText(body[..split], 400), true, BoundText(body[(split + 2)..], 400));
+    }
+
+    private static string BoundText(string value, int limit)
+    {
+        var text = value.Trim();
+        return text.Length <= limit ? text : text[..limit] + "…";
+    }
+
+    /// <summary>
+    /// The brief of a follow-up sub-task: the earlier sub-task's title, outcome and evidence ahead of
+    /// the new instruction. A new executor instance does not share the earlier one's conversation, so
+    /// this is the context it continues from.
+    /// </summary>
+    internal static string FollowUpBrief(DurableTaskNode prior, string? instruction)
+    {
+        var builder = new System.Text.StringBuilder()
+            .Append("This continues an earlier sub-task: ").Append(prior.Title)
+            .Append(" (").Append(prior.WorkerHandle ?? prior.WorkerAgentSlug ?? prior.TaskKey).Append(", ")
+            .Append(prior.ResultStatus ?? prior.Status).Append(").\nIts result: ")
+            .Append(BoundText(prior.ResultSummary ?? "no result reported yet", TaskWaitFieldLimit));
+        foreach (var entry in prior.Evidence.Where(entry => entry.StartsWith("criterion_evidence:", StringComparison.Ordinal)))
+            builder.Append("\n- ").Append(BoundText(entry["criterion_evidence:".Length..].Replace("||", " — "), 400));
+        builder.Append("\n\nNew instruction: ").Append(string.IsNullOrWhiteSpace(instruction) ? "(see title)" : instruction.Trim());
+        return builder.ToString();
+    }
+
     private async Task<FullDuplexCheckpointV1> FeedToolFailureBackAsync(
         RunState run,
         DurableTaskNode task,
@@ -5603,7 +6774,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
     /// task-level failure; genuine engine invariants (e.g. a missing planner
     /// instance) keep throwing plain InvalidDataException and fail the run.
     /// </summary>
-    private sealed class WorkerAssignmentException(string message, Exception? inner = null)
+    internal sealed class WorkerAssignmentException(string message, Exception? inner = null)
         : Exception(message, inner);
 
     private sealed record TaskExecutionResult(
@@ -5793,6 +6964,60 @@ internal sealed class DurableTaskNode
     public Guid? WorkerAgentVersionId { get; set; }
     public string? WorkerAgentVersionHash { get; set; }
     public string? WorkerAssignmentReason { get; set; }
+
+    /// <summary>
+    /// The executor the coordinator named for this task (planner <c>assignee</c> or
+    /// <c>task_dispatch.agent</c>). When set, worker selection honors it instead of inferring
+    /// a worker from required tools. Null-suppressed for pre-existing checkpoint bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestedAgent { get; set; }
+
+    /// <summary>
+    /// Run-scoped instance handle <c>&lt;agent&gt;#&lt;n&gt;</c> assigned with the worker: stable,
+    /// readable, and what evidence and the final answer refer to the executor by.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? WorkerHandle { get; set; }
+
+    /// <summary>The task_dispatch id this sub-task was created from (what task_wait names it by).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? DispatchId { get; set; }
+
+    /// <summary>
+    /// Paths the dispatcher declared this task will write (<c>write_scope</c>). Leased exclusively
+    /// for the task's lifetime and used as the yardstick for what it actually changed. Null when
+    /// undeclared: the task is then bounded only by its resource envelope.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? WriteScope { get; set; }
+
+    /// <summary>The task whose tool loop dispatched this sub-task; only it may wait for it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? DispatchedByTaskId { get; set; }
+
+    /// <summary>
+    /// Sub-tasks this task is parked on (status <c>waiting</c>, via task_wait). The task becomes
+    /// dispatchable again once every one of them is terminal. Empty when not waiting.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public List<Guid> AwaitingTaskIds { get; set; } = [];
+
+    /// <summary>Sub-tasks whose results task_wait already handed to this task.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public List<Guid> ReportedTaskIds { get; set; } = [];
+
+    /// <summary>The agent's own working plan, as last sent through plan_update. Null until it sends one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<TaskPlanStep>? Plan { get; set; }
+
+    /// <summary>
+    /// Rounds a hard insert cut off (todo D2), oldest first; each is shown to the worker where it
+    /// happened. Null until one is, so earlier checkpoints keep their bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<WorkerInterruption>? Interruptions { get; set; }
+
     public long InputContextRevision { get; set; }
     public string? ResultStatus { get; set; }
     public string? ResultSummary { get; set; }
@@ -5819,6 +7044,11 @@ internal sealed class DurableTaskNode
     /// </summary>
     public List<CriterionVerdict> CriteriaVerdicts { get; set; } = [];
 }
+
+/// <summary>One step of an agent's plan_update plan; status is pending, in_progress or completed.</summary>
+public sealed record TaskPlanStep(
+    [property: JsonPropertyName("step")] string Step,
+    [property: JsonPropertyName("status")] string Status);
 
 
 internal sealed record StaleTaskEvidence(

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using TinadecCore.Abstractions;
@@ -239,6 +240,14 @@ public sealed record RuntimeAgentDefinition(
     /// <summary>Event triggers that activate the agent (logical channels).</summary>
     public IReadOnlyList<string> Triggers { get; init; } = [];
 
+    /// <summary>
+    /// The executor ids this agent's node may dispatch to (relationship file
+    /// <c>allowed_dispatch_targets</c>). Null = not declared: the tier's roster applies. Frozen with
+    /// null suppression so a body admitted before the field existed keeps identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+
     /// <summary>Supervisor decisions when applicable (pass/revise/escalate).</summary>
     public IReadOnlyList<string> Decisions { get; init; } = [];
 
@@ -247,6 +256,15 @@ public sealed record RuntimeAgentDefinition(
 
     /// <summary>Immutable formal-agent content captured before run admission.</summary>
     public string SystemPrompt { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The agent's published responsibility description ("what it is for / when to use it /
+    /// what it cannot do"). It is what the coordinator reads to choose a dispatch target, so it
+    /// travels into the frozen roster verbatim. Null-suppressed so bodies frozen before it
+    /// existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
 
     public string ModelStrategyJson { get; init; } = "{\"kind\":\"inherit\"}";
 

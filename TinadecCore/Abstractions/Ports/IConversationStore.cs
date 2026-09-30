@@ -53,6 +53,17 @@ public interface IConversationStore
         long afterRevision,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The most recent applied patches of one run, or of the whole session when
+    /// <paramref name="runId"/> is null — oldest first, at most <paramref name="limit"/> of them.
+    /// Read on every context build, so only those rows' bodies are read.
+    /// </summary>
+    Task<IReadOnlyList<ConversationContextPatch>> ListRecentContextPatchesAsync(
+        Guid sessionId,
+        Guid? runId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<ConversationTurn> CreateTurnAsync(
         Guid sessionId,
         Guid userMessageId,

@@ -33,7 +33,7 @@ public sealed partial class TinaChatService : ITinaChatToolGateway
             return TinaChatToolOutcome.Failed("This run's principal is not an active member of the workspace, so it has no chat identity to act through.");
         try
         {
-            var payload = call.ToolId switch
+            var payload = CoreVirtualToolPolicy.IsOrganization(call.ToolId) ? await OrganizationToolAsync(scope, call, ct) : call.ToolId switch
             {
                 "tina_chat_bind" => await BindAsync(scope, call, ct),
                 "tina_chat_search_people" => await SearchPeopleAsync(scope, call, ct),

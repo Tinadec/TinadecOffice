@@ -121,6 +121,14 @@ internal sealed class ContextProvider : IContextProvider
             });
         }
 
+        // What reached this run while it worked: the user's steering and the facts its own tasks
+        // recorded for later ones. Both are applied patches, and an applied patch no model can read
+        // is steering that never happened — so they sit right after the task, ahead of history.
+        if (Guid.TryParse(request.RunId, out var parsedRunId))
+        {
+            candidates.AddRange(await BuildRunPatchEvidenceAsync(parsedSessionId, parsedRunId, messages, cancellationToken).ConfigureAwait(false));
+        }
+
         var attachmentEvidence = await BuildAttachmentEvidenceAsync(parsedSessionId, messages, cancellationToken).ConfigureAwait(false);
         if (attachmentEvidence is not null)
         {
@@ -212,6 +220,90 @@ internal sealed class ContextProvider : IContextProvider
             }
         };
     }
+
+    /// <summary>Recent patches read per build; the newest few are what an agent must act on.</summary>
+    private const int RecentRunPatches = 16;
+    private const int MaxSteeringItems = 5;
+    private const int MaxSteeringChars = 2000;
+    private const int MaxRecordedFacts = 8;
+    private const int MaxRecordedFactChars = 600;
+
+    /// <summary>
+    /// Applied supplement patches, as two sections. User steering (a patch with no author instance:
+    /// an insert into THIS run) is the user's newest word on the goal, and says so. Facts a task
+    /// recorded for later tasks (<c>CONTEXT_PATCH</c>, authored by a worker instance) are what the
+    /// worker protocol promised those later tasks would respect — and they are the session's shared
+    /// context, so they come from every run of the session (todo D3: parallel runs share one context),
+    /// each labelled with the run that recorded it and the context revision it was applied at. A fact
+    /// built on a revision that had moved on was rejected as stale when it was written, so what is
+    /// shown here never silently overwrote anything. A meeting supplement also posts the user's words
+    /// as a message; when that message is in the window it is not repeated here.
+    /// </summary>
+    private async Task<IReadOnlyList<ContextEvidence>> BuildRunPatchEvidenceAsync(
+        Guid sessionId,
+        Guid runId,
+        IReadOnlyList<ConversationMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        var patches = await _conversations.ListRecentContextPatchesAsync(sessionId, runId, RecentRunPatches, cancellationToken).ConfigureAwait(false);
+        var sessionPatches = await _conversations.ListRecentContextPatchesAsync(sessionId, null, RecentRunPatches, cancellationToken).ConfigureAwait(false);
+        static bool Supplement(ConversationContextPatch patch) => patch.Kind == "supplement" && !string.IsNullOrWhiteSpace(patch.Content);
+        var supplements = patches.Where(Supplement).ToArray();
+        var recorded = sessionPatches.Where(patch => Supplement(patch) && patch.AgentInstanceId is not null).ToArray();
+        if (supplements.Length == 0 && recorded.Length == 0) return [];
+        var said = messages
+            .Where(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+            .Select(message => message.Content.Trim())
+            .ToHashSet(StringComparer.Ordinal);
+        var evidence = new List<ContextEvidence>(2);
+
+        var steering = supplements
+            .Where(patch => patch.AgentInstanceId is null && !said.Contains(patch.Content.Trim()))
+            .TakeLast(MaxSteeringItems)
+            .ToArray();
+        if (steering.Length != 0)
+        {
+            var text = "User steering sent into this run while it was working (oldest first). It is the user's latest word on the goal and its constraints: "
+                + "where it conflicts with earlier instructions, follow it.\n"
+                + string.Join('\n', steering.Select(patch => "- " + Clip(patch.Content.Trim(), MaxSteeringChars)));
+            evidence.Add(new ContextEvidence
+            {
+                Source = "run_steering",
+                Content = text,
+                EstimatedTokens = EstimateTokens(text),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["count"] = steering.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["latest_revision"] = steering[^1].AppliedRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                }
+            });
+        }
+
+        var facts = recorded.TakeLast(MaxRecordedFacts).ToArray();
+        if (facts.Length != 0)
+        {
+            var text = "Facts and constraints tasks in this session recorded for later work (oldest first; [run · rev] says which run recorded it "
+                + "and at which context revision — facts from a parallel run are shared context, not instructions to redo its work):\n"
+                + string.Join('\n', facts.Select(patch => $"- [{(patch.RunId == runId ? "this run" : "run " + patch.RunId?.ToString("N")[..8])} · rev {patch.AppliedRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)}] " + Clip(
+                    string.IsNullOrWhiteSpace(patch.Summary) ? patch.Content.Trim() : $"{patch.Summary.Trim()}: {patch.Content.Trim()}",
+                    MaxRecordedFactChars)));
+            evidence.Add(new ContextEvidence
+            {
+                Source = "run_recorded_facts",
+                Content = text,
+                EstimatedTokens = EstimateTokens(text),
+                Metadata = new Dictionary<string, string>
+                {
+                    ["count"] = facts.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["from_other_runs"] = facts.Count(patch => patch.RunId != runId).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["latest_revision"] = facts[^1].AppliedRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                }
+            });
+        }
+        return evidence;
+    }
+
+    private static string Clip(string text, int limit) => text.Length <= limit ? text : string.Concat(text.AsSpan(0, limit), "…");
 
     /// <summary>
     /// Turns the files carried by the user messages in this window into one bounded

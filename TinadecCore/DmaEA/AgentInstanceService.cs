@@ -46,7 +46,15 @@ public sealed record RuntimeAgentSeed(
     // DirectUserOutput is true only for the conversation-identity instance, which
     // the engine derives from the frozen graph's conversation template slug — the
     // seed never infers identity from a slug literal.
-    bool DirectUserOutput = false);
+    bool DirectUserOutput = false,
+    // Lineage for the engine-authored root path. The engine creates workers here rather
+    // than through SpawnAsync, so the derived depth has to travel on the seed: without it
+    // every engine-created worker would look like a root and SpawnPolicy.MaxDepth could
+    // not bound a dispatch chain. Both values are supplied by the caller that knows who
+    // dispatched the task; a genuine root (conversation author, supervisor, curator, lane
+    // planner) simply omits them and keeps depth 0.
+    Guid? ParentInstanceId = null,
+    int GenerationDepth = 0);
 
 public enum AgentCreationIntent
 {
@@ -175,7 +183,8 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var row = new AgentInstanceRecord
         {
             Id = Guid.NewGuid(), TenantId = scope.TenantId, WorkspaceId = scope.WorkspaceId, SessionId = seed.SessionId, RunId = seed.RunId,
-            TaskNodeId = seed.TaskId, ProfileId = seed.ProfileId, Layer = seed.Layer, Role = seed.Role, GenerationDepth = 0,
+            TaskNodeId = seed.TaskId, ProfileId = seed.ProfileId, Layer = seed.Layer, Role = seed.Role,
+            ParentInstanceId = seed.ParentInstanceId, GenerationDepth = seed.GenerationDepth,
             AgentDefinitionId = binding.DefinitionId, AgentVersionId = binding.VersionId, AgentVersionHash = binding.ContentHash,
             Generated = false, Status = "running", DefinitionReference = stored.Value, DefinitionHash = stored.Sha256, DefinitionLength = stored.Length,
             LaneKey = seed.LaneKey,

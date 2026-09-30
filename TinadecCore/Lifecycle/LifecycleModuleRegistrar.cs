@@ -154,6 +154,22 @@ internal sealed class LifecycleManager : ILifecycleManager
         return runs.Select(ToRunState).ToList();
     }
 
+    public async Task<IReadOnlyList<RunState>> ListActiveRunsAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        if (storage is null)
+            return _fallbackRuns.Values.Where(x => x.SessionId == sessionId.ToString() && x.Status is not (RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled))
+                .OrderByDescending(x => x.StartedAt).ToList();
+        var runs = await storage.ListRunsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return runs.Where(x => x.Status is not ("completed" or "failed" or "cancelled")).Select(ToRunState).ToList();
+    }
+
+    public async Task<int> RequeueRunDirectivesAsync(Guid fromRunId, IReadOnlyList<Guid> directiveIds, Guid toRunId, CancellationToken cancellationToken = default)
+    {
+        var storage = TryStorage();
+        return storage is null ? 0 : await storage.RequeueRunDirectivesAsync(fromRunId, directiveIds, toRunId, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<RunState>> ListLeaseEligibleRunsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         var storage = TryStorage();

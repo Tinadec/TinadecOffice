@@ -41,6 +41,12 @@ internal sealed class LocalFileContentStore : IContentStore
         {
             if (File.Exists(destination)) File.Delete(temporary); else File.Move(temporary, destination);
         }
+        catch (IOException) when (File.Exists(destination))
+        {
+            // Content-addressed: a concurrent writer of the same bytes won the race between the check
+            // and the move (two parallel run admissions freeze identical documents). Same hash, same
+            // content — the write already happened.
+        }
         finally
         {
             if (File.Exists(temporary)) File.Delete(temporary);

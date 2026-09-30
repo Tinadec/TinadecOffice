@@ -33,7 +33,16 @@ public sealed record TinaChatToolCall(
     /// <summary>Stable per model tool call; reused as the idempotency key so a replayed call returns the original write instead of a second message.</summary>
     long ToolCallId,
     string ToolId,
-    JsonElement? Arguments);
+    JsonElement? Arguments)
+{
+    /// <summary>
+    /// The instance making the call. Organization tools act as the member this instance was enrolled
+    /// as (a worker speaks as its own <c>search#1</c>, the conversation identity's instances as the
+    /// conversation member), never as a session-wide binding: in an organization every instance has
+    /// its own voice.
+    /// </summary>
+    public Guid? AgentInstanceId { get; init; }
+}
 
 /// <summary>
 /// <paramref name="ResultJson"/> is the tool result handed straight back to the model; on failure

@@ -23,6 +23,29 @@ public static class CoreVirtualToolPolicy
     public const string TaskDispatchToolId = "task_dispatch";
 
     /// <summary>
+    /// Lets the dispatcher of sub-tasks wait for them and read their results inside the same loop.
+    ///
+    /// Why it exists: task_dispatch only queues; without a wait the master finished its own loop
+    /// before any sub-task ran, so it could never use a result - the run's final answer was the only
+    /// place results met. Executed by the run engine, which owns the task graph: the call parks the
+    /// caller's task until the awaited sub-tasks are terminal, then returns their outcomes.
+    /// </summary>
+    public const string TaskWaitToolId = "task_wait";
+
+    /// <summary>
+    /// Lets an agent working inside one tool loop write its step-by-step plan down and keep it current.
+    ///
+    /// Why it exists: graph tiers plan through the planner's task array, but a solo master or an
+    /// executor on a long task works in a single loop with nowhere to put a plan - it either kept the
+    /// plan in its head (and drifted) or narrated it in prose nobody could track. Executed by the run
+    /// engine, which stores the plan on the task node and emits plan.updated for the UI.
+    /// </summary>
+    public const string PlanUpdateToolId = "plan_update";
+
+    /// <summary>Upper bound on plan_update steps: a longer plan is a task list for the planner, not a working plan.</summary>
+    public const int PlanUpdateMaxSteps = 20;
+
+    /// <summary>
     /// Reads a page of a file the user attached to a message in this session.
     ///
     /// Why it exists: the context builder can only quote a bounded excerpt of every attachment per
@@ -43,6 +66,12 @@ public static class CoreVirtualToolPolicy
 
     public static bool IsTaskDispatch(string? toolId) =>
         string.Equals(toolId, TaskDispatchToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsTaskWait(string? toolId) =>
+        string.Equals(toolId, TaskWaitToolId, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsPlanUpdate(string? toolId) =>
+        string.Equals(toolId, PlanUpdateToolId, StringComparison.OrdinalIgnoreCase);
 
     public static bool IsReadAttachment(string? toolId) =>
         string.Equals(toolId, ReadAttachmentToolId, StringComparison.OrdinalIgnoreCase);
@@ -69,13 +98,67 @@ public static class CoreVirtualToolPolicy
         toolId is not null && TinaChatToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The tools a member uses inside its session's organization (architecture §9.1): see who is here,
+    /// read a room by cursor, talk to a contact or a room, file a report, decide one, ask for a contact,
+    /// open a room. Executed by the communication module against the member the calling instance was
+    /// enrolled as, so a worker speaks as its own <c>search#1</c> and never as the session.
+    ///
+    /// Separate from <see cref="TinaChatToolIds"/> on purpose: those address the workspace-wide chat
+    /// through an explicit bind; these address the session's own organization, where identity is the
+    /// instance's membership and needs no bind.
+    /// </summary>
+    public static readonly IReadOnlyList<string> OrganizationToolIds =
+    [
+        "org_directory", "org_read", "org_send", "org_report", "org_decide_report", "org_contact", "org_room",
+    ];
+
+    public static bool IsOrganization(string? toolId) =>
+        toolId is not null && OrganizationToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads the session as a graph — runs, their tasks and workers, the resources they hold, the
+    /// organization's members. Read-only; what a governance member reasons about is what the user's
+    /// topology view shows, because both read the same projection.
+    /// </summary>
+    public const string GraphViewToolId = "graph_view";
+
+    /// <summary>
+    /// Searches the session's evidence archive (task results, reports, member conclusions and context
+    /// summaries, verbatim): how a governance role goes back from a summary to what was actually said.
+    /// Read-only and session-scoped, so like <c>graph_view</c> it needs no approval.
+    /// </summary>
+    public const string RecallEvidenceToolId = "recall_evidence";
+
+    public static bool IsRecallEvidence(string? toolId) =>
+        string.Equals(toolId, RecallEvidenceToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The environment steward's tools (todo E1): see the workspace's environments and who holds them,
+    /// take one for the calling run, give it back. Core state only — a lease in the ledger — so like the
+    /// organization tools they need no approval; what the run then does inside the environment is
+    /// governed by the tools it uses there.
+    /// </summary>
+    public const string EnvironmentListToolId = "environment_list";
+    public const string EnvironmentAcquireToolId = "environment_acquire";
+    public const string EnvironmentReleaseToolId = "environment_release";
+
+    public static readonly IReadOnlyList<string> EnvironmentToolIds = [EnvironmentListToolId, EnvironmentAcquireToolId, EnvironmentReleaseToolId];
+
+    public static bool IsEnvironment(string? toolId) =>
+        toolId is not null && EnvironmentToolIds.Contains(toolId, StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsGraphView(string? toolId) =>
+        string.Equals(toolId, GraphViewToolId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// True for ANY Core-owned virtual tool. These are executed by Core itself and are
     /// deliberately absent from the TinadecTools child manifest, so every place that
     /// validates a tool id against the live manifest has to recognise them — otherwise a
     /// legitimately declared virtual tool is dropped as "the process does not offer it".
     /// </summary>
     public static bool IsCoreVirtual(string? toolId) =>
-        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsReadAttachment(toolId) || IsTinaChat(toolId);
+        IsCreateWorkspace(toolId) || IsTaskDispatch(toolId) || IsTaskWait(toolId) || IsPlanUpdate(toolId) || IsReadAttachment(toolId)
+        || IsTinaChat(toolId) || IsOrganization(toolId) || IsGraphView(toolId) || IsRecallEvidence(toolId) || IsEnvironment(toolId);
 
     /// <summary>
     /// True when a call-time gate may demand that the tool appear in the TinadecTools child-process

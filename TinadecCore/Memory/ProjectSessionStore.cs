@@ -15,6 +15,13 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
     private readonly IContentStore _content;
     private readonly ITenantContextAccessor _tenantContext;
 
+    /// <summary>
+    /// Patch bodies are immutable once written, and a run's recent patches are read on every context
+    /// build of every agent in it; this keeps that from being one content-store read per patch per turn.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, ConversationContextPatch> _patchBodies = new();
+    private const int PatchBodyCacheLimit = 4096;
+
     public ProjectSessionStore(IDbContextFactory<MemoryDbContext> dbFactory, StoragePaths paths, IContentStore content, ITenantContextAccessor tenantContext)
     {
         _dbFactory = dbFactory;
@@ -183,6 +190,34 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return session;
+    }
+
+    /// <summary>
+    /// Re-freezes the conversation identity while the session holds no message yet.
+    ///
+    /// The identity is frozen so that everything already said in a conversation stays
+    /// attributable to the one agent that said it. Before the first message there is nothing
+    /// to attribute, so the mode the first message is sent in decides who converses. Without
+    /// this, a session created on the workspace default (or by a New Session click before the
+    /// user picked a mode) could never start in a mode whose conversation is held by a
+    /// different agent. Returns false and changes nothing once any message exists.
+    /// </summary>
+    public async Task<bool> AdoptConversationIdentityIfEmptyAsync(
+        Guid sessionId,
+        string conversationNodeKey,
+        string conversationTemplateSlug,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var scope = _tenantContext.Current;
+        var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
+        if (session is null) return false;
+        if (await db.Messages.AnyAsync(x => x.SessionId == sessionId, cancellationToken).ConfigureAwait(false)) return false;
+        session.ConversationNodeKey = conversationNodeKey;
+        session.ConversationTemplateSlug = conversationTemplateSlug;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async Task<SessionRecord> MigrateSessionAsync(
@@ -692,6 +727,41 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         foreach (var row in rows)
         {
             patches.Add(await ReadContextPatchAsync(row, cancellationToken).ConfigureAwait(false));
+        }
+        return patches;
+    }
+
+    public async Task<IReadOnlyList<ConversationContextPatch>> ListRecentContextPatchesAsync(
+        Guid sessionId,
+        Guid? runId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (limit <= 0) return [];
+        var scope = _tenantContext.Current;
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.ContextPatches.AsNoTracking()
+            .Where(item => item.SessionId == sessionId
+                && (runId == null || item.RunId == runId)
+                && item.TenantId == scope.TenantId
+                && item.WorkspaceId == scope.WorkspaceId
+                && item.Status == "applied"
+                && item.AppliedRevision != null)
+            .OrderByDescending(item => item.AppliedRevision)
+            .Take(limit)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        rows.Reverse();
+
+        var patches = new List<ConversationContextPatch>(rows.Count);
+        foreach (var row in rows)
+        {
+            if (!_patchBodies.TryGetValue(row.Id, out var patch))
+            {
+                patch = await ReadContextPatchAsync(row, cancellationToken).ConfigureAwait(false);
+                if (_patchBodies.Count >= PatchBodyCacheLimit) _patchBodies.Clear();
+                _patchBodies[row.Id] = patch;
+            }
+            patches.Add(patch);
         }
         return patches;
     }

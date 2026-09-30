@@ -63,6 +63,15 @@ public sealed record FrozenRunConfigurationV1(
     /// </summary>
     public IReadOnlyList<FrozenToolManifestEntry> ToolManifest { get; init; } = [];
 
+    /// <summary>
+    /// The executors the conversation identity may dispatch to in this run, with the
+    /// responsibility text it chooses by — frozen once at admission so the planner's roster,
+    /// the solo master's roster section and <c>task_dispatch</c>'s call-time validation read one
+    /// list. Null on bodies frozen before it existed; readers then compute it from the roster.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<FrozenDispatchTarget>? DispatchRoster { get; init; }
+
     /// <summary>Protocol version of <see cref="ToolManifest"/> (zero for legacy bodies).</summary>
     public int ToolManifestProtocolVersion { get; init; }
 
@@ -195,6 +204,12 @@ public sealed record FrozenGraphNode(string NodeKey, string AgentSlug, string La
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
 }
 
+/// <summary>
+/// One dispatchable executor: its fixed id (the agent slug — the value a coordinator names in
+/// <c>assignee</c> / <c>task_dispatch.agent</c>), its responsibility description and its tool face.
+/// </summary>
+public sealed record FrozenDispatchTarget(string Id, string Description, IReadOnlyList<string> Tools);
+
 /// <summary>A worker template the conversation identity may spawn, with its frozen tool ceiling.</summary>
 public sealed record FrozenSpawnableTemplate(
     string Slug,
@@ -207,6 +222,15 @@ public sealed record FrozenSpawnableTemplate(
 {
     /// <summary>Workspace-relative path grants frozen from the template's binding envelope resources (empty = no workspace authorization).</summary>
     public IReadOnlyList<FrozenResourceGrant> ResourceGrants { get; init; } = [];
+
+    /// <summary>
+    /// The agent's published responsibility description ("what it is for / when to use it /
+    /// what it cannot do"). It is what the coordinator reads to choose a dispatch target, so it
+    /// travels into the frozen roster verbatim. Null-suppressed so bodies frozen before it
+    /// existed serialize to identical bytes.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
 }
 
 internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigurationResolver
@@ -328,7 +352,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
                 template.ToolScope,
                 template.Capabilities)
             {
-                ResourceGrants = WorkspaceGrantDefaults.Resolve(workspace, template.ResourceGrants, template.ToolScope)
+                ResourceGrants = WorkspaceGrantDefaults.Resolve(workspace, template.ResourceGrants, template.ToolScope),
+                Description = template.Description
             }).ToArray()
         };
 
@@ -464,6 +489,9 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         ResourceGrants = e.ResourceGrants,
         PromptProfile = e.PromptProfile,
         SystemPrompt = e.SystemPrompt,
+        Description = e.Description,
+        Triggers = e.Triggers ?? [],
+        AllowedDispatchTargets = e.AllowedDispatchTargets,
         ModelStrategyJson = e.ModelStrategyJson,
         ModelStrategySource = e.ModelStrategySource,
         Enabled = e.Enabled,
@@ -484,6 +512,11 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
         "deny" => "deny",
         "auto-approve" => "auto-approve",
         "full-access" => "full-access",
+        // Delegated approval (architecture §7.2): an approval gate is decided by the conversation
+        // identity, a reviewer, or both instead of a human click. Frozen verbatim like the others.
+        ApprovalDelegationModes.Conversation => ApprovalDelegationModes.Conversation,
+        ApprovalDelegationModes.Reviewer => ApprovalDelegationModes.Reviewer,
+        ApprovalDelegationModes.Both => ApprovalDelegationModes.Both,
         "default" or "ask" or null or "" => "ask",
         _ => "ask"
     };

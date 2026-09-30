@@ -233,8 +233,11 @@ public sealed class ToolManifestSnapshotResolver : IToolManifestSnapshotResolver
     private static ToolManifestEntryDto VirtualEntry(string toolId) =>
         CoreVirtualToolPolicy.IsCreateWorkspace(toolId) ? CoreWorkspaceTool.ManifestEntry()
         : CoreVirtualToolPolicy.IsTaskDispatch(toolId) ? CoreTaskDispatchTool.ManifestEntry()
+        : CoreVirtualToolPolicy.IsTaskWait(toolId) ? CoreTaskWaitTool.ManifestEntry()
+        : CoreVirtualToolPolicy.IsPlanUpdate(toolId) ? CoreTaskPlanTool.ManifestEntry()
         : CoreVirtualToolPolicy.IsReadAttachment(toolId) ? CoreAttachmentReadTool.ManifestEntry()
         : TinaChatVirtualTools.ManifestEntry(toolId)
+        ?? OrganizationVirtualTools.ManifestEntry(toolId)
         ?? throw new InvalidOperationException($"Core-owned virtual tool '{toolId}' has no manifest entry.");
 
     private static FrozenToolManifestEntry ToFrozen(ToolManifestEntryDto tool) => new(

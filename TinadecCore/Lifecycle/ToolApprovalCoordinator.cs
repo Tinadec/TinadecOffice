@@ -471,6 +471,44 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         return new PreAuthorizationMintResult(await ToSnapshotAsync(fresh ?? execution, cancellationToken).ConfigureAwait(false), source);
     }
 
+    /// <summary>
+    /// Mints from a person's standing rule (todo E7): the dispatcher already matched the rule
+    /// against the call's own parameters (session scope and prefix, so a caller naming a rule id
+    /// cannot ride in on it), so this only records it. The audit names the rule, not the policy.
+    /// </summary>
+    public async Task<PreAuthorizationMintResult?> MintApprovalFromRuleAsync(Guid executionId, Guid ruleId, CancellationToken cancellationToken = default)
+    {
+        var scope = _tenant.Current;
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var execution = await db.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        if (execution is null || !execution.RequiresApproval || execution.ApprovalId is not { } approvalId) return null;
+        var upgraded = await db.ApprovalRequests
+            .Where(x => x.Id == approvalId && x.Status == "pending" && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId)
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Status, "approved")
+                .SetProperty(x => x.Decision, "approved")
+                .SetProperty(x => x.DecisionReason, "approval_rule")
+                .SetProperty(x => x.DecidedAt, now)
+                .SetProperty(x => x.ExecutionWindowExpiresAt, now.Add(_executionWindow))
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        if (upgraded != 1) return null;
+        db.ApprovalDecisions.Add(new ApprovalDecisionRecord
+        {
+            Id = Guid.NewGuid(),
+            ApprovalRequestId = approvalId,
+            Decision = "approved",
+            Reason = "approval_rule",
+            DecidedByPrincipalId = Guid.Empty,
+            CreatedAt = now
+        });
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        var fresh = await db.ToolExecutions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == executionId
+            && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId, cancellationToken).ConfigureAwait(false);
+        return new PreAuthorizationMintResult(await ToSnapshotAsync(fresh ?? execution, cancellationToken).ConfigureAwait(false), $"approval_rule:{ruleId:N}");
+    }
+
     private async Task<string?> ReadFrozenPermissionModeAsync(Guid runId, CancellationToken cancellationToken)
     {
         if (_lifecycle is null) return null;
@@ -1167,7 +1205,15 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         return updated == 1;
     }
 
-    public async Task<ToolApprovalDecision> DecideAsync(Guid approvalId, string decision, string? reason, CancellationToken cancellationToken = default)
+    public Task<ToolApprovalDecision> DecideAsync(Guid approvalId, string decision, string? reason, CancellationToken cancellationToken = default) =>
+        DecideCoreAsync(approvalId, decision, reason, decidedByPrincipalId: null, cancellationToken);
+
+    // A delegated gate has no human behind it; leaving the principal empty keeps the audit trail from
+    // attributing the decision to the person who delegated it (the auto policy does the same).
+    public Task<ToolApprovalDecision> DecideDelegatedAsync(Guid approvalId, string decision, string reason, CancellationToken cancellationToken = default) =>
+        DecideCoreAsync(approvalId, decision, reason, decidedByPrincipalId: Guid.Empty, cancellationToken);
+
+    private async Task<ToolApprovalDecision> DecideCoreAsync(Guid approvalId, string decision, string? reason, Guid? decidedByPrincipalId, CancellationToken cancellationToken)
     {
         var normalized = decision.Trim().ToLowerInvariant();
         if (normalized is not ("approved" or "rejected")) throw new ArgumentException("decision must be approved or rejected", nameof(decision));
@@ -1218,7 +1264,7 @@ public sealed class ToolApprovalCoordinator : IToolApprovalCoordinator, IToolExe
         db.ApprovalDecisions.Add(new ApprovalDecisionRecord
         {
             Id = Guid.NewGuid(), ApprovalRequestId = row.Id, Decision = normalized, Reason = decisionReason,
-            DecidedByPrincipalId = scope.PrincipalId, CreatedAt = now
+            DecidedByPrincipalId = decidedByPrincipalId ?? scope.PrincipalId, CreatedAt = now
         });
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

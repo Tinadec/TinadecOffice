@@ -22,11 +22,14 @@ public sealed class TinaChatModuleRegistrar : IModuleRegistrar
         builder.Services.AddSingleton<ITinaChatWakeProcessor>(sp => sp.GetRequiredService<TinaChatService>());
         builder.Services.AddSingleton<ITinaChatExecutionResults>(sp => sp.GetRequiredService<TinaChatService>());
         builder.Services.AddSingleton<ITinaChatToolGateway>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ISessionOrganization>(sp => sp.GetRequiredService<TinaChatService>());
+        builder.Services.AddSingleton<ISessionOrganizationView>(sp => sp.GetRequiredService<TinaChatService>());
         builder.RegisterModule(new ModuleDescriptor
         {
-            ModuleId = ModuleId, Version = "0.1.0", Language = "C#",
+            ModuleId = ModuleId, Version = "0.2.0", Language = "C#",
             Dependencies = ["abstractions", "persistence"],
-            Capabilities = ["named_participants", "group_messaging", "durable_inbox", "message_visibility", "intent_handoffs", "durable_agent_wakes", "agent_chat_tools"],
+            Capabilities = ["named_participants", "group_messaging", "durable_inbox", "message_visibility", "intent_handoffs", "durable_agent_wakes", "agent_chat_tools",
+                "session_organizations", "organization_contacts", "organization_reports", "standing_member_turns", "turn_budgets"],
             MafPrimitives = [], RegistrationStatus = ModuleRegistrationStatus.Registered
         });
     }

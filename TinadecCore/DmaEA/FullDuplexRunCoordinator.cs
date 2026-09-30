@@ -23,6 +23,11 @@ public interface IFullDuplexRunCoordinator
         CancellationToken cancellationToken = default);
 }
 
+/// <param name="QueueBehindActiveRun">
+/// The <c>queued</c> delivery (todo D1): a new task never runs next to another unfinished run of the
+/// session — admission refuses with <c>SESSION_BUSY</c> and the caller queues the message behind the
+/// run that is working. <c>parallel</c> leaves it false and is bounded only by the active-run limit.
+/// </param>
 public sealed record FullDuplexInvocation(
     Guid SessionId,
     string Content,
@@ -31,7 +36,8 @@ public sealed record FullDuplexInvocation(
     Guid? TargetRunId,
     long? ExpectedContextRevision,
     SessionModelOverride? MeetingModelOverride = null,
-    Guid? ModeVersionId = null);
+    Guid? ModeVersionId = null,
+    bool QueueBehindActiveRun = false);
 
 public sealed record RunSubmission(
     Guid RunId,
@@ -187,6 +193,17 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             throw new RunAdmissionException(
                 "ACTIVE_RUN_LIMIT",
                 $"This session already has {active} active runs; its limit is {configuration.Scheduling.MaxActiveRunsPerSession}.");
+        }
+        // Queued means "after what the session is doing now", not "alongside it while there is room".
+        // A run parked on a decision counts here although the capacity limit above does not count it:
+        // the message waits for that decision too. A replay of an already admitted message is not a
+        // new task and was answered above.
+        if (invocation.QueueBehindActiveRun && turnKind == "new_task"
+            && (await _lifecycle.ListActiveRunsAsync(invocation.SessionId, cancellationToken).ConfigureAwait(false)).Count > 0)
+        {
+            throw new RunAdmissionException(
+                "SESSION_BUSY",
+                "This session is still working on a run; the message waits behind it (queued).");
         }
 
         var userMessage = await _conversations.AppendMessageAsync(
@@ -355,13 +372,16 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
                 }
             }
 
-            return configuration with
+            var finalized = configuration with
             {
                 ToolManifestHash = snapshot.ManifestHash,
                 ToolManifestProtocolVersion = snapshot.ProtocolVersion,
                 ToolManifest = snapshot.AuthorizedTools,
                 Graph = configuration.Graph is null ? null : configuration.Graph with { SpawnableTemplates = frozenSpawnable }
             };
+            // Frozen last, from the finished roster and ceilings: the list the coordinator
+            // dispatches against must be exactly what the engine will then honor.
+            return finalized with { DispatchRoster = FullDuplexRunEngine.ComputeDispatchRoster(finalized) };
         }
         catch (ToolManifestSnapshotException ex)
         {

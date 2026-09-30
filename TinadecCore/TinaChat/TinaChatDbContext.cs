@@ -15,6 +15,10 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
     public DbSet<ChatAudit> Audit => Set<ChatAudit>();
     public DbSet<ChatWake> Wakes => Set<ChatWake>();
     public DbSet<ChatSessionIdentity> SessionIdentities => Set<ChatSessionIdentity>();
+    public DbSet<ChatOrganization> Organizations => Set<ChatOrganization>();
+    public DbSet<ChatContact> Contacts => Set<ChatContact>();
+    public DbSet<ChatReport> Reports => Set<ChatReport>();
+    public DbSet<ChatInstanceBinding> InstanceBindings => Set<ChatInstanceBinding>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -26,11 +30,19 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.Property(x => x.Handle).HasMaxLength(80);
             e.Property(x => x.DisplayName).HasMaxLength(160);
             e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.OrganizationId, x.MemberKey }).IsUnique();
+            e.HasIndex(x => new { x.OrganizationId, x.ParentParticipantId });
+            e.HasIndex(x => x.CurrentRunId);
+            e.Property(x => x.MemberKey).HasMaxLength(160);
+            e.Property(x => x.OrgRole).HasMaxLength(32);
+            e.Property(x => x.Presence).HasMaxLength(16);
+            e.Property(x => x.AgentSlug).HasMaxLength(128);
         });
         model.Entity<ChatConversation>(e =>
         {
             e.ToTable("tina_chat_conversations"); e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.TenantId, x.CreatorId, x.ClientRequestId }).IsUnique();
+            e.HasIndex(x => new { x.OrganizationId, x.Kind });
             e.Property(x => x.ClientRequestId).HasMaxLength(128);
             e.Property(x => x.Revision).IsConcurrencyToken();
         });
@@ -87,6 +99,7 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.ToTable("tina_chat_wakes"); e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.HasIndex(x => new { x.Status, x.AvailableAt });
+            e.HasIndex(x => new { x.Status, x.DueAtUnixMs });
             e.HasIndex(x => new { x.ConversationId, x.ParticipantId, x.Status });
             e.Property(x => x.LastError).HasMaxLength(512);
         });
@@ -95,6 +108,40 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.ToTable("tina_chat_session_identities"); e.HasKey(x => x.SessionId);
             e.HasIndex(x => new { x.TenantId, x.ParticipantId });
             e.HasIndex(x => new { x.TenantId, x.OwnerPrincipalId });
+        });
+        model.Entity<ChatOrganization>(e =>
+        {
+            e.ToTable("tina_chat_organizations"); e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.TenantId, x.SessionId }).IsUnique();
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+        });
+        model.Entity<ChatContact>(e =>
+        {
+            e.ToTable("tina_chat_contacts"); e.HasKey(x => new { x.OwnerId, x.ContactId });
+            e.HasIndex(x => new { x.OrganizationId, x.ContactId, x.Status });
+            e.Property(x => x.Status).HasMaxLength(16);
+        });
+        model.Entity<ChatReport>(e =>
+        {
+            e.ToTable("tina_chat_reports"); e.HasKey(x => x.MessageId);
+            e.HasIndex(x => new { x.OrganizationId, x.Status });
+            e.Property(x => x.ReportKind).HasMaxLength(32);
+            e.Property(x => x.Severity).HasMaxLength(16);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.SubjectKind).HasMaxLength(32);
+            e.Property(x => x.SubjectId).HasMaxLength(512);
+            e.Property(x => x.ProposedVerb).HasMaxLength(32);
+            e.Property(x => x.ProposedArgs).HasMaxLength(1024);
+            e.Property(x => x.Finding).HasMaxLength(4000);
+            e.Property(x => x.DecisionNote).HasMaxLength(2000);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasOne<ChatMessage>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Restrict);
+        });
+        model.Entity<ChatInstanceBinding>(e =>
+        {
+            e.ToTable("tina_chat_instance_bindings"); e.HasKey(x => x.InstanceId);
+            e.HasIndex(x => new { x.OrganizationId, x.ParticipantId });
         });
         model.UseTinadecSnakeCase();
     }
@@ -117,6 +164,22 @@ public sealed class ChatParticipant
     public bool Discoverable { get; set; } = true;
     public string Status { get; set; } = "active";
     public long Revision { get; set; } = 1;
+
+    // Organization membership (null for a workspace-level participant). A member belongs to exactly
+    // one session's organization; its key is unique there (user, host, conversation,
+    // governance:{slug}, instance:{id}), which is what makes enrolment idempotent.
+    public Guid? OrganizationId { get; set; }
+    public string? MemberKey { get; set; }
+    public string? OrgRole { get; set; }
+    public string? AgentSlug { get; set; }
+    /// <summary>The member that dispatched this one: its default contact, and what makes two executors siblings.</summary>
+    public Guid? ParentParticipantId { get; set; }
+    /// <summary>online while the member can act (its run is live, or it is a standing role); offline keeps it attributable.</summary>
+    public string? Presence { get; set; }
+    public Guid? CurrentRunId { get; set; }
+    /// <summary>Fixed one-hour window of this member's woken turns: O(1) to check and exact enough to stop a wake loop.</summary>
+    public DateTimeOffset? TurnWindowStartedAt { get; set; }
+    public int TurnsInWindow { get; set; }
 }
 
 public sealed class ChatConversation
@@ -133,6 +196,10 @@ public sealed class ChatConversation
     public long Revision { get; set; } = 1;
     public long LastSequence { get; set; }
     public Guid? AcceptedIntentId { get; set; }
+    /// <summary>The organization a room belongs to (lobby, board, plan, adhoc, or an org direct chat).</summary>
+    public Guid? OrganizationId { get; set; }
+    /// <summary>For a plan room: the dispatcher whose executors meet there.</summary>
+    public Guid? PlanOwnerId { get; set; }
 }
 
 public sealed class ChatMember
@@ -249,6 +316,13 @@ public sealed class ChatWake
     public string Status { get; set; } = "pending";
     public int Attempts { get; set; }
     public DateTimeOffset AvailableAt { get; set; }
+    /// <summary>
+    /// <see cref="AvailableAt"/> as Unix milliseconds, so "which wakes are due" is an index range in
+    /// SQL on every provider. SQLite cannot compare DateTimeOffset server-side, and scanning every
+    /// pending row per pass does not survive an organization with hundreds of postponed members.
+    /// Rows written before the column existed read 0, which is simply "due".
+    /// </summary>
+    public long DueAtUnixMs { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string? LastError { get; set; }
@@ -266,5 +340,88 @@ public sealed class ChatSessionIdentity
     public Guid WorkspaceId { get; set; }
     public Guid ParticipantId { get; set; }
     public Guid OwnerPrincipalId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// A session in TinaChat (architecture §9.1): one organization per session, holding its members,
+/// contacts, rooms and board. Archiving the session makes it read-only; nothing is deleted.
+/// </summary>
+public sealed class ChatOrganization
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid WorkspaceId { get; set; }
+    public Guid SessionId { get; set; }
+    public Guid OwnerPrincipalId { get; set; }
+    public string Status { get; set; } = "active";
+    public Guid HostParticipantId { get; set; }
+    public Guid HumanParticipantId { get; set; }
+    public Guid LobbyConversationId { get; set; }
+    public Guid BoardConversationId { get; set; }
+    public long Revision { get; set; } = 1;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ArchivedAt { get; set; }
+    /// <summary>Fixed one-hour window of woken turns across the whole organization (the session budget).</summary>
+    public DateTimeOffset? TurnWindowStartedAt { get; set; }
+    public int TurnsInWindow { get; set; }
+}
+
+/// <summary>
+/// An explicit contact edge, for pairs the graph does not already connect. Default contacts
+/// (dispatcher and dispatched, siblings, governance / conversation / user with everybody) are derived
+/// when checked and never stored, so an organization of hundreds of members holds no O(n^2) rows.
+/// </summary>
+public sealed class ChatContact
+{
+    public Guid OwnerId { get; set; }
+    public Guid ContactId { get; set; }
+    public Guid OrganizationId { get; set; }
+    /// <summary>requested (by the owner, awaiting the contact) / active / declined.</summary>
+    public string Status { get; set; } = "requested";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
+}
+
+/// <summary>
+/// The structured half of a report post (architecture §9.3). The message carries the readable text
+/// and the frozen audience; this row carries what a reader filters and a decider acts on.
+/// </summary>
+public sealed class ChatReport
+{
+    public Guid MessageId { get; set; }
+    public Guid OrganizationId { get; set; }
+    public Guid ConversationId { get; set; }
+    public Guid AuthorId { get; set; }
+    public string ReportKind { get; set; } = "risk";
+    public string Severity { get; set; } = "info";
+    /// <summary>open / acted / dismissed / superseded.</summary>
+    public string Status { get; set; } = "open";
+    public string? SubjectKind { get; set; }
+    public string? SubjectId { get; set; }
+    public string? ProposedVerb { get; set; }
+    public string? ProposedArgs { get; set; }
+    public string Finding { get; set; } = "";
+    public string EvidenceJson { get; set; } = "[]";
+    public Guid? SupersedesMessageId { get; set; }
+    public Guid? DecidedById { get; set; }
+    public string? DecisionNote { get; set; }
+    public long Revision { get; set; } = 1;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? DecidedAt { get; set; }
+}
+
+/// <summary>
+/// Which member an agent instance acts as. A worker instance binds to its own member; every instance
+/// of the conversation identity binds to the one conversation member, so a solo master's per-task
+/// instances all speak with one voice.
+/// </summary>
+public sealed class ChatInstanceBinding
+{
+    public Guid InstanceId { get; set; }
+    public Guid OrganizationId { get; set; }
+    public Guid ParticipantId { get; set; }
+    public Guid? RunId { get; set; }
+    public Guid? TaskId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

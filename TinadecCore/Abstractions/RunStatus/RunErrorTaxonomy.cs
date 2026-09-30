@@ -40,6 +40,12 @@ public static class RunErrorTaxonomy
     // vocabulary of record could not classify them (events and UI key off it).
     /// <summary>The worker's authorized declaration surface could not be resolved.</summary>
     public const string ToolManifestUnavailable = "tool_manifest_unavailable";
+    /// <summary>
+    /// Another run in this workspace holds the resource this call would touch. Correctable: the model
+    /// can wait, work in another worktree, or pick a different file — so it is fed back as a tool
+    /// result rather than failing the task.
+    /// </summary>
+    public const string ResourceConflict = "resource_conflict";
     /// <summary>Worker resolution/creation failed against the frozen configuration.</summary>
     public const string WorkerAssignmentInvalid = "worker_assignment_invalid";
     /// <summary>The model produced tool arguments that do not match the declaration.</summary>

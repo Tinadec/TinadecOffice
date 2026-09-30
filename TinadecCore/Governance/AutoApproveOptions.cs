@@ -41,6 +41,15 @@ public sealed class AutoApproveOptions
     /// regardless of what it writes.</summary>
     public string[] HumanOnlyTools { get; set; } = ["git_push", "command_run", "shell", "git_worktree_remove", "mcp_invoke", "web_fetch"];
 
+    /// <summary>
+    /// The highest risk a delegated approval gate (<c>delegate-*</c> permission modes) may decide.
+    /// Above it — and for every human-only tool — the call waits for the person, whatever mode the
+    /// run was started in. The default keeps the project rule that high-risk operations get a human
+    /// checkpoint; an operator who trusts the gates more may raise it to <c>high</c>. Unknown risks
+    /// are never delegated.
+    /// </summary>
+    public string DelegatedApprovalRiskMax { get; set; } = "medium";
+
     public bool IsHumanOnlyTool(string toolId) =>
         HumanOnlyTools.Contains(toolId, StringComparer.OrdinalIgnoreCase)
         || toolId.EndsWith("_delete", StringComparison.OrdinalIgnoreCase)

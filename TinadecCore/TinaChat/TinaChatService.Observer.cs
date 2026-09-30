@@ -28,7 +28,9 @@ public sealed partial class TinaChatService
         var workspaceIds = access.Workspaces.Select(x => x.Id).ToArray();
         if (workspaceId.HasValue && !workspaceIds.Contains(workspaceId.Value)) throw Missing();
         await using var db = await factory.CreateDbContextAsync(ct);
-        var conversations = db.Conversations.AsNoTracking().Where(x => x.TenantId == scope.TenantId
+        // Workspace observation covers workspace chat. A session's organization rooms are observed
+        // through that session (they are its working state, and its owner already sees them there).
+        var conversations = db.Conversations.AsNoTracking().Where(x => x.TenantId == scope.TenantId && x.OrganizationId == null
             && workspaceIds.Contains(x.WorkspaceId) && (!workspaceId.HasValue || x.WorkspaceId == workspaceId.Value));
         if (kind is not null) conversations = conversations.Where(x => x.Kind == kind);
         if (term is not null) conversations = conversations.Where(x => x.Title.Contains(term)
