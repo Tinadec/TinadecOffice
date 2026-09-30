@@ -34,7 +34,7 @@ public sealed partial class TinaChatService : ISessionOrganizationView
         var open = await db.Reports.AsNoTracking().CountAsync(x => x.OrganizationId == org.Id && x.Status == "open", ct);
         return new OrganizationDto(org.Id, org.SessionId, org.Status, org.HumanParticipantId,
             members.Take(ViewMemberLimit).Select(x => new OrganizationMemberDto(x.Id, x.Handle, x.DisplayName, x.OrgRole ?? "",
-                x.Presence ?? Offline, x.AgentSlug, x.ParentParticipantId, x.CurrentRunId)).ToArray(),
+                x.Presence ?? Offline, x.AgentSlug, x.ParentParticipantId, x.CurrentRunId, x.VisibilityScope)).ToArray(),
             rooms.Take(ViewRoomLimit).Select(x => new OrganizationRoomDto(x.Id, x.Kind, x.Title, x.LastSequence,
                 counts.GetValueOrDefault(x.Id), mine.Contains(x.Id), x.PlanOwnerId)).ToArray(),
             open, members.Length > ViewMemberLimit, rooms.Length > ViewRoomLimit);
@@ -125,6 +125,30 @@ public sealed partial class TinaChatService : ISessionOrganizationView
         await using var read = await factory.CreateDbContextAsync(ct);
         var row = await read.Reports.AsNoTracking().SingleAsync(x => x.MessageId == decided.MessageId, ct);
         return ToReportDto(row, await NamesAsync(read, decided.Id, [row.AuthorId], ct));
+    }
+
+    public async Task<OrganizationMemberDto> SetMemberVisibilityAsync(Guid sessionId, Guid participantId, OrganizationMemberVisibilityRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var scope = request.VisibilityScope?.Trim();
+        if (scope is not (null or "down" or "own")) throw Invalid("visibility_scope must be \"down\", \"own\", or null.");
+        var tenant = await ScopeAsync(ct);
+        ChatParticipant member;
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            var org = await OwnedOrganizationAsync(db, tenant, sessionId, ct) ?? throw Missing();
+            RequireWritable(org);
+            member = await db.Participants.SingleOrDefaultAsync(x => x.OrganizationId == org.Id && x.Id == participantId, ct) ?? throw Missing();
+            // Machine members only: hiding the user's or the host's own read would blind the panel.
+            if (member.OrgRole is OrganizationRoles.Human or OrganizationRoles.Host)
+                throw Invalid("The owner's and the host's visibility cannot be changed.");
+            // "down" is the default and means unrestricted: store null so the row says exactly that.
+            member.VisibilityScope = string.Equals(scope, "own", StringComparison.OrdinalIgnoreCase) ? "own" : null;
+            member.Revision++;
+            await db.SaveChangesAsync(ct);
+        }
+        return new OrganizationMemberDto(member.Id, member.Handle, member.DisplayName, member.OrgRole ?? "",
+            member.Presence ?? Offline, member.AgentSlug, member.ParentParticipantId, member.CurrentRunId, member.VisibilityScope);
     }
 
     /// <summary>The organization of a session the caller owns; null otherwise, without saying whether it exists.</summary>

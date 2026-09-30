@@ -106,6 +106,24 @@ public sealed record OrganizationMemberSummary(
     Guid? AgentInstanceId);
 
 /// <summary>
+/// How far a member may look into run internals (todo E5): <c>down</c> (the default for governance
+/// roles and the conversation identity — the whole session, "visibility flows downward") versus
+/// <c>own</c> (only its own run's data: nothing for a standing member, its task's run for an
+/// executor). Set by the user per member; it narrows <c>graph_view</c>, evidence recall and the
+/// facts that wake a member — never chat rooms, which membership rules already govern.
+/// </summary>
+public sealed record OrganizationMemberVisibility(string Scope, Guid? CurrentRunId)
+{
+    public const string Down = "down";
+    public const string Own = "own";
+
+    public bool Restricted => string.Equals(Scope, Own, StringComparison.OrdinalIgnoreCase);
+
+    public static OrganizationMemberVisibility? Of(string? scope, Guid? currentRunId) =>
+        scope is null ? null : new OrganizationMemberVisibility(scope, currentRunId);
+}
+
+/// <summary>
 /// The engine's seam into the session's TinaChat organization (architecture §9.1): a session is an
 /// organization whose members — the user, the conversation identity, standing governance roles and
 /// every dispatched worker — have contacts, rooms, direct chats and a board.
@@ -133,6 +151,12 @@ public interface ISessionOrganization
     Task<IReadOnlyList<OrganizationReportDigest>> ListOpenReportsAsync(Guid sessionId, int max, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<OrganizationMemberSummary>> ListMembersAsync(Guid sessionId, int max, CancellationToken cancellationToken = default);
+
+    /// <summary>The member an instance acts as, and its visibility (todo E5). Null when the instance is nobody in this session.</summary>
+    Task<OrganizationMemberVisibility?> VisibilityForInstanceAsync(Guid sessionId, Guid agentInstanceId, CancellationToken cancellationToken = default);
+
+    /// <summary>The participant's visibility (todo E5), for a standing member's own turn. Null when unrestricted.</summary>
+    Task<OrganizationMemberVisibility?> VisibilityForParticipantAsync(Guid sessionId, Guid participantId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

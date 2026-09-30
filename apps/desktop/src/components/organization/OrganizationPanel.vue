@@ -92,6 +92,35 @@ const mentionable = computed(() => members.value.filter((member) => member.id !=
 const openReports = computed(() => Number(organization.value?.open_reports ?? 0))
 // Core already orders open → severity → newest; the stable sort only guarantees open ones lead.
 const sortedReports = computed(() => [...(reports.value ?? [])].sort((a, b) => Number(a.status !== 'open') - Number(b.status !== 'open')))
+const mutingVisibility = ref<string | null>(null)
+/** Rule: a machine member's visibility into run internals is the owner's per-member choice (human/host rows never offer it). */
+const VISIBILITY_ADJUSTABLE = new Set(['conversation', 'governance', 'executor'])
+function visibilityAdjustable(member: OrganizationMemberDto): boolean {
+  return VISIBILITY_ADJUSTABLE.has(member.role) && member.id !== organization.value?.you_participant_id
+}
+
+async function toggleVisibility(member: OrganizationMemberDto): Promise<void> {
+  const id = props.sessionId
+  if (!id || mutingVisibility.value) return
+  const at = epoch
+  const next = member.visibility_scope === 'own' ? null : 'own'
+  mutingVisibility.value = member.id
+  try {
+    const updated = await api.setOrganizationMemberVisibility(id, member.id, next)
+    if (at !== epoch) return
+    organization.value = organization.value && ({
+      ...organization.value,
+      members: organization.value.members.map((row) => (row.id === updated.id ? updated : row)),
+    })
+    if (next === 'own') notify.warning({ title: t('organization.visibilityMuteShort'), message: t('organization.visibilityMuted', { name: member.display_name }) })
+  } catch (cause) {
+    if (at !== epoch) return
+    if (problemOf(cause).code === 'organization_archived') void refresh()
+    notify.error(cause, { title: t('organization.visibilityFailed') })
+  } finally {
+    if (at === epoch) mutingVisibility.value = null
+  }
+}
 const runs = computed(() => [...(topology.value?.runs ?? [])].sort((a, b) => timeOf(b.started_at) - timeOf(a.started_at)))
 const leases = computed(() => (topology.value?.leases ?? []).map((lease) => ({ lease, holder: leaseHolder(lease) })))
 
@@ -541,8 +570,20 @@ onBeforeUnmount(() => {
                   <code>{{ member.handle }}</code>
                   <span v-if="member.agent_slug">{{ member.agent_slug }}</span>
                   <span v-if="member.parent_id" class="org-dispatched">{{ t('organization.dispatchedBy', { parent: memberName(member.parent_id) }) }}</span>
+                  <span v-if="member.visibility_scope === 'own'" class="org-visibility">{{ t('organization.visibilityOwn') }}</span>
                 </div>
               </div>
+              <button
+                v-if="visibilityAdjustable(member) && writable"
+                type="button"
+                class="org-visibility-toggle"
+                :disabled="mutingVisibility === member.id"
+                :aria-label="member.visibility_scope === 'own' ? t('organization.visibilityRestore', { name: member.display_name }) : t('organization.visibilityMute', { name: member.display_name })"
+                :data-visibility-toggle="member.id"
+                @click="toggleVisibility(member)"
+              >
+                {{ member.visibility_scope === 'own' ? t('organization.visibilityRestoreShort') : t('organization.visibilityMuteShort') }}
+              </button>
             </li>
           </ul>
         </section>
@@ -827,6 +868,10 @@ h2,h3,p { margin:0; }
 .org-offline { font-size:10px; }
 .org-member-meta { display:flex; flex-wrap:wrap; gap:4px 8px; margin-top:3px; font-size:10px; color:var(--text-muted); overflow-wrap:anywhere; }
 .org-dispatched { color:var(--text-secondary); }
+.org-visibility { color:var(--accent-warning); }
+.org-visibility-toggle { margin-left:auto; align-self:center; flex-shrink:0; background:none; border:none; padding:2px 6px; cursor:pointer; font-size:10px; color:var(--text-muted); }
+.org-visibility-toggle:hover:not(:disabled) { color:var(--text-primary); }
+.org-visibility-toggle:disabled { opacity:.5; cursor:default; }
 code { font-family:var(--font-mono, ui-monospace, monospace); font-size:10px; overflow-wrap:anywhere; }
 .org-room { display:flex; flex-direction:column; gap:4px; width:100%; margin-bottom:3px; padding:9px 10px; text-align:left; border:1px solid transparent; border-radius:8px; background:transparent; color:inherit; cursor:pointer; }
 .org-room:hover { background:var(--surface-hover); border-color:var(--border-muted); }

@@ -36,6 +36,7 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.Property(x => x.MemberKey).HasMaxLength(160);
             e.Property(x => x.OrgRole).HasMaxLength(32);
             e.Property(x => x.Presence).HasMaxLength(16);
+            e.Property(x => x.VisibilityScope).HasMaxLength(16);
             e.Property(x => x.AgentSlug).HasMaxLength(128);
         });
         model.Entity<ChatConversation>(e =>
@@ -177,6 +178,8 @@ public sealed class ChatParticipant
     /// <summary>online while the member can act (its run is live, or it is a standing role); offline keeps it attributable.</summary>
     public string? Presence { get; set; }
     public Guid? CurrentRunId { get; set; }
+    /// <summary>User-set visibility into run internals (todo E5): "down" (default) or "own". Null = unrestricted.</summary>
+    public string? VisibilityScope { get; set; }
     /// <summary>Fixed one-hour window of this member's woken turns: O(1) to check and exact enough to stop a wake loop.</summary>
     public DateTimeOffset? TurnWindowStartedAt { get; set; }
     public int TurnsInWindow { get; set; }

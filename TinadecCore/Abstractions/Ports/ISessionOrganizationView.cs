@@ -20,4 +20,7 @@ public interface ISessionOrganizationView
     Task<OrganizationReportPage> ListReportsAsync(Guid sessionId, string? status = null, int limit = 50, CancellationToken cancellationToken = default);
 
     Task<OrganizationReportDto> DecideReportAsync(Guid sessionId, Guid reportId, OrganizationReportDecisionRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>The user sets one member's visibility into run internals (todo E5): "down" (default), "own", or null to clear.</summary>
+    Task<OrganizationMemberDto> SetMemberVisibilityAsync(Guid sessionId, Guid participantId, OrganizationMemberVisibilityRequest request, CancellationToken cancellationToken = default);
 }

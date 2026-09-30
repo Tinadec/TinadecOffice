@@ -67,6 +67,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
     private readonly IEnvironmentRegistry? _environments;
     /// <summary>Standing approvals a person gave (todo E7): command prefixes honored at prepare, shell's per-session delegation opt-in re-checked at the gates.</summary>
     private readonly IApprovalRules? _approvalRules;
+    /// <summary>Per-member visibility into run internals (todo E5). Optional; an absent organization answers "unrestricted".</summary>
+    private readonly ISessionOrganization? _organization;
 
     public ToolDispatcher(
         IToolProvider provider,
@@ -87,7 +89,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ISessionTopology? topology = null,
         IEvidenceArchive? evidence = null,
         IEnvironmentRegistry? environments = null,
-        IApprovalRules? approvalRules = null)
+        IApprovalRules? approvalRules = null,
+        ISessionOrganization? organization = null)
     {
         _provider = provider;
         _scopeResolver = scopeResolver;
@@ -108,6 +111,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         _evidence = evidence;
         _environments = environments;
         _approvalRules = approvalRules;
+        _organization = organization;
     }
 
     public Task<ToolDispatchResultDto> ExecuteAsync(ToolDispatchRequestDto request, CancellationToken cancellationToken = default) =>
@@ -1060,7 +1064,26 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             }
             if (parameters.TryGetProperty("include_finished", out var finished) && finished.ValueKind == JsonValueKind.False) includeFinished = false;
         }
-        var view = await _topology.GetAsync(scope.SessionId, new SessionTopologyQuery(IncludeFinishedRuns: includeFinished, RunId: runId), cancellationToken).ConfigureAwait(false);
+        if (_organization is not null && scope.AgentInstanceId is { } callerInstance)
+        {
+            // Per-member visibility (todo E5): a member the user restricted to its own run sees the
+            // graph only of that run; a standing member without one is told there is nothing to see.
+            var visibility = await _organization.VisibilityForInstanceAsync(scope.SessionId, callerInstance, cancellationToken).ConfigureAwait(false);
+            if (visibility?.Restricted == true)
+            {
+                if (visibility.CurrentRunId is { } own)
+                    runId = own;
+                else
+                    return new ToolWireResponseDto
+                    {
+                        CallId = wire.ToolCallId,
+                        IsSuccess = true,
+                        Result = JsonSerializer.SerializeToElement(new { runs = Array.Empty<object>(), note = "Your visibility is restricted to your own run, and you have none: there is nothing in the graph for you." }),
+                    };
+            }
+        }
+        var view = await _topology.GetAsync(scope.SessionId, new SessionTopologyQuery(IncludeFinishedRuns: includeFinished, RunId: runId), cancellationToken)
+            .ConfigureAwait(false);
         if (view is null)
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = "This run's session could not be read." };
         return new ToolWireResponseDto
@@ -1149,8 +1172,27 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         var parsed = EvidenceRecallArguments.Parse(wire.Params);
         if (parsed.Error is { } error)
             return new ToolWireResponseDto { CallId = wire.ToolCallId, IsSuccess = false, Error = error };
+        var runId = parsed.RunId;
+        if (_organization is not null && scope.AgentInstanceId is { } callerInstance)
+        {
+            // Per-member visibility (todo E5): a restricted member recalls only its own run's evidence;
+            // a standing member without one is told there is nothing to recall.
+            var visibility = await _organization.VisibilityForInstanceAsync(scope.SessionId, callerInstance, cancellationToken).ConfigureAwait(false);
+            if (visibility?.Restricted == true)
+            {
+                if (visibility.CurrentRunId is { } own)
+                    runId = own;
+                else
+                    return new ToolWireResponseDto
+                    {
+                        CallId = wire.ToolCallId,
+                        IsSuccess = true,
+                        Result = JsonSerializer.SerializeToElement(new { hits = Array.Empty<object>(), note = "Your visibility is restricted to your own run, and you have none: there is no evidence for you to recall." }),
+                    };
+            }
+        }
         var result = await _evidence.RecallAsync(new EvidenceRecallQuery(scope.TenantId, scope.WorkspaceId, scope.SessionId,
-            parsed.Query!, parsed.Kinds, parsed.RunId, parsed.Limit), cancellationToken).ConfigureAwait(false);
+            parsed.Query!, parsed.Kinds, runId, parsed.Limit), cancellationToken).ConfigureAwait(false);
         return new ToolWireResponseDto
         {
             CallId = wire.ToolCallId,

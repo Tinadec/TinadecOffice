@@ -2284,6 +2284,8 @@ export interface OrganizationMemberDto {
   agent_slug?: string | null;
   parent_id?: string | null;
   run_id?: string | null;
+  /** Per-member visibility into run internals: "own" restricts to its own run; absent = unrestricted ("down"). */
+  visibility_scope?: 'down' | 'own' | null;
 }
 
 export interface OrganizationRoomDto {
@@ -2757,6 +2759,9 @@ export const api = {
   /** Recorded against the revision the report was read at: 412 = stale revision, 409 `report_closed` = already decided. */
   decideOrganizationReport: (sessionId: string, reportId: string, body: OrganizationReportDecisionInput) =>
     request<OrganizationReportDto>(organizationPath(sessionId, `/reports/${encodeURIComponent(reportId)}/decision`), { method: 'POST', body: JSON.stringify(body) }),
+  /** The owner narrows (or restores) one machine member's visibility into run internals. */
+  setOrganizationMemberVisibility: (sessionId: string, participantId: string, visibilityScope: 'down' | 'own' | null) =>
+    request<OrganizationMemberDto>(organizationPath(sessionId, `/members/${encodeURIComponent(participantId)}`), { method: 'PATCH', body: JSON.stringify({ visibility_scope: visibilityScope }) }),
   /** Search the session's evidence archive (verbatim task results, reports, member conclusions, summaries). */
   recallEvidence: (sessionId: string, q: string, params: { kinds?: string[]; run_id?: string; limit?: number } = {}) =>
     request<EvidenceRecallDto>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/evidence${querySuffix({

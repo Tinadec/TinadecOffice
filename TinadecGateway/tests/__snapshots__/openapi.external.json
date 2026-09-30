@@ -2212,6 +2212,10 @@
             "format": "uuid",
             "nullable": true,
             "type": "string"
+          },
+          "visibility_scope": {
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -2223,6 +2227,18 @@
           "agent_slug",
           "parent_id",
           "run_id"
+        ],
+        "type": "object"
+      },
+      "OrganizationMemberVisibilityRequest": {
+        "properties": {
+          "visibility_scope": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "visibility_scope"
         ],
         "type": "object"
       },
@@ -9251,6 +9267,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrganizationDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "Organization"
+        ]
+      }
+    },
+    "/api/v1/sessions/{sessionId}/organization/members/{participantId}": {
+      "patch": {
+        "operationId": "patchApiV1SessionsBySessionIdOrganizationMembersByParticipantId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "participantId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationMemberVisibilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationMemberDto"
                 }
               }
             },

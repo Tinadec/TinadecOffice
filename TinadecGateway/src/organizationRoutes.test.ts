@@ -41,10 +41,11 @@ test('every organization, topology, approval-gate and environment operation forw
   }
   assert.equal(calls.length, expectedCount);
   // A contract-size pin: a projection that silently loses a Core operation fails here.
-  assert.equal(Object.keys(contract.paths).length, 9);
-  assert.equal(expectedCount, 11);
+  assert.equal(Object.keys(contract.paths).length, 10);
+  assert.equal(expectedCount, 12);
   assert.ok(contract.paths['/api/v1/approvals/{approvalId}/gates'], 'the delegated gates route is part of the contract');
   assert.ok(contract.paths['/api/v1/environments/{environmentId}'], 'the environment registry is part of the contract');
+  assert.ok(contract.paths['/api/v1/sessions/{sessionId}/organization/members/{participantId}'], 'the per-member visibility route is part of the contract');
 });
 
 test('organization and approval-gate schemas are included in the external contract', async () => {

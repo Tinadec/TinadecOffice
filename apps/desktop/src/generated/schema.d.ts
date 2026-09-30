@@ -694,6 +694,9 @@ export interface paths {
   "/api/v1/sessions/{sessionId}/organization": {
     get: operations["getApiV1SessionsBySessionIdOrganization"];
   };
+  "/api/v1/sessions/{sessionId}/organization/members/{participantId}": {
+    patch: operations["patchApiV1SessionsBySessionIdOrganizationMembersByParticipantId"];
+  };
   "/api/v1/sessions/{sessionId}/organization/reports": {
     get: operations["getApiV1SessionsBySessionIdOrganizationReports"];
   };
@@ -1464,6 +1467,10 @@ export interface components {
       role: string;
       /** Format: uuid */
       run_id: string | null;
+      visibility_scope?: string | null;
+    };
+    OrganizationMemberVisibilityRequest: {
+      visibility_scope: string | null;
     };
     OrganizationMessageDto: {
       content: string;
@@ -4610,6 +4617,27 @@ export interface operations {
       200: {
         content: {
           "application/json": components["schemas"]["OrganizationDto"];
+        };
+      };
+    };
+  };
+  patchApiV1SessionsBySessionIdOrganizationMembersByParticipantId: {
+    parameters: {
+      path: {
+        sessionId: string;
+        participantId: string;
+      };
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrganizationMemberVisibilityRequest"];
+      };
+    };
+    responses: {
+      /** @description OK */
+      200: {
+        content: {
+          "application/json": components["schemas"]["OrganizationMemberDto"];
         };
       };
     };

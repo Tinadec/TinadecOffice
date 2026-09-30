@@ -85,6 +85,12 @@ public static class OrganizationEndpoints
             return Results.Ok((await ReportSubjects.ResolveAsync(sessionId, [decided], topology, services.GetService<IResourceLeaseService>(), ct))[0]);
         }).Produces<OrganizationReportDto>();
 
+        // Per-member visibility into run internals (todo E5): "down" is the default for governance
+        // roles ("they watch the execution layer"), "own" narrows a member to its own run.
+        organization.MapPatch("/members/{participantId:guid}", async (Guid sessionId, Guid participantId, OrganizationMemberVisibilityRequest request,
+            ISessionOrganizationView view, CancellationToken ct) =>
+            Results.Ok(await view.SetMemberVisibilityAsync(sessionId, participantId, request, ct))).Produces<OrganizationMemberDto>();
+
         return app;
     }
 }

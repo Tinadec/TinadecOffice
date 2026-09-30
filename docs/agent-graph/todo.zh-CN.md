@@ -160,7 +160,7 @@
 - [ ] **E6. 对话身份合一**：今天 Solo/Plan 由 `solo_master`、其余模式由 `meeting` 对话，已开始对话的会话不能跨这两组切模式。目标是一个对话身份、模式只改策略（architecture §12）。风险：存量会话的身份、模型覆盖按对话根解析、TinaChat 参与者绑定都要迁移。
 - [x] **E7. 审批规则（前缀放行 + 按会话 shell 委托）**（architecture §7.4 第 6、7 条，2026-09-30 第十二批）：表 `agent_graph_approval_rules`；`IApprovalRules` + REST；PDP 在 ask 族的最后一环（`approval_rule_released`）；计用只在铸刻消费时一次；`delegate_tool` 勾选把 shell 交给门。**shell 进沙箱（第 5 条）拆为独立项**：本机 `TinadecSandbox` 账户未初始化、初始化要 UAC，无法在此实机验证；路线已定（runner 协议补输出流 + 一次性调用走沙箱、long_lived 例外），需一次有管理员权限的实机验证后落地。另：每个 shell 批准时"总是允许此前缀"的界面勾选未做（REST 已可用）。
 - [ ] **E4. 项目级委员长**（会话 → 项目的状态上提；长期记忆已区分 workspace/principal/project 三种范围，`Memory/MemoryModuleRegistrar.cs:85-91`，数据模型有预留）
-- [ ] **E5. 治理层可见性的按身份配置**（默认向下全通，用户可关）
+- [x] **E5. 治理层可见性的按身份配置**（默认向下全通，用户可关，2026-09-30 第十三批）：`ChatParticipant.VisibilityScope`（null=全通/"own"）；通知过滤（受限常驻成员被静音，muted 通知不改写其 CurrentRunId）；`graph_view` 与 `recall_evidence` 在 run 内 dispatcher 与常驻成员轮次两处收窄；用户经 `PATCH …/organization/members/{participantId}` 设置（owner/host 不可改，"down" 存回 null）；Desktop 组织面板成员行有切换开关，恢复默认发 null。
 
 ---
 
@@ -186,6 +186,14 @@
 ---
 
 ## 施工记录（按时间倒序，每条写清证据）
+
+### 2026-09-30 第十三批（E5）：治理层可见性按身份配置
+
+- **语义**：`down`（默认，治理层/对话身份看全局）与 `own`（只见自己的 run）。对**常驻治理成员**，`CurrentRunId` 只是上一条事实的 run，没有"自己的 run"可言——设为 `own` = 完全静音（不唤醒、不排队，muted 通知也不改写 `CurrentRunId`）；对**执行者**，收窄为它的 run。这是初实现时差点踩进去的坑：通知自己改写 `CurrentRunId`，用"`CurrentRunId != 事实 run` 过滤"是循环的。
+- **执行点**：`NotifyAsync`（静音）；`ExecuteGraphViewAsync`/`ExecuteRecallEvidenceAsync`（run 内调用，强制 run 过滤或空结果+说明）；`TinaChatMemberTurnRunner` 的 graph/recall（同样需要 know-member）。房间消息不受影响（成员资格本来管着）。
+- **用户面**：`PATCH /api/v1/sessions/{id}/organization/members/{participantId}`（owner/host 不可改，"down" 存 null 保持"默认即无设置"）；Gateway 组织合约投影自动带上（路径数 9→10，测试钉子同步）；Desktop 组织面板成员行对治理/对话/执行者显示切换，恢复默认发 null。
+- **测试**：`OrganizationTests` +1（受限→静音→恢复全程 + 执行者收窄 + owner/host 拒改）；Core Api 回归（ToolChain/Org/Rules）在收尾验证里跑；Desktop `OrganizationPanel.test.ts` +1（治理行有开关、人类行没有、发 null 恢复）31/31，`vue-tsc` 0 错；Gateway 75/75；契约三件套再生零漂移。
+- **诚实边界**：受限成员在房间里的消息仍然看得到（设计如此，只限 run 内部数据）；`graph_view` 的收窄是 run 级，没有任务级。
 
 ### 2026-09-30 第十二批（E7）：审批规则最后一环 + 提交整理
 

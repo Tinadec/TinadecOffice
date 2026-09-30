@@ -131,6 +131,13 @@ public sealed partial class TinaChatService : ISessionOrganization
             var org = await db.Organizations.SingleAsync(x => x.Id == member.OrganizationId, ct);
             if (org.Status != "active") return false;
             var target = await db.Participants.SingleAsync(x => x.Id == member.ParticipantId, ct);
+            // A member whose visibility the user restricted hears no more facts (todo E5): a standing
+            // member has no run of its own (CurrentRunId is only the last fact's run), so restricting
+            // a governance role mutes it entirely; any other member hears only its own run. True, not
+            // false: the member exists and was deliberately muted, not unreachable.
+            if (string.Equals(target.VisibilityScope, OrganizationMemberVisibility.Own, StringComparison.OrdinalIgnoreCase)
+                && (target.OrgRole == OrganizationRoles.Governance || target.CurrentRunId != notice.RunId))
+                return true;
             // The run whose fact this is: its frozen configuration is the role's definition for the
             // turn the notice will cause (prompt, model plan, tool scope).
             target.CurrentRunId = notice.RunId;
@@ -192,6 +199,32 @@ public sealed partial class TinaChatService : ISessionOrganization
                 x.AgentSlug, x.ParentParticipantId, x.CurrentRunId,
                 x.OrgRole == OrganizationRoles.Executor ? bindings.FirstOrDefault(b => b.ParticipantId == x.Id)?.InstanceId : null))
             .ToArray();
+    }
+
+    public async Task<OrganizationMemberVisibility?> VisibilityForInstanceAsync(Guid sessionId, Guid agentInstanceId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var org = await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.SessionId == sessionId, ct);
+        if (org is null) return null;
+#pragma warning disable CA1862
+        var member = await (
+            from binding in db.InstanceBindings.AsNoTracking()
+            join participant in db.Participants.AsNoTracking() on binding.ParticipantId equals participant.Id
+            where binding.OrganizationId == org.Id && binding.InstanceId == agentInstanceId
+            select new { participant.VisibilityScope, participant.CurrentRunId }).FirstOrDefaultAsync(ct);
+#pragma warning restore CA1862
+        return member is null ? null : OrganizationMemberVisibility.Of(member.VisibilityScope, member.CurrentRunId);
+    }
+
+    public async Task<OrganizationMemberVisibility?> VisibilityForParticipantAsync(Guid sessionId, Guid participantId, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var org = await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.SessionId == sessionId, ct);
+        if (org is null) return null;
+        var member = await db.Participants.AsNoTracking()
+            .Where(x => x.OrganizationId == org.Id && x.Id == participantId)
+            .Select(x => new { x.VisibilityScope, x.CurrentRunId }).FirstOrDefaultAsync(ct);
+        return member is null ? null : OrganizationMemberVisibility.Of(member.VisibilityScope, member.CurrentRunId);
     }
 
     // ── internals ─────────────────────────────────────────────────────────────

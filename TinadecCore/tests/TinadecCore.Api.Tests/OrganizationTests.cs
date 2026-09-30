@@ -298,6 +298,57 @@ public sealed class OrganizationTests : IAsyncLifetime
         Assert.All(directory.Result.GetProperty("members").EnumerateArray(), member => Assert.Equal("offline", member.GetProperty("presence").GetString()));
     }
 
+    /// <summary>
+    /// Per-member visibility (todo E5): the user restricts a member to its own run. A restricted
+    /// standing governance member has no run of its own, so it is muted entirely — the notice is
+    /// accepted but queues no wake and sets no current run; an executor reads as "own run only".
+    /// Clearing restores the default flow. The owner's and the host's visibility cannot be changed.
+    /// </summary>
+    [Fact]
+    public async Task VisibilityScope_RestrictsTheMember_NotifiesNoMore_UntilCleared()
+    {
+        var (_, b, _, _) = await CastAsync();
+        var organization = (await View.GetAsync(_session))!;
+        var reviewer = organization.Members.Single(member => member.DisplayName == "governance_reviewer");
+        var worker = organization.Members.Single(member => member.DisplayName == "search#1");
+        var user = organization.Members.Single(member => member.Role == "human");
+        Assert.Null(reviewer.VisibilityScope);
+
+        // Restrict the reviewer before any fact: a notice is accepted but muted — no wake, no turn,
+        // and the muted notice never becomes the member's "current run" either.
+        var set = await View.SetMemberVisibilityAsync(_session, reviewer.Id, new OrganizationMemberVisibilityRequest("own"));
+        Assert.Equal("own", set.VisibilityScope);
+        var visibility = await Organization.VisibilityForParticipantAsync(_session, reviewer.Id);
+        Assert.NotNull(visibility);
+        Assert.True(visibility!.Restricted);
+        Assert.Null(visibility.CurrentRunId);
+        Assert.True(await Organization.NotifyAsync(new OrganizationNotice(Scope(), _run, GovernanceTopics.LeaseConflict,
+            "governance_reviewer", "muted fact")));
+        var drain = _factory.Services.GetRequiredService<TinaChatWakeService>();
+        Assert.Equal(0, await drain.RunPassAsync(5));
+        Assert.Empty(_script.Turns);
+        Assert.Null((await Organization.VisibilityForParticipantAsync(_session, reviewer.Id))!.CurrentRunId);
+
+        // An executor is restricted to exactly its own run.
+        await View.SetMemberVisibilityAsync(_session, worker.Id, new OrganizationMemberVisibilityRequest("own"));
+        var workerVisibility = await Organization.VisibilityForInstanceAsync(_session, b);
+        Assert.NotNull(workerVisibility);
+        Assert.True(workerVisibility!.Restricted);
+        Assert.Equal(_run, workerVisibility.CurrentRunId);
+
+        // The owner (and the host) can never be blinded, and unknown scopes are refused.
+        await Assert.ThrowsAsync<TinaChatException>(() => View.SetMemberVisibilityAsync(_session, user.Id, new OrganizationMemberVisibilityRequest("own")));
+        await Assert.ThrowsAsync<TinaChatException>(() => View.SetMemberVisibilityAsync(_session, reviewer.Id, new OrganizationMemberVisibilityRequest("sideways")));
+
+        // Cleared ("down" is the default, stored as null again), the same fact flows once more.
+        var cleared = await View.SetMemberVisibilityAsync(_session, reviewer.Id, new OrganizationMemberVisibilityRequest(null));
+        Assert.Null(cleared.VisibilityScope);
+        Assert.True(await Organization.NotifyAsync(new OrganizationNotice(Scope(), _run, GovernanceTopics.LeaseConflict,
+            "governance_reviewer", "unmuted fact")));
+        Assert.Equal(1, await drain.RunPassAsync(5));
+        Assert.Single(_script.Turns);
+    }
+
     private sealed class OrganizationFactory(string root, MemberScript script) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)

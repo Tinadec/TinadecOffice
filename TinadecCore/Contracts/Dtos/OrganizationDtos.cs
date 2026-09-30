@@ -25,7 +25,12 @@ public sealed record OrganizationMemberDto(
     string Presence,
     string? AgentSlug,
     Guid? ParentId,
-    Guid? RunId);
+    Guid? RunId,
+    /// <summary>Per-member visibility into run internals (todo E5): "down" (default) or "own"; null = unrestricted.</summary>
+    string? VisibilityScope = null);
+
+/// <summary>The user sets one member's visibility (todo E5): "down", "own", or null to clear.</summary>
+public sealed record OrganizationMemberVisibilityRequest(string? VisibilityScope);
 
 public sealed record OrganizationRoomDto(
     Guid Id,

@@ -12,12 +12,13 @@ import en from '@/locales/en'
 import type { OrganizationDto, OrganizationMemberDto, OrganizationMessageDto, OrganizationReportDto, OrganizationRoomDto, SessionTopologyDto } from '@/api'
 
 const mocks = vi.hoisted(() => ({
-  getOrganization: vi.fn(), readRoom: vi.fn(), post: vi.fn(), reports: vi.fn(), decide: vi.fn(), topology: vi.fn(),
+  getOrganization: vi.fn(), readRoom: vi.fn(), post: vi.fn(), reports: vi.fn(), decide: vi.fn(), topology: vi.fn(), setVisibility: vi.fn(),
   success: vi.fn(), warning: vi.fn(), error: vi.fn(), statusError: vi.fn(), dismiss: vi.fn(),
 }))
 vi.mock('@/api', () => ({ api: {
   getOrganization: mocks.getOrganization, readOrganizationRoom: mocks.readRoom, postOrganizationMessage: mocks.post,
   listOrganizationReports: mocks.reports, decideOrganizationReport: mocks.decide, getSessionTopology: mocks.topology,
+  setOrganizationMemberVisibility: mocks.setVisibility,
 } }))
 vi.mock('@/composables/useNotifications', () => ({ useNotifications: () => ({
   notify: { success: mocks.success, warning: mocks.warning, error: mocks.error },
@@ -118,6 +119,29 @@ describe('OrganizationPanel members', () => {
     expect(online.get('.presence-dot').classes()).toContain('online')
     expect(online.text()).not.toContain('（离线）')
     expect(wrapper.get('[data-member-id="me"]').text()).toContain('（你）')
+  })
+
+  it('lets the owner mute a machine member’s visibility and shows the state, never on the human row', async () => {
+    mocks.setVisibility.mockResolvedValue({ ...member('reviewer', '审查员', 'governance'), visibility_scope: 'own' })
+    const wrapper = panel()
+    await flushPromises()
+
+    const reviewer = wrapper.get('[data-member-id="reviewer"]')
+    expect(reviewer.find('[data-visibility-toggle="reviewer"]').exists()).toBe(true)
+    // The human row is the owner themselves: blinding the panel's only reader makes no sense.
+    expect(wrapper.get('[data-member-id="me"]').find('[data-visibility-toggle]').exists()).toBe(false)
+
+    await reviewer.get('[data-visibility-toggle="reviewer"]').trigger('click')
+    await flushPromises()
+    expect(mocks.setVisibility).toHaveBeenCalledWith('session-1', 'reviewer', 'own')
+    expect(wrapper.get('[data-member-id="reviewer"]').text()).toContain('仅本 run')
+    expect(mocks.warning).toHaveBeenCalled()
+
+    // Clicking again restores the default (null, not the "down" string).
+    mocks.setVisibility.mockResolvedValue(member('reviewer', '审查员', 'governance'))
+    await wrapper.get('[data-member-id="reviewer"] [data-visibility-toggle="reviewer"]').trigger('click')
+    await flushPromises()
+    expect(mocks.setVisibility).toHaveBeenLastCalledWith('session-1', 'reviewer', null)
   })
 
   it('says the organization is created by the first run while Core has none, and asks for a session without one', async () => {
