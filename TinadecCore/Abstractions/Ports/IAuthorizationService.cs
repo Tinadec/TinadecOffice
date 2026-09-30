@@ -308,7 +308,9 @@ public sealed record PermissionRequestCommand(
     string Rationale,
     string IdempotencyKey,
     string? PermissionMode = null,
-    CapabilityClaim? ResourceClaim = null);
+    CapabilityClaim? ResourceClaim = null,
+    /// <summary>See <see cref="ToolAuthorizationCommand.CommandRuleId"/>; travels with the request.</summary>
+    Guid? CommandRuleId = null);
 
 public sealed record PermissionRequestSnapshot(
     Guid Id,
@@ -439,7 +441,12 @@ public sealed record ToolAuthorizationCommand(
     string Rationale,
     string IdempotencyKey,
     string? PermissionMode = null,
-    CapabilityClaim? ResourceClaim = null);
+    CapabilityClaim? ResourceClaim = null,
+    /// <summary>
+    /// A standing command-prefix rule (todo E7) the engine itself matched against this call's
+    /// command. Hint only: the PDP re-verifies scope, kind and tool before honoring it.
+    /// </summary>
+    Guid? CommandRuleId = null);
 
 /// <summary>Publicly safe result for tool authorization; lease nonce is never returned.</summary>
 public sealed record ToolAuthorizationResult(

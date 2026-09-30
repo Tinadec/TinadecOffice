@@ -1276,17 +1276,21 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ToolExecutionSnapshot execution,
         CancellationToken cancellationToken)
     {
-        if (_approvalRules is null || execution.ParametersJson is not { Length: > 0 } parametersJson) return null;
-        string? command;
-        try { command = CommandPrefixRules.CommandOf(descriptor.Id, JsonDocument.Parse(parametersJson).RootElement); }
-        catch (JsonException) { return null; }
-        if (command is null) return null;
-        var rule = await _approvalRules.MatchCommandAsync(scope.SessionId, descriptor.Id, command, cancellationToken).ConfigureAwait(false);
-        if (rule is null) return null;
+        var ruleId = await MatchCommandRuleIdAsync(descriptor, execution, scope.SessionId, cancellationToken).ConfigureAwait(false);
+        if (ruleId is not { } matchedRuleId) return null;
         // A covered call never reaches a human: mint from the rule the person wrote, always — the
         // run-grant and auto-policy paths would name the wrong source, or ask a human who was never
         // meant to be there.
-        return await _executions.MintApprovalFromRuleAsync(execution.Id, rule.Id, cancellationToken).ConfigureAwait(false);
+        var minted = await _executions.MintApprovalFromRuleAsync(execution.Id, matchedRuleId, cancellationToken).ConfigureAwait(false);
+        if (minted is not null && _approvalRules is not null)
+        {
+            try { await _approvalRules.RecordUseAsync(matchedRuleId, cancellationToken).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Could not record the use of approval rule {RuleId} for execution {ExecutionId}.", matchedRuleId, execution.Id);
+            }
+        }
+        return minted;
     }
 
     /// <summary>
@@ -1620,6 +1624,10 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         ToolExecutionSnapshot execution,
         CancellationToken cancellationToken)
     {
+        // A person's standing prefix rule rides to the PDP as a hint (todo E7): the match here is the
+        // engine's own against the frozen parameters, and the PDP re-verifies before releasing — so a
+        // default-ask shell call covered by a rule never waits for a click the person already gave.
+        var commandRuleId = await MatchCommandRuleIdAsync(descriptor, execution, scope.SessionId, cancellationToken).ConfigureAwait(false);
         var result = await _authorization.AuthorizeToolAsync(new ToolAuthorizationCommand(
             scope.PrincipalId,
             scope.AgentInstanceId,
@@ -1633,7 +1641,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
             $"Tool '{descriptor.Id}' requested by agent {scope.AgentInstanceId}.",
             $"tool-auth:{execution.Id:N}",
             scope.PermissionMode,
-            ResourceClaim(descriptor, execution, scope)), cancellationToken).ConfigureAwait(false);
+            ResourceClaim(descriptor, execution, scope),
+            commandRuleId), cancellationToken).ConfigureAwait(false);
         var status = result.Status switch
         {
             "awaiting_delegate" => ToolDispatchStatus.AwaitingDelegate,
@@ -1644,6 +1653,21 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         return new DispatchAuthorization(status, result.PermissionRequest?.Id,
             result.Decision.Id, result.CapabilityLeaseId,
             result.Decision.ReasonCode, result.Decision.Reason, result.LeaseNonce);
+    }
+
+    /// <summary>
+    /// The standing prefix rule covering this call's command, if any (todo E7). Shared by the PDP
+    /// hint and the approval-layer mint; purely a lookup — the use is recorded once, at the mint.
+    /// </summary>
+    private async Task<Guid?> MatchCommandRuleIdAsync(ToolManifestEntryDto descriptor, ToolExecutionSnapshot execution, Guid sessionId, CancellationToken cancellationToken)
+    {
+        if (_approvalRules is null || execution.ParametersJson is not { Length: > 0 } parametersJson) return null;
+        string? command;
+        try { command = CommandPrefixRules.CommandOf(descriptor.Id, JsonDocument.Parse(parametersJson).RootElement); }
+        catch (JsonException) { return null; }
+        if (command is null) return null;
+        var rule = await _approvalRules.MatchCommandAsync(sessionId, descriptor.Id, command, cancellationToken).ConfigureAwait(false);
+        return rule?.Id;
     }
 
     private static CapabilityClaim ToolClaim(ToolManifestEntryDto descriptor) => new(

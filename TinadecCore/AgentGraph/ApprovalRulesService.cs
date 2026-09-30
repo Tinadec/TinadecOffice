@@ -32,11 +32,15 @@ internal sealed class ApprovalRulesService(
         var scope = tenant.Current;
         if (!ApprovalRuleKinds.All.Contains(rule.Kind, StringComparer.Ordinal))
             throw new ApprovalRuleException(400, "invalid_request", $"kind must be one of: {string.Join(", ", ApprovalRuleKinds.All)}.");
-        if (!CommandPrefixRules.IsRuleTool(rule.ToolId))
-            throw new ApprovalRuleException(400, "invalid_request", $"tool_id must be one of: {string.Join(", ", CommandPrefixRules.Tools)}.");
+        if (string.IsNullOrWhiteSpace(rule.ToolId))
+            throw new ApprovalRuleException(400, "invalid_request", "tool_id is required.");
         string? pattern = null;
         if (rule.Kind == ApprovalRuleKinds.CommandPrefix)
         {
+            // Only shells execute command text, so only they can be prefix-matched. A delegated-tool
+            // opt-in names the tool itself and stays open to any tool id.
+            if (!CommandPrefixRules.IsRuleTool(rule.ToolId))
+                throw new ApprovalRuleException(400, "invalid_request", $"A command_prefix rule's tool_id must be one of: {string.Join(", ", CommandPrefixRules.Tools)}.");
             pattern = rule.Pattern?.Trim() ?? string.Empty;
             if (CommandPrefixRules.PrefixError(pattern) is { } error)
                 throw new ApprovalRuleException(400, "invalid_request", error);
@@ -45,7 +49,14 @@ internal sealed class ApprovalRulesService(
         {
             throw new ApprovalRuleException(400, "invalid_request", "A delegated-tool opt-in takes no pattern; it covers the tool, not a command.");
         }
+        var toolId = rule.ToolId.Trim();
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var duplicate = await db.ApprovalRules.AsNoTracking().AnyAsync(x =>
+                x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Revoked
+                && x.SessionId == rule.SessionId && x.Kind == rule.Kind && x.ToolId == toolId && x.Pattern == pattern,
+            cancellationToken).ConfigureAwait(false);
+        if (duplicate)
+            throw new ApprovalRuleException(409, "approval_rule_conflict", "An active rule with the same kind, tool and scope already exists.");
         var now = DateTimeOffset.UtcNow;
         var row = new ApprovalRuleRecord
         {
@@ -54,7 +65,7 @@ internal sealed class ApprovalRulesService(
             WorkspaceId = scope.WorkspaceId,
             SessionId = rule.SessionId,
             Kind = rule.Kind,
-            ToolId = rule.ToolId.Trim(),
+            ToolId = toolId,
             Pattern = pattern,
             CreatedByPrincipalId = scope.PrincipalId,
             CreatedAt = now,
@@ -83,7 +94,7 @@ internal sealed class ApprovalRulesService(
         if (!CommandPrefixRules.IsRuleTool(toolId)) return null;
         foreach (var rule in await ActiveAsync(sessionId, toolId, cancellationToken).ConfigureAwait(false))
             if (rule.Pattern is { } prefix && CommandPrefixRules.Matches(command, prefix))
-                return await CountUseAsync(rule.Id, cancellationToken).ConfigureAwait(false);
+                return ToView(rule);
         return null;
     }
 
@@ -99,9 +110,11 @@ internal sealed class ApprovalRulesService(
         if (rule is null || rule.Kind != ApprovalRuleKinds.CommandPrefix || rule.ToolId != toolId
             || (rule.SessionId is { } bound && bound != sessionId))
             return false;
-        await CountUseAsync(ruleId, cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    public Task<ApprovalRuleView> RecordUseAsync(Guid ruleId, CancellationToken cancellationToken = default) =>
+        CountUseAsync(ruleId, cancellationToken);
 
     public async Task<bool> IsDelegatedToolAsync(Guid runId, string toolId, CancellationToken cancellationToken = default)
     {
@@ -116,9 +129,16 @@ internal sealed class ApprovalRulesService(
     {
         var scope = tenant.Current;
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // An unknown session (e.g. a run that cannot be resolved) degrades to workspace-wide rules
+        // only — never to "every rule". Anything wider would honor another session's rule.
+        if (sessionId is null)
+            return await db.ApprovalRules.AsNoTracking()
+                .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Revoked && x.ToolId == toolId && x.SessionId == null)
+                .OrderBy(x => x.CreatedAtUnixMs)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
         return await db.ApprovalRules.AsNoTracking()
             .Where(x => x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && !x.Revoked && x.ToolId == toolId
-                && (sessionId == null || x.SessionId == null || x.SessionId == sessionId))
+                && (x.SessionId == null || x.SessionId == sessionId))
             .OrderBy(x => x.CreatedAtUnixMs)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }

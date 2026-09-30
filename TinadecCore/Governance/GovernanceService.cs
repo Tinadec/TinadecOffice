@@ -357,7 +357,8 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
             command.Rationale,
             command.IdempotencyKey,
             command.PermissionMode,
-            command.ResourceClaim), cancellationToken).ConfigureAwait(false);
+            command.ResourceClaim,
+            command.CommandRuleId), cancellationToken).ConfigureAwait(false);
         var status = resolution.Decision.Outcome switch
         {
             GovernanceOutcomes.Allowed => "allowed",
@@ -576,9 +577,12 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
                     record.Status = PermissionRequestStatuses.Granted;
                     record.CapabilityGrantId = releaseGrant.Id;
                     record.CapabilityLeaseId = releaseLease.Id;
+                    var releaseReasonText = string.Equals(unattendedReason, "approval_rule_released", StringComparison.Ordinal)
+                        ? $"The standing command-prefix rule the person wrote released this call ('{unattendedReason}'); no fresh decision was needed."
+                        : $"The unattended release path '{unattendedReason}' issued a scoped capability lease without a human decision.";
                     var released = NewDecision(scope, command.SubjectPrincipalId, command.SubjectAgentInstanceId, claim,
                         GovernanceOutcomes.Allowed, unattendedReason,
-                        $"The unattended release path '{unattendedReason}' issued a scoped capability lease without a human decision.",
+                        releaseReasonText,
                         "pdp", boundaryResult.Hash, command.RunId, command.TaskId, record.Id, releaseGrant.Id, releaseLease.Id);
                     // A policy/mode release has no human behind it; leaving the
                     // column empty keeps the audit trail from attributing it to
@@ -1417,11 +1421,18 @@ public sealed class GovernanceService : IAuthorizationService, IPolicyDecisionPo
     /// </summary>
     private async Task<string?> UnattendedPermissionReleaseReasonAsync(PermissionRequestCommand command, CancellationToken cancellationToken)
     {
-        if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
-            return "full_access_auto_grant";
         var toolId = command.Claim.Resource.StartsWith("tool://", StringComparison.OrdinalIgnoreCase)
             ? command.Claim.Resource["tool://".Length..]
             : command.Claim.Resource;
+        // A person's standing command-prefix rule (todo E7) is honored first and in every mode:
+        // the click it replaces is one the person already gave when they wrote the rule. The
+        // engine matched the command; this service re-verifies the rule against the run's own
+        // session — never the call's word.
+        if (command.CommandRuleId is { } ruleId && _approvalRules is not null && command.RunId is { } ruleRunId
+            && await _approvalRules.VerifyCommandRuleAsync(ruleId, ruleRunId, toolId, cancellationToken).ConfigureAwait(false))
+            return "approval_rule_released";
+        if (string.Equals(command.PermissionMode, "full-access", StringComparison.Ordinal))
+            return "full_access_auto_grant";
         if (string.Equals(command.PermissionMode, "auto-approve", StringComparison.Ordinal))
         {
             return AutoApprovePolicyRules.Engages(_autoApproveOptions.Value, approveIntent: true, toolId, command.Risk)

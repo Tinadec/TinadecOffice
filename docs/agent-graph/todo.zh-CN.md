@@ -158,7 +158,7 @@
 - [x] **E1. 环境管家**（表 `agent_graph_environments` + `environment` 租约按空位记账；`environment_list/acquire/release` 虚拟工具；连接信息拒收凭据；Desktop"环境"页）
 - [!] **E2 / E3**（公告板、公共讨论室、智能体之间的自由对话）已并入第二期 P2-O（O3 / O5）。
 - [ ] **E6. 对话身份合一**：今天 Solo/Plan 由 `solo_master`、其余模式由 `meeting` 对话，已开始对话的会话不能跨这两组切模式。目标是一个对话身份、模式只改策略（architecture §12）。风险：存量会话的身份、模型覆盖按对话根解析、TinaChat 参与者绑定都要迁移。
-- [ ] **E7. shell 进沙箱 + 审批前缀规则**（architecture §7.4 第 5、6 条）：先验证 cmd.exe 在沙箱账户下可用。另：用户定的"shell 默认不进委托名单、用户勾选才进"目前只能在配置层做到（从 `TinadecApproval:HumanOnlyTools` 去掉 `shell`，对所有会话生效）；按会话/按前缀勾选随本项的前缀规则一起做。
+- [x] **E7. 审批规则（前缀放行 + 按会话 shell 委托）**（architecture §7.4 第 6、7 条，2026-09-30 第十二批）：表 `agent_graph_approval_rules`；`IApprovalRules` + REST；PDP 在 ask 族的最后一环（`approval_rule_released`）；计用只在铸刻消费时一次；`delegate_tool` 勾选把 shell 交给门。**shell 进沙箱（第 5 条）拆为独立项**：本机 `TinadecSandbox` 账户未初始化、初始化要 UAC，无法在此实机验证；路线已定（runner 协议补输出流 + 一次性调用走沙箱、long_lived 例外），需一次有管理员权限的实机验证后落地。另：每个 shell 批准时"总是允许此前缀"的界面勾选未做（REST 已可用）。
 - [ ] **E4. 项目级委员长**（会话 → 项目的状态上提；长期记忆已区分 workspace/principal/project 三种范围，`Memory/MemoryModuleRegistrar.cs:85-91`，数据模型有预留）
 - [ ] **E5. 治理层可见性的按身份配置**（默认向下全通，用户可关）
 
@@ -186,6 +186,14 @@
 ---
 
 ## 施工记录（按时间倒序，每条写清证据）
+
+### 2026-09-30 第十二批（E7）：审批规则最后一环 + 提交整理
+
+- **E7 收尾**：补了 ask 族的最后一环——此前前缀规则只在到达审批层后生效（auto/full-access/委托），默认 ask 模式的 shell 仍停在 PDP 等人点。现在 dispatcher 授权前按冻结参数匹配规则并把 `CommandRuleId` 带给 PDP（`ToolAuthorizationCommand`/`PermissionRequestCommand` 尾部可选字段），PDP 复核（`VerifyCommandRuleAsync`：范围按 run 自己的会话、类型、工具，不信调用方）后以 `approval_rule_released` 放行，决策文案如实写"人写规则时给过的批准"。审批层仍先 `HonorCommandPrefixAsync` → `MintApprovalFromRuleAsync`，审计 source=`approval_rule:{id}`。
+- **计用语义**：匹配与复核都不计用（一次调用会经过多处匹配），只在铸刻消费时记一次（`IApprovalRules.RecordUseAsync`，铸刻成功后 best-effort）。
+- **顺手修了三处上一批未验证代码的缺陷**：①`CreateAsync` 无重复检测、且把 `delegate_tool` 也限制在 shell/command_run——补 409 `approval_rule_conflict` 与按 kind 的工具校验；②`ActiveAsync(sessionId==null)` 会返回**全部**规则（含别的会话的），改为 null 会话只见工作区级规则；③`RecordUseAsync` 之前藏在 Match 里导致一次调用计两次。
+- **测试**：`ToolChainEndpointTests.ApprovalRules.cs` 3 条端到端（ask 模式下被规则覆盖的 shell 不点任何人就完成且审计 source=approval_rule；未覆盖的命令照样驻留；`delegate_tool` 勾选后审查门裁决 shell）+ `ApprovalRuleServiceTests` 3 条服务级（含新计用语义与冲突 409）。6/6 通过。
+- **诚实边界**：聚合后的 Core Api 全量本轮未重跑（上一轮的 580 全量在这些改动之前）；shell 进沙箱拆为独立项（见第四期 E7 备注）。
 
 ### 2026-09-30 第十一批（E1）：环境管家
 

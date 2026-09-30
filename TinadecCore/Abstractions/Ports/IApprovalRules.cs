@@ -53,14 +53,21 @@ public interface IApprovalRules
 
     Task<bool> RevokeAsync(Guid ruleId, CancellationToken cancellationToken = default);
 
-    /// <summary>The active prefix rule of the session (or the workspace) that covers this command, if any.</summary>
+    /// <summary>
+    /// The active prefix rule of the session (or the workspace) that covers this command, if any.
+    /// Matching does not count a use — a call can be matched more than once on its way through the
+    /// PDP and the approval layer; <see cref="RecordUseAsync"/> marks the one actual consumption.
+    /// </summary>
     Task<ApprovalRuleView?> MatchCommandAsync(Guid sessionId, string toolId, string command, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Re-verifies a rule a caller named: active, of this tool, scoped to this run's session or the
-    /// workspace. Counts the use when it holds.
+    /// workspace. Verification does not count a use.
     /// </summary>
     Task<bool> VerifyCommandRuleAsync(Guid ruleId, Guid runId, string toolId, CancellationToken cancellationToken = default);
+
+    /// <summary>Counts the one consumption of a rule — the call whose approval was minted from it.</summary>
+    Task<ApprovalRuleView> RecordUseAsync(Guid ruleId, CancellationToken cancellationToken = default);
 
     /// <summary>True when the run's session opted the tool into delegated approval.</summary>
     Task<bool> IsDelegatedToolAsync(Guid runId, string toolId, CancellationToken cancellationToken = default);

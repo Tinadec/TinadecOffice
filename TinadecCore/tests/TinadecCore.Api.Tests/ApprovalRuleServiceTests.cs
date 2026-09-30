@@ -24,15 +24,19 @@ public sealed class ApprovalRuleServiceTests : IAsyncLifetime
     {
         var sessionA = Guid.NewGuid();
         var sessionB = Guid.NewGuid();
-        var rule = await Rules.CreateAsync(new ApprovalRuleCreate(ApprovalRuleKinds.DelegateTool, "shell", null, sessionA));
+        await Rules.CreateAsync(new ApprovalRuleCreate(ApprovalRuleKinds.CommandPrefix, "shell", "npm test", sessionA));
 
-        Assert.True(await Rules.IsDelegatedToolAsync(sessionA, "shell"));
-        Assert.False(await Rules.IsDelegatedToolAsync(sessionB, "shell"));
-        Assert.True(await Rules.VerifyCommandRuleAsync(rule.Id, sessionA, "shell"));
-        Assert.False(await Rules.VerifyCommandRuleAsync(rule.Id, sessionB, "shell"));
+        // The session the rule belongs to matches; any other session — and a session that
+        // cannot be resolved at all — sees only workspace-wide rules, never sessionA's.
+        Assert.NotNull(await Rules.MatchCommandAsync(sessionA, "shell", "npm test -u"));
+        Assert.Null(await Rules.MatchCommandAsync(sessionB, "shell", "npm test -u"));
 
+        var rule = (await Rules.ListAsync(sessionA)).Single();
         Assert.True(await Rules.RevokeAsync(rule.Id));
-        Assert.False(await Rules.VerifyCommandRuleAsync(rule.Id, sessionA, "shell"));
+        Assert.Null(await Rules.MatchCommandAsync(sessionA, "shell", "npm test -u"));
+        // A revoked or foreign rule named by a caller never verifies, even against a run id
+        // that resolves nowhere.
+        Assert.False(await Rules.VerifyCommandRuleAsync(rule.Id, Guid.NewGuid(), "shell"));
     }
 
     [Fact]
@@ -44,7 +48,10 @@ public sealed class ApprovalRuleServiceTests : IAsyncLifetime
         var covered = await Rules.MatchCommandAsync(sessionId, "shell", "npm test -u");
         Assert.NotNull(covered);
         Assert.Equal("npm test", covered!.Pattern);
-        Assert.Equal(1, (await Rules.ListAsync(sessionId)).Single().UseCount);
+        // Neither matching nor verifying counts a use: the one count happens when a call
+        // actually consumes the rule (its approval was minted from it).
+        Assert.Equal(0, (await Rules.ListAsync(sessionId)).Single().UseCount);
+        Assert.Equal(1, (await Rules.RecordUseAsync(covered.Id)).UseCount);
 
         Assert.Null(await Rules.MatchCommandAsync(sessionId, "shell", "npm test && rm -rf ."));
         Assert.Null(await Rules.MatchCommandAsync(sessionId, "shell", "npm run test"));
