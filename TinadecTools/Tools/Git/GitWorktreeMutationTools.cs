@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 using TinadecTools.Tools.FileRW;
@@ -11,7 +12,9 @@ public sealed class GitWorktreeMutationArgs
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("start_ref")] public string? StartRef { get; set; }
     [JsonPropertyName("force")] public bool Force { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_worktree_create")] public string? ConfirmWorktreeCreate { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_worktree_remove")] public string? ConfirmWorktreeRemove { get; set; }
 }
 
@@ -36,7 +39,7 @@ internal partial class GitWorktreeMutationToolsJsonContext : JsonSerializerConte
 
 internal static class GitWorktreeMutationTools
 {
-    [ToolFunction("git_worktree_create", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_create"])]
+    [ToolFunction("git_worktree_create", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_create"], Description = "Create a new git worktree at path on a new branch (branch is required), starting from start_ref (default HEAD). Refused if path already exists. confirm_worktree_create must be a short non-empty note naming path and branch. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitWorktreeMutationResult> CreateAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmWorktreeCreate, nameof(args.ConfirmWorktreeCreate));
@@ -64,7 +67,7 @@ internal static class GitWorktreeMutationTools
         return await SuccessAsync(args.RepositoryPath, "create", target, branch, !exists.Ok, false, execution.Stdout, ct).ConfigureAwait(false);
     }
 
-    [ToolFunction("git_worktree_remove", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_remove"])]
+    [ToolFunction("git_worktree_remove", RequiresApproval = true, ConfirmationFields = ["confirm_worktree_remove"], Description = "Remove the git worktree at path (not the current one); force=true removes it even with local changes. confirm_worktree_remove must be a short non-empty note naming the path. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitWorktreeMutationResult> RemoveAsync(GitWorktreeMutationArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmWorktreeRemove, nameof(args.ConfirmWorktreeRemove));

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 
@@ -13,6 +14,7 @@ public sealed class GitDiscardArgs
     /// <summary>When true, untracked files in <c>paths</c> are deleted via <c>git clean</c>. Irreversible.</summary>
     [JsonPropertyName("include_untracked")] public bool IncludeUntracked { get; set; }
 
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_discard")] public string? ConfirmDiscard { get; set; }
 }
 
@@ -47,7 +49,7 @@ internal static class GitDiscardTools
 {
     private const int MaxPaths = 100;
 
-    [ToolFunction("git_discard", RequiresApproval = true, ConfirmationFields = ["confirm_discard"])]
+    [ToolFunction("git_discard", RequiresApproval = true, ConfirmationFields = ["confirm_discard"], Description = "Discard uncommitted changes in the listed paths (restores them to HEAD); include_untracked=true also deletes untracked files among them. Irreversible. confirm_discard must be a short non-empty note listing what is discarded. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitDiscardResult> DiscardAsync(GitDiscardArgs args, CancellationToken cancellationToken)
     {
         ToolConfirmations.Require(args.ConfirmDiscard, nameof(args.ConfirmDiscard));

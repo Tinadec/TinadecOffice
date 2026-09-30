@@ -25,7 +25,7 @@ internal partial class SandboxStatusToolJsonContext : JsonSerializerContext { }
 
 public static class SandboxStatusTool
 {
-    [ToolFunction("sandbox_status")]
+    [ToolFunction("sandbox_status", Description = "Report whether the command sandbox is supported on this machine, initialized, and has a policy configured.")]
     public static ValueTask<SandboxStatusResponse> HandleAsync(
         SandboxStatusParams args,
         CancellationToken cancellationToken)

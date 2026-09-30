@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
@@ -9,6 +10,7 @@ public sealed class GitConflictResolveArgs
     [JsonPropertyName("repository_path")] public string? RepositoryPath { get; set; }
     [JsonPropertyName("path")] public string Path { get; set; } = string.Empty;
     [JsonPropertyName("strategy")] public string Strategy { get; set; } = "auto";
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_resolve")] public string? ConfirmResolve { get; set; }
 }
 
@@ -33,7 +35,7 @@ internal partial class GitConflictResolveToolJsonContext : JsonSerializerContext
 
 internal static class GitConflictResolveTool
 {
-    [ToolFunction("git_conflict_resolve", RequiresApproval = true, ConfirmationFields = ["confirm_resolve"])]
+    [ToolFunction("git_conflict_resolve", RequiresApproval = true, ConfirmationFields = ["confirm_resolve"], Description = "Resolve a merge/rebase conflict in one file (path) with strategy auto, ours, theirs or both, then stage it. Preview first with git_conflict_preview. confirm_resolve must be a short non-empty note. The user still approves the call. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitConflictResolveResult> ResolveAsync(GitConflictResolveArgs args, CancellationToken ct)
     {
         ToolConfirmations.Require(args.ConfirmResolve, nameof(args.ConfirmResolve));

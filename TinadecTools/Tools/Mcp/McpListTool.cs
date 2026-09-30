@@ -7,7 +7,7 @@ public static class McpListTool
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    [ToolFunction("mcp_list")]
+    [ToolFunction("mcp_list", Description = "List the configured MCP servers and their status, so you know which server names mcp_search and mcp_invoke can target.")]
     public static async ValueTask<McpListResponse> HandleAsync(McpListParams args, CancellationToken cancellationToken)
     {
         var servers = await McpRuntime.Repository.ListAsync(cancellationToken).ConfigureAwait(false);

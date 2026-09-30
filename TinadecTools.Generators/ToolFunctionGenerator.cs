@@ -8,6 +8,19 @@ namespace TinadecTools.Generators;
 [Generator]
 public sealed class ToolFunctionGenerator : IIncrementalGenerator
 {
+    /// <summary>
+    /// A tool without a Description reaches the model as a bare name and schema: nothing says when
+    /// to use it, what it returns or why it refuses. git_commit shipped that way with a one-of-three
+    /// mode rule the model could only learn from a failed call. Warn at build time instead.
+    /// </summary>
+    private static readonly DiagnosticDescriptor MissingDescription = new(
+        id: "TTG001",
+        title: "Tool has no model-facing description",
+        messageFormat: "Tool '{0}' has no Description; the model will see an empty description",
+        category: "TinadecTools.ToolContract",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var toolFunctionAttributeSymbol = "TinadecTools.Abstractions.ToolFunctionAttribute";
@@ -65,6 +78,13 @@ public sealed class ToolFunctionGenerator : IIncrementalGenerator
 
                 var requiresApproval = attr.NamedArguments.FirstOrDefault(a => a.Key == "RequiresApproval").Value.Value as bool? ?? false;
                 var description = GetStringArgument(attr, "Description") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(description))
+                {
+                    spc.ReportDiagnostic(Diagnostic.Create(
+                        MissingDescription,
+                        attr.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? Location.None,
+                        toolId));
+                }
                 var risk = GetStringArgument(attr, "Risk") ?? (requiresApproval ? "high" : "low");
                 var mutatesWorkspace = GetBoolArgument(attr, "MutatesWorkspace") ?? requiresApproval;
                 var retrySafety = GetStringArgument(attr, "RetrySafety") ?? (mutatesWorkspace ? "unsafe" : "safe");

@@ -33,11 +33,11 @@ internal static class GitIndexTools
 {
     private const int DefaultMaxPatchBytes = 524288;
 
-    [ToolFunction("git_stage", RequiresApproval = true)]
+    [ToolFunction("git_stage", RequiresApproval = true, Description = "Stage changes for commit: either paths (whole files) or patch (a unified diff applied to the index), not both. Approval-gated. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static ValueTask<GitIndexUpdateResult> StageAsync(GitIndexUpdateArgs args, CancellationToken cancellationToken) =>
         UpdateAsync(args, "stage", cancellationToken);
 
-    [ToolFunction("git_unstage", RequiresApproval = true)]
+    [ToolFunction("git_unstage", RequiresApproval = true, Description = "Unstage changes: either paths (whole files) or patch (a unified diff removed from the index), not both. The working tree is unchanged. Approval-gated. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static ValueTask<GitIndexUpdateResult> UnstageAsync(GitIndexUpdateArgs args, CancellationToken cancellationToken) =>
         UpdateAsync(args, "unstage", cancellationToken);
 

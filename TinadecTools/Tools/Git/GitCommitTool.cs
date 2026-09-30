@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using TinadecTools.Abstractions;
 
@@ -10,6 +11,7 @@ public sealed class GitCommitArgs
     [JsonPropertyName("include_all")] public bool IncludeAll { get; set; }
     [JsonPropertyName("commit_staged_only")] public bool CommitStagedOnly { get; set; }
     [JsonPropertyName("paths")] public List<string>? Paths { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_commit")] public string? ConfirmCommit { get; set; }
 }
 
@@ -34,7 +36,7 @@ internal partial class GitCommitToolJsonContext : JsonSerializerContext { }
 
 internal static class GitCommitTool
 {
-    [ToolFunction("git_commit", RequiresApproval = true, ConfirmationFields = ["confirm_commit"])]
+    [ToolFunction("git_commit", RequiresApproval = true, ConfirmationFields = ["confirm_commit"], Description = "Commit changes in the run workspace repository. Choose exactly ONE mode: include_all=true (stage every change), commit_staged_only=true (commit only what is already staged), or paths=[...] (stage and commit only those files). message is required. confirm_commit must be a short non-empty note (e.g. restate the message); the user still approves the commit. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitCommitResult> CommitAsync(
         GitCommitArgs args,
         CancellationToken cancellationToken)

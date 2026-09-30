@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -13,6 +14,7 @@ public sealed class WebFetchArgs
     [JsonPropertyName("max_bytes")] public int MaxBytes { get; set; }
     [JsonPropertyName("max_chars")] public int MaxChars { get; set; }
     [JsonPropertyName("timeout_ms")] public int TimeoutMs { get; set; }
+    [Description("Required: a short non-empty note restating what this call will do. It does not replace user approval - the call is still approval-gated.")]
     [JsonPropertyName("confirm_fetch")] public string? ConfirmFetch { get; set; }
 }
 

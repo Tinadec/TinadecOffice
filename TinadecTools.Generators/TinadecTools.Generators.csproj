@@ -8,6 +8,8 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <IsRoslynAnalyzer>true</IsRoslynAnalyzer>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <!-- In-repo generator, not a shipped analyzer package: release tracking (RS2008) does not apply. -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>

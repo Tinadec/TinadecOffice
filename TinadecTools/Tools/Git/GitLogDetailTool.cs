@@ -72,7 +72,7 @@ internal static class GitLogDetailTool
 
     private const string LogFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%D";
 
-    [ToolFunction(TOOL_ID)]
+    [ToolFunction(TOOL_ID, Description = "Detailed commit log from a revision (rev is required: a commit, branch or range): per-commit metadata and changed files (max_files), plus the diff when include_patch=true. limit (default 100), skip or after_commit page through it. repository_path must be an absolute path inside the workspace and point at a git worktree.")]
     public static async ValueTask<GitLogDetailResult> HandleAsync(
         GitLogDetailArgs args,
         CancellationToken cancellationToken)

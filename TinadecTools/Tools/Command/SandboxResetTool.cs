@@ -29,7 +29,7 @@ internal partial class SandboxResetToolJsonContext : JsonSerializerContext { }
 
 public static class SandboxResetTool
 {
-    [ToolFunction("sandbox_reset", RequiresApproval = true)]
+    [ToolFunction("sandbox_reset", RequiresApproval = true, Description = "Reset the command sandbox (scope defaults to workspace), discarding sandbox-local state so later commands start clean. Does not touch workspace files outside the sandbox. Approval-gated.")]
     public static async ValueTask<SandboxResetResponse> HandleAsync(
         SandboxResetParams args,
         CancellationToken cancellationToken)

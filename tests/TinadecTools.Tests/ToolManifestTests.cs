@@ -127,6 +127,21 @@ public sealed class ToolManifestTests
     }
 
     [Fact]
+    public void EveryRegisteredTool_CarriesAModelFacingDescription()
+    {
+        // A tool without a description reaches the model as a bare name + schema: nothing says when
+        // to use it or why it refuses. The generator warns (TTG001); this pins it at runtime too.
+        GeneratedToolRegistry.RegisterAll();
+
+        var undescribed = ToolRegistry.ListTools()
+            .Where(tool => !tool.Id.StartsWith('#') && string.IsNullOrWhiteSpace(tool.Description))
+            .Select(tool => tool.Id)
+            .ToArray();
+
+        Assert.Empty(undescribed);
+    }
+
+    [Fact]
     public void ListTools_MatchesRegisteredHandlers()
     {
         GeneratedToolRegistry.RegisterAll();
