@@ -23,6 +23,8 @@ export interface InteractionExternalRequest {
    * carry them) belong to Core, and a proxy that re-decides them can only drift.
    */
   attachment_ids?: string[];
+  /** Hard insert (insert only): Core cuts off the run's work in progress. Core validates it. */
+  interrupt?: boolean;
   [key: string]: unknown;
 }
 

@@ -91,6 +91,21 @@ const ALLOWED_CODES = new Set([
   'agent_pack_preview_stale',
   'managed_resource_read_only',
   'tina_chat_input_locked',
+  // Mode switching across conversation identities, and the resource ledger: both carry a sentence a
+  // person can act on, which a generic `conflict` would throw away.
+  'conversation_identity_locked_mismatch',
+  'resource_conflict',
+  // Session organization (TinaChat): refusals name what to do instead.
+  'organization_not_started',
+  'organization_archived',
+  'tina_chat_forbidden',
+  'tina_chat_not_found',
+  'tina_chat_revision_conflict',
+  'invalid_tina_chat_request',
+  'member_offline',
+  'member_limit',
+  'ambiguous_address',
+  'report_closed',
 ]);
 
 function normalizeCode(raw?: string | null): string {
