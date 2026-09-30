@@ -1,17 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import {
-  Activity,
-  Bot,
-  ChevronsLeft,
-  GitBranch,
-  Globe,
-  Layers3,
-  ShieldCheck,
-  Stethoscope,
-  TerminalSquare,
-  type LucideIcon,
-} from '@lucide/vue'
+import { ChevronsLeft, Globe, type LucideIcon } from '@lucide/vue'
 import UieCardHost from './UieCardHost.vue'
 import BrowserTabBar from './BrowserTabBar.vue'
 import { useI18n } from 'vue-i18n'
@@ -20,10 +9,8 @@ import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useResponsiveMode, useTabLabelMode } from '@/composables/useElementSize'
 import { useDockDrag, type DockDropTarget } from '@/composables/useDockDrag'
 import { dropZoneToSplit } from '../engine/dockDrop'
-import {
-  descriptorForDetachedType,
-  useDetachedTabs,
-} from '@/composables/useDetachedTabs'
+import { useDetachedTabs } from '@/composables/useDetachedTabs'
+import { featureIconFor } from './cards/home/featureCatalog'
 import type {
   PersistedCardInstance,
   StackGeometry,
@@ -53,11 +40,11 @@ const props = defineProps<{
   canRestore?: boolean
 }>()
 
-const wb = useUie()
+const uie = useUie()
 const { t } = useI18n()
 
-// The stack is a single material root (like the old ContextPanel / .sidebar /
-// .conversation). Tab bar and content share one continuous surface.
+// The stack is a single material root. Tab bar and content share one continuous
+// surface owned by the UIE stack.
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 
 // Immersive stacks (Home chat column) are transparent: the root carries no
@@ -76,8 +63,8 @@ const materialStyle = computed(() => {
 const materialAttrs = computed(() => getPanelDataAttributes())
 
 // The feature panel is the stack that hosts the pinned homePicker card (the
-// Home grid). It gets the full browser-style tab chrome from 2b4377c7's
-// ContextPanel; all other stacks keep the minimal tab bar.
+// Home grid). It gets the full browser-style tab chrome; other stacks keep the
+// minimal tab bar.
 const isFeaturePanel = computed(() =>
   props.instances.some((i) => i.descriptorId === 'homePicker'),
 )
@@ -92,7 +79,7 @@ const isMainPane = computed(() => props.paneMain === true || isFeaturePanel.valu
 const isSplitPane = computed(() => !!props.paneId && !isMainPane.value)
 const showTabBar = computed(() => isMainPane.value || isSplitPane.value || props.instances.length > 1)
 
-// ---- Feature-panel responsive modes (ported from ContextPanel) ----
+// ---- Feature-panel responsive modes ----
 const panelRef = ref<HTMLElement | null>(null)
 const { mode: responsiveMode, isCompact } = useResponsiveMode(panelRef)
 
@@ -108,48 +95,35 @@ const tabLabelMode = useTabLabelMode(
 )
 
 const stackClass = computed(() => ({
-  'wb-stack--app': props.surfaceMode === 'app',
-  'wb-stack--immersive': props.surfaceMode === 'immersive',
-  'wb-stack--resizing': !!props.resizing,
-  // Responsive classes mirror the legacy .float-panel.mode-* / .tab-labels-*
-  // hooks; styles.css has matching .wb-stack selectors.
+  'uie-stack--app': props.surfaceMode === 'app',
+  'uie-stack--immersive': props.surfaceMode === 'immersive',
+  'uie-stack--resizing': !!props.resizing,
+  // UIE-specific responsive hooks; styles.css has matching .uie-stack selectors.
   'mode-compact': isFeaturePanel.value && isCompact.value,
   'mode-ultra': isFeaturePanel.value && responsiveMode.value === 'ultra',
   'tab-labels-hidden': isFeaturePanel.value && tabLabelMode.value === 'hidden',
   'tab-labels-active-only': isFeaturePanel.value && tabLabelMode.value === 'active-only',
 }))
 
-// ---- Tab icons (descriptorId -> icon; 'preview' matches the detached type) ----
-const FEATURE_ICONS: Record<string, LucideIcon> = {
-  agent: Bot,
-  terminal: TerminalSquare,
-  git: GitBranch,
-  approval: ShieldCheck,
-  orchestration: Layers3,
-  browser: Globe,
-  preview: Globe,
-  events: Activity,
-  doctor: Stethoscope,
-}
-
+// ---- Tab icons (descriptorId -> shared feature-catalog icon) ----
 function iconFor(descriptorId: string): LucideIcon {
-  return FEATURE_ICONS[descriptorId] ?? Globe
+  return featureIconFor(descriptorId, Globe)
 }
 
 // ---- Dispatch helpers ----
 function activate(instanceId: string) {
-  wb.bus.dispatch({
-    command: { type: 'activateCard', scope: wb.scope.value, instanceId },
+  uie.bus.dispatch({
+    command: { type: 'activateCard', scope: uie.scope.value, instanceId },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
 function close(instanceId: string) {
-  wb.bus.dispatch({
-    command: { type: 'closeCard', scope: wb.scope.value, instanceId },
+  uie.bus.dispatch({
+    command: { type: 'closeCard', scope: uie.scope.value, instanceId },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
@@ -160,15 +134,15 @@ function goHome() {
 
 function collapse() {
   if (!props.slotId) return
-  wb.bus.dispatch({
+  uie.bus.dispatch({
     command: {
       type: 'collapseColumn',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       slotId: props.slotId,
       collapsed: true,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
@@ -182,15 +156,15 @@ function focusDetached(windowId: number) {
  * open tab and just activate it); browser/terminal allow multiple instances.
  */
 function openFeature(descriptorId: string) {
-  wb.bus.dispatch({
+  uie.bus.dispatch({
     command: {
       type: 'openCard',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       descriptorId,
       slotId: props.slotId,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
@@ -223,23 +197,23 @@ function startDockDrag(event: MouseEvent, instance: PersistedCardInstance) {
 /** Commit a dock drop: center → merge tab into pane, edge → split the pane. */
 function handleDockDrop(target: DockDropTarget, tabId: string) {
   if (target.zone === 'center') {
-    wb.bus.dispatch({
+    uie.bus.dispatch({
       command: {
         type: 'moveCardToDockPane',
-        scope: wb.scope.value,
+        scope: uie.scope.value,
         instanceId: tabId,
         toPaneId: target.paneId,
       },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     })
     return
   }
   const { dir, place } = dropZoneToSplit(target.zone)
-  wb.bus.dispatch({
+  uie.bus.dispatch({
     command: {
       type: 'splitDockPane',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       slotId: props.slotId ?? 'right',
       paneId: target.paneId,
       dir,
@@ -247,36 +221,36 @@ function handleDockDrop(target: DockDropTarget, tabId: string) {
       instanceId: tabId,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
 /** Merge this split pane back into the main pane. */
 function mergeIntoMain() {
   if (!props.slotId || !props.paneId) return
-  wb.bus.dispatch({
+  uie.bus.dispatch({
     command: {
       type: 'mergeDockPane',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       slotId: props.slotId,
       paneId: props.paneId,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
 /** Restore the whole dock back to a single stack (from the main pane). */
 function restoreDock() {
   if (!props.slotId) return
-  wb.bus.dispatch({
+  uie.bus.dispatch({
     command: {
       type: 'mergeDockColumn',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       slotId: props.slotId,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 
@@ -294,18 +268,18 @@ let unsubscribeDetached: (() => void) | null = null
 onMounted(() => {
   if (!isFeaturePanel.value) return
   unsubscribeDetached = detached.bind((data) => {
-    wb.bus.dispatch({
+    uie.bus.dispatch({
       command: {
         type: 'openCard',
-        scope: wb.scope.value,
-        descriptorId: descriptorForDetachedType(data.type),
+        scope: uie.scope.value,
+        descriptorId: data.type,
         slotId: props.slotId,
         title: data.title,
         state: data.state,
         instanceId: data.tabId,
       },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     })
   })
 })
@@ -319,7 +293,7 @@ onUnmounted(() => {
 <template vapor>
   <div
     ref="panelRef"
-    class="wb-stack"
+    class="uie-stack"
     :class="stackClass"
     :style="{
       left: `${geometry.x}px`,
@@ -352,7 +326,7 @@ onUnmounted(() => {
     />
 
     <!-- Split dock pane: minimal browser-style tab bar + merge-into-main -->
-    <div v-else-if="isSplitPane && showTabBar" class="browser-tab-bar wb-stack-tabbar">
+    <div v-else-if="isSplitPane && showTabBar" class="browser-tab-bar uie-stack-tabbar">
       <button
         v-for="inst in instances"
         :key="inst.id"
@@ -372,7 +346,7 @@ onUnmounted(() => {
         </span>
       </button>
       <button
-        class="wb-dock-merge-btn"
+        class="uie-dock-merge-btn"
         :title="t('context.mergePanel')"
         @click="mergeIntoMain"
       >
@@ -381,7 +355,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Other stacks: minimal browser-style tab bar for multi-card stacks -->
-    <div v-else-if="showTabBar" class="browser-tab-bar wb-stack-tabbar">
+    <div v-else-if="showTabBar" class="browser-tab-bar uie-stack-tabbar">
       <button
         v-for="inst in instances"
         :key="inst.id"
@@ -402,7 +376,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Card hosts — all mounted, visibility toggles only -->
-    <div class="wb-stack-body">
+    <div class="uie-stack-body">
       <UieCardHost
         v-for="inst in instances"
         :key="inst.id"
@@ -415,7 +389,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.wb-stack {
+.uie-stack {
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -424,13 +398,13 @@ onUnmounted(() => {
   transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* While the column is being dragged, snap geometry (matches .float-panel.resizing). */
-.wb-stack--resizing {
+/* While the column is being dragged, snap geometry. */
+.uie-stack--resizing {
   transition: none !important;
 }
 
 /* Float-panel look (Left/Right): rounded, background + subtle border for island-style elevation */
-.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive) {
+.uie-stack:not(.uie-stack--app):not(.uie-stack--immersive) {
   background: var(--surface-section);
   border: 1px solid var(--border-card);
   border-radius: 12px;
@@ -440,12 +414,12 @@ onUnmounted(() => {
 }
 
 /* Hover elevation for floating panels */
-.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive):hover {
+.uie-stack:not(.uie-stack--app):not(.uie-stack--immersive):hover {
   box-shadow: var(--shadow-card-hover);
 }
 
 /* Connected app look (Market/Code): no rounding, no border, continuous surface. */
-.wb-stack--app {
+.uie-stack--app {
   background: var(--bg-primary);
   border: none;
   border-radius: 0;
@@ -455,19 +429,19 @@ onUnmounted(() => {
 /* Immersive zone (Home chat center column): transparent so page background shows through.
    User's global material setting controls backdrop-filter on inner objects.
    NO background color here — the conversation area is truly invisible. */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
 }
 
-.wb-stack-tabbar {
+.uie-stack-tabbar {
   flex-shrink: 0;
 }
 
 /* Merge-into-main button on split panes — compact icon matching the tab bar. */
-.wb-dock-merge-btn {
+.uie-dock-merge-btn {
   display: grid;
   place-items: center;
   align-self: center;
@@ -482,12 +456,12 @@ onUnmounted(() => {
   transition: background 0.15s, color 0.15s;
 }
 
-.wb-dock-merge-btn:hover {
+.uie-dock-merge-btn:hover {
   color: var(--text-primary);
   background: var(--surface-hover);
 }
 
-.wb-stack-body {
+.uie-stack-body {
   flex: 1;
   min-height: 0;
   position: relative;

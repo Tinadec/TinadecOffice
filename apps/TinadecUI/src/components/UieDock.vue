@@ -20,7 +20,7 @@ const props = defineProps<{
   resizing?: boolean
 }>()
 
-const wb = useUie()
+const uie = useUie()
 const dockDrag = useDockDrag()
 const containerRef = ref<HTMLElement | null>(null)
 
@@ -39,7 +39,7 @@ function findSplit(node: UieDockNode, splitId: string): Extract<UieDockNode, { k
 
 /** Visible panes, pairing flattened geometry with live pane + card instances. */
 const paneViews = computed(() => {
-  const cards = wb.snapshot.value.cards
+  const cards = uie.snapshot.value.cards
   return props.dock.panes
     .filter((g) => !g.degraded)
     .map((g) => {
@@ -94,17 +94,17 @@ function onDividerMove(event: PointerEvent) {
   if (axis <= 0) return
   const delta = divDir === 'row' ? event.clientX - divStartX : event.clientY - divStartY
   const ratio = Math.max(0.1, Math.min(0.9, divInitialRatio + delta / axis))
-  wb.bus.dispatch(
+  uie.bus.dispatch(
     {
       command: {
         type: 'resizeDockSplit',
-        scope: wb.scope.value,
+        scope: uie.scope.value,
         slotId: props.column.slotId,
         splitId: divSplitId,
         ratio,
       },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     },
     { gestureId: `dockresize:${divSplitId}` },
   )
@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
 <template vapor>
   <div
     ref="containerRef"
-    class="wb-dock"
+    class="uie-dock"
     :class="{ 'is-resizing': isResizing }"
   >
     <UieStack
@@ -164,8 +164,8 @@ onBeforeUnmount(() => {
     <div
       v-for="divider in dock.dividers"
       :key="divider.splitId"
-      class="wb-dock-divider"
-      :class="divider.dir === 'row' ? 'wb-dock-divider--row' : 'wb-dock-divider--column'"
+      class="uie-dock-divider"
+      :class="divider.dir === 'row' ? 'uie-dock-divider--row' : 'uie-dock-divider--column'"
       :style="{
         left: `${divider.x}px`,
         top: `${divider.y}px`,
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
     <!-- Drop highlight: whole pane + zone emphasis via data-zone -->
     <div
       v-if="dropOverlay"
-      class="wb-dock-drop-overlay"
+      class="uie-dock-drop-overlay"
       :data-zone="dropOverlay.zone"
       :style="{
         left: `${dropOverlay.x}px`,
@@ -191,25 +191,25 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.wb-dock {
+.uie-dock {
   position: absolute;
   inset: 0;
   overflow: hidden;
 }
 
-.wb-dock-divider {
+.uie-dock-divider {
   position: absolute;
   z-index: 25;
   cursor: col-resize;
   background: transparent;
 }
 
-.wb-dock-divider--column {
+.uie-dock-divider--column {
   cursor: row-resize;
 }
 
 /* Pill handle, centered — mirrors the column/split pill style. */
-.wb-dock-divider::after {
+.uie-dock-divider::after {
   content: '';
   position: absolute;
   border-radius: 999px;
@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
   transition: opacity 0.15s ease;
 }
 
-.wb-dock-divider--row::after {
+.uie-dock-divider--row::after {
   left: 50%;
   top: 50%;
   width: 3px;
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -50%);
 }
 
-.wb-dock-divider--column::after {
+.uie-dock-divider--column::after {
   left: 50%;
   top: 50%;
   width: 28px;
@@ -234,13 +234,13 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -50%);
 }
 
-.wb-dock-divider:hover::after,
-.wb-dock-divider:active::after {
+.uie-dock-divider:hover::after,
+.uie-dock-divider:active::after {
   opacity: 0.45;
 }
 
 /* Drop highlight — translucent fill + zone-emphasized border. */
-.wb-dock-drop-overlay {
+.uie-dock-drop-overlay {
   position: absolute;
   z-index: 40;
   border-radius: 8px;
@@ -250,16 +250,16 @@ onBeforeUnmount(() => {
   transition: left 0.05s, top 0.05s, width 0.05s, height 0.05s;
 }
 
-.wb-dock-drop-overlay[data-zone='left'] {
+.uie-dock-drop-overlay[data-zone='left'] {
   box-shadow: inset 3px 0 0 0 var(--accent-primary);
 }
-.wb-dock-drop-overlay[data-zone='right'] {
+.uie-dock-drop-overlay[data-zone='right'] {
   box-shadow: inset -3px 0 0 0 var(--accent-primary);
 }
-.wb-dock-drop-overlay[data-zone='top'] {
+.uie-dock-drop-overlay[data-zone='top'] {
   box-shadow: inset 0 3px 0 0 var(--accent-primary);
 }
-.wb-dock-drop-overlay[data-zone='bottom'] {
+.uie-dock-drop-overlay[data-zone='bottom'] {
   box-shadow: inset 0 -3px 0 0 var(--accent-primary);
 }
 </style>

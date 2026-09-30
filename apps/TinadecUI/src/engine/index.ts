@@ -26,4 +26,3 @@ export * from './dockDrop'
 // --- Persistence ---
 export * from './persistence/types'
 export * from './persistence/layerStore'
-export * from './persistence/migrate'

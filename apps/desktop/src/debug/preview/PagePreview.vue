@@ -1,29 +1,22 @@
 <script setup lang="ts">
 /**
  * 页面预览包装器 — 真实控件版
- * 除 ChatPanel/ContextPanel 等本就 props 驱动的组合外，
- * GitPanel / CodePage / SettingsPage / MarketPage 均直接挂载真实组件/页面，
+ * ChatPanel、GitPanel、CodePage、SettingsPage、MarketPage 直接挂载真实组件/页面，
  * 数据来自 apiBridge 注入的 mock api（按场景响应式切换）。
  */
 import { computed, defineAsyncComponent, ref } from 'vue'
-import AppHeader from '@/components/AppHeader.vue'
-import AppSidebar from '@/components/AppSidebar.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
-import ContextPanel from '@/components/ContextPanel.vue'
 import ConversationPreview from './ConversationPreview.vue'
 import PreviewIslandCard from './PreviewIslandCard.vue'
 import PreviewNavScope from './PreviewNavScope.vue'
 import RealMarketPage from './RealMarketPage.vue'
 import { api } from '@/api'
 import { UiBadge } from '@/components/ui'
-import type { AgentActivity, AgentState } from '@/composables/useAgentActivity'
 import {
   FileCode2,
   GitBranch,
-  Home,
   MessageSquare,
   MessagesSquare,
-  PanelRight,
   Settings as SettingsIcon,
   Store,
 } from '@lucide/vue'
@@ -36,29 +29,13 @@ const props = defineProps<{
   data: MockDataBundle
 }>()
 
-// ---- 共享状态（HomePage / ChatPanel / ContextPanel 组合预览） ----
+// ---- Shared preview state ----
 const draft = ref('')
 const currentModeVersionId = ref<string | null>(null)
 const currentPermission = ref<PermissionLevel>('default')
-const rightRailCollapsed = ref(false)
-const rightRailWidth = ref(420)
-const shellCommand = ref('npm test')
 const selectedProjectId = ref<string | null>(null)
 const selectedSessionId = ref<string | null>(null)
 
-const mockAgentActivity: AgentActivity = {
-  status: 'idle',
-  runId: null,
-  runStartedAt: null,
-  runSummary: null,
-  activeAgentName: null,
-  activeAgentRole: null,
-  completedNodes: 0,
-  totalNodes: 0,
-  lastUpdated: null,
-}
-const mockAgentStates: Record<string, AgentState> = {}
-const mockProgressEvents: never[] = []
 const previewThinkingSteps = mockThinkingSteps()
 const previewToolCalls = mockToolCalls()
 
@@ -74,7 +51,6 @@ ensureSelection()
 
 const currentProject = computed(() => props.data.projects.find((p) => p.id === selectedProjectId.value) ?? null)
 const currentSession = computed(() => props.data.sessions.find((s) => s.id === selectedSessionId.value) ?? null)
-const recentEvents = computed(() => props.data.events.slice(-8).reverse())
 
 // ---- 真实控件（懒加载保持代码分包） ----
 const RealGitPanel = defineAsyncComponent(() => import('@/components/GitPanel.vue'))
@@ -92,71 +68,8 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
 
 <template>
   <div class="page-preview">
-    <!-- ==================== HomePage：真实三栏组合 ==================== -->
-    <div v-if="pageName === 'HomePage'" class="home-preview">
-      <PreviewIslandCard variant="section" padding="none" class="home-shell-island">
-        <template #header>
-          <div class="preview-island-header">
-            <Home :size="14" />
-            <span>首页（三栏布局 · 真实组件）</span>
-            <UiBadge variant="outline">{{ currentProject?.name ?? '预览' }}</UiBadge>
-          </div>
-        </template>
-        <AppHeader :busy="false" />
-        <section class="workspace" :style="{ '--chat-left': '260px', '--chat-right': rightRailCollapsed ? '52px' : `${rightRailWidth + 8}px`, '--chat-top': '0px' }">
-          <ChatPanel
-            :messages="data.messages"
-            :sessions="data.sessions"
-            :projects="data.projects"
-            :current-session="currentSession"
-            :current-project="currentProject"
-            :selected-project-id="selectedProjectId"
-            :model-name="data.modelSettings?.model ?? 'gpt-4o-mini'"
-            :orchestration="data.orchestration"
-            :busy="false"
-            :draft="draft"
-            :mode-version-id="currentModeVersionId"
-            :permission="currentPermission"
-            :thinking-steps="previewThinkingSteps"
-            :tool-calls="previewToolCalls"
-            @update:draft="draft = $event"
-            @update:mode-version-id="currentModeVersionId = $event"
-            @update:permission="currentPermission = $event"
-          />
-          <AppSidebar
-            :projects="data.projects"
-            :sessions="data.sessions"
-            :selected-project-id="selectedProjectId"
-            :selected-session-id="selectedSessionId"
-            :busy="false"
-            @select-project="selectedProjectId = $event"
-            @select-session="selectedSessionId = $event"
-          />
-          <ContextPanel
-            v-model:collapsed="rightRailCollapsed"
-            v-model:width="rightRailWidth"
-            :approvals="data.approvals"
-            :events="recentEvents"
-            :doctor="data.doctor"
-            :readiness="data.readiness"
-            :orchestration="data.orchestration"
-            :tool-executions="data.toolExecutions"
-            :shell-command="shellCommand"
-            :busy="false"
-            :selected-session-id="selectedSessionId"
-            :current-project-path="currentProject?.path"
-            :agent-activity="mockAgentActivity"
-            :agent-states="mockAgentStates"
-            :thinking-steps="previewThinkingSteps"
-            :progress-events="mockProgressEvents"
-            @update:shell-command="shellCommand = $event"
-          />
-        </section>
-      </PreviewIslandCard>
-    </div>
-
     <!-- ==================== ChatPanel：真实组件 ==================== -->
-    <div v-else-if="pageName === 'ChatPanel'" class="chat-preview">
+    <div v-if="pageName === 'ChatPanel'" class="chat-preview">
       <PreviewIslandCard variant="raised" padding="none">
         <template #header>
           <div class="preview-island-header">
@@ -196,37 +109,6 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
           </div>
         </template>
         <ConversationPreview />
-      </PreviewIslandCard>
-    </div>
-
-    <!-- ==================== ContextPanel：真实组件 ==================== -->
-    <div v-else-if="pageName === 'ContextPanel'" class="context-preview">
-      <PreviewIslandCard variant="raised" padding="none" class="context-island">
-        <template #header>
-          <div class="preview-island-header">
-            <PanelRight :size="14" />
-            <span>上下文面板（真实组件）</span>
-          </div>
-        </template>
-        <ContextPanel
-          v-model:collapsed="rightRailCollapsed"
-          v-model:width="rightRailWidth"
-          :approvals="data.approvals"
-          :events="recentEvents"
-          :doctor="data.doctor"
-          :readiness="data.readiness"
-          :orchestration="data.orchestration"
-          :tool-executions="data.toolExecutions"
-          :shell-command="shellCommand"
-          :busy="false"
-          :selected-session-id="selectedSessionId"
-          :current-project-path="currentProject?.path"
-          :agent-activity="mockAgentActivity"
-          :agent-states="mockAgentStates"
-          :thinking-steps="previewThinkingSteps"
-          :progress-events="mockProgressEvents"
-          @update:shell-command="shellCommand = $event"
-        />
       </PreviewIslandCard>
     </div>
 
@@ -339,32 +221,6 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
   border-radius: 12px;
 }
 
-/* ---- HomePage 预览 ---- */
-.home-preview {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.home-preview .workspace {
-  flex: 1;
-  min-height: 0;
-}
-.home-shell-island {
-  flex: 1;
-  min-height: 0;
-}
-.home-shell-island :deep(.island-body) {
-  padding: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.home-shell-island :deep(.workspace) {
-  flex: 1;
-  min-height: 0;
-}
-
 /* ---- ChatPanel 预览 ---- */
 .chat-preview {
   flex: 1;
@@ -383,16 +239,6 @@ async function onDecideApproval(approvalId: string, decision: 'approved' | 'reje
 }
 .conversation-island { width: 100%; max-width: 760px; }
 .conversation-island :deep(.island-body) { padding: 0; }
-
-/* ---- ContextPanel 预览 ---- */
-.context-preview {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  justify-content: flex-end;
-}
-.context-island { width: 100%; max-width: 420px; }
-.context-island :deep(.island-body) { padding: 0; }
 
 /* ---- 真实页面/组件通用宿主：占满视口，内部自滚动 ---- */
 .git-real-preview,

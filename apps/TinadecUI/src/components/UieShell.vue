@@ -4,7 +4,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import { useUie } from './useUie'
 
 // The Uie store is a module singleton; this component reads it.
-const wb = useUie()
+const uie = useUie()
 </script>
 
 <template vapor>

@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 const router = useRouter()
 const route = useRoute()
 const c = homeController
-const wb = useUie()
+const uie = useUie()
 
 async function openSession(id: string) {
   await c.setSelectedSession(id)
@@ -20,16 +20,16 @@ async function createSession(projectId: string | null) {
 }
 
 function toggleCollapse() {
-  const col = wb.snapshot.value.columns.left
-  wb.bus.dispatch({
+  const col = uie.snapshot.value.columns.left
+  uie.bus.dispatch({
     command: {
       type: 'collapseColumn',
-      scope: wb.scope.value,
+      scope: uie.scope.value,
       slotId: 'left',
       collapsed: !col?.collapsed,
     },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
 }
 </script>
@@ -42,7 +42,7 @@ function toggleCollapse() {
     :selected-session-id="route.path === '/' ? c.selectedSessionId.value : null"
     :chatroom-active="route.path === '/chatroom'"
     :busy="c.busy.value"
-    :collapsed="wb.snapshot.value.columns.left?.collapsed"
+    :collapsed="uie.snapshot.value.columns.left?.collapsed"
     @select-project="c.setSelectedProject($event)"
     @select-session="openSession($event)"
     @create-session="createSession($event)"

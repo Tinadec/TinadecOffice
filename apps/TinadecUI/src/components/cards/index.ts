@@ -7,6 +7,7 @@ import HomePickerCard from './home/HomePickerCard.vue'
 import GitCard from './home/GitCard.vue'
 import ApprovalCard from './home/ApprovalCard.vue'
 import OrchestrationCard from './home/OrchestrationCard.vue'
+import OrganizationCard from './home/OrganizationCard.vue'
 import EventsCard from './home/EventsCard.vue'
 import DoctorCard from './home/DoctorCard.vue'
 import BrowserCard from './home/BrowserCard.vue'
@@ -32,6 +33,7 @@ export function buildUieRegistry(): CardRegistry {
     { type: 'git', component: GitCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Git' },
     { type: 'approval', component: ApprovalCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '审批' },
     { type: 'orchestration', component: OrchestrationCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '编排' },
+    { type: 'organization', component: OrganizationCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '组织' },
     { type: 'events', component: EventsCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: '事件' },
     { type: 'doctor', component: DoctorCard, minWidth: 260, minHeight: 160, singleton: true, movable: true, closable: true, detachable: true, defaultTitle: 'Doctor' },
     { type: 'browser', component: BrowserCard, minWidth: 260, minHeight: 160, singleton: false, movable: true, closable: true, detachable: true, defaultTitle: '浏览器' },

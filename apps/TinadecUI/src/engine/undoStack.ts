@@ -31,6 +31,8 @@ export interface UndoStack {
   pushRedo(record: UndoRecord): void
   /** Clear redo entries (after a fresh mutation). */
   clearRedo(): void
+  /** Drop all history (the layout was swapped for a different page/project). */
+  clear(): void
   undoCount(): number
   redoCount(): number
 }
@@ -66,6 +68,10 @@ export function createUndoStack(limit: number = UNDO_LIMIT): UndoStack {
       if (redo.length > limit) redo = redo.slice(redo.length - limit)
     },
     clearRedo() {
+      redo = []
+    },
+    clear() {
+      undo = []
       redo = []
     },
     undoCount() {

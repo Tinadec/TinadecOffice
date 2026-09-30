@@ -103,4 +103,16 @@ describe('command bus', () => {
     expect(bus.canRedo()).toBe(false)
     expect(bus.getSnapshot().revision).toBe(fresh.revision)
   })
+
+  it('loadSnapshot switches context: clears all history and is not persisted', () => {
+    const preset = buildPreset('home', { nextInstanceId: () => `bus-${Math.random()}` })
+    const changes: boolean[] = []
+    const bus = createCommandBus(preset, { registry: reg, onChanged: (_s, { persist }) => { changes.push(persist) } })
+    bus.dispatch({ command: openBrowser(bus.getSnapshot().revision), source: 'user', expectedRevision: bus.getSnapshot().revision })
+    expect(bus.canUndo()).toBe(true)
+    bus.loadSnapshot(buildPreset('market', { nextInstanceId: () => 'm' }))
+    expect(bus.canUndo()).toBe(false)
+    expect(bus.canRedo()).toBe(false)
+    expect(changes).toEqual([true, false])
+  })
 })

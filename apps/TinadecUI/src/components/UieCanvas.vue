@@ -3,7 +3,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import UieColumn from './UieColumn.vue'
 import { useUie } from './useUie'
 
-const wb = useUie()
+const uie = useUie()
 
 const canvasRef = ref<HTMLElement | null>(null)
 let observer: ResizeObserver | null = null
@@ -13,7 +13,7 @@ function measure() {
   if (!el) return
   const rect = el.getBoundingClientRect()
   // Round to integer pixels so ResizeObserver can't feed back sub-pixel drift.
-  wb.setContainerSize({ width: Math.round(rect.width), height: Math.round(rect.height) })
+  uie.setContainerSize({ width: Math.round(rect.width), height: Math.round(rect.height) })
 }
 
 onMounted(() => {
@@ -32,21 +32,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template vapor>
-  <div ref="canvasRef" class="wb-canvas">
+  <div ref="canvasRef" class="uie-canvas">
     <!-- Columns are absolutely positioned by the constraint solver. -->
     <UieColumn
-      v-for="slotId in wb.snapshot.value.columnOrder"
+      v-for="slotId in uie.snapshot.value.columnOrder"
       :key="slotId"
-      :column="wb.snapshot.value.columns[slotId]"
-      :geometry="wb.geometry.value.columns[slotId]"
-      :split="wb.geometry.value.splits[slotId]"
-      :dock="wb.geometry.value.docks[slotId]"
+      :column="uie.snapshot.value.columns[slotId]"
+      :geometry="uie.geometry.value.columns[slotId]"
+      :split="uie.geometry.value.splits[slotId]"
+      :dock="uie.geometry.value.docks[slotId]"
     />
   </div>
 </template>
 
 <style scoped>
-.wb-canvas {
+.uie-canvas {
   position: absolute;
   inset: 0;
   overflow: hidden;

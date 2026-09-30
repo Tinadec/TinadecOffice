@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // BrowserTabBar — the browser-style tab chrome of the feature panel (the UIE
-// right-column stack). This is the faithful port of the old ContextPanel tab
-// bar UI/UX:
+// right-column stack). The UIE tab bar provides:
 //   - a pinned Home tab (homePicker card),
 //   - one tab per open feature card, with hover-revealed detach/close icons,
 //   - dashed detached-window indicator tabs that focus the floating window,
@@ -176,7 +175,7 @@ onUnmounted(() => {
 </script>
 
 <template vapor>
-  <div class="browser-tab-bar wb-stack-tabbar">
+  <div class="browser-tab-bar uie-stack-tabbar">
     <!-- Pinned Home tab -->
     <button
       class="browser-tab browser-tab-home"
@@ -290,7 +289,7 @@ onUnmounted(() => {
 <style scoped>
 /* All visual styles come from the shared .browser-tab-* rules in styles.css.
    The component only needs to be a flex-shrink-safe strip. */
-.wb-stack-tabbar {
+.uie-stack-tabbar {
   flex-shrink: 0;
 }
 

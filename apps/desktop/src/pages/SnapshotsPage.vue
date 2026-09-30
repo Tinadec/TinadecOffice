@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Camera, RotateCcw } from '@lucide/vue'
 import {
@@ -8,7 +8,7 @@ import {
   type WorkspaceFileChangeDto,
   type WorkspaceFileDiffDto,
 } from '@/api'
-import { useProjectStore } from '@/stores/project'
+import { homeController } from '@/controllers/HomeController'
 import CommandPaletteButton from '@/components/CommandPaletteButton.vue'
 import DiffViewer from '@/components/git/DiffViewer.vue'
 
@@ -21,7 +21,6 @@ import DiffViewer from '@/components/git/DiffViewer.vue'
  * command (not yet inside the UserToolAction loop) and is labelled as such.
  */
 const { t } = useI18n()
-const projectStore = useProjectStore()
 
 const snapshots = ref<SnapshotDto[]>([])
 const selectedProjectId = ref<string>('')
@@ -37,7 +36,7 @@ type RestoreResult = {
 }
 const lastRestore = ref<{ snapshotId: string; result: RestoreResult } | null>(null)
 
-const projects = computed(() => projectStore.projects ?? [])
+const projects = computed(() => homeController.projects.value)
 const sorted = computed(() =>
   [...snapshots.value].sort((a, b) => b.created_at.localeCompare(a.created_at)),
 )
@@ -78,10 +77,14 @@ async function restore(snapshot: SnapshotDto): Promise<void> {
   }
 }
 
-onMounted(async () => {
-  if (!projects.value.length) await projectStore.fetchAll().catch(() => undefined)
-  if (!selectedProjectId.value && projects.value.length) selectProject(projects.value[0]!.id)
-})
+// Projects and the current selection come from the app-wide HomeController;
+// the page opens on the project the user is working in.
+onMounted(() => homeController.start())
+watch(
+  () => homeController.selectedProjectId.value ?? projects.value[0]?.id ?? null,
+  (id) => { if (id && !selectedProjectId.value) selectProject(id) },
+  { immediate: true },
+)
 
 // ---- per-file review -------------------------------------------------------------
 // Core compares the snapshot's manifest with the workspace as it stands now, so this list answers

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api, createUserToolActionForPath, type ApprovalDto, type EventEnvelope, type OrchestrationSnapshotDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type DoctorReportDto, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
@@ -13,6 +13,7 @@ import ApprovalTab from '@/components/ApprovalTab.vue'
 import EventsTab from '@/components/EventsTab.vue'
 import DoctorTab from '@/components/DoctorTab.vue'
 import OrchestrationTab from '@/components/OrchestrationTab.vue'
+import OrganizationPanel from '@/components/organization/OrganizationPanel.vue'
 import PreviewBrowserPanel from '@/components/PreviewBrowserPanel.vue'
 import AgentActivityPanel from '@/components/AgentActivityPanel.vue'
 import TerminalPanel from '@/components/TerminalPanel.vue'
@@ -48,6 +49,8 @@ const approvals = ref<ApprovalDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
+const doctor = ref<DoctorReportDto | null>(null)
+const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
 const shellCommand = ref('npm test')
 const busy = ref(false)
 
@@ -62,6 +65,15 @@ const {
 let unsubscribeEvents: (() => void) | null = null
 
 async function loadData() {
+  // Doctor/readiness are runtime-wide, not session-scoped.
+  if (tabType.value === 'doctor') {
+    const [report, receipt] = await Promise.all([
+      api.doctor().catch(() => null),
+      api.readiness().catch(() => null),
+    ])
+    doctor.value = report
+    readiness.value = receipt
+  }
   if (!sessionId.value) {
     loading.value = false
     return
@@ -273,6 +285,12 @@ watch(sessionId, () => {
           :tool-executions="toolExecutions"
         />
 
+        <!-- Loads and polls its own data; the window only hands it the session. -->
+        <OrganizationPanel
+          v-else-if="tabType === 'organization'"
+          :session-id="sessionId"
+        />
+
         <EventsTab
           v-else-if="tabType === 'events'"
           :events="events"
@@ -280,12 +298,12 @@ watch(sessionId, () => {
 
         <DoctorTab
           v-else-if="tabType === 'doctor'"
-          :doctor="null"
-          :readiness="null"
+          :doctor="doctor"
+          :readiness="readiness"
         />
 
         <PreviewBrowserPanel
-          v-else-if="tabType === 'preview'"
+          v-else-if="tabType === 'browser'"
           :initial-url="(tabState.url as string) ?? ''"
         />
 

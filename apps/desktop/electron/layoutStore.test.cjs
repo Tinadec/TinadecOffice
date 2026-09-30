@@ -44,7 +44,7 @@ test('save + load round-trips a valid payload', async () => {
 test('writes atomically (file exists after save)', async () => {
   const payload = { version: 1, pageByPageId: { code: { pageId: 'code' } } }
   await layoutStore.save(payload)
-  const stat = await fs.stat(path.join(tmpRoot, 'workbench-layout.json'))
+  const stat = await fs.stat(path.join(tmpRoot, 'uie-layout.json'))
   assert.ok(stat.size > 0)
 })
 
@@ -54,7 +54,7 @@ test('load returns null for missing file', async () => {
 })
 
 test('load returns null for corrupt JSON', async () => {
-  await fs.writeFile(path.join(tmpRoot, 'workbench-layout.json'), '{ not valid json', 'utf-8')
+  await fs.writeFile(path.join(tmpRoot, 'uie-layout.json'), '{ not valid json', 'utf-8')
   const loaded = await layoutStore.load()
   assert.equal(loaded, null)
 })

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { setActivePinia, createPinia } from 'pinia'
+import { ref } from 'vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
@@ -17,6 +17,10 @@ vi.mock('@/api', () => ({
   },
 }))
 
+// Projects and the current selection are app-wide HomeController state.
+const homeControllerMock = vi.hoisted(() => ({ projects: null as never, selectedProjectId: null as never, start: () => {} }))
+vi.mock('@/controllers/HomeController', () => ({ homeController: homeControllerMock }))
+
 // Monaco cannot load under happy-dom, and the props handed to it are the claim worth testing.
 vi.mock('@/components/git/DiffViewer.vue', () => ({
   default: {
@@ -27,7 +31,6 @@ vi.mock('@/components/git/DiffViewer.vue', () => ({
 }))
 
 import { api, type SnapshotDto, type WorkspaceFileChangeDto } from '@/api'
-import { useProjectStore } from '@/stores/project'
 import SnapshotsPage from './SnapshotsPage.vue'
 
 const apiMock = vi.mocked(api, true)
@@ -57,8 +60,8 @@ function row(overrides: Partial<WorkspaceFileChangeDto> & { path: string }): Wor
 }
 
 async function mountWithRows(rows: WorkspaceFileChangeDto[]): Promise<VueWrapper> {
-  setActivePinia(createPinia())
-  useProjectStore().projects = [{ id: 'p1', name: 'P1' } as never]
+  homeControllerMock.projects = ref([{ id: 'p1', name: 'P1' }]) as never
+  homeControllerMock.selectedProjectId = ref('p1') as never
   apiMock.listWorkspaceSnapshots.mockResolvedValue([snapshot])
   apiMock.listWorkspaceSnapshotFiles.mockResolvedValue(rows)
   const wrapper = mount(SnapshotsPage)

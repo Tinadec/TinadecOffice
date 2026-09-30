@@ -1,6 +1,6 @@
 // layoutStore.cjs — TinadecUIE layout persistence for the Electron main process.
 //
-// Stores versioned TinadecUIE layout snapshots under userData/workbench-layout.json.
+// Stores versioned TinadecUIE layout snapshots under userData/uie-layout.json.
 // Writes are atomic (temp file + rename) so a crash never leaves a corrupt file.
 // The renderer owns the layout semantics; the main process is a thin store that
 // validates the payload shape and persists it.
@@ -20,7 +20,7 @@ function __setUserDataDir(dir) {
 
 function layoutPath() {
   const base = __userDataDir ?? app.getPath('userData');
-  return path.join(base, 'workbench-layout.json');
+  return path.join(base, 'uie-layout.json');
 }
 
 /** Validate the top-level shape of a layout blob. Returns error string or null. */

@@ -14,8 +14,12 @@ import { createUndoStack, type UndoStack } from './undoStack'
 
 export interface CommandBusOptions {
   registry: CardRegistry
-  /** Called after a successful mutation with the new snapshot. */
-  onChanged?: (snapshot: UieLayoutSnapshot) => void
+  /**
+   * Called whenever the snapshot changes. `persist` is false for `loadSnapshot`
+   * (a stored/inherited layout being shown, not a user edit) so the caller does
+   * not write it back — and never forks an inherited layout into a new scope.
+   */
+  onChanged?: (snapshot: UieLayoutSnapshot, change: { persist: boolean }) => void
   /** Called when a command was rejected. */
   onRejected?: (envelope: UieCommandEnvelope, reason: string) => void
   /** Locked slots (settings) that reject mutations. */
@@ -35,14 +39,23 @@ export interface CommandBus {
   undo(): UieLayoutSnapshot | undefined
   redo(): UieLayoutSnapshot | undefined
   getSnapshot(): UieLayoutSnapshot
+  /** Replace the snapshot as an edit (persisted; clears redo). */
   setSnapshot(snapshot: UieLayoutSnapshot): void
+  /**
+   * Switch to another layout context (page / project / hydration): replaces the
+   * snapshot, drops all undo history so undo can never cross contexts, and is
+   * not persisted.
+   */
+  loadSnapshot(snapshot: UieLayoutSnapshot): void
   canUndo(): boolean
   canRedo(): boolean
 }
 
+const PERSIST = { persist: true } as const
+
 let counter = 0
 function defaultNextInstanceId(): string {
-  return `wb-instance-${++counter}-${Math.random().toString(36).slice(2, 8)}`
+  return `uie-instance-${++counter}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 let dockCounter = 0
@@ -94,7 +107,7 @@ export function createCommandBus(
     }
     undoStack.push(record)
     snapshot = result.next
-    onChanged?.(snapshot)
+    onChanged?.(snapshot, PERSIST)
     return true
   }
 
@@ -115,14 +128,14 @@ export function createCommandBus(
       // Undo = restore the pre-mutation snapshot directly (pure, no replay).
       snapshot = structuredClone(record.before)
       undoStack.pushRedo(record)
-      onChanged?.(snapshot)
+      onChanged?.(snapshot, PERSIST)
       return snapshot
     },
     redo() {
       const record = undoStack.popRedo()
       if (!record) return undefined
       snapshot = structuredClone(record.after)
-      onChanged?.(snapshot)
+      onChanged?.(snapshot, PERSIST)
       return snapshot
     },
     getSnapshot() {
@@ -131,7 +144,12 @@ export function createCommandBus(
     setSnapshot(next) {
       snapshot = next
       undoStack.clearRedo()
-      onChanged?.(snapshot)
+      onChanged?.(snapshot, PERSIST)
+    },
+    loadSnapshot(next) {
+      snapshot = next
+      undoStack.clear()
+      onChanged?.(snapshot, { persist: false })
     },
     canUndo() {
       return undoStack.undoCount() > 0

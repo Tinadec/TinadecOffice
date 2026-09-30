@@ -3794,7 +3794,7 @@ box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 72%, transparent)
    .center-resource-rail / .center-resource-stage so gutters, surfaces and
    scroll clamps match the agents tab. */
 .center-workbench.workbench-duo {
-  grid-template-columns: var(--wb-rail, 248px) minmax(0, 1fr);
+  grid-template-columns: var(--uie-rail, 248px) minmax(0, 1fr);
   grid-template-areas: "rail stage";
 }
 

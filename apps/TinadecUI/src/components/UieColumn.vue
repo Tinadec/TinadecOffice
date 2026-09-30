@@ -7,7 +7,7 @@ import UieDock from './UieDock.vue'
 import { useUie } from './useUie'
 import { usePanelStyles } from '@/composables/usePanelStyles'
 import { useDockDrag } from '@/composables/useDockDrag'
-import { FEATURE_CATALOG } from './cards/home/featureCatalog'
+import { featureIconFor } from './cards/home/featureCatalog'
 import { collectDockPanes, collectDockTabIds } from '../engine/reducer'
 import { maxOverlayColumnWidth } from '../engine/constraints'
 import type {
@@ -27,7 +27,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const wb = useUie()
+const uie = useUie()
 
 /** All tab instanceIds in this column — dock panes first, else the primary stack. */
 const columnTabIds = computed<string[]>(() => {
@@ -36,14 +36,14 @@ const columnTabIds = computed<string[]>(() => {
 })
 
 // The feature panel is the column that hosts the pinned homePicker card.
-// It gets the old ContextPanel treatment: browser tab chrome (in UieStack) and
-// a 44px collapsed rail with expand + Home buttons + the open feature-tab icons.
+// It gets browser tab chrome (in UieStack) and a 44px collapsed rail with
+// expand + Home buttons + the open feature-tab icons.
 const isFeatureColumn = computed(() =>
-  columnTabIds.value.some((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
+  columnTabIds.value.some((id) => uie.snapshot.value.cards[id]?.descriptorId === 'homePicker'),
 )
 const featureHomeId = computed(
   () =>
-    columnTabIds.value.find((id) => wb.snapshot.value.cards[id]?.descriptorId === 'homePicker') ??
+    columnTabIds.value.find((id) => uie.snapshot.value.cards[id]?.descriptorId === 'homePicker') ??
     null,
 )
 const isHomeActive = computed(() => {
@@ -70,7 +70,7 @@ const visualCollapsed = computed(
 // used to render the vertical icon rail while the panel is collapsed.
 const openFeatureInstances = computed<PersistedCardInstance[]>(() =>
   columnTabIds.value
-    .map((id) => wb.snapshot.value.cards[id])
+    .map((id) => uie.snapshot.value.cards[id])
     .filter((c): c is PersistedCardInstance => !!c && c.descriptorId !== 'homePicker'),
 )
 function isFeatureActive(instanceId: string): boolean {
@@ -83,12 +83,11 @@ function isFeatureActive(instanceId: string): boolean {
 
 // Icon lookup reuses the shared feature catalog so the collapsed rail matches
 // the tab bar and the "+" menu (same single-color icons).
-const FEATURE_ICON_BY_DESCRIPTOR = new Map(FEATURE_CATALOG.map((f) => [f.descriptorId, f.icon]))
-function featureIconFor(descriptorId: string): LucideIcon {
-  return FEATURE_ICON_BY_DESCRIPTOR.get(descriptorId) ?? HomeIcon
+function railIconFor(descriptorId: string): LucideIcon {
+  return featureIconFor(descriptorId, HomeIcon)
 }
 
-// Collapsed rail shares the float-panel material (translucent/blur follow the
+// Collapsed rail shares the feature-column material (translucent/blur follow the
 // global panel-style setting just like the stack they replace).
 const { getPanelStyle, getPanelDataAttributes } = usePanelStyles()
 const railStyle = computed(() => getPanelStyle())
@@ -108,16 +107,16 @@ function expand(instanceId?: string | null) {
     const fit = dockFitWidth.value
     if (fit !== null && fit < props.column.width) resizeColumn(fit)
   }
-  wb.bus.dispatch({
-    command: { type: 'collapseColumn', scope: wb.scope.value, slotId: props.column.slotId, collapsed: false },
+  uie.bus.dispatch({
+    command: { type: 'collapseColumn', scope: uie.scope.value, slotId: props.column.slotId, collapsed: false },
     source: 'user',
-    expectedRevision: wb.snapshot.value.revision,
+    expectedRevision: uie.snapshot.value.revision,
   })
   if (instanceId) {
-    wb.bus.dispatch({
-      command: { type: 'activateCard', scope: wb.scope.value, instanceId },
+    uie.bus.dispatch({
+      command: { type: 'activateCard', scope: uie.scope.value, instanceId },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     })
   }
 }
@@ -132,42 +131,42 @@ const primaryDegraded = computed(() => !!props.split?.upper.degraded)
 // Instances in this column, mapped from the snapshot by tabIds (primary).
 const primaryInstances = computed(() =>
   props.column.primary.tabIds
-    .map((id) => wb.snapshot.value.cards[id])
+    .map((id) => uie.snapshot.value.cards[id])
     .filter((c) => !!c),
 )
 const secondaryInstances = computed(() =>
   props.column.secondary
-    ? props.column.secondary.tabIds.map((id) => wb.snapshot.value.cards[id]).filter((c) => !!c)
+    ? props.column.secondary.tabIds.map((id) => uie.snapshot.value.cards[id]).filter((c) => !!c)
     : [],
 )
 
-// Feature-panel width limits match the legacy ContextPanel (280–760px); other
+// Feature-panel width limits stay within the UIE feature-column contract (280–760px); other
 // columns keep the reducer's global clamp (160–1200px).
 // A float feature column's drag ceiling is the widest it can be while leaving
 // at least MIN_OVERLAY_STRIP of the chat visible when it overlays (the solver
 // floats the panel over the chat instead of squeezing the composer).
 const dockFitWidth = computed<number | null>(() =>
   isFeatureColumn.value && props.column.surfaceMode === 'float'
-    ? Math.max(280, maxOverlayColumnWidth(wb.containerSize.value, wb.snapshot.value))
+    ? Math.max(280, maxOverlayColumnWidth(uie.containerSize.value, uie.snapshot.value))
     : null,
 )
 function resizeColumn(width: number) {
-  wb.bus.dispatch(
+  uie.bus.dispatch(
     {
-      command: { type: 'resizeColumn', scope: wb.scope.value, slotId: props.column.slotId, width },
+      command: { type: 'resizeColumn', scope: uie.scope.value, slotId: props.column.slotId, width },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     },
     { gestureId: `resize:${props.column.slotId}` },
   )
 }
 
 function resizeSplit(ratio: number) {
-  wb.bus.dispatch(
+  uie.bus.dispatch(
     {
-      command: { type: 'resizeSplit', scope: wb.scope.value, slotId: props.column.slotId, ratio },
+      command: { type: 'resizeSplit', scope: uie.scope.value, slotId: props.column.slotId, ratio },
       source: 'user',
-      expectedRevision: wb.snapshot.value.revision,
+      expectedRevision: uie.snapshot.value.revision,
     },
     { gestureId: `split:${props.column.slotId}` },
   )
@@ -261,8 +260,8 @@ function onDividerUp() {
 <template vapor>
   <div
     ref="colRef"
-    class="wb-column"
-    :class="{ 'is-resizing': isResizing, 'wb-column--overlay': geometry.overlay }"
+    class="uie-column"
+    :class="{ 'is-resizing': isResizing, 'uie-column--overlay': geometry.overlay }"
     :style="{
       left: `${geometry.x}px`,
       top: `${geometry.y}px`,
@@ -276,19 +275,19 @@ function onDividerUp() {
          dock column would render an empty pane list and blank out. -->
     <div
       v-if="isFeatureColumn && (column.collapsed || visualCollapsed)"
-      class="float-panel-collapsed-bar wb-column-rail"
+      class="uie-column-rail"
       :style="railStyle"
       v-bind="railAttrs"
     >
       <button
-        class="float-panel-toggle-btn"
+        class="uie-column-toggle-btn"
         :title="t('app.expand')"
         @click="expand()"
       >
         <PanelRightOpen :size="16" />
       </button>
       <button
-        class="float-panel-collapsed-icon"
+        class="uie-column-collapsed-icon"
         :class="{ active: isHomeActive }"
         :title="t('context.homeTitle')"
         @click="expand(featureHomeId)"
@@ -300,12 +299,12 @@ function onDividerUp() {
       <button
         v-for="inst in openFeatureInstances"
         :key="inst.id"
-        class="float-panel-collapsed-icon"
+        class="uie-column-collapsed-icon"
         :class="{ active: isFeatureActive(inst.id) }"
         :title="inst.title"
         @click="expand(inst.id)"
       >
-        <component :is="featureIconFor(inst.descriptorId)" :size="16" />
+        <component :is="railIconFor(inst.descriptorId)" :size="16" />
       </button>
     </div>
 
@@ -313,8 +312,8 @@ function onDividerUp() {
       <!-- Resizer handle: Left column resizes via right edge, Right column resizes via left edge -->
       <div
         v-if="column.slotId === 'left' || column.slotId === 'right'"
-        class="wb-column-resizer"
-        :class="column.slotId === 'right' ? 'wb-column-resizer-left' : 'wb-column-resizer-right'"
+        class="uie-column-resizer"
+        :class="column.slotId === 'right' ? 'uie-column-resizer-left' : 'uie-column-resizer-right'"
         @pointerdown="onResizeDown"
       />
 
@@ -343,7 +342,7 @@ function onDividerUp() {
         <!-- Secondary stack + divider -->
         <template v-if="column.secondary && split">
           <div
-            class="wb-split-divider"
+            class="uie-split-divider"
             :style="{ top: `${split.dividerY - geometry.y - 2}px` }"
             @pointerdown="onDividerDown"
           />
@@ -363,14 +362,14 @@ function onDividerUp() {
 </template>
 
 <style scoped>
-.wb-column {
+.uie-column {
   position: absolute;
   min-height: 0;
   overflow: hidden;
   transition: left 0.25s cubic-bezier(0.2, 0, 0, 1), width 0.25s cubic-bezier(0.2, 0, 0, 1);
 }
 
-.wb-column.is-resizing {
+.uie-column.is-resizing {
   transition: none !important;
 }
 
@@ -378,19 +377,19 @@ function onDividerUp() {
    (raised above the other columns) so the composer keeps its comfortable width.
    The float stack inside already carries the panel border/shadow; a leftward
    drop shadow makes the overlap read as stacked windows. */
-.wb-column--overlay {
+.uie-column--overlay {
   z-index: 20;
 }
 
-.wb-column--overlay .wb-stack {
+.uie-column--overlay .uie-stack {
   box-shadow: -8px 0 16px -12px rgba(0, 0, 0, 0.4), var(--shadow-card-subtle);
 }
 
 /* Collapsed feature panel rail: carries the same island material as the stack
    it replaces (rounded, bordered, shadowed). Buttons use the shared
-   .float-panel-* rules from styles.css. Vertical scrolling lets the icon rail
+   shared UIE rail rules. Vertical scrolling lets the icon rail
    grow past the rail height when many tabs are open. */
-.wb-column-rail {
+.uie-column-rail {
   width: 100%;
   height: 100%;
   background: var(--surface-section);
@@ -400,15 +399,15 @@ function onDividerUp() {
   overflow-y: auto;
 }
 
-.wb-column-resizer-right {
+.uie-column-resizer-right {
   right: -4px;
 }
 
-.wb-column-resizer-left {
+.uie-column-resizer-left {
   left: -4px;
 }
 
-.wb-column-resizer {
+.uie-column-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -421,7 +420,7 @@ function onDividerUp() {
 /* Small translucent pill handle, vertically centered on the column edge.
    Hidden by default; fades in on hover/active. The 8px full-height hit
    area stays (pointerdown + cursor) — only the visual is a tiny pill. */
-.wb-column-resizer::after {
+.uie-column-resizer::after {
   content: '';
   position: absolute;
   top: 50%;
@@ -434,22 +433,22 @@ function onDividerUp() {
   transition: opacity 0.15s ease;
 }
 
-.wb-column-resizer-right::after {
+.uie-column-resizer-right::after {
   /* Right edge extends 4px outside the column and is clipped by
      overflow:hidden, so the pill anchors fully inside the column. */
   left: 1px;
 }
 
-.wb-column-resizer-left::after {
+.uie-column-resizer-left::after {
   right: 1px;
 }
 
-.wb-column-resizer:hover::after,
-.wb-column-resizer:active::after {
+.uie-column-resizer:hover::after,
+.uie-column-resizer:active::after {
   opacity: 0.45;
 }
 
-.wb-split-divider {
+.uie-split-divider {
   position: absolute;
   left: 0;
   right: 0;
@@ -462,7 +461,7 @@ function onDividerUp() {
 
 /* Horizontal pill handle, centered on the split line. Same style as the
    column-edge pill so both dividers read consistently. */
-.wb-split-divider::after {
+.uie-split-divider::after {
   content: '';
   position: absolute;
   left: 50%;
@@ -476,8 +475,8 @@ function onDividerUp() {
   transition: opacity 0.15s ease;
 }
 
-.wb-split-divider:hover::after,
-.wb-split-divider:active::after {
+.uie-split-divider:hover::after,
+.uie-split-divider:active::after {
   opacity: 0.45;
 }
 </style>
