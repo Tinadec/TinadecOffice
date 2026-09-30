@@ -347,4 +347,67 @@ public sealed class AutoApprovePolicyTests
 
         Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
     }
+
+    // ── Delegated approval modes (delegate-*) ───────────────────────────────────
+
+    /// <summary>
+    /// A delegated run hands the approval click to its gates, so the PDP releases a delegable
+    /// mutating claim to the approval layer the way auto-approve does — the gate, not this
+    /// resource decision, is where the call is judged. The lease is scoped and single-use.
+    /// </summary>
+    [Theory]
+    [InlineData("delegate-conversation")]
+    [InlineData("delegate-reviewer")]
+    [InlineData("delegate-both")]
+    public async Task MutatingClaim_InADelegatedMode_IsReleasedToTheApprovalLayer(string mode)
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), $"delegated-{mode}", "write_file", action: "mutate", permissionMode: mode));
+
+        Assert.Equal(PermissionRequestStatuses.Granted, resolution.Request.Status);
+        Assert.Equal("delegated_gate_release", resolution.Decision.ReasonCode);
+        Assert.NotNull(resolution.Lease);
+        Assert.Equal(1, resolution.Lease!.MaxUses);
+    }
+
+    /// <summary>
+    /// Delegation never reaches what always stays with the person: a human-only tool, a Core
+    /// virtual tool whose approval is its whole safety net, or a risk above the delegable ceiling
+    /// parks for the human exactly as in ask.
+    /// </summary>
+    [Theory]
+    [InlineData("shell", "high")]
+    [InlineData("git_push", "high")]
+    [InlineData("workspace_delete", "low")]
+    [InlineData("create_workspace", "low")]
+    [InlineData("write_file", "critical")]
+    [InlineData("git_commit", "high")]
+    public async Task DelegatedMode_KeepsHumanOnlyToolsAndCriticalRisksWithThePerson(string toolId, string risk)
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), $"delegated-human-{toolId}-{risk}", toolId, action: "mutate", permissionMode: "delegate-both") with { Risk = risk });
+
+        Assert.Equal(PermissionRequestStatuses.AwaitingUser, resolution.Request.Status);
+        Assert.Equal("user_approval_required", resolution.Decision.ReasonCode);
+    }
+
+    /// <summary>A read in a delegated mode releases as it does in ask: delegation only moves the mutating click.</summary>
+    [Fact]
+    public async Task ReadClaim_InADelegatedMode_ReleasesAsInAsk()
+    {
+        await using var harness = await GovernanceHarness.CreateAsync();
+        AllowEverything(harness);
+
+        var resolution = await harness.Service.RequestPermissionAsync(
+            ToolRequest(Guid.NewGuid(), "delegated-read", "read_file", action: "read", permissionMode: "delegate-reviewer"));
+
+        Assert.Equal(PermissionRequestStatuses.Granted, resolution.Request.Status);
+        Assert.Equal("read_only_auto_release", resolution.Decision.ReasonCode);
+    }
 }

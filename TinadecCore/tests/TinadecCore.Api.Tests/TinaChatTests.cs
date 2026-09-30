@@ -934,6 +934,25 @@ public sealed class TinaChatTests : IAsyncLifetime
         public async Task<ChatResponse> GetResponseAsync(IEnumerable<ModelMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             var list = messages.ToArray();
+            return await InterceptAsync(list, options, cancellationToken) ?? await _inner.GetResponseAsync(list, options, cancellationToken);
+        }
+
+        // Run agents stream their output (ModelOutputStream), so the streaming path is recorded and
+        // gated exactly like the plain one; otherwise the planner gate would never be reached.
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ModelMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var list = messages.ToArray();
+            if (await InterceptAsync(list, options, cancellationToken) is { } canned)
+            {
+                foreach (var update in canned.ToChatResponseUpdates()) yield return update;
+                yield break;
+            }
+            await foreach (var update in _inner.GetStreamingResponseAsync(list, options, cancellationToken)) yield return update;
+        }
+
+        private async Task<ChatResponse?> InterceptAsync(ModelMessage[] list, ChatOptions? options, CancellationToken cancellationToken)
+        {
             Calls.Enqueue(new ModelCall(options?.Instructions ?? "", string.Join("\n", list.Select(x => x.Text)), options?.Tools?.Select(x => x.Name).ToArray() ?? []));
             if (options?.Instructions?.Contains("understanding a user's intent", StringComparison.Ordinal) == true)
             {
@@ -945,9 +964,7 @@ public sealed class TinaChatTests : IAsyncLifetime
                 PlannerStarted?.TrySetResult();
                 await gate.Task.WaitAsync(cancellationToken);
             }
-            return await _inner.GetResponseAsync(list, options, cancellationToken);
+            return null;
         }
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ModelMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-            _inner.GetStreamingResponseAsync(messages, options, cancellationToken);
     }
 }

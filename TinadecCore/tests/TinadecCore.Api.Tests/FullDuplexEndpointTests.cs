@@ -22,7 +22,7 @@ namespace TinadecCore.Api.Tests;
 /// pipeline through HTTP: admission, background execution, supervision loop, streaming
 /// chunks, run control, mode catalogs, context versions, lineage, and candidate review.
 /// </summary>
-public sealed class FullDuplexEndpointTests : IAsyncLifetime
+public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
 {
     private const string TestAgentPackId = "tinadec.tests.runtime-agent-pack";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "tinadec-fullduplex-api-tests", Guid.NewGuid().ToString("N"));
@@ -1491,8 +1491,10 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "a" });
-        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "b" });
+        // Two runs side by side is what parallel means; queued (the default) would make whichever
+        // request lands second wait behind the first, so both ask for parallel.
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "a", dispatch_mode = "parallel" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "b", dispatch_mode = "parallel" });
         var ackA = await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var ackB = await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.NotEqual(RunIdOf(ackA), RunIdOf(ackB));
@@ -1688,8 +1690,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
         var client = factory.CreateClient();
         var sessionId = await CreateSessionAsync(client);
 
-        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "drain-a" });
-        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "drain-b" });
+        var runA = StartStreamingInvoke(client, sessionId, new { content = "任务A", client_message_id = "drain-a", dispatch_mode = "parallel" });
+        var runB = StartStreamingInvoke(client, sessionId, new { content = "任务B", client_message_id = "drain-b", dispatch_mode = "parallel" });
         await runA.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         await runB.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
         var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -2376,6 +2378,8 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             get { lock (_laneGate) return _gatePrompts.ToArray(); }
         }
         public Task? BeforeMeeting;
+        /// <summary>Awaited at the start of every model call with (instructions, prompt): how a test holds one run's step while another proceeds.</summary>
+        public Func<string, string, Task>? BeforeCall;
         public Task? BeforePlanner;
         public Task? BeforeWorker;
         public TaskCompletionSource? WorkerStarted;
@@ -2456,6 +2460,7 @@ public sealed class FullDuplexEndpointTests : IAsyncLifetime
             var prompt = string.Join('\n', messages.Select(m => m.Text));
             var instructions = options?.Instructions;
             Record(instructions, prompt);
+            if (BeforeCall is not null) await BeforeCall(instructions ?? string.Empty, prompt).WaitAsync(cancellationToken);
             var isPlanner = instructions?.Contains("任务规划智能体", StringComparison.Ordinal) == true
                 || instructions?.Contains("规划层", StringComparison.Ordinal) == true
                 || prompt.Contains("规划", StringComparison.Ordinal) && !prompt.Contains("执行证据", StringComparison.Ordinal);

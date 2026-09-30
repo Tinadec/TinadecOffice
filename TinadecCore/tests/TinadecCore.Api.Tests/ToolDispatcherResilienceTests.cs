@@ -511,6 +511,46 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TaskDispatch_UnknownAgent_IsRefusedWithTheValidChoices()
+    {
+        // Validated at the call, while the caller can still correct it next turn - a name found to be
+        // wrong only at worker assignment would fail the sub-task after the caller believed it queued.
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-unknown-agent:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证"), new DispatchRosterEntry("global_engineering", "工程修改")],
+            "{\"agent\":\"coder\",\"title\":\"fix it\",\"description\":\"fix\"}");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("'coder' is not a dispatchable executor", result.Message);
+        Assert.Contains("search — 只读检索与取证", result.Message);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        Assert.Empty(await db.RunDirectives.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task TaskDispatch_NamedAgent_IsCanonicalizedIntoTheQueuedPayload()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-named-agent:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证")],
+            "{\"agent\":\"Search\",\"title\":\"find usages\",\"description\":\"find useUiePage\"}");
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Completed, result.Status);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        var directive = Assert.Single(await db.RunDirectives.AsNoTracking()
+            .Where(x => x.RunId == run.Id && x.Kind == "task_dispatch").ToListAsync());
+        Assert.Equal("search", JsonDocument.Parse(directive.PayloadJson).RootElement.GetProperty("agent").GetString());
+    }
+
+    [Fact]
     public async Task ResumeAsync_ProjectScope_UndeclaredCoreVirtualTool_IsStillRefused()
     {
         var live = new[] { Tool("read_file") };
@@ -539,17 +579,20 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             IReadOnlyList<ToolManifestEntryDto> live,
             IReadOnlyList<ToolManifestEntryDto> declaredVirtual,
             ConfigurableToolProvider provider,
-            string toolCallKey)
+            string toolCallKey,
+            IReadOnlyList<DispatchRosterEntry>? dispatchRoster = null,
+            string parameters = "{\"title\":\"check the fixtures\"}")
     {
         var (projectId, sessionId) = await CreateProjectAndSessionAsync("disp-" + Guid.NewGuid().ToString("N")[..6]);
         var run = await InsertRunAsync(sessionId, "executing");
         var taskId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var dispatcher = CreateDispatcher(provider,
-            ScopeFor([.. live, .. declaredVirtual], run, projectId, sessionId, taskId, agentId, liveManifest: live));
+            ScopeFor([.. live, .. declaredVirtual], run, projectId, sessionId, taskId, agentId, liveManifest: live)
+                with { DispatchRoster = dispatchRoster });
         var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
             toolCallKey, CoreTaskDispatchTool.ToolId, risk: "low", mutatesWorkspace: false, requiresApproval: false,
-            "{\"title\":\"check the fixtures\"}");
+            parameters);
         return (dispatcher, projectId, sessionId, run, execution);
     }
 
@@ -831,6 +874,9 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
 
         public Task<PreAuthorizationMintResult?> TryMintPreAuthorizedApprovalAsync(Guid executionId, CancellationToken cancellationToken = default) =>
             inner.TryMintPreAuthorizedApprovalAsync(executionId, cancellationToken);
+
+        public Task<PreAuthorizationMintResult?> MintApprovalFromRuleAsync(Guid executionId, Guid ruleId, CancellationToken cancellationToken = default) =>
+            inner.MintApprovalFromRuleAsync(executionId, ruleId, cancellationToken);
 
         public Task<bool> TryConsumeApprovalAsync(Guid approvalId, string executionId, string expectedRequestHash, CancellationToken cancellationToken = default) =>
             inner.TryConsumeApprovalAsync(approvalId, executionId, expectedRequestHash, cancellationToken);

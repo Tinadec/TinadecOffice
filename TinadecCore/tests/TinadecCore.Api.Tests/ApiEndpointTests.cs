@@ -86,9 +86,10 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
 
         // modules include the explicit Governance policy-decision module.
         Assert.True(root.TryGetProperty("modules", out var modules));
-        Assert.Equal(14, modules.GetArrayLength());
+        Assert.Equal(15, modules.GetArrayLength());
         Assert.Contains(modules.EnumerateArray(), module => module.GetProperty("module_id").GetString() == "tina_chat");
         Assert.Contains(modules.EnumerateArray(), module => module.GetProperty("module_id").GetString() == "governance");
+        Assert.Contains(modules.EnumerateArray(), module => module.GetProperty("module_id").GetString() == "agent_graph");
 
         // design_notes
         Assert.True(root.TryGetProperty("design_notes", out _));
@@ -167,7 +168,7 @@ public sealed class ApiEndpointTests : IClassFixture<ApiEndpointFactory>
         await using var manifestStream = await manifestResponse.Content.ReadAsStreamAsync();
         using var manifestDoc = await JsonDocument.ParseAsync(manifestStream);
         var modules = manifestDoc.RootElement.GetProperty("modules").EnumerateArray().ToList();
-        Assert.Equal(14, modules.Count);
+        Assert.Equal(15, modules.Count);
         Assert.All(modules, m =>
         {
             Assert.True(m.TryGetProperty("registration_status", out var state));

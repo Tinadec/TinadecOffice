@@ -25,6 +25,26 @@ public sealed class ApprovalEvidenceProjectorTests
         Assert.Contains("\"timeout_ms\":60000", evidence.Arguments);
     }
 
+    /// <summary>
+    /// A delegated approval gate judges the call itself, so the body stays readable — but a
+    /// secret-keyed value is replaced at any depth, and text is not escaped away from the model.
+    /// </summary>
+    [Fact]
+    public void RedactSecrets_KeepsTheBodyForAGate_ButNeverATokenAtAnyDepth()
+    {
+        var redacted = ApprovalEvidenceProjector.RedactSecrets(
+            """{"filepath":"docs/说明.md","content":"第一行","token":"sk-live-1","headers":{"authorization":"Bearer x","accept":"json"},"items":[{"password":"p"}]}""");
+
+        Assert.Contains("\"content\":\"第一行\"", redacted, StringComparison.Ordinal);
+        Assert.Contains("docs/说明.md", redacted, StringComparison.Ordinal);
+        Assert.Contains("\"accept\":\"json\"", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-live-1", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("Bearer x", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"p\"", redacted, StringComparison.Ordinal);
+        Assert.Equal(3, redacted.Split("[redacted]").Length - 1);
+        Assert.StartsWith("{\"[unparsed parameters]\"", ApprovalEvidenceProjector.RedactSecrets("not json"), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void WriteFileCallNamesThePath_ButNeverCarriesTheBody()
     {

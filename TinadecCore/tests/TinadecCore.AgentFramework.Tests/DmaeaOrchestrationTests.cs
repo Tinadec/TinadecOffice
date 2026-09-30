@@ -108,10 +108,10 @@ public sealed class DmaeaOrchestrationTests
 
         Assert.NotNull(client.LastInstructions);
         Assert.Contains("frozen-prompt:task_planner", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("Frozen specialist roster", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"slug\":\"worker.code\"", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"tool.code\"", client.LastInstructions, StringComparison.Ordinal);
-        Assert.Contains("\"write_file\"", client.LastInstructions, StringComparison.Ordinal);
+        // One responsibility line per executor; the planner names it in `assignee`.
+        Assert.Contains("可派发执行者（assignee 取值", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("- worker.code: task_executor | 工具: read_file, write_file | 能力: tool.code, tool.file", client.LastInstructions, StringComparison.Ordinal);
+        Assert.Contains("每个任务必须用 assignee 指定执行者", client.LastInstructions, StringComparison.Ordinal);
     }
 
     [Fact]
