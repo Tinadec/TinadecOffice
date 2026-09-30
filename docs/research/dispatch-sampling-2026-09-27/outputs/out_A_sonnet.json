@@ -1,0 +1,258 @@
+{
+  "answers": [
+    {
+      "scenario": 1,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "查找仓库中所有引用 useUiePage 的位置并说明用途",
+            "description": "在整个仓库中搜索 useUiePage 的所有引用（组件、路由入口、测试等），对每处引用简要说明其用途和上下文。",
+            "success_criteria": [
+              "列出 useUiePage 所有引用文件及行号",
+              "每处引用附带一句话用途说明"
+            ],
+            "required_tools": ["file_search", "read_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 2,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "翻译 ensureProductionUie 的英文注释为中文",
+            "description": "打开 apps/desktop/src/lib/uiEngine.ts，定位 ensureProductionUie 函数的英文注释，将其翻译为准确的中文注释并写回文件，保持代码逻辑不变。",
+            "success_criteria": [
+              "apps/desktop/src/lib/uiEngine.ts 中 ensureProductionUie 的注释变为中文",
+              "函数代码逻辑未被修改"
+            ],
+            "required_tools": ["read_file", "write_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 3,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "编写 showPage 使用说明文档",
+            "description": "了解 TinadecUI 中新增的 showPage API（用法、参数、适用场景），在 docs/uie-show-page.md 中写一份使用说明文档。",
+            "success_criteria": [
+              "docs/uie-show-page.md 文件存在且包含 showPage 的用法示例"
+            ],
+            "required_tools": ["file_search", "read_file", "write_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 4,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "审阅工作区未提交改动并列出潜在风险",
+            "description": "查看当前工作区未提交的 diff，逐项分析潜在风险（如破坏性变更、边界违反、遗漏测试等），输出风险列表。",
+            "success_criteria": [
+              "产出一份未提交改动的风险列表，覆盖所有变更文件"
+            ],
+            "required_tools": ["git_diff", "read_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 5,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "提交当前工作区改动",
+            "description": "检查 git status/diff，将当前所有改动以合适的提交信息提交到本地仓库。",
+            "success_criteria": [
+              "git status 显示工作区干净，改动已生成一个新提交"
+            ],
+            "required_tools": ["git_status", "git_diff", "git_commit"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "将刚才的提交推送到远程 main 分支",
+            "description": "在上一步提交完成后，将本地提交推送到远程仓库的 main 分支。",
+            "success_criteria": [
+              "远程 main 分支包含刚才的新提交"
+            ],
+            "required_tools": ["git_push", "git_log"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 6,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "抓取并总结 Vue Vapor 模式官方文档的限制",
+            "description": "读取 https://vuejs.org/guide/extras/vapor.html 页面内容，总结 Vapor 模式当前存在的限制和不支持的特性。",
+            "success_criteria": [
+              "产出 Vapor 模式限制的要点总结"
+            ],
+            "required_tools": ["web_fetch"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 7,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "运行 desktop 单元测试并收集失败用例",
+            "description": "执行 desktop 的单元测试命令（如 npm run test -w @tinadec/desktop），记录所有失败的测试用例及报错信息。",
+            "success_criteria": [
+              "得到完整的测试运行日志，标明哪些用例失败及失败原因"
+            ],
+            "required_tools": ["shell"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "修复上一步失败的单元测试用例",
+            "description": "根据上一步收集到的失败用例信息，定位并修改相关源码/测试代码，使测试全部通过，再次运行测试确认。",
+            "success_criteria": [
+              "desktop 单元测试全部通过"
+            ],
+            "required_tools": ["read_file", "write_file", "shell"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 8,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "查询最近 5 次提交的改动内容",
+            "description": "使用 git log 获取最近 5 次提交，并对每次提交查看具体改了哪些文件/内容。",
+            "success_criteria": [
+              "列出最近 5 次提交的 hash、说明及各自改动摘要"
+            ],
+            "required_tools": ["git_log", "git_diff"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 9,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "统计 styles.css 中 !important 剩余数量",
+            "description": "读取 apps/desktop/src/styles.css，统计文件中 !important 出现的次数并列出所在位置。",
+            "success_criteria": [
+              "给出 !important 出现的准确计数及对应行号列表"
+            ],
+            "required_tools": ["file_search", "read_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "把 README.md 中端口号 48730 改为 48740",
+            "description": "在 README.md 中查找所有 48730 端口号引用，替换为 48740。",
+            "success_criteria": [
+              "README.md 中不再出现 48730，且对应位置显示为 48740"
+            ],
+            "required_tools": ["read_file", "write_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 10,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "补齐 i18n 中缺失的 key",
+            "description": "检查项目 i18n 语言文件，找出缺失的翻译 key 并补齐对应内容。",
+            "success_criteria": [
+              "i18n 文件中不再缺少任何语言的 key（各语言 key 集合一致）"
+            ],
+            "required_tools": ["file_search", "read_file", "write_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "提交补齐 i18n key 的改动",
+            "description": "在上一步补齐 i18n key 后，将该改动提交到本地仓库。",
+            "success_criteria": [
+              "git 提交历史中出现一条记录本次 i18n 补齐的新提交"
+            ],
+            "required_tools": ["git_status", "git_diff", "git_commit"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 11,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "对当前分支相对 main 的 diff 做安全审查",
+            "description": "对比当前分支与 main 分支的差异，从安全角度审查（如敏感信息泄露、权限控制、审批门是否被绕过等）并给出结论。",
+            "success_criteria": [
+              "产出安全审查报告，列出发现的问题或确认无风险"
+            ],
+            "required_tools": ["git_diff", "read_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 12,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "title": "更新 CHANGELOG.md 记录本次 UIE 重构",
+            "description": "了解本次 UIE（TinadecUI Engine）重构涉及的主要改动，在 CHANGELOG.md 中新增一条记录说明。",
+            "success_criteria": [
+              "CHANGELOG.md 中新增一条描述本次 UIE 重构的条目"
+            ],
+            "required_tools": ["file_search", "read_file", "write_file"],
+            "required_capabilities": ["task.dispatch"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -669,6 +669,26 @@ flowchart TD
 - 风险上限与 human-only 清单是静态全局配置，不随租户/工作区差异化；预算按 run 内次数计数，不是成本度量。
 - **M8 诚实缺口（2026-09-03）**：① 真实模型（非 scripted）全链路 live smoke 未做——E2E（`UnattendedLaneEndToEndTests` 三用例）用 scripted 模型驱动真实 TinadecTools 子进程与真实临时 git 仓验证治理链路，真实模型实跑需配 API key 另行 smoke；② RiskRank 取保守路径：共享规则对 `elevated` 按不可识别处理（永不自动批准），权限请求通路的 RiskRank 保持原样（零行为变化）——方案中"统一采用工具审批链版本"未做，两套预算（Governance 权限路 vs Lifecycle 工具路）各自独立、不跨库共享为刻意决策；③ `AutoApproveOptions.HumanOnlyTools` 含 `command_run` 而实际命令工具 id 是 `shell`——该清单项因此永不命中（语义未改，仅记录观察）；④ 默认 `AutoApproveRiskMax=medium` 不放行 high 风险变更工具（shell/git_commit），无人值守提交必须显式抬升到 high（E2E 已验证必须显式配置）。
 
+### 10.6 委托审批门（2026-09-29）
+
+用户可按消息把"点审批"这一下交给智能体：权限模式 `delegate-conversation`（对话身份结合用户目标决定）、`delegate-reviewer`（审查员在独立上下文决定）、`delegate-both`（先审查员、后对话身份，二者都批才执行，任一驳回即拒）。这是 §10.3 委托包络在"对话身份 / 审查员"两种受托者上的落地，但**不走** `ApprovalDelegationRecord`：PDP 禁止祖先/后代智能体互批，对话身份恰是每个执行者的祖先。
+
+**机制**：委托模式下 PDP 对可委托的写以 `delegated_gate_release` 签发限定该声明、单次的 lease，调用停在工具审批层；Core 的门服务逐门询问（每门一次独立模型调用、无工具面），全部批准后经与人点击同一条转移落库（决策行不记人类主体，`approval.decided` 标 `decided_by=delegated_gates`），并以每门一条记录留下"看了什么、依据什么、结论"。
+
+**补偿控制**
+
+1. 门只做加法：委托只替代审批点击，请求哈希、冻结清单、实例授权、一次性消费、执行窗口一条不少。
+2. 永远等人：human-only 工具（`git_push`、`shell`、`command_run`、`git_worktree_remove`、`mcp_invoke`、`web_fetch` 及 `*_delete`/`delete_*`）、Core 虚拟工具与超过委托上限（默认 `medium`）的风险在 PDP 停下，门根本不开；门服务对漏到审批层的同类也拒绝判断（同一条 `DelegatedApprovalRules`）。
+3. 不自批：执行者本人不是审查员；对话身份自己发起的调用（solo 主人自己干活）直接退回给人。
+4. 不默认放行：答不清、无路由、超时、模型报错一律退回给人；人任何时候都可以直接决定，人先决定则门的结论作废（`superseded`）。
+5. 独立上下文：审查员只看到去密钥的参数、所服务的任务与客观事实，不看对话；只有对话身份的门看到用户目标。密钥键的值任意深度替换，不进任何门。
+6. 有界：每 run 门决定上限（默认 200），超了交还给人；门行 CAS 认领，宿主死亡后可重认领，不会双判。
+
+**残余风险**
+
+- 批准质量取决于门所用模型；门提示词尚未经真实模型评测（当前只有脚本化模型的端到端验证）。
+- 默认只委托到 `medium`（`DelegatedApprovalRiskMax`，与策略自动批准同一上限），守住"高风险要有人工检查点"：`git_commit` 这类 `high` 风险在委托模式下仍停在 PDP 等人。运营者若更信任门，可显式抬到 `high`，代价是提交类变更不再经人。
+
 ## 11. 上下文、记忆与压缩
 
 ### 11.1 上下文组成

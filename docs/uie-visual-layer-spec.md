@@ -107,12 +107,12 @@ background: var(--surface-active);   /* Focus states */
 
 ```css
 /* ❌ DO NOT USE */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: var(--bg-immersive);  /* Wrong! Breaks immersion */
 }
 
 /* ✅ CORRECT */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
@@ -129,7 +129,7 @@ background: var(--surface-active);   /* Focus states */
 ```vue
 <style scoped>
 /* Float panels (left/right columns) */
-.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive) {
+.uie-stack:not(.uie-stack--app):not(.uie-stack--immersive) {
   background: var(--surface-section);
   border: 1px solid var(--border-card);
   border-radius: 12px;
@@ -138,12 +138,12 @@ background: var(--surface-active);   /* Focus states */
 }
 
 /* Hover elevation feedback */
-.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive):hover {
+.uie-stack:not(.uie-stack--app):not(.uie-stack--immersive):hover {
   box-shadow: var(--shadow-card-hover);
 }
 
 /* Connected app (market/code/debug) - no visual separation needed */
-.wb-stack--app {
+.uie-stack--app {
   background: var(--bg-primary);
   border: none;
   border-radius: 0;
@@ -151,7 +151,7 @@ background: var(--surface-active);   /* Focus states */
 }
 
 /* Immersive center column - truly invisible */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
@@ -174,13 +174,13 @@ background: var(--surface-active);   /* Focus states */
 
 ```vue
 <style scoped>
-.wb-card-frame {
+.uie-card-frame {
   /* Island-style boundary provided by frame itself */
   border: 1px solid var(--border-card);
   border-radius: 12px;
 }
 
-.wb-card-frame--shadow {
+.uie-card-frame--shadow {
   box-shadow: var(--shadow-card-subtle);
 }
 </style>
@@ -222,12 +222,12 @@ background: var(--surface-active);   /* Focus states */
 
 ```css
 /* WRONG */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: rgba(var(--bg-secondary-rgb), 0.38);
 }
 
 /* RIGHT */
-.wb-stack--immersive {
+.uie-stack--immersive {
   background: transparent !important;
 }
 ```
@@ -236,12 +236,12 @@ background: var(--surface-active);   /* Focus states */
 
 ```css
 /* WRONG */
-.wb-stack {
+.uie-stack {
   border: none;
 }
 
 /* RIGHT */
-.wb-stack:not(.wb-stack--app):not(.wb-stack--immersive) {
+.uie-stack:not(.uie-stack--app):not(.uie-stack--immersive) {
   border: 1px solid var(--border-card);
 }
 ```
@@ -261,13 +261,13 @@ box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06),
 
 ```css
 /* WRONG */
-.wb-card-host .conversation {
+.uie-card-host .conversation {
   background: var(--surface-section);
   border: 1px solid var(--border-muted);
 }
 
 /* RIGHT */
-.wb-card-host .conversation {
+.uie-card-host .conversation {
   background: transparent !important;
   border: none !important;
   /* Parent stack owns material */

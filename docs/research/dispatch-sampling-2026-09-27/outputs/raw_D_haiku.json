@@ -1,0 +1,160 @@
+{"answers":[
+{"scenario":1,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-3f9k",
+"title":"查找所有引用 useUiePage 的位置",
+"objective":"在仓库中检索所有引用 useUiePage 的地方（源码、测试、文档均包括），逐处记录文件路径与行号，并说明每处的用途（例如路由入口、页面切换、测试用例、文档示例等）。",
+"success_criteria":[
+"给出去重的引用清单，每处包含文件路径:行号",
+"每处附带一句话说明用途",
+"标明检索方法与覆盖范围（哪些目录/文件类型已查）"
+]}
+}]},
+{"scenario":2,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-q71m",
+"title":"翻译 ensureProductionUie 的英文注释为中文",
+"objective":"文件 apps/desktop/src/lib/uiEngine.ts 中 ensureProductionUie 函数的英文注释翻译成中文。只改注释文本，不改变任何代码逻辑、不重命名符号。",
+"success_criteria":[
+"该函数相关的英文注释全部译为中文",
+"代码逻辑与符号名零改动",
+"文件仍可通过类型检查/构建"
+]}
+}]},
+{"scenario":3,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-m5ta",
+"title":"编写 showPage 使用说明文档",
+"objective":"为 TinadecUI 新增的 showPage 能力撰写使用说明，输出到 docs/uie-show-page.md。内容需覆盖：用途与适用场景、调用方式与参数、与 useUiePage 等既有路由入口的关系、最小可用示例、常见注意事项。可先读取相关源码以确认接口签名与实际行为。",
+"success_criteria":[
+"生成 docs/uie-show-page.md",
+"包含用途、参数说明、示例、注意事项四部分",
+"示例与源码实际签名一致"
+]}
+}]},
+{"scenario":4,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-8h2p",
+"title":"审阅工作区未提交改动",
+"objective":"审阅当前工作区未提交的全部改动，从正确性、回归风险、安全性与架构边界（Desktop 不直连 Core、Gateway 保持薄代理、Core 为唯一状态权威）等角度给出评审意见。",
+"success_criteria":[
+"逐项列出潜在风险，含文件路径与位置",
+"每条风险给出严重级别与简要理由",
+"对架构边界违规单独标注"
+]}
+}]},
+{"scenario":5,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-x0de",
+"title":"提交并推送当前改动到 main",
+"objective":"把当前工作区已完成的改动提交，并推送到远程 main 分支。提交信息需描述改动内容与目的。注意：如工作区存在与本次意图无关的改动，先说明再处理，不要盲目全量提交。",
+"success_criteria":[
+"改动已形成一次或多次语义清晰的提交",
+"已成功推送到远程 main",
+"返回提交 hash 与推送结果"
+]}
+}]},
+{"scenario":6,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-3f9k",
+"title":"抓取并总结 Vue Vapor 模式限制",
+"objective":"读取 https://vuejs.org/guide/extras/vapor.html ，总结 Vapor 模式当前的限制与不适用场景（如不支持的特性、编译期约束、生态兼容问题等），并记录出处链接。",
+"success_criteria":[
+"产出 Vapor 模式限制的要点清单",
+"每条限制尽量对应原文表述",
+"标注来源 URL"
+]}
+}]},
+{"scenario":7,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-q71m",
+"title":"运行 desktop 单元测试并修复失败用例",
+"objective":"运行 desktop 的单元测试（npm run test -w @tinadec/desktop），定位失败用例的根因并修复，使其全部通过。修复应针对根因，不做无意义的断言放宽或跳过测试。",
+"success_criteria":[
+"给出测试命令与修复前的失败清单",
+"失败用例全部修复且测试通过",
+"说明每处修复的根因与改动点"
+]}
+}]},
+{"scenario":8,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-3f9k",
+"title":"汇总最近 5 次提交的改动内容",
+"objective":"查看仓库最近 5 次提交，输出每次提交的 hash、作者/时间、提交信息，并概括该次提交实际改动了什么（主要文件与意图）。",
+"success_criteria":[
+"列出最近 5 次提交及各自改动摘要",
+"包含 hash 与提交信息",
+"结果与实际仓库历史一致"
+]}
+}]},
+{"scenario":9,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-3f9k",
+"title":"统计 styles.css 中剩余的 !important 数量",
+"objective":"统计 apps/desktop/src/styles.css 中还存在多少处 !important，列出每一处所在行的位置与选择器上下文。",
+"success_criteria":[
+"给出 !important 的总数",
+"给出每处的行号与所在规则"
+]}
+},
+{"tool":"task_dispatch","args":{
+"agent":"ag-q71m",
+"title":"把 README.md 中端口 48730 改为 48740",
+"objective":"将 README.md 中出现的端口号 48730 全部改为 48740。仅替换端口数字，不改动其它文本。",
+"success_criteria":[
+"README.md 中不再出现 48730",
+"改动仅限端口号，其余内容不变"
+]}
+}]},
+{"scenario":10,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-q71m",
+"title":"补齐 i18n 中缺失的 key",
+"objective":"找出 i18n 资源中缺失的 key（对照各语言文件与代码中的使用点），补齐缺失条目。补齐后运行相关检查/测试确认语言文件保持一致。",
+"success_criteria":[
+"列出补齐前缺失的 key 清单",
+"各语言文件 key 集合一致",
+"相关测试或校验通过"
+]}
+},
+{"tool":"task_dispatch","args":{
+"agent":"ag-x0de",
+"title":"提交 i18n key 补齐改动",
+"objective":"把 i18n key 补齐产生的改动提交到版本库，提交信息说明补齐了哪些 key。",
+"success_criteria":[
+"改动已提交",
+"提交信息清楚描述补齐范围",
+"返回提交 hash"
+],
+"depends_on":["补齐 i18n 中缺失的 key"]
+]}
+}]},
+{"scenario":11,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-8h2p",
+"title":"对当前分支相对 main 的 diff 做安全审查",
+"objective":"对当前分支相对 main 分支的完整 diff 做安全审查，重点检查：敏感信息泄露（密钥、token、路径）、权限与审批门是否被削弱、输入校验与错误处理的缺失、危险命令/脚本注入面、依赖与配置变更的安全影响。",
+"success_criteria":[
+"覆盖 diff 全部改动文件",
+"逐条列出安全问题/隐患，含文件与行号",
+"每条给出严重级别与修复建议"
+]}
+}]},
+{"scenario":12,"calls":[
+{"tool":"task_dispatch","args":{
+"agent":"ag-m5ta",
+"title":"更新 CHANGELOG.md 记录 UIE 重构",
+"objective":"在 CHANGELOG.md 中新增条目，记录本次 UIE 重构（布局引擎正式化为 TinadecUI/TinadecUIE、命名由 wb 改为 uie、useUiePage/showPage 路由入口等）。沿用文件既有格式与版本分段约定。",
+"success_criteria":[
+"CHANGELOG.md 新增 UIE 重构条目",
+"格式与文件既有风格一致",
+"条目内容与实际改动相符"
+]}
+}]},
+{"scenario":13,"calls":[
+{"tool":"task_followup","args":{
+"handle":"ag-3f9k#1",
+"instruction":"之前的统计不完整。请在原任务基础上，把 apps/desktop/src 目录下其它 .css 文件（不止 styles.css）也一并纳入统计，按文件分组给出每处 !important 的行号与所在规则，最后汇总总数。"
+}}
+]}
+]}

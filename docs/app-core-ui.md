@@ -196,7 +196,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - `blocked` 显示 reason code；`outcome_unknown` 进入只读恢复页面，不显示“再次执行”。
 - 同一 action 的 permission 和 action approval 可串联展示，但不能合并为一个本地 approval 对象。
 
-### 4.4 Git Changes / CommitPanel
+### 4.4 Git Changes（GitChangesView）
 
 **只读查询**：`git_status`、`git_diff`、`git_log`、branch、worktree、conflict preview 使用用户直连工具传输面。
 
@@ -216,7 +216,7 @@ Desktop 可以保存窗口布局、当前项目/会话选择、筛选条件、�
 - 所有 Git mutation 参数都包含规范化 `repository_path`。
 - `confirm_commit`、`confirm_push` 等确认值必须是 manifest schema 声明的非空字符串，不能发送布尔值。
 - `git_push` 持续显示 `non_reversible=true` 和 Core 提供的补偿建议；本地快照不能被描述为远程 push 的回滚。
-- CommitPanel 和 `useGitOperation` 不得调用 `createApproval`、`createShellApproval` 或直接调用工具写路由。
+- `GitChangesView` 和 `useGitOperation` 不得调用 `createApproval`、`createShellApproval` 或直接调用工具写路由。
 
 Git mutation 的当前参数基线如下；实际字段和确认语义仍以本次 run 冻结的 manifest 为准：
 
@@ -676,7 +676,7 @@ create action
 - [ ] 新增 recovery decision client；按 `action.id` 建立 Pinia/store 单一身份。
 - [ ] 统一 create/list/detail/poll/permission-decision/approval-decision/resume 流程。
 - [ ] 修复 PermissionRequest -> ActionApproval 两阶段刷新；处理 approval 包装响应。
-- [ ] CommitPanel、`useGitOperation`、CodeEditor、PatchPreview、FileTree、shell 全部移除生产 `createApproval` 写路径。
+- [ ] `GitChangesView`、`useGitOperation`、CodeEditor、PatchPreview、FileTree、shell 全部移除生产 `createApproval` 写路径。
 - [ ] 所有 Git mutation 使用当前 `project_id`、`repository_path`、manifest 确认字段和稳定幂等 key。
 - [ ] rebase start/continue/skip/abort 分成独立 action。
 - [ ] 实现 snapshot_required、awaiting_user、awaiting_approval、running、completed、blocked、outcome_unknown、failed 的状态组件。

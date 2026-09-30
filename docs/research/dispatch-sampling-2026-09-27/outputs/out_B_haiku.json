@@ -1,0 +1,293 @@
+{
+  "answers": [
+    {
+      "scenario": 1,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "search",
+            "title": "查找 useUiePage 的所有引用",
+            "objective": "在仓库中检索标识符 useUiePage 的全部引用位置（定义、导入、调用）。对每一处给出文件路径、行号、上下文片段，并说明该处的用途（例如：定义处导出组合式函数；UIE 页面路由入口 showPage 的调用方；测试用例等）。重点关注 apps/TinadecUI/src/ 与 apps/desktop/src/。",
+            "success_criteria": [
+              "列出 useUiePage 的每一个引用，含文件路径与行号",
+              "每处引用附一句用途说明",
+              "区分定义/导出与调用点",
+              "结论均附出处（文件与行号），无凭空推测"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 2,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "doc_writer",
+            "title": "翻译 ensureProductionUie 英文注释为中文",
+            "objective": "定位 apps/desktop/src/lib/uiEngine.ts 中 ensureProductionUie 函数（及其相关）的英文注释，将其就地改写为中文。只改注释文字，不得改动函数签名、类型标注、逻辑与任何代码行；保持原有缩进与注释风格（JSDoc 与行注释维持原格式）。",
+            "success_criteria": [
+              "ensureProductionUie 相关英文注释全部译为中文",
+              "代码逻辑与签名零改动，仅注释文本变化",
+              "术语（UIE、生产环境、页面路由等）翻译一致、可读",
+              "无遗漏的英文注释残留"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 3,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "doc_writer",
+            "title": "撰写 showPage 使用说明文档",
+            "objective": "为 TinadecUI 新增的 showPage 功能撰写使用说明，保存为 docs/uie-show-page.md。内容需涵盖：showPage 的作用与定位（UIE 页面路由入口）、基本调用方式与参数、与 useUiePage 的关系、典型使用场景、注意事项与常见误用。参考 apps/TinadecUI/src 下的实际实现，确保示例与真实 API 一致。",
+            "success_criteria": [
+              "文档写入 docs/uie-show-page.md",
+              "包含作用、基本用法、参数说明、示例代码、注意事项",
+              "示例与实际 API 签名一致，无编造参数",
+              "仅新增文档文件，不改动任何代码"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 4,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "reviewer",
+            "title": "审阅未提交改动并列出风险",
+            "objective": "审阅当前工作区所有未提交的改动（含已暂存与未暂存、新增与删除文件），给出潜在风险清单：包括但不限于逻辑缺陷、行为回归、接口/契约不兼容、被删除文件的下游引用未清理、未同步的文档与测试、以及安全与审批门相关问题。按严重程度排序，每条给出文件路径、行号范围、问题描述与建议。",
+            "success_criteria": [
+              "覆盖全部未提交改动的关键文件",
+              "风险按严重程度分级并排序",
+              "每条风险含文件路径/行号、成因与建议",
+              "明确区分确证问题与待确认疑点"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 5,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "reviewer",
+            "title": "提交前快速核对当前改动",
+            "objective": "在提交前对当前工作区改动做一次快速核对，确认是否存在明显不应提交的内容（调试残留、被误删的关键文件、临时文件、疑似密钥或敏感信息），并确认改动范围与预期一致。只给出核对结论与需要人工确认的条目清单，不做任何修改。",
+            "success_criteria": [
+              "列出疑似不应提交的内容（若有）",
+              "确认改动范围与预期是否一致",
+              "明确给出是否可提交的结论",
+              "不修改任何文件"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "git_steward",
+            "title": "提交改动并推送到远程 main",
+            "objective": "将当前工作区改动提交并推送到远程 main 分支。提交信息需概括本次改动内容（UIE 重构相关）并符合仓库既有提交风格；推送目标为远程 main。若当前不在 main 分支，先在回复中说明现状，不要执行破坏性操作（禁止 force push）。",
+            "success_criteria": [
+              "改动已提交到当前分支，提交信息准确概括改动",
+              "已推送到远程 main（或在无法直接推送时明确说明原因）",
+              "未执行 force push 等破坏性操作",
+              "回复中给出提交 hash 与推送结果"
+            ],
+            "depends_on": [
+              "提交前快速核对当前改动"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 6,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "search",
+            "title": "抓取并总结 Vue Vapor 模式限制",
+            "objective": "读取 https://vuejs.org/guide/extras/vapor.html ，总结 Vapor 模式的能力边界与限制：哪些特性不支持或不完整、与标准编译模式的差异、生态/工具链兼容性注意事项、迁移或启用时的约束。输出带出处的要点总结。",
+            "success_criteria": [
+              "准确抓取该页面内容",
+              "列出 Vapor 模式的主要限制，逐条附页面出处",
+              "区分已支持、部分支持与不支持",
+              "不臆造页面未提及的结论"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 7,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "global_engineering",
+            "title": "运行 desktop 单测并修复失败用例",
+            "objective": "运行 desktop 的单元测试（apps/desktop，npm run test -w @tinadec/desktop，若需要可用 vitest 直接跑），收集失败用例，定位根因并在不改动无关代码的前提下修复，之后重跑直至通过。修复须保持既有架构边界，不得为让测试通过而删除断言或跳过测试。",
+            "success_criteria": [
+              "已运行 desktop 单元测试并给出原始失败清单",
+              "每个失败用例定位到根因并完成修复",
+              "修复后重跑测试全部通过",
+              "未删除或跳过测试，未改动无关文件",
+              "回复中附最终测试结果摘要"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 8,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "search",
+            "title": "汇总最近 5 次提交的改动内容",
+            "objective": "查看当前分支最近 5 次提交，逐条总结每次提交改了什么：提交 hash、作者、提交信息、主要变更文件与变更意图。可用 git log 与 git diff 比对相邻提交以获得准确内容。",
+            "success_criteria": [
+              "列出最近 5 次提交，含 hash、作者与提交信息",
+              "每次提交给出主要变更文件与改动意图的简述",
+              "内容基于实际提交历史，无臆测",
+              "条数与顺序（由新到旧）正确"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 9,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "search",
+            "title": "统计 styles.css 中的 !important 数量",
+            "objective": "统计 apps/desktop/src/styles.css 中 !important 的出现处数，给出总数以及分布位置（行号与所属选择器）。只读统计，不得修改文件。",
+            "success_criteria": [
+              "给出 !important 的准确总处数",
+              "列出每处所在行号与所处规则的选择器",
+              "统计方法可复现（可说明所用命令）",
+              "未修改任何文件"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "global_engineering",
+            "title": "将 README 中端口 48730 改为 48740",
+            "objective": "在 README.md 中把端口号 48730 修改为 48740。注意：只改 README.md 中表示该端口的数字，若同文件中存在其它无关的 48730（如注释说明或历史记录）需先判断是否同属该端口再决定，无法确定时保留并在回复中列出。只改这一处语义相关的端口，不动其它内容。",
+            "success_criteria": [
+              "README.md 中该端口的 48730 已改为 48740",
+              "除端口号外无其它内容改动",
+              "对存在歧义的 48730 处给出说明而非擅自更改",
+              "回复中给出改动行号"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 10,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "global_engineering",
+            "title": "补齐 i18n 缺失的 key",
+            "objective": "定位项目 i18n 资源（如 apps/desktop/src 下的 locales / i18n 目录及相关 TS/JSON 语言包），找出缺失的 key（某语言有而其它语言缺失，或代码中引用但语言包中不存在），补齐翻译。保持各语言文件 key 结构一致，键序稳定，不做无关重排；不得改动业务代码逻辑。",
+            "success_criteria": [
+              "列出检测到的缺失 key 清单（含语言与文件）",
+              "所有缺失 key 已补齐，各语言文件结构对齐",
+              "未引入与现有风格不符的翻译或占位文本",
+              "除 i18n 资源外无其它文件改动"
+            ]
+          }
+        },
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "git_steward",
+            "title": "提交 i18n 补齐改动",
+            "objective": "把本次 i18n 缺失 key 补齐的改动提交到当前分支。提交信息需说明补齐 i18n key；只提交本次 i18n 相关文件，不要把工作区中其它无关改动一并提交。不执行推送。",
+            "success_criteria": [
+              "仅 i18n 相关文件被提交，无无关改动混入",
+              "提交信息准确描述本次改动",
+              "未执行推送或分支变更",
+              "回复中给出提交 hash 与所包含文件清单"
+            ],
+            "depends_on": [
+              "补齐 i18n 缺失的 key"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 11,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "reviewer",
+            "title": "对当前分支相对 main 的 diff 做安全审查",
+            "objective": "获取当前分支相对 main 的完整 diff，做一次安全审查：关注敏感信息泄露（密钥、令牌、凭据、内网地址）、注入类风险（命令拼接、路径穿越、XSS/模板注入）、权限与审批门是否被绕过或削弱、依赖与配置的安全隐患、以及错误处理缺失导致的信息外泄。按严重程度分级，每条给出文件路径、行号、证据与修复建议。",
+            "success_criteria": [
+              "覆盖当前分支相对 main 的全部改动文件",
+              "按严重程度分级列出安全问题，每条含证据与建议",
+              "明确标注高危项的触发条件与影响",
+              "无证据的猜测单独列为待确认项"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 12,
+      "calls": [
+        {
+          "tool": "task_dispatch",
+          "args": {
+            "agent": "doc_writer",
+            "title": "更新 CHANGELOG 记录 UIE 重构",
+            "objective": "更新 CHANGELOG.md，记录本次 UIE（TinadecUI Engine）重构。参考仓库现有 CHANGELOG 的格式与版本组织方式，在合适位置新增条目，内容包括重构要点（布局引擎正式化、命名与入口变化、持久化与撤销栈相关改动等）与影响范围。不改动代码。",
+            "success_criteria": [
+              "CHANGELOG.md 中新增本次 UIE 重构条目",
+              "格式与既有 CHANGELOG 风格一致",
+              "要点准确，与本次实际改动相符",
+              "仅改动 CHANGELOG.md"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario": 13,
+      "calls": [
+        {
+          "tool": "task_followup",
+          "args": {
+            "handle": "search#1",
+            "instruction": "上一轮只统计了 apps/desktop/src/styles.css。请继续沿用当前上下文，扩展统计范围：把 apps/desktop/src 目录下所有 .css 文件都纳入，逐个文件统计 !important 的出现处数并给出行号与所属选择器，最后汇总各文件数量与总计。仍为只读，不得修改任何文件。"
+          }
+        }
+      ]
+    }
+  ]
+}

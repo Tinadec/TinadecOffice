@@ -226,28 +226,28 @@ The Desktop main window is rendered by **TinadecUI** (in `apps/TinadecUI`), spli
 
 ### Material integration
 
-- Material is applied on the **stable stack root** (`UieStack`), which binds `data-panel-effect` + `--surface-section`/`--bg-primary` — the same contract as the legacy `.float-panel`. Legacy page components embedded as card content are neutralized to fill their card frame (see `apps/TinadecUI/src/components/uie-card-fill.css`).
+- Material is applied on the **stable stack root** (`UieStack`), which binds `data-panel-effect` + `--surface-section`/`--bg-primary` — and card content (e.g. `.sidebar` in `AppSidebar`, `.conversation` in `ChatPanel`) is plain normal-flow content that fills its card — it carries no position, border, shadow or background of its own.
 - `App.vue` no longer wraps the main `RouterView` in a `mode="out-in"` transition: the engine owns the layout, and a transition wrapper would unload the page host on route change, breaking `backdrop-filter` and hitting removed-node patches.
 
 ### Route semantics
 
-- The router keeps all existing hash paths (`/`, `/settings`, `/agent-center` → redirect, `/market`, `/debug-studio`, `/code-editor`, `/workbench`, `/governance`, `/snapshots`, `/recovery/:actionId`, `/library`, `/panel`, `/pet`). `/governance`, `/snapshots`, `/recovery/:actionId`, `/code-editor` and `/library` currently have no in-app navigation entry. The main window renders `UieShell` for the home page; other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
+- The router keeps all existing hash paths (`/`, `/settings`, `/agent-center` → redirect, `/market`, `/debug-studio`, `/code-editor`, `/workbench`, `/governance`, `/snapshots`, `/recovery/:actionId`, `/library`, `/panel`, `/pet`). `/governance`, `/snapshots`, `/recovery/:actionId`, `/code-editor` and `/library` currently have no in-app navigation entry. UIE routes (`/` home, `/chatroom`, `/market`) enter through `useUiePage(pageId)` (`apps/desktop/src/lib/uiEngine.ts`), which initializes the single UIE store and calls `showPage(pageId)` on mount — restoring that page's persisted layout, else its preset. Routes must never call `applyPreset` (a layout reset) on navigation. Other pages keep their page-level layouts. Pet / detached-panel / debug-studio windows remain separate renderer windows.
 
 ### Page transition animations
 
-Spatial route transitions are **declarative and CSS-class driven** — page code never manipulates engine nodes (`.wb-column`) via DOM queries or inline styles, so TinadecUIE remains the single layout authority.
+Spatial route transitions are **declarative and CSS-class driven** — page code never manipulates engine nodes (`.uie-column`) via DOM queries or inline styles, so TinadecUIE remains the single layout authority.
 
-- **Home exit**: `HomePage.vue` wraps the shell in a classic `<Transition name="home-up-exit">` around a plain div (never the Vapor `UieShell` root — classic-around-Vapor leave paths crash the interop unmount, see `VaporExemptions.ts`). `onBeforeRouteLeave` flips a `visible` flag and defers navigation ~300 ms; `page-transitions.css` animates `.wb-column` `transform`/`opacity` only (the engine's `patchStyle` diff owns `left/top/width/height` and never touches these).
-- **Home entry**: the same Transition's enter classes rise the columns from below with stagger when returning.
+- **Home exit**: `HomePage.vue` wraps the shell in a classic plain div (never the Vapor `UieShell` root — classic-around-Vapor leave paths crash the interop unmount, see `VaporExemptions.ts`). `onBeforeRouteLeave` toggles `.home-exiting` on it and defers navigation ~300 ms; `page-transitions.css` keyframes animate `.uie-column` `transform`/`opacity` only (the engine's `patchStyle` diff owns `left/top/width/height` and never touches these).
+- **Home entry**: `.home-entering` rises the columns from below with stagger on mount (initial load and when returning).
 - **Settings entry/exit**: `settings.css` keyframes (`settings-nav-enter`/`settings-content-enter` and `settings-nav-exit`/`settings-content-exit`) drive both directions. Exit toggles a `.settings-exiting` class on the page root from `onBeforeRouteLeave` — no `document.querySelector`, no inline styles, no `animation: 'none'` detachment hack.
 - All spatial animations are neutralized under `prefers-reduced-motion` in both `page-transitions.css` and `settings.css`.
 
 ### Persistence
 
-- Layouts persist to `userData/workbench-layout.json` via `electron/layoutStore.cjs` (atomic temp+rename) with IPC `tinadec:layout-load` / `tinadec:layout-save`.
+- Layouts persist to `userData/uie-layout.json` via `electron/layoutStore.cjs` (atomic temp+rename) with IPC `tinadec:layout-load` / `tinadec:layout-save`.
+- **Per-project layouts**: the selected project (`homeController.selectedProjectId`) is bound to `uie.setActiveProjectId` in `apps/desktop/src/lib/uiEngine.ts`. Project-scoped pages (`PROJECT_SCOPED_PAGES`, currently `home`) resolve `workspace-page(project) > page > global > preset`; a project without its own layout inherits the page-wide one and forks on its first edit. Switching page/project/hydrating uses `bus.loadSnapshot` (not persisted, undo history cleared).
 - The renderer `layerStore` holds three scope layers, resolved most-specific-first: `workspace-page(projectId, pageId)` > `page(pageId)` > `global(pageId)` > built-in preset. Auto-save is debounced (400 ms) to the write scope (workspace-scoped when a project is active).
 - `repairLayout()` fixes corrupt/unknown-card/duplicate-singleton/illegal-size layouts and falls back to the built-in preset — never a blank window.
-- Legacy detached-panel records (`~/.tinadec-panel-layout.json`, `PanelType`) migrate to generic card types via `apps/TinadecUI/src/engine/persistence/migrate.ts`.
 
 ### Vapor mode
 

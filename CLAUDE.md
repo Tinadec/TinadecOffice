@@ -143,7 +143,8 @@ Before making architecture, feature, UI, or tool-layer changes, read in this ord
 For Tool-layer / Code-suite work, inspect:
 
 - `TinadecCore/Tools/CoreToolRegistry.cs` and `TinadecCore/Tools/ToolDispatcher.cs` - Core-side tool governance, approval posture, and dispatch.
-- `TinadecTools/Tools/**` - the actual tool implementations (file, git, command/shell, search, MCP); `TinadecTools/README.md` lists the manifest.
+- `TinadecTools/Tools/**` - the actual tool implementations (file, git, command/shell, search, MCP); the manifest is generated from `[ToolFunction]` attributes (every tool needs a model-facing `Description`; the generator warns `TTG001` otherwise).
+- `docs/agent-dispatch-contract.zh-CN.md` - how the coordinator dispatches sub-agents (by responsibility, fixed role ids, `<agent>#<n>` handles) and the sampling evidence behind it.
 - Gateway has no `codeTools.ts` catalog any more; `/api/v1/code/tools/*` and `/api/v1/tool-runtime/*` are stateless transport routes.
 - `apps/desktop/src/toolCatalog.ts` and `apps/desktop/src/pages/SettingsPage.vue` - Desktop presentation of Tool-layer capabilities.
 
