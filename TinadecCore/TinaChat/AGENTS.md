@@ -1,17 +1,19 @@
 # TinaChat 模块约定
 
-**Last Updated:** 2026-09-30
-**Last Updated By:** 会话 = 组织（成员/通讯录/计划室/公告板/报告/唤醒泛化）+ 按身份可见性（E5）；工具面扩到 7 个 `org_*` + `graph_view` + `recall_evidence`。
-**Last Verified Commit:** f50dfb1 之后的工作树（OrganizationTests 9/9，含可见性用例）
+**Last Updated:** 2026-10-01
+**Last Updated By:** Codex 用隔离 SQLite 故障注入复查唤醒、崩溃恢复与可见性；纠正已闭环误报。
+**Last Verified Commit:** b496bec；Core API 全量 588/590，失败两条单独复跑通过；复查探针确认来源丢失、孤儿 running 不恢复和拓扑租约越界。完整报告见 ../../docs/agent-graph/review-2026-10-01.zh-CN.md（仓库根 docs 下）。
 **Branch:** Everything-changed
 
 ## 位置与依赖
 
-用户决定位置为 `TinadecCore/TinaChat`，覆盖此前讨论的根级独立目录方案。它是 Core 内部模块，模块 id `tina_chat`；未来独立交付为后续工作。当前 23 个 Core source project、14 个全量模块描述符。
+用户决定位置为 `TinadecCore/TinaChat`，覆盖此前讨论的根级独立目录方案。它是 Core 内部模块，模块 id `tina_chat`；未来独立交付为后续工作。当前 Core 解决方案有 24 个源码工程（含 F#）与 15 个全量模块描述符；依据 `TinadecCore.slnx` 与 ApiEndpointTests 的 composition 断言。
 
 本模块仅依赖 Abstractions/Persistence。DTO 放 Contracts，跨模块端口放 Abstractions；真实身份与运行组合放 Runtime，模型理解放 DmaEA，HTTP 放 AspNetCore。不要引用其他业务模块、MAF、Gateway 或 Desktop。
 
 ## 必须保留的规则
+
+- **当前实现欠缺（2026-10-01）**：下述可靠消费、重启重放与背压是要求，不是已完成事实。领取中来源需要持久保存，成功才 ACK；running 行要有 owner/期限/fencing；消息来源不能用 Take(32) 覆盖丢弃。默认执行者尚无自动收件箱消费，治理成员也没有完整的持久上下文和治理执行动词；`own` 图过滤尚未覆盖租约与成员内部运行信息。见仓库 `docs/agent-graph/review-2026-10-01.zh-CN.md` 与 todo N2/N3/N5/N6。
 
 - 身份由经验证的租户主体控制；请求的 actor_id、职位或名字不是凭据。同一所有者能管理自己的多个参与者，目前尚无单独的运行实例凭据。
 - 对话理解是可配置职责，不把 meeting 名字、某个全局 agent id 或管理员职责硬编码为唯一入口。
@@ -20,7 +22,7 @@
 - 意图提案记录未核实陈述、约束、假设和问题；采纳是版本化操作，blocking_questions 未解决时不能执行。
 - Core handoff session 绑定已采纳材料。普通交互、insert、历史查询、长期记忆和旧式 context patch 不得成为注入原话的旁路；恢复时重新核对绑定。
 - 不直接消费其他模块 DbContext，不绕过已有模式/包禁用检查、工具审批、运行租约与检查点。
-- 智能体工具面（`tina_chat_*` 六个 Core 虚拟工具）只是既有服务方法的另一层入口：受众、来源、保密、跨区与成员判定必须继续走同一套代码，禁止在工具里另写一份。会话发言身份由 `tina_chat_bind` 认领、每次调用重核归属；一个会话只绑一个身份。
+- 智能体工具面（`tina_chat_*` Core 虚拟工具）只是既有服务方法的另一层入口：受众、来源、保密、跨区与成员判定必须继续走同一套代码，禁止在工具里另写一份。会话发言身份由 `tina_chat_bind` 认领、每次调用重核归属；一个会话只绑一个身份。
 - 这些工具不加审批门是有意的：授权来自“模式声明 ∩ 冻结清单 ∩ 实例 grant”，副作用面只有该参与者本可发出的通信记录。若将来给工具加工作区副作用，必须先回到审批门。
 - 消息与它欠下的回合必须同事务落盘（`tina_chat_wakes`）；同一 (会话, 参与者, 原因) 未完成前只留一条待办并合并来源。不得用内存队列或 fire-and-forget 任务替代，冷却只推迟回合、绝不丢弃。
 - 意图简报不再唤醒整理者，发送者不唤醒自己：这两条是防两个整理者互相作答的回路闸，移除前必须另设替代熔断。

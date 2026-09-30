@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-01
-**Last Updated By:** Codex 亲自复查；修复种子包测试对可选 bindings 的直接读取，并显式断言对话绑定存在。
-**Last Verified Commit:** f67ce4f + 本次测试修复；Desktop 801 passed / 14 skipped / 0 failed（maxWorkers=2），GraphSeedPack 9/9，Electron node:test 31/31，`vue-tsc` 与 Vite build 通过，`check:drift` 零漂移。本轮没有真实 Electron/模型走查或重新打包验收。
+**Last Updated By:** Codex 亲自复查；测试修复已提交 b496bec，图工程验收缺口与测试矩阵落盘。
+**Last Verified Commit:** b496bec；Desktop 801 passed / 14 skipped / 0 failed（maxWorkers=2），GraphSeedPack 9/9，Electron node:test 31/31，`vue-tsc` 与 Vite build 通过，`check:drift` 零漂移。本轮没有真实 Electron/模型走查或重新打包验收。
 **Branch:** Everything-changed
 
 ## OVERVIEW
