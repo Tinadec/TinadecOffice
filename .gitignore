@@ -38,3 +38,9 @@ oc-debug.log
 /apps/desktop/.runtime-cache/
 tmp/
 .workbuddy/
+
+# Pinned ripgrep staged by scripts/setup-ripgrep.mjs (npm run setup:rg)
+native/rg/
+
+# Local logs (runtime output, security keys)
+logs/

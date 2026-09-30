@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: apps/desktop/.runtime-cache/downloads
-          key: desktop-runtime-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/stage-runtime.mjs') }}
+          key: desktop-runtime-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/stage-runtime.mjs', 'scripts/ripgrep-pin.mjs') }}
           restore-keys: |
             desktop-runtime-${{ runner.os }}-
 

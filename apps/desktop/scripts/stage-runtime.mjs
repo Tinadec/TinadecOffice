@@ -14,6 +14,12 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	RIPGREP_ASSET,
+	RIPGREP_SHA256,
+	RIPGREP_URL,
+	RIPGREP_VERSION,
+} from "../../../scripts/ripgrep-pin.mjs";
 
 for (const key of Object.keys(process.env)) {
 	if (key.toLowerCase() === "version" || key.toLowerCase() === "ice-version") {
@@ -28,10 +34,6 @@ const cacheDir = join(desktopDir, ".runtime-cache");
 const stagingDir = join(cacheDir, "runtime.staging");
 const npmCli = process.env.npm_execpath;
 const rid = "win-x64";
-const RIPGREP_VERSION = "15.2.0";
-const RIPGREP_ASSET = `ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip`;
-const RIPGREP_SHA256 =
-	"71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5";
 const PORTABLE_GIT_VERSION = "2.55.0.windows.3";
 const PORTABLE_GIT_ASSET = "PortableGit-2.55.0.3-64-bit.7z.exe";
 const PORTABLE_GIT_SHA256 =
@@ -168,7 +170,7 @@ function extractZip(archive, destination) {
 async function stageRipgrep() {
 	const archive = await downloadPinned(
 		`ripgrep ${RIPGREP_VERSION}`,
-		`https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RIPGREP_ASSET}`,
+		RIPGREP_URL,
 		RIPGREP_ASSET,
 		RIPGREP_SHA256,
 	);
