@@ -32,7 +32,7 @@ public static class InteractionsEndpoints
         return app;
     }
 
-    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, CancellationToken ct)
+    static async Task<IResult> CreateInteraction(Guid sessionId, HttpRequest req, IDbContextFactory<AgentConfigurationDbContext> cfgFactory, IDbContextFactory<LifecycleDbContext> lifecycleDbFactory, ITenantContextAccessor tenant, IAgentModelResolver modelResolver, ProjectSessionStore sessions, IConversationStore conversations, IFullDuplexRunCoordinator coordinator, IMessageAttachmentStore attachments, StorageLifecycleService lifecycle, ILifecycleManager lifecycleManager, CancellationToken ct)
     {
         var el = await JsonSerializer.DeserializeAsync<JsonElement>(req.Body, cancellationToken: ct);
         if (el.ValueKind != JsonValueKind.Object) return Results.BadRequest(new { code = "invalid_request", message = "Body must be a JSON object." });
@@ -260,10 +260,9 @@ public static class InteractionsEndpoints
 
         // A session that has said nothing yet takes the conversation identity of the mode its
         // first message is sent in. Revision 0 is the cheap pre-check (every append bumps it);
-        // the store re-checks for messages before it writes. Once anything has been said this
-        // changes nothing, and a switch to a mode held by another agent is refused at run
-        // freeze as conversation_identity_locked_mismatch.
-        if (await sessions.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false) == 0)
+        // the store re-checks for messages before it writes.
+        TinadecCore.Runtime.ConversationIdentityResolver.ConversationIdentity? resolvedIdentity = null;
+        if (modeVersionId.HasValue)
         {
             await using var cfg = await cfgFactory.CreateDbContextAsync(ct);
             var snapshotJson = await cfg.ModeVersions.AsNoTracking()
@@ -274,9 +273,21 @@ public static class InteractionsEndpoints
                 .Where(x => x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId)
                 .Select(x => new TinadecCore.Runtime.ConversationIdentityResolver.DefinitionInput(x.Id, x.Slug, x.Layer, x.CapabilitiesJson))
                 .ToListAsync(ct);
-            var identity = TinadecCore.Runtime.ConversationIdentityResolver.Resolve(snapshotJson, definitions);
-            if (identity is not null && !string.Equals(identity.TemplateSlug, session.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase))
-                await sessions.AdoptConversationIdentityIfEmptyAsync(sessionId, identity.NodeKey, identity.TemplateSlug, ct).ConfigureAwait(false);
+            resolvedIdentity = TinadecCore.Runtime.ConversationIdentityResolver.Resolve(snapshotJson, definitions);
+        }
+        var identityDiffers = resolvedIdentity is not null
+            && !string.Equals(resolvedIdentity.TemplateSlug, session.ConversationTemplateSlug, StringComparison.OrdinalIgnoreCase);
+        if (identityDiffers && await sessions.GetContextRevisionAsync(sessionId, ct).ConfigureAwait(false) == 0)
+        {
+            await sessions.AdoptConversationIdentityIfEmptyAsync(sessionId, resolvedIdentity!.NodeKey, resolvedIdentity.TemplateSlug, ct).ConfigureAwait(false);
+        }
+        // Todo E6 (one conversation identity): a session frozen on a legacy identity (an agent no
+        // mode still points at) may move to the requested mode's identity while nothing is running —
+        // an active run freezes its roster against the identity it started with, so under those the
+        // freeze gate's 409 stands on purpose.
+        else if (identityDiffers && (await lifecycleManager.ListActiveRunsAsync(sessionId, ct).ConfigureAwait(false)).Count == 0)
+        {
+            await sessions.MigrateConversationIdentityAsync(sessionId, resolvedIdentity!.NodeKey, resolvedIdentity.TemplateSlug, ct).ConfigureAwait(false);
         }
 
         // Persist the chosen mode_version onto the session so the run engine's roster resolver

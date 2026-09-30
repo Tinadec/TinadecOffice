@@ -1681,11 +1681,11 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         await InstallGraphSeedPackAsync(client);
 
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "solo project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
-        // The conversation identity (solo_master) is frozen when the session is created, so a solo
-        // session starts in solo mode rather than being switched into it.
+        // Since E6 every mode converses through the one identity (`meeting`), so a solo session
+        // starts in solo mode under exactly the conversation agent every other mode uses.
         var soloModeVersionId = await LatestPublishedModeVersionIdAsync("solo");
         var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "solo session", mode_version_id = soloModeVersionId })).Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("solo_master", session.GetProperty("conversation_template_slug").GetString());
+        Assert.Equal("meeting", session.GetProperty("conversation_template_slug").GetString());
         var sessionId = session.GetProperty("id").GetGuid();
 
         var active = StartStreamingInvoke(client, sessionId, new { content = "HomePage 被引用了几处？", client_message_id = "solo-wait-c-1" });
@@ -1926,16 +1926,14 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// A session created on the workspace default (conversation held by meeting) has said nothing
-    /// yet, so its first message may be sent in solo mode: the session adopts solo_master as its
-    /// conversation identity instead of failing the run freeze. Once a message exists the identity
-    /// is locked again, and switching to a mode held by another agent is refused with a message a
-    /// person can act on.
+    /// Todo E6 (one conversation identity): every mode converses through the same agent, so a mode
+    /// switch is strategy, never identity — a session moves Team → Solo and back without any
+    /// adoption step and without a refusal.
     /// </summary>
     [Fact]
-    public async Task EmptySession_AdoptsTheFirstMessagesModeIdentity_ThenLocksIt()
+    public async Task ModesShareOneConversationIdentity_SwitchingNeverTouchesIt()
     {
-        var workspace = Path.Combine(_root, "workspace-identity-adopt");
+        var workspace = Path.Combine(_root, "workspace-identity-shared");
         Directory.CreateDirectory(workspace);
         var script = new ToolScriptedClient()
             .WhenWorkerTurns([new TextContent("你好。")])
@@ -1944,30 +1942,107 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
         var client = _factory.CreateClient();
         await InstallGraphSeedPackAsync(client);
 
-        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "adopt project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
-        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "adopt session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "shared project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "shared session" })).Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("meeting", session.GetProperty("conversation_template_slug").GetString());
         var sessionId = session.GetProperty("id").GetGuid();
 
         using var first = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
-            new { content = "你好", client_message_id = "adopt-1", mode_version_id = await LatestPublishedModeVersionIdAsync("solo"), dispatch_mode = "queued" });
+            new { content = "你好", client_message_id = "shared-1", mode_version_id = await LatestPublishedModeVersionIdAsync("solo"), dispatch_mode = "queued" });
         Assert.True(first.IsSuccessStatusCode, $"first message in solo mode was refused: {first.StatusCode} {await first.Content.ReadAsStringAsync()}");
-        var adopted = await (await client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { })).Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("solo_master", adopted.GetProperty("conversation_template_slug").GetString());
+        var during = await (await client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("meeting", during.GetProperty("conversation_template_slug").GetString());
 
         using var second = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
-            new { content = "换个模式", client_message_id = "adopt-2", mode_version_id = await LatestPublishedModeVersionIdAsync("free_director"), dispatch_mode = "queued" });
-        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
-        var refusal = await second.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("conversation_identity_locked_mismatch", refusal.GetProperty("code").GetString());
-        Assert.Contains("新建会话", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+            new { content = "换个模式", client_message_id = "shared-2", mode_version_id = await LatestPublishedModeVersionIdAsync("free_director"), dispatch_mode = "queued" });
+        Assert.True(second.IsSuccessStatusCode, $"switching Team after Solo must not fail: {second.StatusCode} {await second.Content.ReadAsStringAsync()}");
+        var after = await (await client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { })).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("meeting", after.GetProperty("conversation_template_slug").GetString());
     }
 
     /// <summary>
-    /// Plan runs on the Solo agent with its mutating tools switched off: the master is offered
-    /// reading, planning and dispatch tools and nothing that changes the workspace, the plan
-    /// pipeline reaches the model, and because the conversation agent is the same, the session can
-    /// hand the plan over to Solo without starting a new session.
+    /// A session frozen on the legacy solo_master identity (pack &lt; 3.0) migrates to the unified
+    /// identity at admission while nothing is running; with an active run in flight the migration
+    /// must NOT happen underfoot — the freeze gate's refusal stands, because that run's roster was
+    /// frozen against the identity it started with.
+    /// </summary>
+    [Fact]
+    public async Task LegacyIdentity_MigratesWhileIdle_AndRefusesOnlyWhileARunIsActive()
+    {
+        var workspace = Path.Combine(_root, "workspace-identity-legacy");
+        Directory.CreateDirectory(Path.Combine(workspace, "docs"));
+        // Solo master answers in text for the first two runs; the third run calls write_file so
+        // the approval park makes the session busy.
+        var script = new ToolScriptedClient()
+            .WhenWorkerTurns(
+                [new TextContent("你好。")],
+                [new TextContent("方案：先读再动，不动文件。")],
+                [new FunctionCallContent("call-doc", "write_file", new Dictionary<string, object?> { ["filepath"] = "docs/a.md", ["content"] = "x" })],
+                [new TextContent("docs/a.md 已写入。")])
+            .WhenMeeting("你好。");
+        _factory = new ToolChainFactory(_root, script, new FakeToolProvider());
+        var client = _factory.CreateClient();
+        await InstallGraphSeedPackAsync(client);
+
+        var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "legacy project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
+        var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "legacy session" })).Content.ReadFromJsonAsync<JsonElement>();
+        var sessionId = session.GetProperty("id").GetGuid();
+        var memoryFactory = _factory.Services.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<TinadecCore.Memory.MemoryDbContext>>();
+        async Task FreezeSlugAsync(string slug)
+        {
+            await using var db = await memoryFactory.CreateDbContextAsync();
+            var row = await db.Sessions.SingleAsync(x => x.Id == sessionId);
+            row.ConversationNodeKey = "meeting";
+            row.ConversationTemplateSlug = slug;
+            await db.SaveChangesAsync();
+        }
+
+        // Say something first so the session has history (revision > 0); then pretend it was frozen
+        // on the legacy identity by an older pack.
+        var first = StartStreamingInvoke(client, sessionId, new { content = "你好", client_message_id = "legacy-0", mode_version_id = await LatestPublishedModeVersionIdAsync("solo"), dispatch_mode = "parallel" });
+        await first.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30));
+        await first.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+        await FreezeSlugAsync("solo_master");
+
+        // Idle: the next message migrates it once (MigrateConversationIdentityAsync) and runs.
+        using (var idle = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "看看方案", client_message_id = "legacy-1", mode_version_id = await LatestPublishedModeVersionIdAsync("plan"), dispatch_mode = "parallel" }))
+            Assert.True(idle.IsSuccessStatusCode, $"idle migration was refused: {idle.StatusCode} {await idle.Content.ReadAsStringAsync()}");
+        {
+            await using var db = await memoryFactory.CreateDbContextAsync();
+            Assert.Equal("meeting", (await db.Sessions.SingleAsync(x => x.Id == sessionId)).ConversationTemplateSlug);
+        }
+
+        // Busy: a run started normally (meeting identity) parks on its approval; only then pretend
+        // the session was frozen on the legacy identity — every later interaction must NOT migrate
+        // underfoot while that run is alive.
+        for (var poll = 0; poll < 40; poll++)
+        {
+            var runs = await client.GetFromJsonAsync<JsonElement[]>($"/api/v1/sessions/{sessionId}/runs");
+            if (runs!.All(run => run.GetProperty("status").GetString() is "completed" or "failed" or "cancelled")) break;
+            await Task.Delay(500);
+        }
+        var active = StartStreamingInvoke(client, sessionId, new { content = "写一份文档", client_message_id = "legacy-2", mode_version_id = await LatestPublishedModeVersionIdAsync("solo"), dispatch_mode = "parallel" });
+        var runId = (await active.Acknowledgement.WaitAsync(TimeSpan.FromSeconds(30))).GetProperty("run_id").GetGuid();
+        var approvalId = await WaitForPendingApprovalAsync(client, sessionId, runId, TimeSpan.FromSeconds(45));
+        await FreezeSlugAsync("solo_master");
+        using (var busy = await client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interactions",
+            new { content = "看看方案", client_message_id = "legacy-3", mode_version_id = await LatestPublishedModeVersionIdAsync("plan"), dispatch_mode = "parallel" }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
+            var refusal = await busy.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("conversation_identity_locked_mismatch", refusal.GetProperty("code").GetString());
+            Assert.Contains("新建会话", refusal.GetProperty("message").GetString(), StringComparison.Ordinal);
+        }
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/v1/approvals/{approvalId}/decision", new { decision = "approved" })).StatusCode);
+        await active.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+    }
+
+    /// <summary>
+    /// Plan runs on the unified conversation identity with its mutating tools switched off: the
+    /// master is offered reading, planning and dispatch tools and nothing that changes the
+    /// workspace, the plan pipeline reaches the model, and because every mode shares the identity
+    /// since E6, the session can hand the plan over to Solo without starting a new session.
     /// </summary>
     [Fact]
     public async Task PlanMode_OffersNoWriteTool_AndHandsOverToSoloInTheSameSession()
@@ -1992,7 +2067,7 @@ public sealed partial class ToolChainEndpointTests : IAsyncLifetime
 
         var project = await (await client.PostAsJsonAsync("/api/v1/projects", new { name = "plan project", path = workspace })).Content.ReadFromJsonAsync<JsonElement>();
         var session = await (await client.PostAsJsonAsync("/api/v1/sessions", new { project_id = project.GetProperty("id").GetGuid(), title = "plan session", mode_version_id = await LatestPublishedModeVersionIdAsync("plan") })).Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("solo_master", session.GetProperty("conversation_template_slug").GetString());
+        Assert.Equal("meeting", session.GetProperty("conversation_template_slug").GetString());
         var sessionId = session.GetProperty("id").GetGuid();
 
         var active = StartStreamingInvoke(client, sessionId, new { content = "给首页加个入口，先出方案", client_message_id = "plan-1" });

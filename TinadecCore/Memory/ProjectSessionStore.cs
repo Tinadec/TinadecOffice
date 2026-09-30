@@ -220,6 +220,39 @@ public sealed class ProjectSessionStore : ISessionLocator, IWorkspaceRootResolve
         return true;
     }
 
+    /// <summary>
+    /// Moves the session's conversation identity to another agent (todo E6): with the modes
+    /// converging on one conversation identity, a session frozen on a legacy identity may move —
+    /// but ONLY while no run is active (the caller's check): an in-flight run freezes its roster
+    /// against the identity it started with, so moving underfoot would strand it at resume.
+    /// Returns false when the session does not exist or is not active.
+    /// </summary>
+    public async Task<bool> MigrateConversationIdentityAsync(
+        Guid sessionId,
+        string conversationNodeKey,
+        string conversationTemplateSlug,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = SessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var scope = _tenantContext.Current;
+            var session = await db.Sessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.TenantId == scope.TenantId && x.WorkspaceId == scope.WorkspaceId && x.LifecycleStatus == LifecycleStatuses.Active, cancellationToken).ConfigureAwait(false);
+            if (session is null) return false;
+            session.ConversationNodeKey = conversationNodeKey;
+            session.ConversationTemplateSlug = conversationTemplateSlug;
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<SessionRecord> MigrateSessionAsync(
         Guid sessionId,
         Guid targetProjectId,

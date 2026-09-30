@@ -30,30 +30,29 @@ describe('GraphSeedPack', () => {
     ])
     expect(agents.every((agent) => Boolean(agent.system_prompt?.trim()))).toBe(true)
 
-    // The orchestrating identity declares NO tools: it coordinates and dispatches, and
-    // an empty tool_scope is also what keeps its mode on the declared-graph tiers.
+    // Todo E6 (one conversation identity): every mode converses through `meeting`, which
+    // carries the chairman tool ceiling. The modes that coordinate only switch every tool
+    // off on its binding (their tier derives from EFFECTIVE tools, never from slugs);
+    // Solo keeps the full surface and derives solo_dispatch exactly as before.
     const meeting = agents.find((agent) => agent.resource_key === 'meeting')!
     expect(meeting.layer).toBe('operation')
-    expect(meeting.tool_scope).toEqual([])
-
-    // The solo identity is the opposite by design: the operation layer MAY now hold a
-    // tool surface (the removed deny floor), and this is what makes its mode derive the
-    // solo_dispatch tier. It needs read + write + shell to do the work, `task_dispatch`
-    // to hand sub-tasks off from inside its loop, and deliberately NOT git_push — a
-    // heavier side effect the master can dispatch to global_engineering instead.
-    const soloMaster = agents.find((agent) => agent.resource_key === 'solo_master')!
-    expect(soloMaster.layer).toBe('operation')
-    expect(soloMaster.tool_scope).toContain('read_file')
-    expect(soloMaster.tool_scope).toContain('write_file')
-    expect(soloMaster.tool_scope).toContain('shell')
-    expect(soloMaster.tool_scope).toContain('task_dispatch')
-    expect(soloMaster.tool_scope).toContain('task_wait')
+    expect(meeting.tool_scope).toContain('read_file')
+    expect(meeting.tool_scope).toContain('write_file')
+    expect(meeting.tool_scope).toContain('shell')
+    expect(meeting.tool_scope).toContain('task_dispatch')
+    expect(meeting.tool_scope).toContain('task_wait')
     // A single tool loop has no planner: plan_update is where a multi-step plan lives.
-    expect(soloMaster.tool_scope).toContain('plan_update')
-    expect(soloMaster.tool_scope).not.toContain('git_push')
+    expect(meeting.tool_scope).toContain('plan_update')
+    expect(meeting.tool_scope).not.toContain('git_push')
     // A conversation identity must carry the conversation capability or admission
     // refuses the run (conversation_identity_locked_mismatch).
-    expect(soloMaster.capabilities).toContain('user.respond')
+    expect(meeting.capabilities).toContain('user.respond')
+
+    // solo_master stays published for sessions frozen on it, but no mode may still point
+    // a conversation node at it (they all converse through meeting now).
+    const soloMaster = agents.find((agent) => agent.resource_key === 'solo_master')!
+    expect(soloMaster.layer).toBe('operation')
+    expect(soloMaster.tool_scope).toEqual(meeting.tool_scope)
 
     // The engineering template carries the git tools this round added: a pack whose
     // prose promises repository work must declare them or the ceiling silently
@@ -145,11 +144,12 @@ describe('GraphSeedPack', () => {
     // solo_dispatch mirrors the free-director SHAPE on purpose: no declared edges, so
     // its sub-agents must be declared as spawnable templates (agent_types + node-less
     // bindings) rather than as nodes. Declaring them as nodes with no edge would make
-    // the edge authority deny dispatch to them.
+    // the edge authority deny dispatch to them. The conversation agent is the unified
+    // identity (todo E6); the solo tier comes from its effective tools, not its slug.
     const solo = bySlug.get('solo')!
     expect(solo.nodes).toHaveLength(1)
     expect(solo.edges).toHaveLength(0)
-    expect(solo.nodes[0].agent_ref).toBe('agent:solo_master')
+    expect(solo.nodes[0].agent_ref).toBe('agent:meeting')
 
     // Plan, Review and Spec are compositions of existing tiers, not new machinery: Plan is the
     // solo_dispatch shape with its mutating tools switched off, Review and Spec are free-form
@@ -159,15 +159,23 @@ describe('GraphSeedPack', () => {
       expect(bySlug.get(key)!.edges, `${key} edges`).toHaveLength(0)
     }
 
-    // Which agent holds the conversation decides which modes a session can move between:
-    // Core locks a session to its conversation agent once anything has been said. So the
-    // families are part of the product, not an accident of authoring. Plan shares Solo's
-    // agent so a plan can be carried out by switching to Solo in the same session; Review
-    // and Spec share the coordinator so their follow-up can happen in Team or Graph.
+    // Todo E6 (one conversation identity): EVERY mode converses through the same agent, so a
+    // session can move between any two modes; switching what the mode does is strategy, not
+    // identity. A session frozen on the legacy solo_master identity migrates at admission
+    // while nothing is running.
     const conversationAgent = (key: string) => bySlug.get(key)!.nodes.find((node) => node.config.conversation === true)!.agent_ref
-    expect(['solo', 'plan'].map(conversationAgent)).toEqual(['agent:solo_master', 'agent:solo_master'])
-    expect(['free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec'].map(conversationAgent))
-      .toEqual(Array(5).fill('agent:meeting'))
+    for (const slug of ['solo', 'plan', 'free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
+      expect(conversationAgent(slug), `${slug} conversation`).toBe('agent:meeting')
+    }
+    // The modes whose conversation must hold NO tools (their tier derives from effective
+    // tools) switch the whole chairman ceiling off; Solo and Plan opt into their own tools.
+    const conversationBinding = (key: string) => bySlug.get(key)!.bindings.find((binding) =>
+      binding.agent_ref === 'agent:meeting' && (binding.node_key ?? 'meeting') === 'meeting')!
+    const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
+    for (const slug of ['free_director', 'vibe_graph', 'fixed_pipeline', 'review', 'spec']) {
+      const switches = conversationBinding(slug).tool_switches ?? {}
+      for (const tool of soloMaster.tool_scope ?? []) expect(switches[tool], `${slug} switches ${tool} off`).toBe(false)
+    }
 
     const resourceKeys = new Set(graphSeedPackManifest.resources.agents.map((agent) => agent.resource_key))
     for (const mode of modes) {
@@ -328,25 +336,26 @@ describe('GraphSeedPack', () => {
     // WorkspaceGrantDefaults never implies it, so a master holding write_file with a
     // read-only envelope would have every write DENIED (not asked) at the decision
     // point. The spawn room must be present too, or "dispatch aggressively" is
-    // rejected as graph_tier_spawn_denied.
+    // rejected as graph_tier_spawn_denied. (The conversation agent is the unified
+    // identity since E6; the solo behavior lives on this binding, not on the slug.)
     const solo = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'solo')!
     const masterBinding = solo.bindings!.find((binding) => binding.node_key === 'meeting')!
-    expect(masterBinding.agent_ref).toBe('agent:solo_master')
+    expect(masterBinding.agent_ref).toBe('agent:meeting')
     expect(masterBinding.envelope!.resources!.read).toEqual([''])
     expect(masterBinding.envelope!.resources!.write).toEqual([''])
     expect(masterBinding.envelope!.spawn!.max_depth).toBeGreaterThan(0)
     expect(masterBinding.envelope!.spawn!.max_agents_per_run).toBeGreaterThan(0)
   })
 
-  it('keeps Plan read-only while it runs on the Solo agent', () => {
-    // Plan reuses solo_master so a session can plan and then switch to Solo to carry the plan
-    // out. Its read-only promise therefore rests on the binding, not on the agent: the node's
-    // effective tools (tool_scope minus switched-off ids, the same view Core publishes) must be
-    // exactly the reading, planning and dispatch set. Pinned as an exact list so a tool later
-    // added to solo_master cannot reach Plan without someone deciding it should.
+  it('keeps Plan read-only while it runs on the unified conversation identity', () => {
+    // Plan reuses the unified identity (todo E6), like every other mode. Its read-only
+    // promise therefore rests on the binding, not on the agent: the node's effective
+    // tools (tool_scope minus switched-off ids, the same view Core publishes) must be
+    // exactly the reading, planning and dispatch set. Pinned as an exact list so a tool
+    // later added to the chairman ceiling cannot reach Plan without someone deciding.
     const plan = graphSeedPackManifest.resources.modes.find((mode) => mode.resource_key === 'plan')!
     const binding = plan.bindings!.find((item) => item.node_key === 'meeting')!
-    expect(binding.agent_ref).toBe('agent:solo_master')
+    expect(binding.agent_ref).toBe('agent:meeting')
     const soloMaster = graphSeedPackManifest.resources.agents.find((agent) => agent.resource_key === 'solo_master')!
     const switches = binding.tool_switches ?? {}
     const effective = soloMaster.tool_scope.filter((tool) => switches[tool] !== false)

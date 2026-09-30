@@ -157,7 +157,7 @@
 
 - [x] **E1. 环境管家**（表 `agent_graph_environments` + `environment` 租约按空位记账；`environment_list/acquire/release` 虚拟工具；连接信息拒收凭据；Desktop"环境"页）
 - [!] **E2 / E3**（公告板、公共讨论室、智能体之间的自由对话）已并入第二期 P2-O（O3 / O5）。
-- [ ] **E6. 对话身份合一**：今天 Solo/Plan 由 `solo_master`、其余模式由 `meeting` 对话，已开始对话的会话不能跨这两组切模式。目标是一个对话身份、模式只改策略（architecture §12）。风险：存量会话的身份、模型覆盖按对话根解析、TinaChat 参与者绑定都要迁移。
+- [x] **E6. 对话身份合一**（2026-09-30 第十四批）：种子包 3.0.0 七模式全部由 `meeting` 对话（其定义携带全部工具作天花板，不需要工具的模式在绑定上全关；档位从有效工具推导）。`solo_master` 模板保留发布供存量会话恢复，无模式再引用。准入路径：会话身份与所选模式身份不一致且无活跃 run 时一次性迁移（`ProjectSessionStore.MigrateConversationIdentityAsync`，与 `MigrateSessionAsync` 同一把会话锁），有活跃 run 维持 `conversation_identity_locked_mismatch` 拒绝。验收：同一会话 Solo↔Team 互切不触碰身份；旧身份空闲迁移、忙碌拒绝各一条端到端。
 - [x] **E7. 审批规则（前缀放行 + 按会话 shell 委托）**（architecture §7.4 第 6、7 条，2026-09-30 第十二批）：表 `agent_graph_approval_rules`；`IApprovalRules` + REST；PDP 在 ask 族的最后一环（`approval_rule_released`）；计用只在铸刻消费时一次；`delegate_tool` 勾选把 shell 交给门。**shell 进沙箱（第 5 条）拆为独立项**：本机 `TinadecSandbox` 账户未初始化、初始化要 UAC，无法在此实机验证；路线已定（runner 协议补输出流 + 一次性调用走沙箱、long_lived 例外），需一次有管理员权限的实机验证后落地。另：每个 shell 批准时"总是允许此前缀"的界面勾选未做（REST 已可用）。
 - [ ] **E4. 项目级委员长**（会话 → 项目的状态上提；长期记忆已区分 workspace/principal/project 三种范围，`Memory/MemoryModuleRegistrar.cs:85-91`，数据模型有预留）
 - [x] **E5. 治理层可见性的按身份配置**（默认向下全通，用户可关，2026-09-30 第十三批）：`ChatParticipant.VisibilityScope`（null=全通/"own"）；通知过滤（受限常驻成员被静音，muted 通知不改写其 CurrentRunId）；`graph_view` 与 `recall_evidence` 在 run 内 dispatcher 与常驻成员轮次两处收窄；用户经 `PATCH …/organization/members/{participantId}` 设置（owner/host 不可改，"down" 存回 null）；Desktop 组织面板成员行有切换开关，恢复默认发 null。
@@ -177,7 +177,7 @@
 ## 已知坑（施工时别踩）
 
 - 写测试：harness 会折叠 heredoc 里的反斜杠，含 `\n`/`\u`/`\"` 的代码用 Write/Edit 工具写。
-- 对话身份在会话说出第一句话后锁定：空会话的第一条消息采用所选模式的身份；已有消息后跨 `meeting` / `solo_master` 两组切模式会 `conversation_identity_locked_mismatch`。
+- 对话身份自 E6 只有一个（`meeting`）：模式互切不再触碰身份。仅存量 `solo_master` 会话会在准入时迁移——必须是无消息（采用首句身份）或无活跃 run（一次性迁移），否则 `conversation_identity_locked_mismatch`。
 - 旧包兼容：任何新增字段必须可选，否则 digest 漂移 → 409 不可变纪律。
 - 既有失败（非本次引入）：`TinaChatTests.AcceptedHandoff…`；`FullDuplexEndpointTests.RunTerminal_ExecutesQueuedInteraction…` 与 `FullDuplexEndpointTests.InvokeStream_TransientModelOutage…` 在全量并发下偶发（后者依赖重试退避计时，单独跑通过）。
 - PowerShell：用 `scripts/setup-dotnet-env.ps1`，`--verbosity` 而不是 `-v`。
@@ -186,6 +186,14 @@
 ---
 
 ## 施工记录（按时间倒序，每条写清证据）
+
+### 2026-09-30 第十四批（E6）：对话身份合一
+
+- **包 3.0.0**：`meeting` 定义携带 solo_master 的 37 件工具为天花板；Solo/Plan 的对话节点与绑定改指 `agent:meeting`；Team/Review/Spec/Graph/Workflow 的对话绑定把 37 件工具逐个关掉（档位由有效工具推导，不从 slug）；`solo_master` 模板保留发布（描述注明存量会话用）。
+- **Core 准入**：所选模式身份与会话身份不一致时——空会话照旧采用首句身份；有历史且无活跃 run 则一次性迁移（`MigrateConversationIdentityAsync`，与 `MigrateSessionAsync` 同一把会话锁）；有活跃 run 维持 409（名册按旧身份冻结）。拒绝文案照旧中文可执行说明。
+- **测试坑（自食其果过一次）**：要构造"旧身份 + 活跃 run"，必须先让 run 在新身份下驻留，再改会话 slug——先改 slug 的话，启动那条 run 的交互自己就会触发空闲迁移。
+- **测试**：`ModesShareOneConversationIdentity_SwitchingNeverTouchesIt`（Team↔Solo 互切不动身份）、`LegacyIdentity_MigratesWhileIdle_AndRefusesOnlyWhileARunIsActive`（空闲迁移 + 忙碌 409 中文说明）、Solo/Plan/Review/Spec 端到端断言改指 `meeting` 全过；AgentFramework 421/421；包测试 9/9（digest `97cb5e57…91aa1`）。
+- **诚实边界**：桌面模式切换界面无改动（不需要）；组织成员里旧会话的 conversation 成员 slug 不随迁移改名（只是显示）。全量 Core Api 本轮未跑，最终一轮见下。
 
 ### 2026-09-30 第十三批（E5）：治理层可见性按身份配置
 
