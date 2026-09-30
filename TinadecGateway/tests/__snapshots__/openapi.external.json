@@ -7762,6 +7762,28 @@
         ]
       }
     },
+    "/api/v1/projects/{projectId}/overview": {
+      "get": {
+        "operationId": "getApiV1ProjectsByProjectIdOverview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Project overview rollup",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/projects/{projectId}/restore": {
       "post": {
         "operationId": "postApiV1ProjectsByProjectIdRestore",

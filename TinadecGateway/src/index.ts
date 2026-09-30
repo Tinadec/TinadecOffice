@@ -356,6 +356,20 @@ const app = new Elysia()
       max_bytes: t.Optional(t.Number()),
     }, { additionalProperties: true }),
   })
+  // The project commander's desk (todo E4): the rollup a project-level chairman reads.
+  .get('/api/v1/projects/:projectId/overview', async ({ params, set, request }) => {
+    const headers = forwardHeaders(request);
+    const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/overview`;
+    const result = await proxyJson(path, { headers });
+    setStatus(set, result.status);
+    if (result.status >= 400) {
+      set.headers['content-type'] = 'application/problem+json';
+      setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+      return mapCoreErrorToExternal(result.status, result.data, path);
+    }
+    setProxyResponseHeaders(set as never, (headers as Record<string, string>)['x-request-id'], result.headers);
+    return result.data;
+  }, { detail: { summary: 'Project overview rollup', tags: ['Projects'] } })
   .get('/api/v1/projects/:projectId/snapshots', async ({ params, set, request }) => {
     const headers = forwardHeaders(request);
     const path = `/api/v1/projects/${encodeURIComponent(params.projectId)}/snapshots`;

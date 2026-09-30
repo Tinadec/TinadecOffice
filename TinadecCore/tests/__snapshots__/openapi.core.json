@@ -3376,6 +3376,166 @@
         },
         "type": "object"
       },
+      "ProjectOverviewDto": {
+        "properties": {
+          "active_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewRunDto"
+            },
+            "type": "array"
+          },
+          "held_resources": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewLeaseDto"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_reports": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectOverviewReportDto"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reports_truncated": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "sessions",
+          "active_runs",
+          "open_reports",
+          "held_resources",
+          "reports_truncated"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewLeaseDto": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "lease_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resource_key": {
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "lease_id",
+          "kind",
+          "resource_key",
+          "purpose",
+          "run_id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewReportDto": {
+        "properties": {
+          "author_display_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "report_kind": {
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "report_id",
+          "author_display_name",
+          "report_kind",
+          "severity",
+          "finding",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ProjectOverviewRunDto": {
+        "properties": {
+          "phase": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "session_id",
+          "status",
+          "phase",
+          "started_at"
+        ],
+        "type": "object"
+      },
       "PublishPolicyVersionRequestDto": {
         "properties": {
           "rules": {
@@ -8908,6 +9068,36 @@
         ],
         "responses": {
           "200": {
+            "description": "OK"
+          }
+        },
+        "tags": [
+          "TinadecCore.Api"
+        ]
+      }
+    },
+    "/api/v1/projects/{projectId}/overview": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOverviewDto"
+                }
+              }
+            },
             "description": "OK"
           }
         },

@@ -159,7 +159,7 @@
 - [!] **E2 / E3**（公告板、公共讨论室、智能体之间的自由对话）已并入第二期 P2-O（O3 / O5）。
 - [x] **E6. 对话身份合一**（2026-09-30 第十四批）：种子包 3.0.0 七模式全部由 `meeting` 对话（其定义携带全部工具作天花板，不需要工具的模式在绑定上全关；档位从有效工具推导）。`solo_master` 模板保留发布供存量会话恢复，无模式再引用。准入路径：会话身份与所选模式身份不一致且无活跃 run 时一次性迁移（`ProjectSessionStore.MigrateConversationIdentityAsync`，与 `MigrateSessionAsync` 同一把会话锁），有活跃 run 维持 `conversation_identity_locked_mismatch` 拒绝。验收：同一会话 Solo↔Team 互切不触碰身份；旧身份空闲迁移、忙碌拒绝各一条端到端。
 - [x] **E7. 审批规则（前缀放行 + 按会话 shell 委托）**（architecture §7.4 第 6、7 条，2026-09-30 第十二批）：表 `agent_graph_approval_rules`；`IApprovalRules` + REST；PDP 在 ask 族的最后一环（`approval_rule_released`）；计用只在铸刻消费时一次；`delegate_tool` 勾选把 shell 交给门。**shell 进沙箱（第 5 条）拆为独立项**：本机 `TinadecSandbox` 账户未初始化、初始化要 UAC，无法在此实机验证；路线已定（runner 协议补输出流 + 一次性调用走沙箱、long_lived 例外），需一次有管理员权限的实机验证后落地。另：每个 shell 批准时"总是允许此前缀"的界面勾选未做（REST 已可用）。
-- [ ] **E4. 项目级委员长**（会话 → 项目的状态上提；长期记忆已区分 workspace/principal/project 三种范围，`Memory/MemoryModuleRegistrar.cs:85-91`，数据模型有预留）
+- [~] **E4. 项目级委员长**（2026-09-30 第一刀：**先可见、后授权**）：`GET /api/v1/projects/{id}/overview`（项目自己的会话、未终态 run、未处理报告、被占用资源的汇总读模型；含驻留 run，外会话泄漏为零）+ Gateway 透传。**后续项**（设计决定，不在本批）：项目级治理角色本体、跨会话写权限、桌面端页面；按用户此前的拍板，委员长现在以会话为单位，项目级做成单独功能。
 - [x] **E5. 治理层可见性的按身份配置**（默认向下全通，用户可关，2026-09-30 第十三批）：`ChatParticipant.VisibilityScope`（null=全通/"own"）；通知过滤（受限常驻成员被静音，muted 通知不改写其 CurrentRunId）；`graph_view` 与 `recall_evidence` 在 run 内 dispatcher 与常驻成员轮次两处收窄；用户经 `PATCH …/organization/members/{participantId}` 设置（owner/host 不可改，"down" 存回 null）；Desktop 组织面板成员行有切换开关，恢复默认发 null。
 
 ---
@@ -186,6 +186,11 @@
 ---
 
 ## 施工记录（按时间倒序，每条写清证据）
+
+### 2026-09-30 第十五批（E4 第一刀）：项目级指挥台读模型
+
+- **先可见、后授权**：`GET /api/v1/projects/{projectId}/overview` 汇总项目的会话数、全部未终态 run（含等待决定的驻留 run）、未处理报告（50 上限并报告截断）、被占用资源（按会话归属过滤，外会话为 0）；没有新写权限——项目级委员长的写面是独立设计决定，按用户此前的拍板（委员长以会话为单位，项目级做成单独功能）留下后续。
+- **测试**：`ProjectOverviewTests` 2/2（聚合 + 他会话租约不漏 + 未知项目 404）；OpenAPI 快照再生；Gateway 透传并 75/75。
 
 ### 2026-09-30 第十四批（E6）：对话身份合一
 

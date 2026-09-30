@@ -488,6 +488,10 @@ export interface paths {
     /** Archive project */
     post: operations["postApiV1ProjectsByProjectIdArchive"];
   };
+  "/api/v1/projects/{projectId}/overview": {
+    /** Project overview rollup */
+    get: operations["getApiV1ProjectsByProjectIdOverview"];
+  };
   "/api/v1/projects/{projectId}/restore": {
     /** Restore project */
     post: operations["postApiV1ProjectsByProjectIdRestore"];
@@ -3807,6 +3811,19 @@ export interface operations {
   };
   /** Archive project */
   postApiV1ProjectsByProjectIdArchive: {
+    parameters: {
+      path: {
+        projectId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Project overview rollup */
+  getApiV1ProjectsByProjectIdOverview: {
     parameters: {
       path: {
         projectId: string;
