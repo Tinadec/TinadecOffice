@@ -12,7 +12,9 @@ namespace TinadecCore.Runtime;
 internal sealed class OrganizationReportActionExecutor(
     IGovernanceRunController runs,
     IEnvironmentRegistry? environments = null,
-    ILifecycleManager? lifecycle = null) : IOrganizationReportActionExecutor
+    ILifecycleManager? lifecycle = null,
+    IResourceLeaseService? leases = null,
+    ISessionLocator? sessions = null) : IOrganizationReportActionExecutor
 {
     private static readonly HashSet<string> RunActions = ["pause_run", "resume_run", "stop_run"];
 
@@ -36,6 +38,8 @@ internal sealed class OrganizationReportActionExecutor(
         {
             if (verb == "assign_environment")
                 return await AssignEnvironmentAsync(request, cancellationToken).ConfigureAwait(false);
+            if (verb == "separate_worktree")
+                return await AssignWorktreeAsync(request, cancellationToken).ConfigureAwait(false);
             return new OrganizationReportActionResult(
                 Completed: false,
                 Status: "not_executed",
@@ -89,6 +93,67 @@ internal sealed class OrganizationReportActionExecutor(
                 string.IsNullOrWhiteSpace(result.Code) ? "run_control_rejected" : result.Code,
                 string.IsNullOrWhiteSpace(result.Message) ? "The run control was rejected; the report remains open." : result.Message,
                 runId, result.Status);
+    }
+
+    private async Task<OrganizationReportActionResult> AssignWorktreeAsync(
+        OrganizationReportActionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (leases is null || sessions is null)
+            return new OrganizationReportActionResult(false, "not_executed", "worktree_registry_unavailable",
+                "No resource ledger or session lookup is available; the report remains open.");
+        if (!string.Equals(request.SubjectKind, "run", StringComparison.OrdinalIgnoreCase)
+            || !Guid.TryParse(request.SubjectId, out var runId)
+            || runId == Guid.Empty)
+            return new OrganizationReportActionResult(false, "not_executed", "run_subject_required",
+                "separate_worktree requires subject_kind=run and a valid subject_id.");
+
+        var arguments = ParseArguments(request.ArgumentsJson);
+        var pathText = arguments.GetValueOrDefault("path") ?? arguments.GetValueOrDefault("worktree_path");
+        if (string.IsNullOrWhiteSpace(pathText))
+            return new OrganizationReportActionResult(false, "not_executed", "worktree_path_required",
+                "separate_worktree needs path or worktree_path in proposed_args.", runId);
+
+        var session = await sessions.FindAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+        var project = session?.ProjectId is { } projectId
+            ? await sessions.FindProjectAsync(projectId, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (project is null || project.TenantId != request.Scope.TenantId || project.WorkspaceId != request.Scope.WorkspaceId)
+            return new OrganizationReportActionResult(false, "not_executed", "project_boundary_unavailable",
+                "The session has no project workspace boundary for worktree assignment.", runId);
+
+        var path = Path.GetFullPath(Path.IsPathRooted(pathText) ? pathText : Path.Combine(project.RootPath, pathText));
+        if (!Directory.Exists(path)
+            || (!File.Exists(Path.Combine(path, ".git")) && !Directory.Exists(Path.Combine(path, ".git"))))
+            return new OrganizationReportActionResult(false, "not_executed", "invalid_worktree_path",
+                $"'{path}' is not an existing Git worktree directory; the report remains open.", runId);
+
+        var decision = await leases.AcquireAsync(new ResourceAcquireRequest(
+            new ResourceClaim(ResourceLeaseKinds.Worktree, path, Exclusive: true),
+            request.SessionId, runId, null, null,
+            arguments.GetValueOrDefault("reason") ?? $"Governance report {request.ReportId:N}",
+            ResourceLeasePurposes.Assignment), cancellationToken).ConfigureAwait(false);
+        if (!decision.Granted)
+            return new OrganizationReportActionResult(false, "not_executed", "worktree_unavailable",
+                "The worktree is already assigned: " + string.Join("; ", decision.Conflicts.Select(item => item.Reason)), runId);
+
+        await AppendEventBestEffortAsync(lifecycle, runId, request.ReportId, decision.Lease!, path, cancellationToken).ConfigureAwait(false);
+        return new OrganizationReportActionResult(true, "executed", "worktree_assigned",
+            $"Worktree '{path}' was assigned to run {runId:N}.", runId, "assigned");
+    }
+
+    private static async Task AppendEventBestEffortAsync(ILifecycleManager? lifecycle, Guid runId, Guid reportId,
+        ResourceLeaseInfo lease, string path, CancellationToken cancellationToken)
+    {
+        if (lifecycle is null) return;
+        try
+        {
+            await lifecycle.AppendEventAsync(runId, "governance.worktree_assigned", new
+            {
+                report_id = reportId, path, lease_id = lease.Id
+            }, "A governance report assigned a worktree to the run.", cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested) { }
     }
 
     private async Task<OrganizationReportActionResult> AssignEnvironmentAsync(

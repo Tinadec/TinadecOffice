@@ -75,7 +75,7 @@ public static class OrganizationToolCatalog
         new("org_execute_report",
             "Execute the open report's proposed governance action through the runtime action executor, then record acted only after the operation is accepted. "
             + "This is the only organization tool that changes a run because of a report. Read the report first and pass its exact revision; a stale revision or a target outside this session fails closed. "
-            + "Currently supported actions are pause_run, resume_run, stop_run (stop_run maps to durable cancel) and assign_environment. wait and ask_user leave the report open; unsupported actions also stay open with a reason.",
+            + "Currently supported actions are pause_run, resume_run, stop_run (stop_run maps to durable cancel), assign_environment and separate_worktree. wait and ask_user leave the report open; unsupported actions also stay open with a reason.",
             Obj(("report_id", Str("report_id from org_read.")),
                 ("expected_revision", Int("The report revision as org_read returned it."))),
             Writes: true),

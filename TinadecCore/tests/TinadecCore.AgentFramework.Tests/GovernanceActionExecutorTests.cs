@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Runtime;
 
@@ -47,6 +48,37 @@ public sealed class GovernanceActionExecutorTests
         Assert.Empty(controller.Calls);
     }
 
+    [Fact]
+    public async Task SeparateWorktree_ValidatesTheProjectBoundary_AndTakesAnAssignmentLease()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tinadec-action-worktree", Guid.NewGuid().ToString("N"));
+        var worktree = Path.Combine(root, ".tinadec", "worktrees", "review");
+        Directory.CreateDirectory(worktree);
+        File.WriteAllText(Path.Combine(worktree, ".git"), "gitdir: ../.git/worktrees/review");
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var runId = Guid.NewGuid();
+            var scope = new TenantContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "test");
+            var lease = new RecordingLeases();
+            var executor = new OrganizationReportActionExecutor(new RecordingController(), leases: lease,
+                sessions: new RecordingSessions(root, sessionId, scope.TenantId, scope.WorkspaceId));
+            var result = await executor.ExecuteAsync(new OrganizationReportActionRequest(
+                scope, sessionId, Guid.NewGuid(),
+                Guid.NewGuid(), Guid.NewGuid(), "separate_worktree",
+                JsonSerializer.Serialize(new { path = worktree, reason = "review" }), "run", runId.ToString(), "key"));
+
+            Assert.True(result.Completed, result.Message);
+            var call = Assert.Single(lease.Calls);
+            Assert.Equal(ResourceLeaseKinds.Worktree, call.Claim.Kind);
+            Assert.Equal(runId, call.Request.RunId);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
     private sealed class RecordingController : IGovernanceRunController
     {
         public List<Call> Calls { get; } = [];
@@ -60,4 +92,33 @@ public sealed class GovernanceActionExecutorTests
     }
 
     private sealed record Call(TenantContext Scope, Guid SessionId, Guid RunId, string Action, string ClientControlId);
+
+    private sealed class RecordingSessions(string root, Guid sessionId, Guid tenantId, Guid workspaceId) : ISessionLocator
+    {
+        public Task<SessionReference?> FindAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<SessionReference?>(id == sessionId ? new SessionReference(id, Guid.NewGuid(), tenantId, workspaceId) : null);
+
+        public Task<ProjectReference?> FindProjectAsync(Guid projectId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ProjectReference?>(new ProjectReference(projectId, tenantId, workspaceId, root));
+    }
+
+    private sealed class RecordingLeases : IResourceLeaseService
+    {
+        public List<(ResourceAcquireRequest Request, ResourceClaim Claim)> Calls { get; } = [];
+
+        public Task<ResourceLeaseDecision> AcquireAsync(ResourceAcquireRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls.Add((request, request.Claim));
+            return Task.FromResult(new ResourceLeaseDecision(new ResourceLeaseInfo(Guid.NewGuid(), request.Claim.Kind, request.Claim.ResourceKey,
+                request.Claim.Exclusive, request.SessionId, request.RunId, request.TaskId, request.AgentInstanceId,
+                ResourceLeaseStatuses.Active, request.Purpose, request.Reason), []));
+        }
+
+        public Task<IReadOnlyList<ResourceLeaseInfo>> ProbeAsync(ResourceClaim claim, Guid? runId, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ResourceLeaseInfo>>([]);
+        public Task<int> ReleaseRunAsync(Guid runId, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<int> ReleaseTaskAsync(Guid runId, Guid taskId, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<int> ReleaseAsync(Guid leaseId, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<IReadOnlyList<ResourceLeaseInfo>> ListActiveAsync(Guid? sessionId = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ResourceLeaseInfo>>([]);
+        public Task<IReadOnlyList<ResourceLeaseInfo>> ListTaskAsync(Guid runId, Guid taskId, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ResourceLeaseInfo>>([]);
+    }
 }
