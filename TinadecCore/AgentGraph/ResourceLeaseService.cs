@@ -61,7 +61,7 @@ internal sealed class ResourceLeaseService(
                     && string.Equals(lease.Purpose, request.Purpose, StringComparison.Ordinal));
                 if (mine is not null) return new ResourceLeaseDecision(ToInfo(mine), []);
 
-                var conflicts = ResourceLeasePolicy.Conflicts(claim, request.RunId, overlapping.Select(ToInfo).ToArray());
+                var conflicts = ResourceLeasePolicy.Conflicts(claim, request.RunId, request.TaskId, overlapping.Select(ToInfo).ToArray());
                 if (conflicts.Count > 0)
                 {
                     await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);

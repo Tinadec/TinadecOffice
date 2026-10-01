@@ -65,6 +65,10 @@ public sealed class SessionTopologyService : ISessionTopology
         var leases = _leases is null
             ? []
             : await _leases.ListActiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        // A run-scoped graph read is the service boundary for a restricted member. Filtering only
+        // the runs array still leaked another run's lease rows to graph_view callers.
+        if (query.RunId is { } visibleRunId)
+            leases = leases.Where(lease => lease.RunId == visibleRunId).ToArray();
         IReadOnlyList<OrganizationMemberSummary> members = [];
         if (_organization is not null)
         {
@@ -82,7 +86,9 @@ public sealed class SessionTopologyService : ISessionTopology
             runs.ToArray(),
             leases.Take(query.MaxLeases).Select(lease => new SessionTopologyLeaseDto(lease.Id, lease.Kind, lease.ResourceKey, lease.Purpose,
                 lease.Exclusive, lease.RunId, lease.TaskId, lease.AgentInstanceId)).ToArray(),
-            members.Where(member => member.Role != OrganizationRoles.Host).Take(query.MaxMembers)
+            members.Where(member => member.Role != OrganizationRoles.Host
+                && (query.RunId is null || member.Role != OrganizationRoles.Executor || member.RunId == query.RunId))
+                .Take(query.MaxMembers)
                 .Select(member => new SessionTopologyMemberDto(member.ParticipantId, member.Handle, member.DisplayName, member.Role,
                     member.Presence, member.AgentSlug, member.ParentParticipantId, member.RunId, member.AgentInstanceId)).ToArray(),
             candidates.Length > query.MaxRuns,

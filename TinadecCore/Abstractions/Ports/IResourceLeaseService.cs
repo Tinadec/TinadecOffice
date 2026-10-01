@@ -265,9 +265,21 @@ public static class ResourceLeasePolicy
         ResourceClaim candidate,
         Guid? runId,
         IEnumerable<ResourceLeaseInfo> activeLeases) =>
+        Conflicts(candidate, runId, taskId: null, activeLeases);
+
+    /// <summary>
+    /// Task-aware conflict filtering. A task may re-enter its own claim, but a different task in the
+    /// same run is still a separate writer. The older run-only overload deliberately keeps its
+    /// historical "same run is one owner" behavior for read-only probes and legacy callers.
+    /// </summary>
+    public static IReadOnlyList<ResourceLeaseInfo> Conflicts(
+        ResourceClaim candidate,
+        Guid? runId,
+        Guid? taskId,
+        IEnumerable<ResourceLeaseInfo> activeLeases) =>
         activeLeases
             .Where(lease => string.Equals(lease.Status, ResourceLeaseStatuses.Active, StringComparison.Ordinal)
-                && lease.RunId != runId
+                && !(lease.RunId == runId && (taskId is null || lease.TaskId == taskId))
                 && Conflicts(candidate, new ResourceClaim(lease.Kind, lease.ResourceKey, lease.Exclusive)))
             .ToArray();
 

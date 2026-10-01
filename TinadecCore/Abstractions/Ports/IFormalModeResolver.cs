@@ -114,6 +114,14 @@ public sealed record DeclaredSpawnableTemplate(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; init; }
+
+    /// <summary>
+    /// The published role instructions frozen with this template. Spawned workers do not have a
+    /// relational roster entry of their own at admission, so this must travel with the template;
+    /// resolving it later would let a mutable agent version change the worker's duty mid-run.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SystemPrompt { get; init; }
 }
 
 /// <summary>

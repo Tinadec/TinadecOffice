@@ -535,6 +535,52 @@ public sealed class TinaChatTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task WakeModelFailure_RequeuesTheClaimedSources_AndTheNextPassProcessesThem()
+    {
+        var team = await TeamAsync();
+        var source = await Chat.SendAsync(team.Conversation, new(team.Human, "The first wake must survive a model fault.", "wake-failure", AllowDerivedSharing: true));
+        _model.FailNext = true;
+
+        Assert.Equal(0, await WakesAsync().RunPassAsync(5));
+        await using (var db = await DbAsync())
+        {
+            var wake = Assert.Single(await db.Wakes.ToArrayAsync());
+            Assert.Equal("pending", wake.Status);
+            Assert.Contains(source.Id, JsonSerializer.Deserialize<Guid[]>(wake.SourceMessageIdsJson, Wire)!);
+            Assert.Equal("[]", wake.ClaimedSourceMessageIdsJson);
+        }
+
+        await using (var db = await DbAsync())
+            await db.Wakes.ExecuteUpdateAsync(set => set.SetProperty(x => x.DueAtUnixMs, 0L));
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+        var brief = Assert.Single(await Chat.ListIntentsAsync(team.Conversation, team.Interpreter));
+        Assert.Contains(source.Id, brief.SourceMessageIds);
+    }
+
+    [Fact]
+    public async Task ExpiredWakeClaim_IsReclaimedAndProcessedByTheNextHost()
+    {
+        var team = await TeamAsync();
+        var source = await Chat.SendAsync(team.Conversation, new(team.Human, "Recover the wake after the host disappears.", "wake-crash", AllowDerivedSharing: true));
+        await using (var db = await DbAsync())
+        {
+            var wake = Assert.Single(await db.Wakes.ToArrayAsync());
+            wake.Status = "running";
+            wake.SourceMessageIdsJson = "[]";
+            wake.ClaimedSourceMessageIdsJson = JsonSerializer.Serialize(new[] { source.Id }, Wire);
+            wake.ClaimToken = "dead-host";
+            wake.ClaimedAtUnixMs = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds();
+            wake.DueAtUnixMs = 0;
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(1, await WakesAsync().RunPassAsync(5));
+        await using (var db = await DbAsync())
+            Assert.DoesNotContain(await db.Wakes.ToArrayAsync(), x => x.Status == "running");
+        Assert.Contains(source.Id, Assert.Single(await Chat.ListIntentsAsync(team.Conversation, team.Interpreter)).SourceMessageIds);
+    }
+
+    [Fact]
     public async Task AdmittedHandoff_CompletingItsRun_AnnouncesTheOutcomeBackIntoTheConversation()
     {
         var team = await TeamAsync();
@@ -927,6 +973,7 @@ public sealed class TinaChatTests : IAsyncLifetime
             .WhenSupervisor("""{"decision":"pass","reasons":[],"revise_task_indexes":[]}""")
             .WhenMeeting("The scoped investigation completed.");
         public ConcurrentQueue<ModelCall> Calls { get; } = new();
+        public bool FailNext { get; set; }
         public TaskCompletionSource? PlannerGate { get; set; }
         public TaskCompletionSource? PlannerStarted { get; set; }
         public void Dispose() { }
@@ -954,6 +1001,11 @@ public sealed class TinaChatTests : IAsyncLifetime
         private async Task<ChatResponse?> InterceptAsync(ModelMessage[] list, ChatOptions? options, CancellationToken cancellationToken)
         {
             Calls.Enqueue(new ModelCall(options?.Instructions ?? "", string.Join("\n", list.Select(x => x.Text)), options?.Tools?.Select(x => x.Name).ToArray() ?? []));
+            if (FailNext)
+            {
+                FailNext = false;
+                throw new InvalidOperationException("deliberate wake model failure");
+            }
             if (options?.Instructions?.Contains("understanding a user's intent", StringComparison.Ordinal) == true)
             {
                 var brief = Brief() with { BlockingQuestions = ["Clarify which page and permitted scope."] };

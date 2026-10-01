@@ -56,7 +56,8 @@ public sealed class ResourceLedgerTests : IDisposable
         var sibling = await ledger.AcquireAsync(Request("C:/ws/a.ts", runId, Guid.NewGuid()));
 
         Assert.Equal(first.Lease!.Id, again.Lease!.Id);
-        Assert.True(sibling.Granted);
+        Assert.False(sibling.Granted);
+        Assert.Equal(taskId, Assert.Single(sibling.Conflicts).TaskId);
     }
 
     [Fact]

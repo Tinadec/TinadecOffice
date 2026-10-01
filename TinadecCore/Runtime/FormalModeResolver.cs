@@ -374,7 +374,8 @@ internal sealed class FormalModeResolver : IFormalModeResolver
                 ReadStringArray(agent, "capabilities"))
             {
                 ResourceGrants = envelopes.TemplateGrants.TryGetValue(slug, out var grants) ? grants : [],
-                Description = OptionalString(agent, "description")
+                Description = OptionalString(agent, "description"),
+                SystemPrompt = OptionalString(agent, "system_prompt")
             });
         }
         return result.OrderBy(item => item.Slug, StringComparer.Ordinal).ToArray();

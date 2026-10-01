@@ -101,6 +101,7 @@ public sealed class TinaChatDbContext(DbContextOptions<TinaChatDbContext> option
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.HasIndex(x => new { x.Status, x.AvailableAt });
             e.HasIndex(x => new { x.Status, x.DueAtUnixMs });
+            e.HasIndex(x => new { x.Status, x.ClaimedAtUnixMs });
             e.HasIndex(x => new { x.ConversationId, x.ParticipantId, x.Status });
             e.Property(x => x.LastError).HasMaxLength(512);
         });
@@ -316,8 +317,13 @@ public sealed class ChatWake
     public Guid ParticipantId { get; set; }
     public string Reason { get; set; } = "message";
     public string SourceMessageIdsJson { get; set; } = "[]";
+    /// <summary>Sources owned by the current claim. They are ACKed only after the turn succeeds.</summary>
+    public string ClaimedSourceMessageIdsJson { get; set; } = "[]";
     public string Status { get; set; } = "pending";
     public int Attempts { get; set; }
+    /// <summary>Fencing token for the host currently processing this row.</summary>
+    public string? ClaimToken { get; set; }
+    public long? ClaimedAtUnixMs { get; set; }
     public DateTimeOffset AvailableAt { get; set; }
     /// <summary>
     /// <see cref="AvailableAt"/> as Unix milliseconds, so "which wakes are due" is an index range in

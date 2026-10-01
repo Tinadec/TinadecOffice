@@ -2463,6 +2463,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             VersionContentHash = template.VersionHash,
             AllowedTools = template.ToolCeiling,
             Description = template.Description,
+            SystemPrompt = template.SystemPrompt ?? string.Empty,
             ModelPlan = conversation.ModelPlan,
             Enabled = true
         };

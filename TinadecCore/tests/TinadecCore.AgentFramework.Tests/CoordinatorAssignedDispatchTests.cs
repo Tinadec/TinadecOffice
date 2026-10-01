@@ -117,6 +117,23 @@ public sealed class CoordinatorAssignedDispatchTests
     }
 
     [Fact]
+    public void NamedSpawnableTemplate_CarriesItsFrozenSystemPromptToTheWorker()
+    {
+        var template = Template("prompted_worker", ["read_file"]) with
+        {
+            SystemPrompt = "DUTY: inspect only the assigned evidence and report file references."
+        };
+        var configuration = Configuration([]) with
+        {
+            Graph = Graph(FrozenGraphTiers.SelfDispatch, [("meeting", "prompted_worker")], [template])
+        };
+
+        var (selection, _) = FullDuplexRunEngine.ResolveRequestedWorker(configuration, Task(requestedAgent: "prompted_worker"));
+
+        Assert.Equal(template.SystemPrompt, selection.Agent.SystemPrompt);
+    }
+
+    [Fact]
     public void UnknownNamedExecutor_FailsWithTheValidChoices()
     {
         var error = Assert.ThrowsAny<Exception>(() =>

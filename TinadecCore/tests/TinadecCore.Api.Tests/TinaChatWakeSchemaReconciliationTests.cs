@@ -41,6 +41,9 @@ public sealed class TinaChatWakeSchemaReconciliationTests
                 Assert.Contains("status", await ColumnsAsync(db, "tina_chat_wakes"));
                 Assert.Contains("available_at", await ColumnsAsync(db, "tina_chat_wakes"));
                 Assert.Contains("source_message_ids_json", await ColumnsAsync(db, "tina_chat_wakes"));
+                Assert.Contains("claimed_source_message_ids_json", await ColumnsAsync(db, "tina_chat_wakes"));
+                Assert.Contains("claim_token", await ColumnsAsync(db, "tina_chat_wakes"));
+                Assert.Contains("claimed_at_unix_ms", await ColumnsAsync(db, "tina_chat_wakes"));
                 Assert.Contains("result_message_id", await ColumnsAsync(db, "tina_chat_executions"));
                 Assert.Contains("participant_id", await ColumnsAsync(db, "tina_chat_session_identities"));
                 Assert.Contains("result_run_status", await ColumnsAsync(db, "tina_chat_executions"));
