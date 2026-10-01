@@ -1702,9 +1702,15 @@ export interface components {
       completed_at: string | null;
       instances: components["schemas"]["SessionTopologyInstanceDto"][];
       instances_truncated: boolean;
+      /** Format: uuid */
+      parent_run_id?: string | null;
+      /** Format: uuid */
+      parent_task_id?: string | null;
       phase: string | null;
       /** Format: uuid */
       run_id: string;
+      /** @default root */
+      run_kind?: string;
       /** Format: date-time */
       started_at: string;
       status: string;

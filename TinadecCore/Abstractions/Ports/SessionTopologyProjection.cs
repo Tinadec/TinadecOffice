@@ -15,6 +15,9 @@ public static class SessionTopologyProjection
         runs = view.Runs.Select(run => new
         {
             run_id = run.RunId.ToString("N"),
+            parent_run_id = run.ParentRunId?.ToString("N"),
+            parent_task_id = run.ParentTaskId?.ToString("N"),
+            run_kind = run.RunKind,
             status = run.Status,
             phase = run.Phase,
             tier = run.Tier,

@@ -29,7 +29,10 @@ public sealed record SessionTopologyRunDto(
     SessionTopologyTaskDto[] Tasks,
     SessionTopologyInstanceDto[] Instances,
     bool TasksTruncated,
-    bool InstancesTruncated);
+    bool InstancesTruncated,
+    Guid? ParentRunId = null,
+    Guid? ParentTaskId = null,
+    string RunKind = "root");
 
 public sealed record SessionTopologyTaskDto(
     Guid TaskId,

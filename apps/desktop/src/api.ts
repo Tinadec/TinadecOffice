@@ -2123,6 +2123,9 @@ export interface TopologyInstanceDto {
 
 export interface TopologyRunDto {
   run_id: string;
+  parent_run_id?: string | null;
+  parent_task_id?: string | null;
+  run_kind?: string;
   status: string;
   started_at?: string | null;
   completed_at?: string | null;

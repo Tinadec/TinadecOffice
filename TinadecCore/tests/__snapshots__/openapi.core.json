@@ -3827,6 +3827,20 @@
           "instances_truncated": {
             "type": "boolean"
           },
+          "parent_run_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parent_task_id": {
+            "format": "uuid",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
           "phase": {
             "type": [
               "null",
@@ -3835,6 +3849,10 @@
           },
           "run_id": {
             "format": "uuid",
+            "type": "string"
+          },
+          "run_kind": {
+            "default": "root",
             "type": "string"
           },
           "started_at": {

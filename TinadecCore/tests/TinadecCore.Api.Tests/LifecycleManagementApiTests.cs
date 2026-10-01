@@ -356,6 +356,11 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
         Assert.Equal(parent.Id.ToString(), childState.ParentRunId);
         Assert.Equal(taskId.ToString(), childState.ParentTaskId);
         Assert.Equal("execution_child", childState.RunKind);
+        var topology = await _factory.Services.GetRequiredService<ISessionTopology>().GetAsync(sessionId, new SessionTopologyQuery(MaxRuns: 10));
+        var topologyChild = Assert.Single(topology!.Runs, item => item.RunId == child.Run.Id);
+        Assert.Equal(parent.Id, topologyChild.ParentRunId);
+        Assert.Equal(taskId, topologyChild.ParentTaskId);
+        Assert.Equal("execution_child", topologyChild.RunKind);
 
         await storage.SetRunStatusAsync(child.Run.Id, "executing");
         await storage.SetRunStatusAsync(parent.Id, "paused");

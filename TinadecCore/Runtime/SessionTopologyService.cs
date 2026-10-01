@@ -136,7 +136,10 @@ public sealed class SessionTopologyService : ISessionTopology
                 slugByInstance.GetValueOrDefault(instance.Id) ?? (instance.Id == projection.AuthorInstanceId ? "conversation" : instance.Role),
                 instance.Layer, instance.Role, instance.Status, instance.ParentInstanceId, instance.TaskId, instance.GenerationDepth)).ToArray(),
             projection.TotalTasks > projection.Tasks.Count,
-            orderedInstances.Length > query.MaxInstancesPerRun);
+            orderedInstances.Length > query.MaxInstancesPerRun,
+            run.ParentRunId,
+            run.ParentTaskId,
+            run.RunKind);
     }
 
     /// <summary>The orchestration tier frozen with the run; only the one field is read out of the frozen body.</summary>
