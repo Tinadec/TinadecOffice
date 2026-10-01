@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-10-01
 **Last Updated By:** Codex 修复 TinaChat 唤醒的 claimed source、fencing、过期回收和来源无上限合并；补模型失败/旧 claim 回归。
-**Last Verified Commit:** 11733f1；TinaChat/组织/资源相关 Api 定向 41/41，新增唤醒回归 3/3。完整 API 历史矩阵仍为 588/590，真实模型/PG/多宿主未验收。完整报告见 `../../docs/agent-graph/review-2026-10-01.zh-CN.md`。
+**Last Verified Commit:** 1b1dc98；TinaChat/组织/资源相关 Api 定向 41/41，新增唤醒回归 3/3，执行者点名 wake 组织回归 1/1。完整 API 历史矩阵仍为 588/590，真实模型/PG/多宿主未验收。完整报告见 `../../docs/agent-graph/review-2026-10-01.zh-CN.md`。
 **Branch:** Everything-changed
 
 ## 位置与依赖
@@ -13,7 +13,7 @@
 
 ## 必须保留的规则
 
-- **当前实现欠缺（2026-10-01）**：claimed source、成功 ACK、claim token/期限回收和来源无上限合并已实现并有回归；默认执行者尚无自动收件箱消费，治理成员也没有完整的持久上下文和治理执行动词。`own` topology 的租约/执行成员过滤已接入。见仓库 `docs/agent-graph/review-2026-10-01.zh-CN.md` 与 todo N5/N7/N8。
+- **当前实现欠缺（2026-10-01）**：claimed source、成功 ACK、claim token/期限回收、来源无上限合并和执行者点名→run supplement 已实现并有回归；执行者回复/离线终态策略、治理成员持久上下文与治理执行动词仍待做。`own` topology 的租约/执行成员过滤已接入。见仓库 `docs/agent-graph/review-2026-10-01.zh-CN.md` 与 todo N5/N7/N8。
 
 - 身份由经验证的租户主体控制；请求的 actor_id、职位或名字不是凭据。同一所有者能管理自己的多个参与者，目前尚无单独的运行实例凭据。
 - 对话理解是可配置职责，不把 meeting 名字、某个全局 agent id 或管理员职责硬编码为唯一入口。
