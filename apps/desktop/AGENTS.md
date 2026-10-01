@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-02
-**Last Updated By:** Codex 对话活动与侧边栏视觉修复批次；整行选中态、受限宽度重命名、活动/审批/监督卡片已落地；定向 Vitest 25/25、`vue-tsc` 通过，未做真实 Electron 视觉走查。
-**Last Verified Commit:** 5f860f9；本批验证见上。
+**Last Updated By:** Codex 对照 dsh-claude-style、OpenChamber、OpenCodeUI 后的对话活动视觉批次；活动总览、时间线列表、工具类型图标和审批层级已统一；定向 Vitest 25/25、`vue-tsc` 通过，未做真实 Electron 视觉走查。
+**Last Verified Commit:** 540fd09；本批验证见上。
 **Branch:** Astra
 
 ### 2026-10-02 前端 UX 改进

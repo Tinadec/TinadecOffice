@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight } from '@lucide/vue'
+import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight, FileText, FolderSearch, Globe2, GitBranch, Terminal, Wrench } from '@lucide/vue'
 import { UiCollapsible } from '@/components/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import TerminalCallBlock from './TerminalCallBlock.vue'
@@ -25,6 +25,15 @@ const durationLabel = computed(() => props.toolCall.durationMs == null ? null
   : props.toolCall.durationMs < 1000 ? `${props.toolCall.durationMs}ms` : `${(props.toolCall.durationMs / 1000).toFixed(1)}s`)
 const isRisky = computed(() => ['high', 'critical'].includes(props.toolCall.risk))
 const isShellCall = computed(() => props.toolCall.toolId === 'shell')
+const toolIcon = computed(() => {
+  const id = props.toolCall.toolId.toLowerCase()
+  if (id.includes('search') || id === 'grep' || id === 'glob' || id === 'ls') return FolderSearch
+  if (id.includes('git')) return GitBranch
+  if (id.includes('web') || id.includes('fetch') || id.includes('browser')) return Globe2
+  if (id.includes('shell') || id.includes('command') || id.includes('terminal')) return Terminal
+  if (id.includes('read') || id.includes('write') || id.includes('file')) return FileText
+  return Wrench
+})
 </script>
 
 <template>
@@ -34,7 +43,7 @@ const isShellCall = computed(() => props.toolCall.toolId === 'shell')
         <button class="tool-call-head" type="button" :aria-expanded="expanded" :aria-controls="detailsId"
           :aria-label="t(expanded ? 'agent.collapseTool' : 'agent.expandTool', { tool: toolCall.toolName })">
           <ChevronRight :size="13" class="tool-call-toggle" :class="{ expanded }" />
-          <component :is="statusConfig.icon" :size="13" class="tool-status-glyph"
+          <component :is="toolIcon" :size="13" class="tool-status-glyph"
             :class="{ 'tool-icon-spin': toolCall.status === 'running' }" />
           <strong>{{ toolCall.toolName }}</strong>
           <span v-if="isRisky" class="tool-call-risk-tag">{{ t('agent.highRisk') }}</span>
