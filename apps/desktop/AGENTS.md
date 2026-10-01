@@ -1,15 +1,15 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-01
-**Last Updated By:** Codex 亲自复查；测试修复已提交 b496bec，图工程验收缺口与测试矩阵落盘。
-**Last Verified Commit:** b496bec；Desktop 801 passed / 14 skipped / 0 failed（maxWorkers=2），GraphSeedPack 9/9，Electron node:test 31/31，`vue-tsc` 与 Vite build 通过，`check:drift` 零漂移。本轮没有真实 Electron/模型走查或重新打包验收。
+**Last Updated By:** Codex 治理报告动作批次；GraphSeedPack 3.0.1 工具声明与 digest 已同步。
+**Last Verified Commit:** 30ab198；GraphSeedPack 结构与 digest 9/9；历史 Desktop 801 passed / 14 skipped / 0 failed、Electron 31/31、`vue-tsc`/Vite/build/drift 结果仍以 b496bec 为基线，本轮没有重新做真实 Electron/模型走查或打包验收。
 **Branch:** Everything-changed
 
 ## OVERVIEW
 
 ### 2026-10-01 复查
 
-类型检查原在 `GraphSeedPack.test.ts:172` 失败：模式的 `bindings` 可选，测试直接 `.find`。现在安全取值并断言该绑定存在，仍严格验证每个模式的对话身份与工具开关，没有放宽清单契约。图工程组织界面存在不代表后端闭环；当前缺口与重开的任务见 `docs/agent-graph/review-2026-10-01.zh-CN.md`。
+类型检查原在 `GraphSeedPack.test.ts:172` 失败：模式的 `bindings` 可选，测试直接 `.find`。现在安全取值并断言该绑定存在，仍严格验证每个模式的对话身份与工具开关，没有放宽清单契约。GraphSeedPack 已升到 3.0.1，治理审查角色声明 `org_execute_report`，用于执行受边界校验的 pause/resume/stop run 报告动作。图工程组织界面存在不代表后端闭环；当前缺口与重开的任务见 `docs/agent-graph/review-2026-10-01.zh-CN.md`。
 
 ### WINDOWS DISTRIBUTION（2026-09-24）
 
