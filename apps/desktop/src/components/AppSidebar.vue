@@ -8,6 +8,7 @@ import {
   MessageSquare,
   MessagesSquare,
   MoreHorizontal,
+  Search,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -143,10 +144,9 @@ async function handleMenuSelect(key: string) {
 const filteredProjects = computed(() => {
   if (!searchQuery.value.trim()) return props.projects
   const q = searchQuery.value.toLowerCase()
-  return props.projects.filter((project) =>
-    project.name.toLowerCase().includes(q)
-  )
+  return props.projects.filter((project) => project.name.toLowerCase().includes(q) || getProjectSessions(project.id).some((session) => session.title.toLowerCase().includes(q)))
 })
+const hasSearch = computed(() => searchQuery.value.trim().length > 0)
 
 function getProjectSessions(projectId: string): SessionDto[] {
   return props.sessions.filter((s) => (s.project_id ?? null) === projectId && s.title)
@@ -264,6 +264,12 @@ function openDebugStudio() {
       </UiButton>
     </nav>
 
+    <div v-if="!collapsed" class="sidebar-search">
+      <Search :size="14" aria-hidden="true" />
+      <input v-model="searchQuery" type="search" data-testid="sidebar-search" :aria-label="t('sidebar.search')" :placeholder="t('sidebar.searchPlaceholder')" />
+      <button v-if="hasSearch" type="button" :aria-label="t('sidebar.clearSearch')" @click="searchQuery = ''">×</button>
+    </div>
+
     <div class="sidebar-list">
       <div v-if="freeSessions.length > 0" class="project-group free-conversation-group">
         <div class="project-row">
@@ -317,6 +323,8 @@ function openDebugStudio() {
         >
           <button
             class="project-row-main"
+            :class="{ active: project.id === selectedProjectId }"
+            :aria-current="project.id === selectedProjectId ? 'location' : undefined"
             :title="project.name"
             @click="handleProjectClick(project.id)"
             @dblclick.stop="renaming = { kind: 'project', id: project.id }"
@@ -362,6 +370,7 @@ function openDebugStudio() {
             <button
               class="session-item"
               :class="{ active: session.id === selectedSessionId }"
+              :aria-current="session.id === selectedSessionId ? 'page' : undefined"
               @click="handleSessionClick(session.id)"
               @dblclick.stop="renaming = { kind: 'session', id: session.id }"
             >

@@ -56,6 +56,17 @@ async function expandProject(wrapper: ReturnType<typeof factory>) {
 }
 
 describe('AppSidebar lifecycle management', () => {
+  it('searches project conversations without hiding the matching project', async () => {
+    const wrapper = factory()
+    const search = wrapper.get('[data-testid="sidebar-search"]')
+    await search.setValue('Demo session')
+    expect(wrapper.find('.project-row-main').exists()).toBe(true)
+    expect(wrapper.find('.project-row-main').attributes('aria-current')).toBe('location')
+    await search.setValue('no such conversation')
+    expect(wrapper.find('.project-row-main').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('opens the chatroom while a run is busy and exposes the selected observer page', async () => {
     const wrapper = factory({ busy: true, collapsed: true, chatroomActive: true })
     const button = wrapper.get('[data-testid="sidebar-chatroom"]')

@@ -1870,6 +1870,7 @@ import '../settings/settings.css'
           :class="{ active: activeSection === item.key }"
           :title="item.label"
           :aria-label="item.label"
+          :aria-current="activeSection === item.key ? 'page' : undefined"
             @click="selectSettingsSection(item.key)"
         >
           <component :is="item.icon" :size="16" />

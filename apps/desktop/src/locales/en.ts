@@ -76,6 +76,7 @@ export default {
     commandCenter: 'Command Center',
     debugStudio: 'Debug Studio',
     moreActions: 'More actions',
+    clearSearch: 'Clear search',
     rename: 'Rename',
     archive: 'Archive',
     moveToTrash: 'Delete',
@@ -244,6 +245,10 @@ export default {
     modeUnavailable: 'This mode is currently unavailable, please pick another',
     meetingModel: 'Meeting model',
     meetingModelPlaceholder: 'Optional',
+    jumpToLatest: 'Jump to latest',
+    thinking: 'Thinking',
+    usingTools: 'Using tools',
+    waitingForApproval: 'Waiting for approval',
   },
   context: {
     approval: 'Approval',

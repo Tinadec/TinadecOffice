@@ -1,9 +1,13 @@
 # DESKTOP APP KNOWLEDGE
 
-**Last Updated:** 2026-10-01
-**Last Updated By:** Codex 父子 run 拓扑可见性批次；Core/Gateway snapshot 与 generated client 已同步。
-**Last Verified Commit:** 0f68c05；Core/Gateway OpenAPI snapshot 与子 run 定向 2/2、`vue-tsc` typecheck 通过；GraphSeedPack 9/9、历史 Desktop 801 passed / 14 skipped / 0 failed、Electron 31/31、Vite/build/drift 仍以此前基线为准，本轮没有真实 Electron/模型走查或重新打包验收。
-**Branch:** Everything-changed
+**Last Updated:** 2026-10-02
+**Last Updated By:** Codex 前端 UX 改进批次；对话回到底部、运行状态可读反馈、侧边栏搜索与当前态、设置导航可达性已落地；定向 Vitest 26/26、设置相关 76/76、`vue-tsc`、Vite build、drift 通过，未做真实 Electron 视觉走查。
+**Last Verified Commit:** 948664b；本批验证见上。
+**Branch:** Astra
+
+### 2026-10-02 前端 UX 改进
+
+`MessageList` 在用户离开底部时显示可键盘操作的“回到底部”入口，保留用户主动上滚的阅读位置；`LiveTurnBlock` 为思考、工具调用、等待审批提供统一的 aria-live 状态文字，并尊重 `prefers-reduced-motion`。消息行和入口使用短时动效，避免长动画干扰流式阅读。`AppSidebar` 接通原有搜索状态，项目名和项目内会话名均可过滤，并补上项目/会话当前态、焦点轮廓与可访问名称。设置导航声明当前页。定向测试覆盖搜索过滤，未做真实 Electron 像素级走查。
 
 ## OVERVIEW
 

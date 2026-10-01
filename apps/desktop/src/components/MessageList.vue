@@ -26,11 +26,21 @@ const props = defineProps<{
 }>()
 
 const inner = ref<HTMLElement | null>(null)
+const showJumpToLatest = ref(false)
 let followOutput = true
 function onScroll(event: Event) {
   const viewport = inner.value?.parentElement
   if (event.target !== viewport || !viewport) return
-  followOutput = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40
+  const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+  followOutput = distance < 40
+  showJumpToLatest.value = !followOutput
+}
+async function jumpToLatest() {
+  followOutput = true
+  showJumpToLatest.value = false
+  await nextTick()
+  const viewport = inner.value?.parentElement
+  viewport?.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
 }
 watch(() => [props.streamingReply, props.messages.length, props.liveTurn, props.liveTurns], async () => {
   if (!followOutput) return
@@ -88,16 +98,33 @@ const emit = defineEmits<{
         </div>
       </div>
     </UiScrollArea>
+    <button v-if="showJumpToLatest" class="jump-to-latest" type="button" data-testid="jump-to-latest"
+      :aria-label="t('chat.jumpToLatest')" @click="jumpToLatest">
+      <span aria-hidden="true">↓</span>{{ t('chat.jumpToLatest') }}
+    </button>
   </div>
 </template>
 
 <style scoped>
 .message-stream-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
 }
+
+.jump-to-latest {
+  position: absolute; right: 18px; bottom: 14px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--border-muted); border-radius: 999px; padding: 5px 10px;
+  color: var(--text-primary); background: var(--surface-section);
+  box-shadow: var(--shadow-panel); font-size: 11px; cursor: pointer;
+  animation: jump-to-latest-in 160ms ease-out;
+}
+.jump-to-latest:hover, .jump-to-latest:focus-visible { background: var(--surface-hover); }
+@keyframes jump-to-latest-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .jump-to-latest { animation: none; } }
 
 .message-stream-container :deep(.message-stream) {
   flex: 1;

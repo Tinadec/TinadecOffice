@@ -76,6 +76,7 @@ export default {
     commandCenter: '指挥中心',
     debugStudio: '调试工作室',
     moreActions: '更多操作',
+    clearSearch: '清除搜索',
     rename: '重命名',
     archive: '归档',
     moveToTrash: '删除',
@@ -242,6 +243,10 @@ export default {
     modeUnavailable: '该模式当前不可用，请重新选择',
     meetingModel: '会议模型',
     meetingModelPlaceholder: '可选',
+    jumpToLatest: '回到底部',
+    thinking: '正在思考',
+    usingTools: '正在使用工具',
+    waitingForApproval: '等待审批',
   },
   context: {
     approval: '审批',
