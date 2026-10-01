@@ -834,7 +834,7 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
                 : await _provider.CallAsync(scope.WorkspaceRoot, wire, timeout, cancellationToken).ConfigureAwait(false);
         }
 
-        var gate = WorkspaceLocks.GetOrAdd(scope.WorkspaceRoot, _ => new SemaphoreSlim(1, 1));
+        var gate = WorkspaceLocks.GetOrAdd(WorkspaceWriteLockKey(scope, wire), _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -846,6 +846,27 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         {
             gate.Release();
         }
+    }
+
+    private static string WorkspaceWriteLockKey(ToolInvocationScope scope, ToolWireRequestDto wire)
+    {
+        if (wire.Params is not { ValueKind: JsonValueKind.Object } parameters)
+            return scope.WorkspaceRoot;
+
+        if (parameters.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "worktree_path", "repository_path", "cwd", "workdir", "workspace_root" })
+            {
+                if (parameters.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(value.GetString()))
+                {
+                    var candidate = value.GetString()!.Trim();
+                    try { return Path.GetFullPath(Path.IsPathRooted(candidate) ? candidate : Path.Combine(scope.WorkspaceRoot, candidate)); }
+                    catch (ArgumentException) { return scope.WorkspaceRoot; }
+                }
+            }
+        }
+        return scope.WorkspaceRoot;
     }
 
     /// <summary>

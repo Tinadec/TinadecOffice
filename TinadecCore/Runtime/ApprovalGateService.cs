@@ -153,33 +153,45 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
     {
         var scope = _tenant.Current;
         var modes = ApprovalDelegationModes.All.ToArray();
-        List<Candidate> rows;
-        await using (var db = await _lifecycleDb.CreateDbContextAsync(ct).ConfigureAwait(false))
-        {
-            rows = await (
-                from approval in db.ApprovalRequests.AsNoTracking()
-                join execution in db.ToolExecutions.AsNoTracking() on (Guid?)approval.Id equals execution.ApprovalId
-                join run in db.Runs.AsNoTracking() on execution.RunId equals run.Id
-                where approval.TenantId == scope.TenantId && approval.WorkspaceId == scope.WorkspaceId
-                    && approval.Status == "pending" && approval.Kind == "tool" && approval.UserToolActionId == null
-                    && modes.Contains(run.PermissionMode)
-                    && run.Status != "completed" && run.Status != "failed" && run.Status != "cancelled"
-                select new Candidate(approval.Id, run.Id, run.SessionId, execution.Id, execution.TaskId, execution.ToolId,
-                    execution.Risk, run.PermissionMode, approval.CreatedAt))
-                .Take(CandidateWindow)
-                .ToListAsync(ct).ConfigureAwait(false);
-        }
-        if (rows.Count == 0) return [];
-
-        var ids = rows.Select(row => row.ApprovalId).ToArray();
-        await using var gates = await _gatesDb.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var states = await gates.ApprovalGates.AsNoTracking()
-            .Where(gate => ids.Contains(gate.PermissionRequestId))
-            .Select(gate => new { gate.PermissionRequestId, gate.Status, gate.ClaimedAtUnixMs })
-            .ToListAsync(ct).ConfigureAwait(false);
+        var target = Math.Clamp(_options.BatchSize, 1, 64);
+        var ready = new List<Candidate>(target);
+        Guid? afterApprovalId = null;
         var lapse = LapseBefore();
-        var byApproval = states.GroupBy(state => state.PermissionRequestId).ToDictionary(group => group.Key, group => group.ToList());
-        return rows.Where(row =>
+
+        // Gate state lives in the AgentGraph context, so terminal/escalated gates cannot be filtered
+        // in the lifecycle SQL query. Page by a stable approval id instead of taking the first 512
+        // rows forever; a large prefix of already-escalated approvals must not starve newer work.
+        while (ready.Count < target)
+        {
+            List<Candidate> rows;
+            await using (var db = await _lifecycleDb.CreateDbContextAsync(ct).ConfigureAwait(false))
+            {
+                rows = await (
+                    from approval in db.ApprovalRequests.AsNoTracking()
+                    join execution in db.ToolExecutions.AsNoTracking() on (Guid?)approval.Id equals execution.ApprovalId
+                    join run in db.Runs.AsNoTracking() on execution.RunId equals run.Id
+                    where approval.TenantId == scope.TenantId && approval.WorkspaceId == scope.WorkspaceId
+                        && approval.Status == "pending" && approval.Kind == "tool" && approval.UserToolActionId == null
+                        && modes.Contains(run.PermissionMode)
+                        && run.Status != "completed" && run.Status != "failed" && run.Status != "cancelled"
+                        && (afterApprovalId == null || approval.Id > afterApprovalId.Value)
+                    select new Candidate(approval.Id, run.Id, run.SessionId, execution.Id, execution.TaskId, execution.ToolId,
+                        execution.Risk, run.PermissionMode, approval.CreatedAt))
+                    .OrderBy(row => row.ApprovalId)
+                    .Take(CandidateWindow)
+                    .ToListAsync(ct).ConfigureAwait(false);
+            }
+            if (rows.Count == 0) break;
+            afterApprovalId = rows[^1].ApprovalId;
+
+            var ids = rows.Select(row => row.ApprovalId).ToArray();
+            await using var gates = await _gatesDb.CreateDbContextAsync(ct).ConfigureAwait(false);
+            var states = await gates.ApprovalGates.AsNoTracking()
+                .Where(gate => ids.Contains(gate.PermissionRequestId))
+                .Select(gate => new { gate.PermissionRequestId, gate.Status, gate.ClaimedAtUnixMs })
+                .ToListAsync(ct).ConfigureAwait(false);
+            var byApproval = states.GroupBy(state => state.PermissionRequestId).ToDictionary(group => group.Key, group => group.ToList());
+            ready.AddRange(rows.Where(row =>
             {
                 if (!byApproval.TryGetValue(row.ApprovalId, out var own)) return true;
                 if (own.Any(state => state.Status is not (ApprovalGateStatuses.Pending or ApprovalGateStatuses.Evaluating or ApprovalGateStatuses.Approved)))
@@ -187,11 +199,12 @@ public sealed class ApprovalGateService : BackgroundService, IApprovalGateLedger
                 return own.All(state => state.Status == ApprovalGateStatuses.Approved)
                     || own.Any(state => state.Status == ApprovalGateStatuses.Pending)
                     || own.Any(state => state.Status == ApprovalGateStatuses.Evaluating && (state.ClaimedAtUnixMs ?? 0) < lapse);
-            })
-            // SQLite cannot order by DateTimeOffset, so the oldest-first order is applied here.
-            .OrderBy(row => row.CreatedAt)
-            .Take(Math.Clamp(_options.BatchSize, 1, 64))
-            .ToArray();
+            }));
+
+            if (rows.Count < CandidateWindow) break;
+        }
+
+        return ready.OrderBy(row => row.CreatedAt).Take(target).ToArray();
     }
 
     private async Task<bool> AdvanceAsync(Candidate candidate, CancellationToken ct)
