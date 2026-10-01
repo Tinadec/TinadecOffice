@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using TinadecCore.Abstractions;
 using TinadecCore.Abstractions.Ports;
 using TinadecCore.Contracts.Dtos;
@@ -482,6 +483,22 @@ public sealed class ControlPlaneService
             if (!Guid.TryParse(runId, out var parsedRun)) return Results.BadRequest(new { message = "run_id must be a valid Guid." });
             run = parsedRun;
         }
+        // This is a read-only projection across two contexts. Retry the whole read with
+        // fresh contexts on SQLITE_BUSY/LOCKED, including connection initialization errors.
+        // Never turn a failed read into an empty approval list, and never retry decisions here.
+        for (var attempt = 0; ; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try { return await ReadApprovalsAsync(status, session, run, ct).ConfigureAwait(false); }
+            catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6 && attempt < 2)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1)), ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<IResult> ReadApprovalsAsync(string? status, Guid? session, Guid? run, CancellationToken ct)
+    {
         await using var db = await _lifecycle.CreateDbContextAsync(ct);
         var q = db.ApprovalRequests.Where(x => x.TenantId == Tenant.TenantId && x.WorkspaceId == Tenant.WorkspaceId);
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status);

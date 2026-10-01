@@ -678,7 +678,7 @@ flowchart TD
 **补偿控制**
 
 1. 门只做加法：委托只替代审批点击，请求哈希、冻结清单、实例授权、一次性消费、执行窗口一条不少。
-2. 永远等人：human-only 工具（`git_push`、`shell`、`command_run`、`git_worktree_remove`、`mcp_invoke`、`web_fetch` 及 `*_delete`/`delete_*`）、Core 虚拟工具与超过委托上限（默认 `medium`）的风险在 PDP 停下，门根本不开；门服务对漏到审批层的同类也拒绝判断（同一条 `DelegatedApprovalRules`）。
+2. 人工裁决边界：推送、删除、MCP/外连、Core 虚拟工具及 elevated/high/critical/未知风险在 PDP 停下；门服务对经其他路径进入审批层的同类也拒绝判断。shell/command_run 默认等人，仅具体会话的低/中风险 opt-in 可进入委托门；PDP 与门服务使用同一条 `DelegatedApprovalRules`，规则不能跳过风险上限。
 3. 不自批：执行者本人不是审查员；对话身份自己发起的调用（solo 主人自己干活）直接退回给人。
 4. 不默认放行：答不清、无路由、超时、模型报错一律退回给人；人任何时候都可以直接决定，人先决定则门的结论作废（`superseded`）。
 5. 独立上下文：审查员只看到去密钥的参数、所服务的任务与客观事实，不看对话；只有对话身份的门看到用户目标。密钥键的值任意深度替换，不进任何门。
