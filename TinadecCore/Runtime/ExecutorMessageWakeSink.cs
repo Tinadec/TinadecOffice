@@ -22,9 +22,22 @@ internal sealed class ExecutorMessageWakeSink(
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var state = await lifecycle.GetRunStateAsync(runId.ToString("N"), cancellationToken).ConfigureAwait(false);
-            if (state.Status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled)
-                return false;
+            RunState state;
+            try
+            {
+                state = await lifecycle.GetRunStateAsync(runId.ToString("N"), cancellationToken).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException)
+            {
+                // The execution member is offline or its old run was already
+                // purged. The TinaChat inbox remains the durable todo; there is
+                // no context boundary to wake, so settle the wake instead of
+                // retrying it forever.
+                return true;
+            }
+            if (string.IsNullOrWhiteSpace(state.SessionId)
+                || state.Status is RunStatus.Completed or RunStatus.Failed or RunStatus.Cancelled)
+                return true;
 
             var existing = await conversations.ListRecentContextPatchesAsync(sessionId, runId, 32, cancellationToken).ConfigureAwait(false);
             if (existing.Any(patch => patch.AgentInstanceId == agentInstanceId && string.Equals(patch.Content, briefing, StringComparison.Ordinal)))

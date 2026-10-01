@@ -339,6 +339,32 @@ public sealed class OrganizationTests : IAsyncLifetime
         Assert.All(directory.Result.GetProperty("members").EnumerateArray(), member => Assert.Equal("offline", member.GetProperty("presence").GetString()));
     }
 
+    [Fact]
+    public async Task AnOfflineExecutorKeepsAPlanRoomMentionInItsInbox_WithoutRetryingADeadRunWake()
+    {
+        var (meeting, worker, _, _) = await CastAsync();
+        Assert.True(await Organization.SetRunOfflineAsync(_run) >= 3);
+        var post = await ToolAsync(meeting, "org_send", new
+        {
+            room = "plan", content = "search#1 please review the finished artifact.", mention = new[] { "search#1" }
+        });
+        Assert.True(post.Ok, post.Error);
+
+        var drain = _factory.Services.GetRequiredService<TinaChatWakeService>();
+        await using (var dueDb = await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync())
+            await dueDb.Wakes.Where(wake => wake.Status == "pending").ExecuteUpdateAsync(setters => setters.SetProperty(wake => wake.DueAtUnixMs, 0L));
+        _ = await drain.RunPassAsync(5);
+        await using var db = await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync();
+        var workerParticipantId = await db.InstanceBindings.AsNoTracking()
+            .Where(binding => binding.InstanceId == worker).Select(binding => binding.ParticipantId).SingleAsync();
+        var wakes = await db.Wakes.AsNoTracking().ToArrayAsync();
+        Assert.DoesNotContain(wakes, wake => wake.ParticipantId == workerParticipantId && (wake.Status is "pending" or "running"));
+        var inbox = await ToolAsync(worker, "org_read", new { room = "inbox" });
+        Assert.True(inbox.Ok, inbox.Error);
+        Assert.Contains(inbox.Result.GetProperty("messages").EnumerateArray(), message =>
+            message.GetProperty("content").GetString()!.Contains("finished artifact", StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// Per-member visibility (todo E5): the user restricts a member to its own run. A restricted
     /// standing governance member has no run of its own, so it is muted entirely — the notice is
