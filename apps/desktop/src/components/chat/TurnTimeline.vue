@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { ListChecks } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { homeController } from '@/controllers/HomeController'
@@ -56,6 +57,7 @@ async function decideSupervision(option: SupervisionDecisionOption) {
   <div class="turn-timeline">
     <div v-if="items.length" class="activity-summary" data-testid="activity-summary">
       <button class="activity-summary-trigger" type="button" :aria-expanded="expanded" data-testid="activity-toggle" @click="expanded = !expanded">
+        <ListChecks :size="13" class="activity-summary-icon" aria-hidden="true" />
         <span class="activity-summary-chevron" :class="{ expanded }" aria-hidden="true">›</span>
         <span class="activity-summary-label">{{ activitySummary }}</span>
         <span v-if="pendingCalls.length" class="activity-summary-attention">{{ t('agent.toolApprovalRequired') }}</span>
@@ -73,11 +75,10 @@ async function decideSupervision(option: SupervisionDecisionOption) {
         @approve="emit('approve', $event)" @reject="emit('reject', $event)" />
     </template>
     <div v-if="supervisionReview?.reasons.length || supervisionReview?.options.length" class="supervision-review">
-      <p v-if="supervisionReview?.reasons.length" class="supervision-reasons">
-        <span data-testid="supervision-reasons">
-          <strong>{{ t('agent.supervisionWaiting') }}</strong>{{ supervisionReview.reasons.join('；') }}
-        </span>
-      </p>
+      <div v-if="supervisionReview?.reasons.length" class="supervision-reasons" data-testid="supervision-reasons">
+        <strong>{{ t('agent.supervisionWaiting') }}</strong>
+        <span>{{ supervisionReview.reasons.join('；') }}</span>
+      </div>
       <div v-if="supervisionReview?.options.length" class="supervision-actions">
         <button v-for="option in supervisionReview.options" :key="option" type="button"
           class="supervision-action" :data-option="option" data-testid="supervision-decision"
@@ -91,19 +92,21 @@ async function decideSupervision(option: SupervisionDecisionOption) {
 
 <style scoped>
 .turn-timeline { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.activity-summary { min-width: 0; }
-.activity-summary-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 2px 4px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
-.activity-summary-trigger:hover, .activity-summary-trigger:focus-visible { color: var(--text-primary); background: var(--bg-hover); }
+.activity-summary { min-width: 0; overflow: hidden; border: 1px solid var(--border-muted); border-radius: 8px; background: color-mix(in srgb, var(--surface-raised) 78%, transparent); }
+.activity-summary-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 5px 8px; border: 0; color: var(--text-secondary); background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
+.activity-summary-trigger:hover, .activity-summary-trigger:focus-visible { color: var(--text-primary); background: var(--surface-hover); }
 .activity-summary-trigger:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
 .activity-summary-chevron { display: inline-block; width: 12px; color: var(--text-muted); font-size: 18px; line-height: 12px; transition: transform .15s ease; }
 .activity-summary-chevron.expanded { transform: rotate(90deg); }
+.activity-summary-icon { flex: 0 0 auto; color: var(--accent-primary); }
 .activity-summary-label { font-weight: 500; }
 .activity-summary-attention { margin-left: auto; color: var(--accent-warning); font-size: 10px; }
-.activity-details { padding-left: 14px; }
-.supervision-review { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px; }
-.supervision-reasons { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-.supervision-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.supervision-action { border: none; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; padding: 2px 0; }
-.supervision-action:hover { color: var(--accent); }
+.activity-details { display: flex; flex-direction: column; gap: 3px; padding: 5px 8px 7px 28px; border-top: 1px solid var(--border-muted); background: color-mix(in srgb, var(--surface-section) 42%, transparent); }
+.supervision-review { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent-warning) 38%, var(--border-muted)); border-radius: 8px; background: color-mix(in srgb, var(--accent-warning) 8%, var(--surface-raised)); }
+.supervision-reasons { display: flex; flex-direction: column; gap: 3px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.supervision-reasons strong { color: var(--accent-warning); font-weight: 600; }
+.supervision-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.supervision-action { min-height: 26px; padding: 4px 10px; border: 1px solid var(--border-muted); border-radius: 6px; color: var(--text-primary); background: var(--surface-raised); cursor: pointer; font-size: 12px; }
+.supervision-action:hover { border-color: var(--accent-primary); background: var(--surface-hover); }
 @media (prefers-reduced-motion: reduce) { .activity-summary-chevron { transition: none; } }
 </style>

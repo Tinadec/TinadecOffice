@@ -1898,6 +1898,7 @@ button.agent-topology-node:hover,
 .project-row:hover {
   background: var(--bg-hover);
 }
+.project-row.active { background: var(--surface-selected); }
 
 .project-row-main {
   display: flex;
@@ -1920,7 +1921,7 @@ button.agent-topology-node:hover,
 .project-row-main:hover {
   background: transparent;
 }
-.project-row-main.active { color: var(--text-primary); background: var(--surface-selected); }
+.project-row.active .project-row-main { color: var(--text-primary); }
 
 
 .project-row-action {
@@ -1946,6 +1947,7 @@ button.agent-topology-node:hover,
   color: var(--text-primary);
   background: var(--surface-button-hover);
 }
+.project-row.active .project-row-action { color: var(--text-secondary); opacity: 1; }
 
 .project-chevron {
   color: var(--text-muted);
@@ -2025,6 +2027,9 @@ button.agent-topology-node:hover,
   gap: 2px;
   width: 100%;
 }
+.session-row.active { padding: 0 2px; border-radius: 5px; background: var(--surface-selected); }
+.session-row.active .session-item { color: var(--text-primary); background: transparent; }
+.session-row.active .session-more { opacity: 1; }
 
 .session-row .session-item {
   flex: 1;

@@ -66,6 +66,15 @@ describe('AppSidebar lifecycle management', () => {
     wrapper.unmount()
   })
 
+  it('keeps the selected state on the full project row, including actions', () => {
+    const wrapper = factory()
+    const row = wrapper.get('.project-row')
+    expect(row.classes()).toContain('active')
+    expect(row.find('.project-row-action').exists()).toBe(true)
+    expect(row.find('.project-row-main').attributes('aria-current')).toBe('location')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     confirmMock.mockClear()
     document.body.querySelectorAll('.row-context-menu').forEach((node) => node.remove())

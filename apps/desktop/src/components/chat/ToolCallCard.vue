@@ -71,6 +71,8 @@ const isShellCall = computed(() => props.toolCall.toolId === 'shell')
 </template>
 
 <style scoped>
+.tool-call-card { min-width: 0; }
+.tool-waiting { margin: 3px 0; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--accent-warning) 40%, var(--border-muted)); border-radius: 8px; background: color-mix(in srgb, var(--accent-warning) 7%, var(--surface-raised)); }
 .tool-call-head { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 4px; background: transparent; border: none; border-radius: 4px; color: var(--text-secondary); text-align: left; cursor: pointer; }
 .tool-call-head:hover { background: var(--bg-hover); }
 .tool-call-head:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
@@ -86,7 +88,7 @@ const isShellCall = computed(() => props.toolCall.toolId === 'shell')
 .tool-call-risk-tag { flex-shrink: 0; font-size: 10px; color: var(--accent-danger); font-weight: 600; }
 .tool-call-details { margin: 4px 0 6px 25px; max-height: 18rem; overflow: auto; font-size: 12px; color: var(--text-secondary); }
 .tool-call-details p, pre { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
-.tool-call-approval { margin: 4px 0 8px 25px; font-size: 12px; }
+.tool-call-approval { margin: 5px 0 2px 25px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--accent-warning) 28%, var(--border-muted)); font-size: 12px; }
 .tool-call-approval-actions { display: flex; gap: 8px; margin-top: 4px; }
 .tool-call-approve-btn, .tool-call-reject-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: transparent; border: 1px solid var(--border-muted); border-radius: 4px; cursor: pointer; }
 .tool-call-approve-btn { color: var(--accent-success); }

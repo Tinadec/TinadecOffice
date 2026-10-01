@@ -66,8 +66,12 @@ function onKeyDown(event: KeyboardEvent) {
 
 <style scoped>
 .inline-rename-input {
+  box-sizing: border-box;
+  display: block;
+  flex: 1 1 auto;
   width: 100%;
   min-width: 0;
+  max-width: 100%;
   padding: 0 4px;
   border: 1px solid var(--border-focus, rgba(94, 152, 255, 0.65));
   border-radius: 4px;

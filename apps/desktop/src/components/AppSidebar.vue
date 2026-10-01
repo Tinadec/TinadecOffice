@@ -272,11 +272,11 @@ function openDebugStudio() {
             v-for="session in freeSessions"
             :key="session.id"
             class="session-row"
+            :class="{ active: session.id === selectedSessionId }"
             @contextmenu.prevent="openMenuAtCursor($event, 'session', session.id, session.title)"
           >
             <button
               class="session-item"
-              :class="{ active: session.id === selectedSessionId }"
               @click="handleSessionClick(session.id)"
               @dblclick.stop="renaming = { kind: 'session', id: session.id }"
             >
@@ -308,11 +308,11 @@ function openDebugStudio() {
       >
         <div
           class="project-row"
+          :class="{ active: project.id === selectedProjectId }"
           @contextmenu.prevent="openMenuAtCursor($event, 'project', project.id, project.name)"
         >
           <button
             class="project-row-main"
-            :class="{ active: project.id === selectedProjectId }"
             :aria-current="project.id === selectedProjectId ? 'location' : undefined"
             :title="project.name"
             @click="handleProjectClick(project.id)"
@@ -354,11 +354,11 @@ function openDebugStudio() {
             v-for="session in getProjectSessions(project.id)"
             :key="session.id"
             class="session-row"
+            :class="{ active: session.id === selectedSessionId }"
             @contextmenu.prevent="openMenuAtCursor($event, 'session', session.id, session.title)"
           >
             <button
               class="session-item"
-              :class="{ active: session.id === selectedSessionId }"
               :aria-current="session.id === selectedSessionId ? 'page' : undefined"
               @click="handleSessionClick(session.id)"
               @dblclick.stop="renaming = { kind: 'session', id: session.id }"
