@@ -29,10 +29,25 @@ const park: ApprovalDto = {
 }
 
 describe('ApprovalTab decision evidence', () => {
+  it('separates pending, allowed and historical decisions into foldable sections', () => {
+    const wrapper = mountRows([
+      park,
+      { ...park, id: 'a-approved', status: 'approved', command: 'npm test', summary: 'Run tests' },
+      { ...park, id: 'a-rejected', status: 'rejected', command: 'git push', summary: 'Push changes' },
+    ])
+    expect(wrapper.find('.approval-section-pending').findAll('.approval-row')).toHaveLength(1)
+    expect(wrapper.find('.approval-count-allowed').text()).toBe('1')
+    expect(wrapper.find('.approval-history-status').text()).toBe('rejected')
+    expect(wrapper.find('.approval-section-collapsed').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('names the tool, risk, command, working directory and parameters', () => {
     const wrapper = mountRows([park])
     expect(wrapper.find('.approval-tool').text()).toBe('shell')
     expect(wrapper.find('.approval-risk').text()).toBe('high')
+    expect(wrapper.get('.approval-evidence-details').attributes('open')).toBeUndefined()
+    wrapper.get('.approval-evidence-details summary').trigger('click')
     expect(wrapper.find('.approval-command').text()).toContain('git push origin main')
     expect(wrapper.find('.approval-cwd').text()).toBe('C:\\repo')
     expect(wrapper.find('.approval-arguments').text()).toContain('approval.parameters')

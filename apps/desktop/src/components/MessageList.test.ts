@@ -70,6 +70,13 @@ describe('MessageList turn anchoring', () => {
   // A pending card asks whether its approval was delegated; none of these were.
   beforeEach(() => { vi.spyOn(api, 'getApprovalGates').mockResolvedValue(null) })
 
+  it('keeps the tool evidence checkpoint out of the visible transcript', () => {
+    const wrapper = mountList({ messages: [message('e1', 'tool_evidence')] })
+    expect(wrapper.find('[data-testid="tool-evidence"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="tool-evidence-context-only"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   /**
    * Regression guard for the 真机走查 finding: a first-turn run has no assistant
    * message yet, so activity that only ever hangs off a message id renders

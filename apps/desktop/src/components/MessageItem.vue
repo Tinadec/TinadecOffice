@@ -125,13 +125,12 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
       </div>
     </template>
 
-    <!-- 运行工具证据：写进会话历史是为了让下一条消息能读到上一轮的工具体验，
-         它不是用户说的话。渲染成静默证据块，不提供复制/编辑等「用户消息」操作。 -->
+    <!-- tool_evidence is a model-context checkpoint. The visible tool timeline is
+         the single user-facing activity surface; rendering this checkpoint again
+         here created a duplicate plain-text "tool activity" menu. -->
     <template v-else-if="message.role === 'tool_evidence'">
-      <details class="tool-evidence-block" data-testid="tool-evidence">
-        <summary>{{ $t('chat.toolEvidence') }}</summary>
-        <pre class="tool-evidence-body">{{ message.content }}</pre>
-      </details>
+      <!-- Intentionally omitted from the transcript. Core still stores it for the
+           next model turn; the visible TurnTimeline owns tool activity. -->
     </template>
 
     <!-- 用户消息：对话框气泡 + 左侧操作按钮 -->
