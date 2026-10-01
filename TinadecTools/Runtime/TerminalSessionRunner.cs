@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TinadecTools.Runtime.Sandbox;
 
 namespace TinadecTools.Runtime;
 
@@ -15,6 +16,7 @@ public sealed class TerminalSession
     public required string Command { get; init; }
     public required string WorkingDirectory { get; init; }
     public required Process Process { get; init; }
+    public IDisposable? Cleanup { get; init; }
     public DateTimeOffset StartedAt { get; init; }
     /// <summary>False while the session is still tracked as a live call attachment.</summary>
     public volatile bool Exited;
@@ -275,6 +277,28 @@ public static class TerminalSessionHost
         return session;
     }
 
+    internal static TerminalSession StartSession(
+        Process process,
+        IDisposable cleanup,
+        string workingDirectory,
+        string command)
+    {
+        var session = new TerminalSession
+        {
+            TerminalSessionId = $"ts-{Guid.NewGuid():N}",
+            Command = command,
+            WorkingDirectory = workingDirectory,
+            Process = process,
+            Cleanup = cleanup,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        Register(session);
+        var lifetimeCts = new CancellationTokenSource();
+        _ = Task.Run(() => AwaitExitAsync(session, lifetimeCts.Token));
+        StartOutputPumps(session, () => Volatile.Read(ref session.AttachedCallId), lifetimeCts.Token);
+        return session;
+    }
+
     private static async Task AwaitExitAsync(TerminalSession session, CancellationToken cancellationToken)
     {
         try
@@ -304,6 +328,7 @@ public static class TerminalSessionHost
             writer.WriteNumber("exit_code", session.ExitCode);
             writer.WriteBoolean("timed_out", session.TimedOut);
         });
+        session.Cleanup?.Dispose();
     }
 }
 
@@ -346,6 +371,50 @@ public static class TerminalSessionRunner
 {
     private const int MaxCapturedChars = 64 * 1024;
     private const long LongLivedSettleMs = 3_000;
+
+    /// <summary>
+    /// Runs a process that was started by a streaming sandbox backend. The
+    /// cleanup handle remains attached to the terminal session until exit or kill.
+    /// </summary>
+    internal static async ValueTask<ShellToolResult> RunSandboxedStreamingAsync(
+        SandboxStreamingProcess sandbox,
+        string workingDirectory,
+        string command,
+        long callId,
+        CancellationToken cancellationToken)
+    {
+        if (!TerminalSessionHost.CanAdmit)
+        {
+            sandbox.Dispose();
+            throw new ShellToolExecutionException("Too many active terminal sessions.");
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        var session = TerminalSessionHost.StartSession(sandbox.Process, sandbox.Cleanup, workingDirectory, command);
+        session.AttachedCallId = callId;
+        var process = session.Process;
+        var exitTask = process.WaitForExitAsync(cancellationToken);
+        var finished = await Task.WhenAny(
+            exitTask,
+            Task.Delay(TimeSpan.FromMilliseconds(LongLivedSettleMs), cancellationToken)).ConfigureAwait(false);
+        if (finished == exitTask)
+        {
+            await DrainOutputAsync(session, 500).ConfigureAwait(false);
+            session.AttachedCallId = -1;
+            session.Exited = true;
+            var output = TerminalSessionHost.ReadReplay(session);
+            var (stdout, stderr, truncated) = SplitReplay(output);
+            return new ShellToolResult(process.ExitCode == 0, session.TerminalSessionId, session.Command,
+                "completed", process.ExitCode, stdout, stderr, truncated, truncated, false,
+                stopwatch.ElapsedMilliseconds);
+        }
+
+        await DrainOutputAsync(session, 500).ConfigureAwait(false);
+        session.AttachedCallId = -1;
+        return new ShellToolResult(true, session.TerminalSessionId, session.Command, "long_lived", -1,
+            TerminalSessionHost.ReadReplay(session), string.Empty, false, false, false,
+            stopwatch.ElapsedMilliseconds);
+    }
 
     public static async ValueTask<ShellToolResult> RunAsync(
         string shellFileName,

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TinadecTools.Abstractions;
 using TinadecTools.Runtime.Sandbox;
@@ -149,6 +150,34 @@ public sealed class ShellToolTests
         Assert.Equal(0, result.GetProperty("exit_code").GetInt32());
     }
 
+    [Fact]
+    public async Task Shell_LongLived_UsesTheStreamingSandboxBackend_AndCanBeKilled()
+    {
+        ShellToolRegistration.Register();
+        var backend = new ShellTestSandboxBackend();
+        using var _ = CommandSandboxRuntime.OverrideBackendForTests(backend);
+        var response = await ToolRegistry.DispatchAsync(ShellRequest(
+            OperatingSystem.IsWindows()
+                ? "{\"command\":\"ping -n 30 127.0.0.1 >nul\",\"long_lived\":true}"
+                : "{\"command\":\"sleep 30\",\"long_lived\":true}"));
+
+        Assert.True(response.IsSuccess, response.Response.ToString());
+        Assert.True(backend.StreamingStartRequested);
+        var result = response.Response;
+        Assert.Equal("long_lived", result.GetProperty("status").GetString());
+        var terminalSessionId = result.GetProperty("terminal_session_id").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(terminalSessionId));
+
+        var killed = await ToolRegistry.DispatchAsync(new ToolCallRequest<JsonElement>
+        {
+            ToolId = "#terminal",
+            SessionId = "shell-test",
+            ToolCallId = Interlocked.Increment(ref _nextCallId),
+            Params = JsonSerializer.SerializeToElement(new { action = "kill", terminal_session_id = terminalSessionId })
+        });
+        Assert.True(killed.IsSuccess);
+    }
+
     private static async Task<ToolCallResponse<JsonElement>> DispatchSandboxedAsync(ToolCallRequest<JsonElement> request)
     {
         using var backend = CommandSandboxRuntime.OverrideBackendForTests(new ShellTestSandboxBackend());
@@ -159,6 +188,7 @@ public sealed class ShellToolTests
     {
         public bool IsSupported => true;
         public bool IsInitialized => true;
+        public bool StreamingStartRequested { get; private set; }
         public Task EnsureSetupAsync(CancellationToken ct) => Task.CompletedTask;
         public Task ResetAsync(SandboxResetScope scope, CancellationToken ct) => Task.CompletedTask;
 
@@ -174,6 +204,31 @@ public sealed class ShellToolTests
                 ? command[(command.IndexOf("echo", StringComparison.OrdinalIgnoreCase) + 4)..].Trim() + "\n"
                 : string.Empty;
             return Task.FromResult(new SandboxRunnerResponse { Success = true, ExitCode = 0, Stdout = stdout });
+        }
+
+        public Task<SandboxStreamingProcess> StartStreamingAsync(
+            SandboxRunnerRequest request,
+            SandboxPermissions permissions,
+            CancellationToken ct)
+        {
+            StreamingStartRequested = true;
+            var psi = new ProcessStartInfo(request.Executable)
+            {
+                WorkingDirectory = request.WorkingDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                CreateNoWindow = true
+            };
+            foreach (var argument in request.Arguments) psi.ArgumentList.Add(argument);
+            var process = Process.Start(psi) ?? throw new InvalidOperationException("test process did not start");
+            return Task.FromResult(new SandboxStreamingProcess(process, new NoopCleanup()));
+        }
+
+        private sealed class NoopCleanup : IDisposable
+        {
+            public void Dispose() { }
         }
     }
 }

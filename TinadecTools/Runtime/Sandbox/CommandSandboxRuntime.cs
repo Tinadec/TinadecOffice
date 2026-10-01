@@ -122,6 +122,26 @@ internal static class CommandSandboxRuntime
         return await _backend.ExecuteAsync(request, permissions, persistGrants, ct).ConfigureAwait(false);
     }
 
+    internal static async Task<SandboxStreamingProcess> StartStreamingAsync(
+        string executable,
+        List<string> arguments,
+        string workingDirectory,
+        int timeoutMs,
+        SandboxPermissions permissions,
+        CancellationToken ct)
+    {
+        SandboxRequestValidator.Validate(executable, arguments, workingDirectory, timeoutMs);
+        var fullWorkDir = SandboxPaths.ValidateWorkingDirectory(workingDirectory);
+        await _backend.EnsureSetupAsync(ct).ConfigureAwait(false);
+        return await _backend.StartStreamingAsync(new SandboxRunnerRequest
+        {
+            Executable = executable,
+            Arguments = arguments,
+            WorkingDirectory = fullWorkDir,
+            TimeoutMs = timeoutMs
+        }, permissions, ct).ConfigureAwait(false);
+    }
+
     private sealed class RestoreBackend(ISandboxBackend backend) : IDisposable
     {
         public void Dispose() => _backend = backend;

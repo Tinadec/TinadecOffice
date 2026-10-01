@@ -133,10 +133,14 @@ internal static class ShellToolRegistration
         {
             if (longLived)
             {
-                // The Windows sandbox runner is deliberately one-shot: it owns the child process and
-                // returns bounded output only after exit. Never fall back to an unsandboxed long-lived
-                // terminal; a future streaming sandbox backend must explicitly implement this mode.
-                return Fail(request.ToolCallId, "long_lived shell sessions are unavailable until a streaming sandbox backend is configured.");
+                var (streamFileName, streamArguments) = ResolveSandboxCommand(command);
+                var streamPermissions = CommandSandboxRuntime.MergeWithPolicy(
+                    CommandSandboxRuntime.BuildPermissions(null, null, null));
+                var streamingSandbox = await CommandSandboxRuntime.StartStreamingAsync(
+                    streamFileName, streamArguments, workingDirectory, timeoutMs, streamPermissions, cancellationToken).ConfigureAwait(false);
+                var streamed = await TerminalSessionRunner.RunSandboxedStreamingAsync(
+                    streamingSandbox, workingDirectory, command, request.ToolCallId, cancellationToken).ConfigureAwait(false);
+                return Ok(request.ToolCallId, streamed);
             }
 
             var (fileName, arguments) = ResolveSandboxCommand(command);
