@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import TurnTimeline from './TurnTimeline.vue'
 import type { SupervisionReview } from '@/composables/useAgentActivity'
+import type { ToolCall } from '@/composables/useAgentActivity'
 import zh from '@/locales/zh-CN'
 
 const i18n = createI18n({ legacy: false, locale: 'zh-CN', messages: { 'zh-CN': zh } })
@@ -70,5 +71,21 @@ describe('TurnTimeline supervision review', () => {
     }))
     expect(apiMock.controlRun).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('TurnTimeline activity summary', () => {
+  it('collapses the detailed activity into one compact row by default', async () => {
+    const call = {
+      id: 'call-1', toolId: 'read_file', toolName: 'read_file', status: 'completed',
+      startedAt: null, completedAt: null, durationMs: 12, argsSummary: 'README.md',
+      resultSummary: 'ok', requiresApproval: false, approvalId: null, evidence: [], seq: 1, risk: 'low',
+    } as unknown as ToolCall
+    const wrapper = mount(TurnTimeline, { props: { toolCalls: [call] }, global: { plugins: [i18n] } })
+    expect(wrapper.find('[data-testid="activity-summary"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="activity-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="activity-details"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('read_file')
   })
 })

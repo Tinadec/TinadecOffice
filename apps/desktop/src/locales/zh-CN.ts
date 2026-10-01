@@ -76,7 +76,6 @@ export default {
     commandCenter: '指挥中心',
     debugStudio: '调试工作室',
     moreActions: '更多操作',
-    clearSearch: '清除搜索',
     rename: '重命名',
     archive: '归档',
     moveToTrash: '删除',

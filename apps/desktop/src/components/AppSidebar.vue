@@ -8,7 +8,6 @@ import {
   MessageSquare,
   MessagesSquare,
   MoreHorizontal,
-  Search,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -61,7 +60,6 @@ const emit = defineEmits<{
   'trash-session': [id: string]
 }>()
 
-const searchQuery = ref('')
 const expandedProjects = ref<Set<string>>(new Set())
 
 // ---- Lifecycle management (context menu + inline rename) ----
@@ -142,11 +140,8 @@ async function handleMenuSelect(key: string) {
 }
 
 const filteredProjects = computed(() => {
-  if (!searchQuery.value.trim()) return props.projects
-  const q = searchQuery.value.toLowerCase()
-  return props.projects.filter((project) => project.name.toLowerCase().includes(q) || getProjectSessions(project.id).some((session) => session.title.toLowerCase().includes(q)))
+  return props.projects
 })
-const hasSearch = computed(() => searchQuery.value.trim().length > 0)
 
 function getProjectSessions(projectId: string): SessionDto[] {
   return props.sessions.filter((s) => (s.project_id ?? null) === projectId && s.title)
@@ -263,12 +258,6 @@ function openDebugStudio() {
         <span class="sidebar-label">Debug Studio</span>
       </UiButton>
     </nav>
-
-    <div v-if="!collapsed" class="sidebar-search">
-      <Search :size="14" aria-hidden="true" />
-      <input v-model="searchQuery" type="search" data-testid="sidebar-search" :aria-label="t('sidebar.search')" :placeholder="t('sidebar.searchPlaceholder')" />
-      <button v-if="hasSearch" type="button" :aria-label="t('sidebar.clearSearch')" @click="searchQuery = ''">×</button>
-    </div>
 
     <div class="sidebar-list">
       <div v-if="freeSessions.length > 0" class="project-group free-conversation-group">

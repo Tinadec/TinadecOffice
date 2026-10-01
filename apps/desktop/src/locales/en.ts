@@ -76,7 +76,6 @@ export default {
     commandCenter: 'Command Center',
     debugStudio: 'Debug Studio',
     moreActions: 'More actions',
-    clearSearch: 'Clear search',
     rename: 'Rename',
     archive: 'Archive',
     moveToTrash: 'Delete',

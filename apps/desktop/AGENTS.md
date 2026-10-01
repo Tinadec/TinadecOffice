@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-02
-**Last Updated By:** Codex 前端 UX 改进批次；对话回到底部、运行状态可读反馈、侧边栏搜索与当前态、设置导航可达性已落地；定向 Vitest 26/26、设置相关 76/76、`vue-tsc`、Vite build、drift 通过，未做真实 Electron 视觉走查。
-**Last Verified Commit:** 948664b；本批验证见上。
+**Last Updated By:** Codex 紧凑对话活动批次；撤回侧边栏搜索条，活动总折叠与审批外露已落地；定向 Vitest 29/29、`vue-tsc` 通过，未做真实 Electron 视觉走查。
+**Last Verified Commit:** d9c9c73；本批验证见上。
 **Branch:** Astra
 
 ### 2026-10-02 前端 UX 改进
