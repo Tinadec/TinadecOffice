@@ -1,8 +1,8 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-09-30
-**Last Updated By:** 组织合约投影 9→10 路径（成员可见性 PATCH）、`GET …/projects/{id}/overview` 透传、审批门与审批规则路由；契约三件套再生零漂移。
-**Last Verified Commit:** f50dfb1 之后的工作树；bun test 75 pass / 0 fail（12 文件）。
+**Last Updated:** 2026-10-01
+**Last Updated By:** 从 Core snapshot 同步父子 run 拓扑字段到 organization contract 与 external OpenAPI。
+**Last Verified Commit:** 0f68c05；Gateway OpenAPI snapshot 1/1，organization contract 已再生；历史 bun test 75 pass / 0 fail（12 文件）仍为基线。
 **Branch:** Everything-changed
 
 ## OVERVIEW

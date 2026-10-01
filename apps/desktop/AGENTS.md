@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-01
-**Last Updated By:** Codex 治理报告动作批次；GraphSeedPack 3.0.1 工具声明与 digest 已同步。
-**Last Verified Commit:** 30ab198；GraphSeedPack 结构与 digest 9/9；历史 Desktop 801 passed / 14 skipped / 0 failed、Electron 31/31、`vue-tsc`/Vite/build/drift 结果仍以 b496bec 为基线，本轮没有重新做真实 Electron/模型走查或打包验收。
+**Last Updated By:** Codex 父子 run 拓扑可见性批次；Core/Gateway snapshot 与 generated client 已同步。
+**Last Verified Commit:** 0f68c05；Core/Gateway OpenAPI snapshot 与子 run 定向 2/2、`vue-tsc` typecheck 通过；GraphSeedPack 9/9、历史 Desktop 801 passed / 14 skipped / 0 failed、Electron 31/31、Vite/build/drift 仍以此前基线为准，本轮没有真实 Electron/模型走查或重新打包验收。
 **Branch:** Everything-changed
 
 ## OVERVIEW
