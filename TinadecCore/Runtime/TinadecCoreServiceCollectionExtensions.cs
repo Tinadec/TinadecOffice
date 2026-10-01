@@ -55,6 +55,7 @@ public static class TinadecCoreServiceCollectionExtensions
         services.AddSingleton<ITinaChatIdentityBoundary, TinaChatIdentityBoundary>();
         services.AddSingleton<ITinaChatObserverAuthority, TinaChatObserverAuthority>();
         services.AddSingleton<ITinaChatRunService, TinaChatRunService>();
+        services.AddSingleton<IExecutorMessageWakeSink, ExecutorMessageWakeSink>();
         // The handoff tool needs the mode catalog and the coordinator, so the composition root wraps
         // the module's gateway rather than giving the communication module a dependency that would
         // point back at itself.

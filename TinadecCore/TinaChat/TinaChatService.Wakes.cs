@@ -36,7 +36,7 @@ public sealed partial class TinaChatService
                 && conversation.OrganizationId == organization
                 && recipient.OrgRole == OrganizationRoles.Governance;
             if (recipient.Id == sender.Id || recipient.Kind != "agent" || recipient.Status != "active"
-                || !(recipient.CanInterpretIntent || standing)) continue;
+                || !(recipient.CanInterpretIntent || standing || recipient.OrgRole == OrganizationRoles.Executor)) continue;
             var audience = audiences.FirstOrDefault(x => x.ParticipantId == recipient.Id);
             if (audience is null) continue;
             if (!audience.CanReadOriginal && !(message.AllowDerivedSharing && audience.CanReceiveDerived)) continue;
@@ -166,6 +166,8 @@ public sealed partial class TinaChatService
             if (target is null) return false;
             if (target.OrganizationId is not null && target.OrgRole == OrganizationRoles.Governance)
                 return await RunMemberWakeAsync(claim, ct);
+            if (target.OrgRole == OrganizationRoles.Executor)
+                return await RunExecutorWakeAsync(claim, ct);
         }
 
         Guid[] sources;
@@ -212,6 +214,49 @@ public sealed partial class TinaChatService
                 await Task.Delay(50 * (attempt + 1), ct);
             }
         }
+        await CompleteWakeAsync(claim, ct);
+        return true;
+    }
+
+    private async Task<bool> RunExecutorWakeAsync(WakeClaim claim, CancellationToken ct)
+    {
+        if (services?.GetService(typeof(IExecutorMessageWakeSink)) is not IExecutorMessageWakeSink sink)
+            throw new TinaChatException(503, "executor_message_wake_unavailable", "The execution run cannot receive TinaChat messages in this host.");
+
+        Guid runId;
+        Guid instanceId;
+        Guid sessionId;
+        Guid[] sources;
+        ChatParticipant participant;
+        ChatWake wake;
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            var row = await db.Wakes.SingleOrDefaultAsync(x => x.Id == claim.Id && x.Status == "running" && x.ClaimToken == claim.Token, ct)
+                ?? throw Missing();
+            participant = await db.Participants.SingleAsync(x => x.Id == row.ParticipantId, ct);
+            var binding = await db.InstanceBindings.AsNoTracking().SingleOrDefaultAsync(x => x.ParticipantId == participant.Id, ct);
+            var organization = participant.OrganizationId is { } organizationId
+                ? await db.Organizations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == organizationId, ct)
+                : null;
+            if (binding?.RunId is not { } boundRun || binding.InstanceId == Guid.Empty)
+                throw new TinaChatException(409, "executor_message_wake_unbound", "The execution member is no longer bound to a live run.");
+            if (organization is null) throw new TinaChatException(409, "executor_message_wake_unbound", "The execution member has no session organization.");
+            runId = boundRun;
+            instanceId = binding.InstanceId;
+            sessionId = organization.SessionId;
+            sources = Deserialize(row.ClaimedSourceMessageIdsJson);
+            wake = row;
+        }
+
+        if (sources.Length == 0)
+        {
+            await CompleteWakeAsync(claim, ct);
+            return true;
+        }
+
+        var briefing = await BriefingAsync(participant, wake.ConversationId, sources, ct);
+        if (!await sink.DeliverAsync(sessionId, runId, instanceId, briefing, ct).ConfigureAwait(false))
+            throw new TinaChatException(409, "executor_message_wake_stale", "The execution run could not accept this message at its context boundary.");
         await CompleteWakeAsync(claim, ct);
         return true;
     }

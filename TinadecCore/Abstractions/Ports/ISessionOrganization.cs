@@ -201,6 +201,20 @@ public interface ITinaChatMemberTurnRunner
 }
 
 /// <summary>
+/// Delivers a TinaChat message addressed to an active execution member at its next run context
+/// boundary. The implementation lives in Runtime so TinaChat remains independent of DmaEA.
+/// </summary>
+public interface IExecutorMessageWakeSink
+{
+    Task<bool> DeliverAsync(
+        Guid sessionId,
+        Guid runId,
+        Guid agentInstanceId,
+        string briefing,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// A governance fact raised outside the run engine (the tool dispatcher sees a lease conflict or
 /// parks a call on approval). The sink resolves the run's declared subscribers from its frozen
 /// configuration and notifies each through the organization — the same path engine-side facts take.

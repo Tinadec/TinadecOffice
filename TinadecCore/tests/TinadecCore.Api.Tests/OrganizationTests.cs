@@ -166,6 +166,13 @@ public sealed class OrganizationTests : IAsyncLifetime
 
         var mentioned = await ToolAsync(c, "org_read", new { room = "inbox" });
         Assert.Single(mentioned.Result.GetProperty("messages").EnumerateArray());
+        await using (var db = await _factory.Services.GetRequiredService<IDbContextFactory<TinaChatDbContext>>().CreateDbContextAsync())
+        {
+            // An execution member gets a durable wake as well as an inbox item; Runtime consumes it
+            // into that member's run-scoped context at the next safe boundary.
+            var binding = await db.InstanceBindings.SingleAsync(row => row.InstanceId == c);
+            Assert.Contains(await db.Wakes.ToArrayAsync(), wake => wake.ParticipantId == binding.ParticipantId && wake.Status == "pending");
+        }
         // The dispatcher was not mentioned: nothing in its inbox, but it sees its plan room (it owns it).
         Assert.Empty((await ToolAsync(a, "org_read", new { room = "inbox" })).Result.GetProperty("messages").EnumerateArray());
         var room = await ToolAsync(a, "org_read", new { room = "plan" });
