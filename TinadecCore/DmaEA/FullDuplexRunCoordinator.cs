@@ -37,7 +37,10 @@ public sealed record FullDuplexInvocation(
     long? ExpectedContextRevision,
     SessionModelOverride? MeetingModelOverride = null,
     Guid? ModeVersionId = null,
-    bool QueueBehindActiveRun = false);
+    bool QueueBehindActiveRun = false,
+    Guid? ParentRunId = null,
+    Guid? ParentTaskId = null,
+    string RunKind = "root");
 
 public sealed record RunSubmission(
     Guid RunId,
@@ -243,7 +246,10 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             configuration.BaselineVersion,
             configuration.ContentHash,
             configuration.PermissionMode,
-            configuration.RuntimeProfileId), cancellationToken).ConfigureAwait(false);
+            configuration.RuntimeProfileId,
+            ParentRunId: invocation.ParentRunId?.ToString(),
+            ParentTaskId: invocation.ParentTaskId?.ToString(),
+            RunKind: invocation.RunKind), cancellationToken).ConfigureAwait(false);
         var runId = Guid.Parse(started.RunId);
         await _conversations.AttachRunAsync(turn.Id, runId, cancellationToken).ConfigureAwait(false);
 

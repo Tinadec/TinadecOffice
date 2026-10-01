@@ -34,6 +34,9 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.TenantId).HasColumnName("tenant_id");
             entity.Property(x => x.WorkspaceId).HasColumnName("workspace_id");
             entity.Property(x => x.SessionId).HasColumnName("session_id");
+            entity.Property(x => x.ParentRunId).HasColumnName("parent_run_id");
+            entity.Property(x => x.ParentTaskId).HasColumnName("parent_task_id");
+            entity.Property(x => x.RunKind).HasColumnName("run_kind").HasMaxLength(32).IsRequired();
             entity.Property(x => x.InitiatedByPrincipalId).HasColumnName("initiated_by_principal_id");
             entity.Property(x => x.TriggerMessageId).HasColumnName("trigger_message_id");
             entity.Property(x => x.TurnId).HasColumnName("turn_id");
@@ -58,6 +61,7 @@ public sealed class LifecycleDbContext : DbContext
             entity.Property(x => x.TerminalErrorCategory).HasMaxLength(128);
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.CreatedAt });
             entity.HasIndex(x => new { x.SessionId, x.Status, x.UpdatedAt });
+            entity.HasIndex(x => new { x.ParentRunId, x.ParentTaskId, x.Status });
             entity.HasIndex(x => new { x.TenantId, x.WorkspaceId, x.SessionId, x.TriggerMessageId }).IsUnique();
             entity.HasIndex(x => new { x.Status, x.LeaseExpiresAt });
         });
@@ -237,6 +241,10 @@ public sealed class RunRecord
     public Guid TenantId { get; set; }
     public Guid WorkspaceId { get; set; }
     public Guid SessionId { get; set; }
+    /// <summary>Null for a user-facing root run; set for an execution child run.</summary>
+    public Guid? ParentRunId { get; set; }
+    public Guid? ParentTaskId { get; set; }
+    public string RunKind { get; set; } = "root";
     public Guid InitiatedByPrincipalId { get; set; }
     public Guid TriggerMessageId { get; set; }
     public Guid? TurnId { get; set; }

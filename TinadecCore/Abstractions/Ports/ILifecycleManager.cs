@@ -239,6 +239,9 @@ public sealed record RunState
     public string RuntimeProfileId { get; init; } = string.Empty;
     public string? TenantId { get; init; }
     public string? WorkspaceId { get; init; }
+    public string? ParentRunId { get; init; }
+    public string? ParentTaskId { get; init; }
+    public string RunKind { get; init; } = "root";
     /// <summary>Immutable principal that admitted the run. Empty means legacy runs cannot authorize tools.</summary>
     public string? InitiatedByPrincipalId { get; init; }
     public long CheckpointRevision { get; init; }
@@ -283,7 +286,10 @@ public sealed record RunStartRequest(
     string ConfigurationHash = "",
     string PermissionMode = "default",
     string RuntimeProfileId = "",
-    string? InitiatedByPrincipalId = null);
+    string? InitiatedByPrincipalId = null,
+    string? ParentRunId = null,
+    string? ParentTaskId = null,
+    string RunKind = "root");
 
 /// <summary>Values captured when a tool call is dispatched to the tool layer.</summary>
 public sealed record ToolExecutionStart(

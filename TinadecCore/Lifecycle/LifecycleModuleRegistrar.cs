@@ -87,10 +87,20 @@ internal sealed class LifecycleManager : ILifecycleManager
                 Guid.TryParse(request.TurnId, out var turnId) ? turnId : null,
                 request.ContextRevision, request.ConfigurationVersion, request.ConfigurationHash,
                 request.PermissionMode, request.RuntimeProfileId,
-                request.InitiatedByPrincipalId), cancellationToken).ConfigureAwait(false);
+                request.InitiatedByPrincipalId, request.ParentRunId, request.ParentTaskId, request.RunKind), cancellationToken).ConfigureAwait(false);
             return new RunStartResult(result.Run.Id.ToString(), result.Existing);
         }
-        var runId = await StartRunAsync(request.SessionId, request.TriggerMessageId, cancellationToken).ConfigureAwait(false);
+        var runId = Guid.NewGuid().ToString("N");
+        _fallbackRuns[runId] = new RunState
+        {
+            RunId = runId,
+            SessionId = request.SessionId,
+            Status = RunStatus.Planning,
+            ParentRunId = request.ParentRunId,
+            ParentTaskId = request.ParentTaskId,
+            RunKind = request.RunKind,
+            StartedAt = DateTimeOffset.UtcNow
+        };
         return new RunStartResult(runId, Existing: false);
     }
 
@@ -464,6 +474,9 @@ internal sealed class LifecycleManager : ILifecycleManager
         RuntimeProfileId = run.RuntimeProfileId,
         TenantId = run.TenantId.ToString(),
         WorkspaceId = run.WorkspaceId.ToString(),
+        ParentRunId = run.ParentRunId?.ToString(),
+        ParentTaskId = run.ParentTaskId?.ToString(),
+        RunKind = run.RunKind,
         InitiatedByPrincipalId = run.InitiatedByPrincipalId == Guid.Empty ? null : run.InitiatedByPrincipalId.ToString(),
         CheckpointRevision = run.CheckpointRevision,
         FrozenConfigurationHash = run.FrozenConfigurationHash,

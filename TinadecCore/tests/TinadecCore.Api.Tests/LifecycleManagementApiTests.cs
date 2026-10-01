@@ -335,6 +335,38 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExecutionChildRun_PersistsItsParentAndFollowsParentControl()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "child-run-workspace");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Child run session");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var message = await (await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/messages", new { content = "parent run" })).Content.ReadFromJsonAsync<JsonElement>();
+        var storage = _factory.Services.GetRequiredService<StorageLifecycleService>();
+        var parent = await storage.StartRunAsync(sessionId, message.GetProperty("id").GetGuid());
+        await storage.SetRunStatusAsync(parent.Id, "executing");
+        var taskId = Guid.NewGuid();
+        var child = await storage.StartOrGetRunAsync(sessionId, Guid.NewGuid(), new RunStartOptions(
+            TurnId: null, ContextRevision: 0, ConfigurationVersion: 0, ConfigurationHash: "",
+            PermissionMode: "default", RuntimeProfileId: "",
+            ParentRunId: parent.Id.ToString(), ParentTaskId: taskId.ToString(), RunKind: "execution_child"));
+
+        var childState = await _factory.Services.GetRequiredService<ILifecycleManager>().GetRunStateAsync(child.Run.Id.ToString());
+        Assert.Equal(parent.Id.ToString(), childState.ParentRunId);
+        Assert.Equal(taskId.ToString(), childState.ParentTaskId);
+        Assert.Equal("execution_child", childState.RunKind);
+
+        await storage.SetRunStatusAsync(child.Run.Id, "executing");
+        await storage.SetRunStatusAsync(parent.Id, "paused");
+        Assert.Equal(RunStatus.Paused, (await _factory.Services.GetRequiredService<ILifecycleManager>().GetRunStateAsync(child.Run.Id.ToString())).Status);
+        await storage.SetRunStatusAsync(parent.Id, "executing");
+        Assert.Equal(RunStatus.Executing, (await _factory.Services.GetRequiredService<ILifecycleManager>().GetRunStateAsync(child.Run.Id.ToString())).Status);
+        await storage.SetRunStatusAsync(parent.Id, "cancelled", "parent cancelled");
+        Assert.Equal(RunStatus.Cancelled, (await _factory.Services.GetRequiredService<ILifecycleManager>().GetRunStateAsync(child.Run.Id.ToString())).Status);
+    }
+
+    [Fact]
     public async Task RecoveryCoordinator_RepairsFailedRunWithItsOriginalErrorCategory()
     {
         var client = _factory!.CreateClient();

@@ -85,9 +85,34 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             initiatedByPrincipalId = requestedPrincipal;
         }
 
+        Guid? parentRunId = null;
+        Guid? parentTaskId = null;
+        var runKind = string.IsNullOrWhiteSpace(options?.RunKind) ? "root" : options!.RunKind.Trim().ToLowerInvariant();
+        if (runKind is not ("root" or "execution_child"))
+            throw new ArgumentException("RunKind must be root or execution_child.", nameof(options));
+        if (!string.IsNullOrWhiteSpace(options?.ParentRunId))
+        {
+            if (!Guid.TryParse(options.ParentRunId, out var parsedParentRun) || parsedParentRun == Guid.Empty
+                || !Guid.TryParse(options.ParentTaskId, out var parsedParentTask) || parsedParentTask == Guid.Empty)
+                throw new ArgumentException("A child run requires valid parent_run_id and parent_task_id.", nameof(options));
+            var parent = await db.Runs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == parsedParentRun
+                && x.TenantId == session.TenantId && x.WorkspaceId == session.WorkspaceId && x.SessionId == sessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The parent run does not belong to this session boundary.");
+            if (RunStatusMachine.IsTerminal(parent.Status))
+                throw new InvalidOperationException("A terminal run cannot admit a child run.");
+            parentRunId = parsedParentRun;
+            parentTaskId = parsedParentTask;
+            runKind = "execution_child";
+        }
+        else if (runKind != "root")
+        {
+            throw new ArgumentException("An execution_child run requires a parent run.", nameof(options));
+        }
+
         var run = new RunRecord
         {
             Id = Guid.NewGuid(), TenantId = session.TenantId, WorkspaceId = session.WorkspaceId, SessionId = sessionId, TriggerMessageId = triggerMessageId,
+            ParentRunId = parentRunId, ParentTaskId = parentTaskId, RunKind = runKind,
             InitiatedByPrincipalId = initiatedByPrincipalId,
             TurnId = options?.TurnId, ContextRevision = options?.ContextRevision ?? 0, ConfigurationVersion = options?.ConfigurationVersion ?? 0,
             ConfigurationHash = options?.ConfigurationHash ?? string.Empty, PermissionMode = options?.PermissionMode ?? "default",
@@ -278,7 +303,7 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
             await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var current = await db.Runs.AsNoTracking()
                 .Where(x => x.Id == runId)
-                .Select(x => new { x.Status, x.Summary, x.TerminalErrorCategory, x.CompletedAt, x.CheckpointRevision })
+                .Select(x => new { x.Status, x.Summary, x.TerminalErrorCategory, x.CompletedAt, x.CheckpointRevision, x.RunKind })
                 .SingleOrDefaultAsync(cancellationToken)
                 .ConfigureAwait(false);
             if (current is null) throw new KeyNotFoundException("Run was not found.");
@@ -326,10 +351,46 @@ public sealed class StorageLifecycleService : IStorageMigrationParticipant
                     .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
             }
 
-            if (updated == 1) return;
+            if (updated == 1)
+            {
+                await CascadeChildStatusAsync(db, runId, target, now, cancellationToken).ConfigureAwait(false);
+                return;
+            }
         }
 
         throw new InvalidOperationException($"Run '{runId}' status changed too frequently to apply transition to '{target}'.");
+    }
+
+    private static async Task CascadeChildStatusAsync(LifecycleDbContext db, Guid parentRunId, string target,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (target == "cancelled")
+        {
+            await db.Runs.Where(x => x.ParentRunId == parentRunId
+                    && x.Status != "completed" && x.Status != "failed" && x.Status != "cancelled")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "cancelled")
+                    .SetProperty(x => x.CompletedAt, now)
+                    .SetProperty(x => x.Summary, "Cancelled with the parent run.")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        }
+        else if (target == "paused")
+        {
+            await db.Runs.Where(x => x.ParentRunId == parentRunId
+                    && (x.Status == "executing" || x.Status == "reviewing"))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "paused")
+                    .SetProperty(x => x.Summary, "Paused with the parent run.")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        }
+        else if (target == "executing")
+        {
+            await db.Runs.Where(x => x.ParentRunId == parentRunId && x.Status == "paused")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "executing")
+                    .SetProperty(x => x.Summary, "Resumed with the parent run.")
+                    .SetProperty(x => x.UpdatedAt, now), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public async Task<EventIndexRecord> AppendEventAsync(
@@ -1388,7 +1449,10 @@ public sealed record RunStartOptions(
     string ConfigurationHash,
     string PermissionMode,
     string RuntimeProfileId,
-    string? InitiatedByPrincipalId = null);
+    string? InitiatedByPrincipalId = null,
+    string? ParentRunId = null,
+    string? ParentTaskId = null,
+    string RunKind = "root");
 
 // RunStatusMachine lives in TinadecCore.Abstractions (shared Contracts/Abstractions
 // layer, plan §3.3 item 3); Lifecycle consumes the shared rules without a local copy.
