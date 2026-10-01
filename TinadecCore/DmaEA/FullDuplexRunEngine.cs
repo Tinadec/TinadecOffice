@@ -601,6 +601,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 && checkpoint.Phase == "awaiting_user"
                 && run.Status is not RunStatus.AwaitingUser and not RunStatus.Executing)
             {
+                if (checkpoint.SupervisionDecision == "escalate" && !checkpoint.AwaitingApprovalExpiryReview)
+                    await PublishSupervisionReviewAsync(run, checkpoint, stoppingToken).ConfigureAwait(false);
                 await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review.", stoppingToken).ConfigureAwait(false);
                 return;
             }
@@ -1523,8 +1525,13 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
 
         var parallelToolTasks = toolCapable
             .Where(task => task.ToolTurns.Count == 0 && string.IsNullOrWhiteSpace(task.PendingToolExecutionId))
+            // Dispatch/wait can consume durable directives and materialize child tasks. That
+            // shared graph belongs to the run owner, not to a disposable worker snapshot.
+            .Where(task => !surfaces[task.TaskId].Any(tool =>
+                CoreVirtualToolPolicy.IsTaskDispatch(tool.ToolId) || CoreVirtualToolPolicy.IsTaskWait(tool.ToolId)))
             .ToList();
         var serialToolTasks = toolCapable.Except(parallelToolTasks).ToList();
+        var usageBeforeParallel = checkpoint.ModelUsage;
         ToolTaskExecutionResult[] parallelResults = parallelToolTasks.Count == 0
             ? []
             : await Task.WhenAll(parallelToolTasks.Select(task => ExecuteParallelToolTaskAsync(
@@ -1533,6 +1540,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         foreach (var result in parallelResults)
         {
             MergeParallelTaskCheckpoint(checkpoint, result.Checkpoint, result.TaskId);
+            checkpoint.ModelUsage = Maf18RuntimeAdapter.AddUsage(checkpoint.ModelUsage,
+                Maf18RuntimeAdapter.UsageSince(result.Checkpoint.ModelUsage, usageBeforeParallel));
             if (result.Waiting)
             {
                 parallelWaiting = true;
@@ -4169,14 +4178,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             checkpoint.Phase = "awaiting_user";
             checkpoint.MeetingResponse = null;
             checkpoint = await SaveCheckpointAsync(checkpoint, checkpoint.CheckpointRevision, "supervision-escalated", cancellationToken).ConfigureAwait(false);
+            await PublishSupervisionReviewAsync(run, checkpoint, cancellationToken).ConfigureAwait(false);
             await TrySetRunStatusAsync(run.RunId, "awaiting_user", "Supervision requires user review before this run can finish.", cancellationToken).ConfigureAwait(false);
-            await AppendEventAsync(runId, "supervision.user_review.requested", "Supervision escalated the run and is waiting for a user decision.", new
-            {
-                run_id = run.RunId,
-                decision = "escalate",
-                reasons = checkpoint.SupervisionReasons,
-                options = new[] { "continue", "correct", "cancel" }
-            }, cancellationToken).ConfigureAwait(false);
             return checkpoint;
         }
 
@@ -4689,6 +4692,18 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
         }
         return true;
     }
+
+    // The decision evidence must be durable before the externally visible waiting status.
+    // Recovery uses the same key if the host stopped between checkpoint/event/status writes.
+    private Task PublishSupervisionReviewAsync(RunState run, FullDuplexCheckpointV1 checkpoint, CancellationToken ct) =>
+        AppendEventAsync(Guid.Parse(run.RunId), "supervision.user_review.requested",
+            "Supervision escalated the run and is waiting for a user decision.", new
+            {
+                run_id = run.RunId,
+                decision = "escalate",
+                reasons = checkpoint.SupervisionReasons,
+                options = new[] { "continue", "correct", "cancel" }
+            }, ct, idempotencyKey: $"run:{run.RunId}:supervision-review:{checkpoint.PlanRevision}:{checkpoint.SupervisionRound}");
 
     private async Task FinalizeAsync(
         RunState run,

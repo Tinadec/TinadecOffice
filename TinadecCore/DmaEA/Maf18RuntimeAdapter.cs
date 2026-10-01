@@ -151,6 +151,20 @@ internal static class Maf18RuntimeAdapter
     internal static string? SerializeUsage(ModelUsage? usage) =>
         usage is null ? null : JsonSerializer.Serialize(usage);
 
+    /// <summary>A worker snapshot inherits the run's usage. Merge only its new counts,
+    /// preserving absent provider dimensions rather than manufacturing zero totals.</summary>
+    internal static ModelUsage? UsageSince(ModelUsage? current, ModelUsage? baseline)
+    {
+        if (current is null || baseline is null) return current;
+        static long? Delta(long? value, long? before) => value is null ? null : value.Value - (before ?? 0);
+        return new ModelUsage(
+            Delta(current.InputTokens, baseline.InputTokens), Delta(current.OutputTokens, baseline.OutputTokens),
+            Delta(current.TotalTokens, baseline.TotalTokens), Delta(current.CachedInputTokens, baseline.CachedInputTokens),
+            Delta(current.ReasoningTokens, baseline.ReasoningTokens),
+            current.AdditionalCounts?.ToDictionary(pair => pair.Key,
+                pair => pair.Value - (baseline.AdditionalCounts?.GetValueOrDefault(pair.Key) ?? 0)));
+    }
+
     /// <summary>
     /// Token accounting for the budget gates. Providers are not required to report
     /// a total, and <see cref="ModelUsage.TotalTokens"/> stays null for calls that

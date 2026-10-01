@@ -587,6 +587,12 @@ internal sealed class FullDuplexRunCoordinator : IFullDuplexRunCoordinator
             var chunks = await _lifecycle.ReplayRunStreamAsync(runId.ToString(), turnId, cursor, cancellationToken).ConfigureAwait(false);
             foreach (var chunk in chunks)
             {
+                // The durable tail is written before CompleteRunAsync so a crashed owner can
+                // finish its claim. Do not publish success while the run still says reviewing.
+                // Keep the cursor before this frame; recovery or the owner will commit the status.
+                if (chunk.Kind == "done" && chunk.FinishReason == "completed"
+                    && (await _lifecycle.GetRunStateAsync(runId.ToString(), cancellationToken).ConfigureAwait(false)).Status != RunStatus.Completed)
+                    break;
                 cursor = Math.Max(cursor, chunk.Sequence);
                 lastEmitAt = DateTimeOffset.UtcNow;
                 yield return ToStreamChunk(chunk);

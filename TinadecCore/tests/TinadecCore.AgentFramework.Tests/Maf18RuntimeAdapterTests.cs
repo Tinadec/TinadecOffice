@@ -9,6 +9,20 @@ namespace TinadecCore.AgentFramework.Tests;
 public sealed class Maf18RuntimeAdapterTests
 {
     [Fact]
+    public void UsageSince_MergesParallelDeltasWithoutCountingTheBaselineTwice()
+    {
+        var baseline = new ModelUsage(10, 2, null, AdditionalCounts: new Dictionary<string, long> { ["requests"] = 1 });
+        var worker = new ModelUsage(3, 1, null, AdditionalCounts: new Dictionary<string, long> { ["requests"] = 2 });
+        var local = Maf18RuntimeAdapter.AddUsage(baseline, worker);
+        var delta = Maf18RuntimeAdapter.UsageSince(local, baseline);
+        var combined = Maf18RuntimeAdapter.AddUsage(Maf18RuntimeAdapter.AddUsage(baseline, delta), delta);
+        Assert.Equal(16, combined!.InputTokens);
+        Assert.Equal(4, combined.OutputTokens);
+        Assert.Null(combined.TotalTokens);
+        Assert.Equal(5, combined.AdditionalCounts!["requests"]);
+    }
+
+    [Fact]
     public void FrameworkPackageFamily_IsLockedTo118()
     {
         Maf18RuntimeAdapter.EnsureCompatible();

@@ -2212,6 +2212,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
         private readonly IPromptAssembler? _promptAssembler;
         private readonly string? _runtimeToml;
         private readonly bool _throwingLogger;
+        public Action<IServiceCollection>? ConfigureTestServices { get; set; }
 
         public FullDuplexFactory(string root, ScriptedChatClient client, bool available, IPromptAssembler? promptAssembler, string? runtimeToml = null, bool throwingLogger = false)
         {
@@ -2245,6 +2246,7 @@ public sealed partial class FullDuplexEndpointTests : IAsyncLifetime
                 services.AddSingleton<ISecretStore>(new TestModelSecretStore(_available));
                 services.AddSingleton<IToolManifestSnapshotResolver, EmptyToolManifestSnapshotResolver>();
                 if (_promptAssembler is not null) services.AddSingleton(_promptAssembler);
+                ConfigureTestServices?.Invoke(services);
             });
             if (_throwingLogger)
             {

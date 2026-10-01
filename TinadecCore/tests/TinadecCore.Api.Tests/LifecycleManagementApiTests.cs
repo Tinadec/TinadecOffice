@@ -335,6 +335,39 @@ public sealed class LifecycleManagementApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StreamCompletion_WaitsForTheDurableStatus_WithoutDroppingTheFinalFrame()
+    {
+        var client = _factory!.CreateClient();
+        var project = await CreateProjectAsync(client, "stream-commit");
+        var session = await CreateSessionAsync(client, project.GetProperty("id").GetGuid(), "Stream completion");
+        var sessionId = session.GetProperty("id").GetGuid();
+        var conversations = _factory.Services.GetRequiredService<IConversationStore>();
+        var user = await conversations.AppendMessageAsync(sessionId, "user", "test finalization");
+        var lifecycle = _factory.Services.GetRequiredService<ILifecycleManager>();
+        var runId = await lifecycle.StartRunAsync(sessionId.ToString(), user.Id.ToString());
+        await lifecycle.SetRunStatusAsync(runId, "executing");
+        await lifecycle.SetRunStatusAsync(runId, "reviewing");
+        Assert.True(await lifecycle.TryClaimRunCompletionAsync(runId, "reviewing", null, null));
+        var turnId = Guid.NewGuid();
+        await lifecycle.AppendRunStreamAsync(runId, new(turnId, "delta", Delta: "completed work"));
+        var done = await lifecycle.AppendRunStreamAsync(runId, new(turnId, "done", FinishReason: "completed"));
+        var coordinator = _factory.Services.GetRequiredService<TinadecCore.DmaEA.IFullDuplexRunCoordinator>();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var stream = coordinator.FollowAsync(Guid.Parse(runId), turnId, cancellationToken: timeout.Token).GetAsyncEnumerator();
+        Assert.True(await stream.MoveNextAsync());
+        Assert.Equal("delta", stream.Current.Kind);
+        var next = stream.MoveNextAsync().AsTask();
+        await Task.Delay(400, timeout.Token);
+        Assert.False(next.IsCompleted, "Success must not be published before the run's completed status.");
+        await lifecycle.CompleteRunAsync(runId);
+        Assert.True(await next.WaitAsync(timeout.Token));
+        Assert.Equal("done", stream.Current.Kind);
+        Assert.Equal(done.Sequence, stream.Current.Seq);
+        Assert.Equal(RunStatus.Completed, (await lifecycle.GetRunStateAsync(runId)).Status);
+        Assert.False(await stream.MoveNextAsync());
+    }
+
+    [Fact]
     public async Task ExecutionChildRun_PersistsItsParentAndFollowsParentControl()
     {
         var client = _factory!.CreateClient();
