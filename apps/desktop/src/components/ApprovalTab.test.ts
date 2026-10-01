@@ -2,15 +2,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ApprovalTab from './ApprovalTab.vue'
-import type { ApprovalDto } from '../api'
+import type { ApprovalDto, ApprovalRuleDto } from '../api'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-function mountRows(approvals: ApprovalDto[]) {
+function mountRows(approvals: ApprovalDto[], approvalRules: ApprovalRuleDto[] = []) {
   return mount(ApprovalTab, {
-    props: { approvals, shellCommand: '', busy: false, selectedSessionId: 's1' },
+    props: { approvals, approvalRules, shellCommand: '', busy: false, selectedSessionId: 's1' },
   })
 }
 
@@ -32,14 +32,32 @@ describe('ApprovalTab decision evidence', () => {
   it('separates pending, allowed and historical decisions into foldable sections', () => {
     const wrapper = mountRows([
       park,
-      { ...park, id: 'a-approved', status: 'approved', command: 'npm test', summary: 'Run tests' },
       { ...park, id: 'a-rejected', status: 'rejected', command: 'git push', summary: 'Push changes' },
     ])
     expect(wrapper.find('.approval-section-pending').findAll('.approval-row')).toHaveLength(1)
-    expect(wrapper.find('.approval-count-allowed').text()).toBe('1')
+    expect(wrapper.find('.approval-count-allowed').text()).toBe('0')
     expect(wrapper.find('.approval-history-status').text()).toBe('rejected')
     expect(wrapper.find('.approval-section-collapsed').exists()).toBe(true)
     wrapper.unmount()
+  })
+
+  it('renders standing command rules separately from approval history', () => {
+    const rule = { id: 'rule-1', kind: 'command_prefix', tool_id: 'shell', pattern: 'npm test', session_id: 's1', created_by_principal_id: 'u1', created_at: '', use_count: 3 } satisfies ApprovalRuleDto
+    const wrapper = mountRows([], [rule])
+    expect(wrapper.find('.approval-rule-row').text()).toContain('npm test')
+    expect(wrapper.find('.approval-rule-revoke').exists()).toBe(true)
+    wrapper.find('.approval-rule-revoke').trigger('click')
+    expect(wrapper.emitted('revoke-approval-rule')?.[0]).toEqual([rule])
+    wrapper.unmount()
+  })
+
+  it('offers a distinct action for remembering a command prefix', async () => {
+    const wrapper = mountRows([])
+    await wrapper.setProps({ shellCommand: 'npm test' })
+    await wrapper.get('.approval-rule-request-button').trigger('click')
+    expect(wrapper.emitted('create-approval-rule')?.[0]).toEqual([{
+      kind: 'command_prefix', tool_id: 'shell', pattern: 'npm test', session_id: 's1',
+    }])
   })
 
   it('names the tool, risk, command, working directory and parameters', () => {

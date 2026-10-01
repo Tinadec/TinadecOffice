@@ -3,6 +3,8 @@ import {
   api,
   createUserToolActionForPath,
   type ApprovalDto,
+  type ApprovalRuleDto,
+  type CreateApprovalRuleInput,
   type DoctorReportDto,
   type EventEnvelope,
   type MessageDto,
@@ -41,6 +43,7 @@ const projects = ref<ProjectDto[]>([])
 const sessions = ref<SessionDto[]>([])
 const messages = ref<MessageDto[]>([])
 const approvals = ref<ApprovalDto[]>([])
+const approvalRules = ref<ApprovalRuleDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const doctor = ref<DoctorReportDto | null>(null)
 const readiness = ref<RuntimeReadinessReceiptDto | null>(null)
@@ -181,14 +184,16 @@ async function loadMessagesAndApprovals() {
   if (!selectedSessionId.value) {
     messages.value = []
     approvals.value = []
+    approvalRules.value = []
     orchestration.value = null
     toolExecutions.value = []
     runs.value = []
     return
   }
-  const [messageList, approvalList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
+  const [messageList, approvalList, ruleList, orchestrationSnapshot, toolTimeline, runList] = await Promise.all([
     api.listMessages(session!),
     api.listApprovals(session!),
+    api.listApprovalRules(session!).catch(() => [] as ApprovalRuleDto[]),
     api.getOrchestrationSnapshot(session!),
     api.listToolExecutions(session!, { limit: 12 }),
     api.listRuns(session!).catch(() => [] as unknown[]),
@@ -203,6 +208,7 @@ async function loadMessagesAndApprovals() {
   )
   messages.value = pendingEcho.length ? [...messageList, ...pendingEcho] : messageList
   approvals.value = approvalList
+  approvalRules.value = ruleList
   orchestration.value = orchestrationSnapshot
   toolExecutions.value = toolTimeline
   runs.value = (Array.isArray(runList) ? runList : []).map((r) => ({ id: String((r as Record<string, unknown>).id), status: String((r as Record<string, unknown>).status ?? '') }))
@@ -647,6 +653,20 @@ async function decideApprovalById(approvalId: string, decision: 'approved' | 're
   })
 }
 
+async function revokeApprovalRule(rule: ApprovalRuleDto) {
+  await run('revoke approval rule', async () => {
+    await api.revokeApprovalRule(rule.id)
+    approvalRules.value = approvalRules.value.filter((item) => item.id !== rule.id)
+  })
+}
+
+async function createApprovalRule(input: CreateApprovalRuleInput) {
+  await run('create approval rule', async () => {
+    const created = await api.createApprovalRule(input)
+    approvalRules.value = [created, ...approvalRules.value.filter((item) => item.id !== created.id)]
+  })
+}
+
 /** Cancel the run the composer is currently bound to. */
 async function stopRun() {
   const runId = stoppableRunId.value
@@ -760,6 +780,7 @@ export const homeController = {
   sessions,
   messages,
   approvals,
+  approvalRules,
   events,
   recentEvents,
   doctor,
@@ -817,7 +838,9 @@ export const homeController = {
   editAndResend,
   requestShellApproval,
   decideApproval,
-  decideApprovalById,
+    decideApprovalById,
+    revokeApprovalRule,
+    createApprovalRule,
   stopRun,
   executeCatalogTool,
   stoppableRunId,

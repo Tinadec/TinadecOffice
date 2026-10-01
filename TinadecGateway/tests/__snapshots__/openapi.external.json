@@ -5977,6 +5977,50 @@
         ]
       }
     },
+    "/api/v1/approval-rules": {
+      "get": {
+        "operationId": "getApiV1Approval-rules",
+        "responses": {
+          "200": {}
+        },
+        "summary": "List active approval rules",
+        "tags": [
+          "System"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Approval-rules",
+        "responses": {
+          "200": {}
+        },
+        "summary": "Create approval rule",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/approval-rules/{ruleId}": {
+      "delete": {
+        "operationId": "deleteApiV1Approval-rulesByRuleId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ruleId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "summary": "Revoke approval rule",
+        "tags": [
+          "System"
+        ]
+      }
+    },
     "/api/v1/approvals": {
       "get": {
         "operationId": "getApiV1Approvals",

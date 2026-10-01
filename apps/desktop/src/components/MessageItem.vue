@@ -106,7 +106,7 @@ function isThumbnail(attachment: MessageAttachmentSummaryDto): boolean {
 </script>
 
 <template>
-  <article class="message-wrapper" :class="message.role">
+  <article v-if="message.role !== 'tool_evidence'" class="message-wrapper" :class="message.role">
     <!-- AI 消息：Markdown 渲染，无头像无对话框；元信息在消息末尾 hover 揭示 -->
     <template v-if="message.role === 'assistant'">
       <div class="assistant-message-row">

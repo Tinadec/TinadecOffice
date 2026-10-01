@@ -1,28 +1,34 @@
 <script setup lang="ts">
 import { Check, ChevronDown, FileText, Infinity as InfinityIcon, ShieldAlert, ShieldX, Terminal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import type { ApprovalDto } from '../api'
+import type { ApprovalDto, ApprovalRuleDto, CreateApprovalRuleInput } from '../api'
 import ApprovalGateStatus from './approval/ApprovalGateStatus.vue'
 
 const { t } = useI18n()
 
-defineProps<{
+const props = withDefaults(defineProps<{
   approvals: ApprovalDto[]
+  approvalRules?: ApprovalRuleDto[]
   shellCommand: string
   busy: boolean
   selectedSessionId: string | null
-}>()
+}>(), { approvalRules: () => [] })
 
 const emit = defineEmits<{
   'request-approval': []
+  'create-approval-rule': [input: CreateApprovalRuleInput]
   /** `scope: 'run'` is "always allow this tool for this session". */
   'decide-approval': [approval: ApprovalDto, decision: 'approved' | 'rejected', scope?: 'once' | 'run']
+  'revoke-approval-rule': [rule: ApprovalRuleDto]
   'update:shellCommand': [value: string]
 }>()
 
 const pendingApprovals = (approvals: ApprovalDto[]) => approvals.filter((a) => a.status === 'pending')
 const allowedApprovals = (approvals: ApprovalDto[]) => approvals.filter((a) => a.status === 'approved' || a.governance_status === 'completed')
 const historyApprovals = (approvals: ApprovalDto[]) => approvals.filter((a) => a.status !== 'pending' && !allowedApprovals([a]).length)
+const ruleLabel = (rule: ApprovalRuleDto) => rule.kind === 'command_prefix'
+  ? `${rule.tool_id} · ${rule.pattern ?? ''}`
+  : rule.tool_id
 </script>
 
 <template>
@@ -50,6 +56,15 @@ const historyApprovals = (approvals: ApprovalDto[]) => approvals.filter((a) => a
         >
           <ShieldAlert :size="14" />
           <span>{{ t('approval.request') }}</span>
+        </button>
+        <button
+          class="approval-rule-request-button"
+          :title="t('approval.rememberCommand')"
+          :disabled="busy || !selectedSessionId || !shellCommand.trim()"
+          @click="emit('create-approval-rule', { kind: 'command_prefix', tool_id: 'shell', pattern: shellCommand.trim(), session_id: selectedSessionId })"
+        >
+          <InfinityIcon :size="14" />
+          <span>{{ t('approval.rememberCommand') }}</span>
         </button>
       </div>
     </div>
@@ -112,13 +127,13 @@ const historyApprovals = (approvals: ApprovalDto[]) => approvals.filter((a) => a
     <details class="approval-section approval-section-collapsed" open>
       <summary class="approval-section-heading">
         <div><strong>{{ t('approval.allowedTitle') }}</strong><span>{{ t('approval.allowedHint') }}</span></div>
-        <span class="approval-count approval-count-allowed">{{ allowedApprovals(approvals).length }}</span>
+        <span class="approval-count approval-count-allowed">{{ props.approvalRules.length }}</span>
       </summary>
-      <div v-if="allowedApprovals(approvals).length" class="approval-history-list">
-        <article v-for="approval in allowedApprovals(approvals)" :key="`allowed-${approval.id}`" class="approval-history-row">
-          <Check :size="14" class="approval-history-icon" />
-          <div class="approval-history-copy"><strong>{{ approval.command ?? approval.tool_id ?? approval.summary }}</strong><span>{{ approval.cwd ?? approval.summary }}</span></div>
-          <span class="approval-allowed-badge">{{ t('approval.allowedBadge') }}</span>
+      <div v-if="props.approvalRules.length" class="approval-history-list">
+        <article v-for="rule in props.approvalRules" :key="rule.id" class="approval-history-row approval-rule-row">
+          <InfinityIcon :size="14" class="approval-history-icon" />
+          <div class="approval-history-copy"><strong>{{ ruleLabel(rule) }}</strong><span>{{ rule.kind === 'command_prefix' ? t('approval.commandRuleHint') : t('approval.toolRuleHint') }} · {{ t('approval.ruleUses', { count: rule.use_count }) }}</span></div>
+          <button class="approval-rule-revoke" type="button" :title="t('approval.revokeRule')" @click="emit('revoke-approval-rule', rule)"><ShieldX :size="13" /></button>
         </article>
       </div>
       <span v-else class="quiet approval-empty">{{ t('approval.noAllowed') }}</span>

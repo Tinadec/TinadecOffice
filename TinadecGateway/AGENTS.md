@@ -1,9 +1,9 @@
 # GATEWAY KNOWLEDGE
 
-**Last Updated:** 2026-10-01
-**Last Updated By:** 从 Core snapshot 同步父子 run 拓扑字段到 organization contract 与 external OpenAPI。
-**Last Verified Commit:** 0f68c05；Gateway OpenAPI snapshot 1/1，organization contract 已再生；历史 bun test 75 pass / 0 fail（12 文件）仍为基线。
-**Branch:** Everything-changed
+**Last Updated:** 2026-10-02
+**Last Updated By:** 增加 Core-owned approval-rules 只代理路由，并同步 external OpenAPI snapshot。
+**Last Verified Commit:** 3828f84；approval-rules 路由由 Core 负责校验，Gateway runtime proxy 15/15，OpenAPI snapshot 通过。
+**Branch:** Astra
 
 ## OVERVIEW
 独立 Bun 包，薄代理 BFF/API 层。使用 Bun 运行时，拥有独立的 `bun.lock`、启动、测试和部署流程，脱离 Electron 与根 npm workspace。

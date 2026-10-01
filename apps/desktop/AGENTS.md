@@ -1,8 +1,8 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-02
-**Last Updated By:** Codex 工具证据与审批面板批次；隐藏模型上下文 checkpoint 的重复菜单，审批面板增加待处理/已允许/历史分区与可折叠证据；定向 Vitest 18/18、i18n parity 4/4、`vue-tsc` 通过，未做真实 Electron 视觉走查。
-**Last Verified Commit:** 38f571b；本批验证见上。
+**Last Updated By:** Codex 审批规则接入批次；常驻命令前缀规则、创建/撤销、审批历史与工具证据面板已贯通；定向 Vitest 23/23、i18n parity 4/4、`vue-tsc` 通过，未做真实 Electron 视觉走查。
+**Last Verified Commit:** 3828f84；本批验证见上。
 **Branch:** Astra
 
 ### 2026-10-02 前端 UX 改进

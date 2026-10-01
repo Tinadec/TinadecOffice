@@ -3366,6 +3366,8 @@ label {
 .approval-request-button, .approval-action-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 4px 9px; border: 1px solid var(--border-muted); border-radius: 6px; color: var(--text-primary); background: var(--surface-raised); cursor: pointer; font-size: 11px; white-space: nowrap; }
 .approval-request-button:hover, .approval-action-button:hover { background: var(--surface-hover); }
 .approval-request-button { color: var(--accent-warning); border-color: color-mix(in srgb, var(--accent-warning) 36%, var(--border-muted)); }
+.approval-rule-request-button { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; padding: 3px 2px; border: 0; color: var(--accent-primary); background: transparent; cursor: pointer; font-size: 11px; }
+.approval-rule-request-button:hover { color: var(--text-primary); text-decoration: underline; }
 .approval-section { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
 .approval-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 5px 6px; border-radius: 6px; color: var(--text-secondary); cursor: pointer; list-style: none; }
 .approval-section-heading::-webkit-details-marker { display: none; }
@@ -3425,6 +3427,8 @@ background: var(--surface-raised);
 .approval-history-copy span { color: var(--text-muted); font-size: 10px; }
 .approval-allowed-badge, .approval-history-status { flex: 0 0 auto; color: var(--accent-success); font-size: 10px; }
 .approval-history-status[data-status='rejected'] { color: var(--accent-danger); }
+.approval-rule-revoke { display: inline-grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.approval-rule-revoke:hover { color: var(--accent-danger); background: var(--surface-hover); }
 
 .approval-actions {
   display: flex;

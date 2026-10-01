@@ -140,6 +140,16 @@ export interface paths {
     /** Get agent version */
     get: operations["getApiV1AgentsByAgentIdVersionsByVersionId"];
   };
+  "/api/v1/approval-rules": {
+    /** List active approval rules */
+    get: operations["getApiV1Approval-rules"];
+    /** Create approval rule */
+    post: operations["postApiV1Approval-rules"];
+  };
+  "/api/v1/approval-rules/{ruleId}": {
+    /** Revoke approval rule */
+    delete: operations["deleteApiV1Approval-rulesByRuleId"];
+  };
   "/api/v1/approvals": {
     /** List approvals */
     get: operations["getApiV1Approvals"];
@@ -2777,6 +2787,35 @@ export interface operations {
       path: {
         agentId: string;
         versionId: string;
+      };
+    };
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** List active approval rules */
+  "getApiV1Approval-rules": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Create approval rule */
+  "postApiV1Approval-rules": {
+    responses: {
+      200: {
+        content: never;
+      };
+    };
+  };
+  /** Revoke approval rule */
+  "deleteApiV1Approval-rulesByRuleId": {
+    parameters: {
+      path: {
+        ruleId: string;
       };
     };
     responses: {

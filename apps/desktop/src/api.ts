@@ -74,6 +74,28 @@ export interface ApprovalDto {
   governance_status?: string | null;
   created_at: string;
   decided_at?: string | null;
+  decision?: string | null;
+  decision_reason?: string | null;
+  run_id?: string | null;
+}
+
+/** Core ApprovalRuleDto: active, persisted rules; never inferred from approval history. */
+export interface ApprovalRuleDto {
+  id: string;
+  kind: string;
+  tool_id: string;
+  pattern?: string | null;
+  session_id?: string | null;
+  created_by_principal_id: string;
+  created_at: string;
+  use_count: number;
+}
+
+export interface CreateApprovalRuleInput {
+  kind: 'command_prefix' | 'delegate_tool'
+  tool_id: string
+  pattern?: string | null
+  session_id?: string | null
 }
 
 export interface PreAuthorizationDto {
@@ -2799,6 +2821,12 @@ export const api = {
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ApprovalDto[]>(`/api/v1/approvals${suffix}`);
   },
+  listApprovalRules: (sessionId: string) =>
+    request<ApprovalRuleDto[]>(`/api/v1/approval-rules?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' }),
+  createApprovalRule: (input: CreateApprovalRuleInput) =>
+    request<ApprovalRuleDto>('/api/v1/approval-rules', { method: 'POST', body: JSON.stringify(input) }),
+  revokeApprovalRule: (id: string) =>
+    request<void>(`/api/v1/approval-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** The delegated gates of one approval, or null when it was never delegated (404). */
   getApprovalGates: async (approvalId: string): Promise<ApprovalGatesDto | null> => {
     try {

@@ -861,13 +861,27 @@ const app = new Elysia()
     const params = new URLSearchParams();
     const q = query as Record<string,unknown>;
     if (q.status) params.set('status', String(q.status));
-    if (q.session_id) params.set('sessionId', String(q.session_id));
+    if (q.session_id) params.set('session_id', String(q.session_id));
     const result = await proxyJson(`/api/v1/approvals?${params.toString()}`, { headers });
     setStatus(set, result.status);
     if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/approvals'); }
     setProxyResponseHeaders(set as never, (headers as Record<string,string>)['x-request-id']);
     return result.data;
   }, { detail: { summary: 'List approvals', tags: ['System'] } })
+  .get('/api/v1/approval-rules', async ({ request }) => {
+    const url = new URL(request.url);
+    return proxyRaw(url.pathname + url.search, { headers: forwardHeaders(request) });
+  }, { detail: { summary: 'List active approval rules', tags: ['System'] } })
+  .post('/api/v1/approval-rules', async ({ body, set, request }) => {
+    const result = await proxyJson('/api/v1/approval-rules', { method: 'POST', body: body as Record<string, unknown>, headers: forwardHeaders(request) });
+    setStatus(set, result.status);
+    if (result.status >= 400) { set.headers['content-type'] = 'application/problem+json'; return mapCoreErrorToExternal(result.status, result.data, '/api/v1/approval-rules'); }
+    return result.data;
+  }, { detail: { summary: 'Create approval rule', tags: ['System'] } })
+  .delete('/api/v1/approval-rules/:ruleId', async ({ params, request }) =>
+    proxyRaw(`/api/v1/approval-rules/${encodeURIComponent(params.ruleId)}`, {
+      method: 'DELETE', headers: forwardHeaders(request),
+    }), { detail: { summary: 'Revoke approval rule', tags: ['System'] } })
   .post('/api/v1/approvals/:approvalId/decision', async ({ params, body, set, request }) => {
     const headers = forwardHeaders(request);
     const result = await proxyJson(`/api/v1/approvals/${params.approvalId}/decision`, { method: 'POST', body: body as Record<string, unknown>, headers });

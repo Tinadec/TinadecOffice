@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Minus, PanelRightOpen, Square, X } from '@lucide/vue'
-import { api, createUserToolActionForPath, type ApprovalDto, type DoctorReportDto, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
+import { api, createUserToolActionForPath, type ApprovalDto, type ApprovalRuleDto, type CreateApprovalRuleInput, type DoctorReportDto, type EventEnvelope, type OrchestrationSnapshotDto, type RuntimeReadinessReceiptDto, type ToolExecutionTimelineItemDto } from '@/api'
 import { useTheme } from '@/composables/useTheme'
 import { useAgentActivity } from '@/composables/useAgentActivity'
 import { followSession, subscribeToSessionEvents } from '@/lib/sessionEventBus'
@@ -46,6 +46,7 @@ const loading = ref(true)
 
 // ---- Data refs (loaded independently, not via HomePage props) ----
 const approvals = ref<ApprovalDto[]>([])
+const approvalRules = ref<ApprovalRuleDto[]>([])
 const events = ref<EventEnvelope[]>([])
 const orchestration = ref<OrchestrationSnapshotDto | null>(null)
 const toolExecutions = ref<ToolExecutionTimelineItemDto[]>([])
@@ -80,13 +81,15 @@ async function loadData() {
   }
 
   try {
-    const [approvalList, orchestrationSnapshot, toolTimeline] = await Promise.all([
+    const [approvalList, ruleList, orchestrationSnapshot, toolTimeline] = await Promise.all([
       api.listApprovals(sessionId.value),
+      api.listApprovalRules(sessionId.value).catch(() => [] as ApprovalRuleDto[]),
       api.getOrchestrationSnapshot(sessionId.value).catch(() => null),
       api.listToolExecutions(sessionId.value, { limit: 12 }).catch(() => []),
     ])
 
     approvals.value = approvalList
+    approvalRules.value = ruleList
     orchestration.value = orchestrationSnapshot
     toolExecutions.value = toolTimeline
     dismissByKey('detached-panel')
@@ -181,12 +184,34 @@ async function requestShellApproval() {
   }
 }
 
-async function decideApproval(approval: ApprovalDto, decision: 'approved' | 'rejected') {
+async function decideApproval(
+  approval: ApprovalDto,
+  decision: 'approved' | 'rejected',
+  scope?: 'once' | 'run',
+) {
   try {
-    await api.decideApproval(approval.id, decision)
+    await api.decideApproval(approval.id, decision, null, scope)
     await loadData()
   } catch (err) {
     notify.error(err, { title: 'Failed to decide approval' })
+  }
+}
+
+async function revokeApprovalRule(rule: ApprovalRuleDto) {
+  try {
+    await api.revokeApprovalRule(rule.id)
+    approvalRules.value = approvalRules.value.filter((item) => item.id !== rule.id)
+  } catch (err) {
+    notify.error(err, { title: t('approval.revokeRule') })
+  }
+}
+
+async function createApprovalRule(input: CreateApprovalRuleInput) {
+  try {
+    const created = await api.createApprovalRule(input)
+    approvalRules.value = [created, ...approvalRules.value.filter((item) => item.id !== created.id)]
+  } catch (err) {
+    notify.error(err, { title: t('approval.rememberCommand') })
   }
 }
 
@@ -262,9 +287,12 @@ watch(sessionId, () => {
         <GitPanel
           v-if="tabType === 'git'"
           :approvals="approvals"
+          :approval-rules="approvalRules"
           :current-project-path="projectPath"
           :selected-session-id="sessionId"
           @decide-approval="decideApproval"
+          @revoke-approval-rule="revokeApprovalRule"
+          @create-approval-rule="createApprovalRule"
           @approval-created="recordApproval"
         />
 
