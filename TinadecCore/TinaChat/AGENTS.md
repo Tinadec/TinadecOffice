@@ -1,8 +1,8 @@
 # TinaChat 模块约定
 
 **Last Updated:** 2026-10-01
-**Last Updated By:** Codex 用隔离 SQLite 故障注入复查唤醒、崩溃恢复与可见性；纠正已闭环误报。
-**Last Verified Commit:** b496bec；Core API 全量 588/590，失败两条单独复跑通过；复查探针确认来源丢失、孤儿 running 不恢复和拓扑租约越界。完整报告见 ../../docs/agent-graph/review-2026-10-01.zh-CN.md（仓库根 docs 下）。
+**Last Updated By:** Codex 修复 TinaChat 唤醒的 claimed source、fencing、过期回收和来源无上限合并；补模型失败/旧 claim 回归。
+**Last Verified Commit:** 3e44ef6；TinaChat/组织/资源相关 Api 定向 41/41，新增唤醒回归 3/3。完整 API 历史矩阵仍为 588/590，真实模型/PG/多宿主未验收。完整报告见 `../../docs/agent-graph/review-2026-10-01.zh-CN.md`。
 **Branch:** Everything-changed
 
 ## 位置与依赖
@@ -13,7 +13,7 @@
 
 ## 必须保留的规则
 
-- **当前实现欠缺（2026-10-01）**：下述可靠消费、重启重放与背压是要求，不是已完成事实。领取中来源需要持久保存，成功才 ACK；running 行要有 owner/期限/fencing；消息来源不能用 Take(32) 覆盖丢弃。默认执行者尚无自动收件箱消费，治理成员也没有完整的持久上下文和治理执行动词；`own` 图过滤尚未覆盖租约与成员内部运行信息。见仓库 `docs/agent-graph/review-2026-10-01.zh-CN.md` 与 todo N2/N3/N5/N6。
+- **当前实现欠缺（2026-10-01）**：claimed source、成功 ACK、claim token/期限回收和来源无上限合并已实现并有回归；默认执行者尚无自动收件箱消费，治理成员也没有完整的持久上下文和治理执行动词。`own` topology 的租约/执行成员过滤已接入。见仓库 `docs/agent-graph/review-2026-10-01.zh-CN.md` 与 todo N5/N7/N8。
 
 - 身份由经验证的租户主体控制；请求的 actor_id、职位或名字不是凭据。同一所有者能管理自己的多个参与者，目前尚无单独的运行实例凭据。
 - 对话理解是可配置职责，不把 meeting 名字、某个全局 agent id 或管理员职责硬编码为唯一入口。
