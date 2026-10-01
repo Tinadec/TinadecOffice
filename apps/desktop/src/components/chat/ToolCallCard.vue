@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight, FileText, FolderSearch, Globe2, GitBranch, Terminal, Wrench } from '@lucide/vue'
+import { CheckCircle2, XCircle, Loader2, Clock, ShieldAlert, ChevronRight } from '@lucide/vue'
+import { toolIconOf } from '@/lib/toolPresentation'
 import { UiCollapsible } from '@/components/ui'
 import type { ToolCall } from '@/composables/useAgentActivity'
 import TerminalCallBlock from './TerminalCallBlock.vue'
@@ -26,13 +27,7 @@ const durationLabel = computed(() => props.toolCall.durationMs == null ? null
 const isRisky = computed(() => ['high', 'critical'].includes(props.toolCall.risk))
 const isShellCall = computed(() => props.toolCall.toolId === 'shell')
 const toolIcon = computed(() => {
-  const id = props.toolCall.toolId.toLowerCase()
-  if (id.includes('search') || id === 'grep' || id === 'glob' || id === 'ls') return FolderSearch
-  if (id.includes('git')) return GitBranch
-  if (id.includes('web') || id.includes('fetch') || id.includes('browser')) return Globe2
-  if (id.includes('shell') || id.includes('command') || id.includes('terminal')) return Terminal
-  if (id.includes('read') || id.includes('write') || id.includes('file')) return FileText
-  return Wrench
+  return toolIconOf(props.toolCall.toolId)
 })
 </script>
 

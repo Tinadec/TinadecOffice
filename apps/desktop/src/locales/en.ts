@@ -186,7 +186,7 @@ export default {
     subjectState: { lease_active: 'Held', lease_released: 'Released', path_held: 'Held', path_free: 'Free', member_online: 'Online', member_offline: 'Offline' },
     subjectUnknown: 'Current state unknown',
     proposed: 'Proposes',
-    verb: { wait: 'Wait', serialize: 'Serialize', reassign: 'Reassign', separate_worktree: 'Separate worktree', narrow_scope: 'Narrow scope', stop_run: 'Stop the run', ask_user: 'Ask the user' },
+    verb: { wait: 'Wait', serialize: 'Serialize', reassign: 'Reassign', separate_worktree: 'Separate worktree', narrow_scope: 'Narrow scope', pause_run: 'Pause the run', resume_run: 'Resume the run', stop_run: 'Stop the run', assign_environment: 'Assign environment', ask_user: 'Ask the user' },
     evidence: 'Evidence', notePlaceholder: 'Note (optional)', act: 'Mark acted on', dismiss: 'Dismiss',
     decided: 'Report marked “{status}”', decidedBy: '{name} · {time} · {status}', decideFailed: 'The report was not updated',
     reportRefreshed: 'Report refreshed', reportStale: 'The report changed after you read it; check the latest version before deciding',

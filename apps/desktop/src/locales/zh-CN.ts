@@ -184,7 +184,7 @@ export default {
     subjectState: { lease_active: '持有中', lease_released: '已释放', path_held: '持有中', path_free: '空闲', member_online: '在线', member_offline: '离线' },
     subjectUnknown: '当前状态未知',
     proposed: '建议',
-    verb: { wait: '等待', serialize: '串行执行', reassign: '重新分派', separate_worktree: '分离工作树', narrow_scope: '收窄范围', stop_run: '停止运行', ask_user: '询问用户' },
+    verb: { wait: '等待', serialize: '串行执行', reassign: '重新分派', separate_worktree: '分离工作树', narrow_scope: '收窄范围', pause_run: '暂停运行', resume_run: '恢复运行', stop_run: '停止运行', assign_environment: '分配环境', ask_user: '询问用户' },
     evidence: '证据', notePlaceholder: '备注（可选）', act: '已处理', dismiss: '驳回',
     decided: '报告已标记为「{status}」', decidedBy: '{name} · {time} · {status}', decideFailed: '报告未能更新',
     reportRefreshed: '报告已刷新', reportStale: '报告在你查看之后有了变化，请确认最新内容后再处理',

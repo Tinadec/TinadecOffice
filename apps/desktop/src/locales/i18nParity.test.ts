@@ -43,6 +43,7 @@ const panelSources = import.meta.glob(
     './../components/AgentEvolutionPanel.vue',
     './../components/AgentActivityPanel.vue',
     './../components/TaskGraphPanel.vue',
+    './../components/organization/**/*.vue',
     './../components/TerminalPanel.vue',
     // The chat surface ships through TinadecUI's ChatCard, not a page, so nothing
     // else proved its keys exist: chat.copy/chat.edit rendered as raw keys for the
@@ -121,6 +122,14 @@ function templateText(source: string): string | null {
 const CJK = /[\u4e00-\u9fff]/
 
 describe('i18n locale parity and reference integrity', () => {
+  it('translates every governance report verb accepted by Core, including dynamic label() references', () => {
+    const source = readFileSync(new URL('../../../../TinadecCore/TinaChat/TinaChatService.OrganizationTools.cs', import.meta.url), 'utf8')
+    const declaration = source.match(/ProposedVerbs\s*=\s*\[([^\]]+)\]/)
+    expect(declaration, 'Core report verb declaration must be found').not.toBeNull()
+    const verbs = [...declaration![1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1])
+    expect(verbs.length).toBeGreaterThan(0)
+    assertKeysExist('Core ProposedVerbs', new Set(verbs.map((verb) => `organization.verb.${verb}`)))
+  })
   it('zh-CN and en expose the same leaf keys in every namespace', () => {
     const zhLeaves = flattenLeaves(zhCN as Bundle)
     const enLeaves = flattenLeaves(en as Bundle)

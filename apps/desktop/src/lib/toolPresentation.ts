@@ -111,6 +111,7 @@ export const CORE_VIRTUAL_TOOL_IDS = [
   'org_send',
   'org_report',
   'org_decide_report',
+  'org_execute_report',
   'org_contact',
   'org_room',
   'graph_view',

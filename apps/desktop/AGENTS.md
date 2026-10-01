@@ -1,13 +1,13 @@
 # DESKTOP APP KNOWLEDGE
 
 **Last Updated:** 2026-10-02
-**Last Updated By:** Codex 审批规则接入批次；常驻命令前缀规则、创建/撤销、审批历史与工具证据面板已贯通；定向 Vitest 23/23、i18n parity 4/4、`vue-tsc` 通过，未做真实 Electron 视觉走查。
-**Last Verified Commit:** 3828f84；本批验证见上。
+**Last Updated By:** Codex 修复 org_execute_report 工具登记、组织治理动词双语缺键，工具卡复用统一图标目录，i18n 守卫读取 Core 动词集合。
+**Last Verified Commit:** 0670533 后本工作树 Desktop 定向 55/55、typecheck 通过；未执行真实 Electron 视觉验收或模型验收。
 **Branch:** Astra
 
 ### 2026-10-02 前端 UX 改进
 
-`MessageList` 在用户离开底部时显示可键盘操作的“回到底部”入口，保留用户主动上滚的阅读位置；`LiveTurnBlock` 为思考、工具调用、等待审批提供统一的 aria-live 状态文字，并尊重 `prefers-reduced-motion`。消息行和入口使用短时动效，避免长动画干扰流式阅读。`AppSidebar` 接通原有搜索状态，项目名和项目内会话名均可过滤，并补上项目/会话当前态、焦点轮廓与可访问名称。设置导航声明当前页。定向测试覆盖搜索过滤，未做真实 Electron 像素级走查。
+对话活动使用总折叠；重复 tool_evidence 菜单已移除，Core 持久消息仍保留。侧栏搜索条在用户反馈后已撤回，选中态由整行承载。工具显示规则统一在 `lib/toolPresentation.ts`，ToolCallCard 不再自建工具名→图标猜测链。组织界面的动态 `organization.verb.*` 必须与 Core `ProposedVerbs` 一致；i18nParity 扫描 organization/**/*.vue 并逐项检查 Core 动词的双语键，不能仅以两份 locale 键集相等作为完成证明。新增 org_execute_report / pause_run / resume_run / assign_environment 已补齐。
 
 ## OVERVIEW
 
