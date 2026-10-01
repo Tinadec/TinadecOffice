@@ -144,7 +144,8 @@ public sealed class ToolInvocationScopeResolver : IToolInvocationScopeResolver
             frozenManifest.Tools,
             frozenManifest.ManifestHash,
             policy.PermissionMode,
-            ReadFrozenDispatchRoster(frozen.Content));
+            ReadFrozenDispatchRoster(frozen.Content),
+            authorization.AllowedDispatchTargets);
     }
 
     /// <summary>Reads the frozen dispatch roster (ids + responsibility text); null when absent.</summary>

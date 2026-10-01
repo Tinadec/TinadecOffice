@@ -171,7 +171,8 @@ public sealed record ToolInvocationScope(
     IReadOnlyList<FrozenToolManifestEntry>? AuthorizedToolManifest = null,
     string? FrozenToolManifestHash = null,
     string? PermissionMode = null,
-    IReadOnlyList<DispatchRosterEntry>? DispatchRoster = null);
+    IReadOnlyList<DispatchRosterEntry>? DispatchRoster = null,
+    IReadOnlyList<string>? DispatchTargets = null);
 
 /// <summary>
 /// One executor the run's coordinator may name in <c>task_dispatch.agent</c>, read from the run's
@@ -210,7 +211,8 @@ public sealed record AgentToolAuthorization(
     Guid TaskId,
     Guid AgentInstanceId,
     IReadOnlyList<string> AllowedTools,
-    IReadOnlyList<string> AllowedResources);
+    IReadOnlyList<string> AllowedResources,
+    IReadOnlyList<string>? AllowedDispatchTargets = null);
 
 /// <summary>
 /// Durable execution and approval state transitions. The Lifecycle module owns

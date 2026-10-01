@@ -122,6 +122,10 @@ public sealed record DeclaredSpawnableTemplate(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SystemPrompt { get; init; }
+
+    /// <summary>Targets this execution role may itself dispatch to; null keeps the tier default.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
 }
 
 /// <summary>

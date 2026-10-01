@@ -551,6 +551,25 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TaskDispatch_UsesTheCallingAgentsNarrowerTargetEnvelope()
+    {
+        var live = new[] { Tool("read_file") };
+        var provider = new ConfigurableToolProvider(live, OkResult());
+        var (dispatcher, _, _, run, execution) = await PrepareVirtualExecutionAsync(
+            live, [CoreTaskDispatchTool.ManifestEntry()], provider, "disp:dispatch-child-envelope:0:0",
+            [new DispatchRosterEntry("search", "只读检索与取证"), new DispatchRosterEntry("global_engineering", "工程修改")],
+            "{\"agent\":\"global_engineering\",\"title\":\"edit\",\"description\":\"edit\"}",
+            ["search"]);
+
+        var result = await dispatcher.ResumeAsync(execution.Id.ToString());
+
+        Assert.Equal(ToolDispatchStatus.Failed, result.Status);
+        Assert.Contains("not a dispatchable executor", result.Message);
+        await using var db = await DbFactory().CreateDbContextAsync();
+        Assert.Empty(await db.RunDirectives.AsNoTracking().Where(x => x.RunId == run.Id).ToListAsync());
+    }
+
+    [Fact]
     public async Task ResumeAsync_ProjectScope_UndeclaredCoreVirtualTool_IsStillRefused()
     {
         var live = new[] { Tool("read_file") };
@@ -581,15 +600,16 @@ public sealed class ToolDispatcherResilienceTests : IAsyncLifetime
             ConfigurableToolProvider provider,
             string toolCallKey,
             IReadOnlyList<DispatchRosterEntry>? dispatchRoster = null,
-            string parameters = "{\"title\":\"check the fixtures\"}")
+            string parameters = "{\"title\":\"check the fixtures\"}",
+            IReadOnlyList<string>? dispatchTargets = null)
     {
         var (projectId, sessionId) = await CreateProjectAndSessionAsync("disp-" + Guid.NewGuid().ToString("N")[..6]);
         var run = await InsertRunAsync(sessionId, "executing");
         var taskId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
-        var dispatcher = CreateDispatcher(provider,
+            var dispatcher = CreateDispatcher(provider,
             ScopeFor([.. live, .. declaredVirtual], run, projectId, sessionId, taskId, agentId, liveManifest: live)
-                with { DispatchRoster = dispatchRoster });
+                with { DispatchRoster = dispatchRoster, DispatchTargets = dispatchTargets });
         var execution = await PrepareExecutionAsync(projectId, sessionId, run.Id, taskId, agentId,
             toolCallKey, CoreTaskDispatchTool.ToolId, risk: "low", mutatesWorkspace: false, requiresApproval: false,
             parameters);

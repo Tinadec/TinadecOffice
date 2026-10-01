@@ -54,7 +54,8 @@ public sealed record RuntimeAgentSeed(
     // dispatched the task; a genuine root (conversation author, supervisor, curator, lane
     // planner) simply omits them and keeps depth 0.
     Guid? ParentInstanceId = null,
-    int GenerationDepth = 0);
+    int GenerationDepth = 0,
+    IReadOnlyList<string>? AllowedDispatchTargets = null);
 
 public enum AgentCreationIntent
 {
@@ -93,7 +94,10 @@ public sealed record FrozenAgentTemplate(
     IReadOnlyList<string> AllowedTools,
     Guid AgentDefinitionId,
     Guid AgentVersionId,
-    string VersionContentHash);
+    string VersionContentHash)
+{
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+}
 
 /// <summary>
 /// Run-frozen limits for generated agents. The durable engine supplies these values
@@ -177,7 +181,10 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var definition = new AgentInstanceDefinition(
             seed.Id, seed.Layer, seed.Role, seed.ModelRoutePurpose, Normalize(seed.Capabilities), Normalize(seed.AllowedTools),
             Normalize(seed.AllowedResources), Math.Max(0, seed.BudgetTokens), DirectUserOutput: seed.DirectUserOutput, FormalMemoryWrite: false,
-            Goal: null, SuccessCriteria: [], ContextSelectors: []);
+            Goal: null, SuccessCriteria: [], ContextSelectors: [])
+        {
+            AllowedDispatchTargets = NormalizeOptional(seed.AllowedDispatchTargets)
+        };
         var stored = await PutDefinitionAsync(scope.TenantId, scope.WorkspaceId, definition, cancellationToken).ConfigureAwait(false);
         var binding = ResolveBinding(definition.Id, seed.AgentDefinitionId, seed.AgentVersionId, seed.VersionContentHash, stored.Sha256);
         var row = new AgentInstanceRecord
@@ -269,7 +276,10 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
                 new { goal = request.Goal.Trim(), successCriteria = Normalize(request.SuccessCriteria), contextSelectors = Normalize(request.ContextSelectors), allowedTools = tools, allowedResources = resources, intent = intent.ToString().ToLowerInvariant() }), cancellationToken).ConfigureAwait(false);
             var tempDefinition = new AgentInstanceDefinition(
                 candidate.Name, candidate.Layer, candidate.AgentType, parentDefinition.ModelRoutePurpose, [], tools, resources, Math.Clamp(request.BudgetTokens, 0, parentDefinition.BudgetTokens),
-                DirectUserOutput: false, FormalMemoryWrite: false, request.Goal.Trim(), Normalize(request.SuccessCriteria), Normalize(request.ContextSelectors));
+                DirectUserOutput: false, FormalMemoryWrite: false, request.Goal.Trim(), Normalize(request.SuccessCriteria), Normalize(request.ContextSelectors))
+            {
+                AllowedDispatchTargets = parentDefinition.AllowedDispatchTargets
+            };
             var tempStored = await PutDefinitionAsync(scope.TenantId, scope.WorkspaceId, tempDefinition, cancellationToken).ConfigureAwait(false);
             // A generated/candidate instance executes under its parent's frozen
             // published version until a candidate passes the separate publish
@@ -294,7 +304,10 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         var definition = new AgentInstanceDefinition(
             template?.Id ?? "generated.worker", "execution", template?.Role ?? (string.IsNullOrWhiteSpace(request.Role) ? "worker" : request.Role.Trim()),
             parentDefinition.ModelRoutePurpose, template?.Capabilities ?? [], tools, resources, Math.Clamp(request.BudgetTokens, 0, parentDefinition.BudgetTokens),
-            DirectUserOutput: false, FormalMemoryWrite: false, request.Goal.Trim(), Normalize(request.SuccessCriteria), Normalize(request.ContextSelectors));
+            DirectUserOutput: false, FormalMemoryWrite: false, request.Goal.Trim(), Normalize(request.SuccessCriteria), Normalize(request.ContextSelectors))
+        {
+            AllowedDispatchTargets = template?.AllowedDispatchTargets ?? parentDefinition.AllowedDispatchTargets
+        };
         var stored = await PutDefinitionAsync(scope.TenantId, scope.WorkspaceId, definition, cancellationToken).ConfigureAwait(false);
         var binding = template is null
             ? ResolveBinding(definition.Id, parent.AgentDefinitionId, parent.AgentVersionId, parent.AgentVersionHash, stored.Sha256)
@@ -381,7 +394,7 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         if (row is null || row.Status is not ("created" or "running")) return null;
         var definition = await ReadDefinitionAsync(row, cancellationToken).ConfigureAwait(false);
         return new AgentToolAuthorization(scope.TenantId, scope.WorkspaceId, row.SessionId, row.RunId,
-            taskId, row.Id, definition.AllowedTools, definition.AllowedResources);
+            taskId, row.Id, definition.AllowedTools, definition.AllowedResources, definition.AllowedDispatchTargets);
     }
 
     public async Task ReleaseRunInstancesAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -594,5 +607,11 @@ internal sealed class AgentInstanceService : IAgentInstanceService, IAgentToolAu
         bool FormalMemoryWrite,
         string? Goal,
         IReadOnlyList<string> SuccessCriteria,
-        IReadOnlyList<string> ContextSelectors);
+        IReadOnlyList<string> ContextSelectors)
+    {
+        public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
+    }
+
+    private static IReadOnlyList<string>? NormalizeOptional(IReadOnlyList<string>? values) =>
+        values is null ? null : Normalize(values);
 }

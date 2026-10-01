@@ -900,6 +900,8 @@ public sealed class ToolDispatcher : ILeaseFencedToolDispatcher
         // the caller had already moved on believing it was queued.
         if (scope.DispatchRoster is { } roster)
         {
+            if (scope.DispatchTargets is { } allowedTargets)
+                roster = roster.Where(entry => allowedTargets.Contains(entry.Id, StringComparer.OrdinalIgnoreCase)).ToArray();
             var match = string.IsNullOrWhiteSpace(agent)
                 ? null
                 : roster.FirstOrDefault(entry => string.Equals(entry.Id, agent, StringComparison.OrdinalIgnoreCase));

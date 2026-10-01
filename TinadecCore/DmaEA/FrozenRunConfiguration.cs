@@ -235,6 +235,10 @@ public sealed record FrozenSpawnableTemplate(
     /// <summary>Published role instructions carried with the frozen spawnable template.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SystemPrompt { get; init; }
+
+    /// <summary>Targets this frozen execution template may itself dispatch to.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? AllowedDispatchTargets { get; init; }
 }
 
 internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigurationResolver
@@ -358,7 +362,8 @@ internal sealed class AgentRuntimeConfigurationResolver : IAgentRuntimeConfigura
             {
                 ResourceGrants = WorkspaceGrantDefaults.Resolve(workspace, template.ResourceGrants, template.ToolScope),
                 Description = template.Description,
-                SystemPrompt = template.SystemPrompt
+                SystemPrompt = template.SystemPrompt,
+                AllowedDispatchTargets = template.AllowedDispatchTargets
             }).ToArray()
         };
 

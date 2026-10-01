@@ -2297,6 +2297,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
                 AgentDefinitionId: definitionId,
                 AgentVersionId: versionId,
                 VersionContentHash: selected.Agent.VersionContentHash,
+                AllowedDispatchTargets: spawnable?.AllowedDispatchTargets ?? selected.Agent.AllowedDispatchTargets,
                 // Lineage so the created worker carries a real depth instead of starting the
                 // count over: the ceiling above was checked against the dispatcher's depth, and
                 // the same value must land on the row or a later sub-task would see depth 0.
@@ -2464,6 +2465,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             AllowedTools = template.ToolCeiling,
             Description = template.Description,
             SystemPrompt = template.SystemPrompt ?? string.Empty,
+            AllowedDispatchTargets = template.AllowedDispatchTargets,
             ModelPlan = conversation.ModelPlan,
             Enabled = true
         };
@@ -5018,6 +5020,7 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             AgentDefinitionId: conversationDefinition.AgentDefinitionId,
             AgentVersionId: conversationDefinition.AgentVersionId,
             VersionContentHash: conversationDefinition.VersionContentHash,
+            AllowedDispatchTargets: conversationDefinition.AllowedDispatchTargets,
             DirectUserOutput: true), cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(runId, "agent.created", "Conversation author agent created.", new
         {
@@ -5083,7 +5086,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             configuration.Context.DefaultTokenBudget,
             AgentDefinitionId: definition.AgentDefinitionId,
             AgentVersionId: definition.AgentVersionId,
-            VersionContentHash: definition.VersionContentHash), cancellationToken).ConfigureAwait(false);
+            VersionContentHash: definition.VersionContentHash,
+            AllowedDispatchTargets: definition.AllowedDispatchTargets), cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(runId, "agent.created", "Supervision agent created.", new
         {
             agent_instance_id = supervisor.Id,
@@ -5956,7 +5960,8 @@ internal sealed partial class FullDuplexRunEngine : BackgroundService, IFullDupl
             configuration.Context.DefaultTokenBudget,
             AgentDefinitionId: definition.AgentDefinitionId,
             AgentVersionId: definition.AgentVersionId,
-            VersionContentHash: definition.VersionContentHash), cancellationToken).ConfigureAwait(false);
+            VersionContentHash: definition.VersionContentHash,
+            AllowedDispatchTargets: definition.AllowedDispatchTargets), cancellationToken).ConfigureAwait(false);
         await AppendEventAsync(runId, "agent.created", "Experience curator created.", new
         {
             agent_instance_id = curator.Id,
